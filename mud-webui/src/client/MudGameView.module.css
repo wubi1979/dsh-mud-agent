@@ -1,0 +1,83 @@
+/**
+ * Game window layout (client half): a fixed top toolbar (connect/disconnect
+ * button + status) above a flex-1 xterm surface. The toolbar never overlays
+ * the terminal; the xterm host fills the remaining space and clips overflow.
+ * The terminal element is pinned to 100% so a failed/late fit cannot inflate
+ * it past the container.
+ */
+
+.gameRoot {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  background: var(--dsw-alias-bg-base);
+}
+
+/* Top toolbar: one row, never overlapping the terminal below. */
+.toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--dsw-alias-interactive-bg-hover);
+  background: var(--dsw-alias-bg-base);
+}
+
+.toolbarButton {
+  padding: 5px 16px;
+  border: none;
+  border-radius: 6px;
+  background: var(--dsw-alias-state-business-primary);
+  color: #fff;
+  cursor: pointer;
+  font-size: 12.5px;
+  flex: none;
+}
+
+.toolbarButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.toolbarStatus {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The xterm surface: fills the space below the toolbar, clips overflow.
+ * NO padding here — xterm's fit computes available height as the parent's
+ * height minus the xterm ELEMENT's own padding; parent padding is not
+ * deducted and would overflow the last line (a few px of vertical scroll).
+ * Padding lives on `.xterm` itself so fit accounts for it. */
+.xtermHost {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  background: #0a0a0a;
+}
+
+/* Pin the terminal element to the host box (fit only tunes rows/cols inside);
+ * padding here is measured by fit and deducted from the available area. */
+.xtermHost :global(.xterm) {
+  height: 100%;
+  width: 100%;
+  padding: 8px 12px;
+  box-sizing: border-box;
+}
+
+/* Hard ceiling for the terminal's rendering surface: even a bad fit cannot
+ * inflate the visible box past the host (overflow is clipped by gameRoot). */
+.xtermHost :global(.xterm .xterm-screen) {
+  max-width: 100%;
+  max-height: 100%;
+}

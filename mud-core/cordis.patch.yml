@@ -1,0 +1,22 @@
+# The dsh-mud-core bundle patch: the MUD core service row set (telnet client,
+# perception/rule pipeline, and the agent bridge published as `ctx.mud`).
+# UI shells are separate rows: add `@deepseek-ai/dsh-mud-tui` and/or
+# `@deepseek-ai/dsh-mud-web` after this row in a profile patch to pick a face.
+#
+# Deployment values live in the profile's own cordis.patch.yml (server,
+# account, session pacing) — never in this bundle.
+
+- insert:
+    - id: mud-core
+      name: '@deepseek-ai/dsh-mud-core'
+      config:
+        host: mud.pkuxkx.net
+        port: 8081
+        sessionId: mud-player
+        # 暂停接入: 游戏输出直推终端/日志, agent (LLM) 不介入不思考。
+        # 接入 agent 时改为 true (注入游戏输出 → agent 自主决策)。
+        agentEnabled: false
+        commandIntervalMs: 400
+        ruleDedupMs: 1500
+        loginTimeoutMs: 20000
+        persona: ''

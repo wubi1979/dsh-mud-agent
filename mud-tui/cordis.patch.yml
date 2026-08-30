@@ -1,0 +1,11 @@
+# The dsh-mud-tui bundle patch: the terminal shell row for the MUD player
+# core. Compose a playable profile as [dsh-base, dsh-mud-core, dsh-mud-tui].
+# Deployment values (server, account) live in the profile's own
+# cordis.patch.yml — never in this bundle.
+
+- insert:
+    - id: mud-tui
+      name: '@deepseek-ai/dsh-mud-tui'
+      config:
+        refreshMs: 500
+        rightWidth: 42

@@ -1,0 +1,298 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  background: var(--dsw-specific-sidebar-fill);
+  color: var(--dsw-alias-label-primary);
+}
+
+.logoRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 10px 6px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 6px;
+  text-align: left;
+}
+
+.brand:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.brandMark {
+  display: flex;
+  align-items: center;
+  color: var(--dsw-alias-label-primary);
+}
+
+.brandText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.brandName {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.brandSub {
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.iconButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  flex: none;
+}
+
+.iconButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.addServer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 10px 6px;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: var(--dsw-alias-button-elevated-fill);
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.addServer:hover {
+  background: var(--dsw-alias-button-floating-hover);
+}
+
+.addServerLabel {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.listArea {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 8px 8px;
+}
+
+.sectionLabel {
+  display: block;
+  padding: 6px 8px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.empty {
+  padding: 18px 10px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  text-align: center;
+  line-height: 1.7;
+}
+
+.serverGroup {
+  margin-bottom: 4px;
+}
+
+.serverRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: 6px;
+}
+
+.serverRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.serverIcon {
+  display: flex;
+  align-items: center;
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.serverBody {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.serverName {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.serverMeta {
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rowActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.smallIcon {
+  width: 24px;
+  height: 24px;
+}
+
+.userRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 22px;
+  border-radius: 6px;
+}
+
+.userRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.userIcon {
+  display: flex;
+  align-items: center;
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.userName {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stateDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--dsw-alias-label-secondary);
+  opacity: 0.55;
+}
+
+.stateIdle {
+  background: var(--dsw-alias-label-secondary);
+  opacity: 0.4;
+}
+
+.stateConnecting {
+  background: #d8a15a;
+  opacity: 1;
+}
+
+.stateConnected {
+  background: #5fbf77;
+  opacity: 1;
+}
+
+.stateError {
+  background: #d85f5f;
+  opacity: 1;
+}
+
+.footArea {
+  border-top: 1px solid var(--dsw-alias-interactive-bg-hover);
+  padding: 6px 10px 8px;
+}
+
+.connLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.connLabel {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.connError {
+  color: #d85f5f;
+}
+
+/* Collapsed 56px rail: only the toggle + add-server icon controls. */
+.railControls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding-top: 10px;
+}
+
+.railToggle {
+  width: 36px;
+  height: 36px;
+}
+
+.railOnly {
+  display: none;
+}
+
+.collapsed .wideOnly {
+  display: none;
+}
+
+.collapsed .railOnly {
+  display: flex;
+}

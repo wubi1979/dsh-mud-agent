@@ -1,0 +1,14 @@
+{
+  "name": "dsh-mud-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MUD agent plugins for deepseek-harness (pkuxkx): mud-core / mud-tui / mud-webui, hosted as an out-of-tree plugin repo",
+  "type": "module",
+  "license": "MIT",
+  "packageManager": "pnpm@11.7.0",
+  "workspaces": [
+    "mud-core",
+    "mud-tui",
+    "mud-webui"
+  ]
+}
