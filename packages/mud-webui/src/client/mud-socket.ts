@@ -13,7 +13,7 @@
  * @module @deepseek-ai/dsh-mud-webui/client/mud-socket
  */
 
-import type { MudGameItem, MudUiItem } from '@deepseek-ai/dsh-mud-core/src/client/wire.ts'
+import type { MudGameItem, MudUiItem } from '@deepseek-ai/dsh-mud-core/client-wire'
 
 /** Connection lifecycle shown by consumers that care about channel health. */
 export type MudSocketStatus = 'connecting' | 'open' | 'closed'

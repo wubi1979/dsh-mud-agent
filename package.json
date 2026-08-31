@@ -2,13 +2,20 @@
   "name": "dsh-mud-agent",
   "version": "0.1.0",
   "private": true,
-  "description": "MUD agent plugins for deepseek-harness (pkuxkx): mud-core / mud-tui / mud-webui, hosted as an out-of-tree plugin repo",
+  "description": "MUD agent plugins for deepseek-harness (pkuxkx): mud-core / mud-webui, hosted as an independent npm package workspace",
   "type": "module",
   "license": "MIT",
   "packageManager": "pnpm@11.7.0",
-  "workspaces": [
-    "mud-core",
-    "mud-tui",
-    "mud-webui"
-  ]
+  "scripts": {
+    "build": "pnpm -r build",
+    "clean": "pnpm -r run clean",
+    "test": "pnpm --filter @deepseek-ai/dsh-mud-core test",
+    "dev": "pnpm build && pnpm --dir D:/Code/deepseek-harness dsh web --patch D:/Code/dsh-mud-agent/packages/mud-core/cordis.patch.yml --patch D:/Code/dsh-mud-agent/packages/mud-webui/cordis.patch.yml",
+    "restart": "pnpm run dev"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  }
 }

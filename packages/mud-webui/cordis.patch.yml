@@ -1,0 +1,14 @@
+# The dsh-mud-webui patch row: the browser WebUI shell for the MUD player core.
+#
+# The host half is a no-op discovery stub; the browser half is discovered
+# through this package's `dsh.client` declaration (platform web) and served by
+# client-modules from `exports["./client"]` → `dist/client.js`.
+#
+# `name` points at the tsc build output (dist). The browser bundle must exist
+# before boot, otherwise the roster scan throws "client bundle not found":
+#   pnpm --dir D:/Code/dsh-mud-agent -r build
+
+- insert:
+    - id: mud-webui
+      name: 'file:///D:/Code/dsh-mud-agent/packages/mud-webui/dist/index.js'
+      config: {}

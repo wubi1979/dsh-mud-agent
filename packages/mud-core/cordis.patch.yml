@@ -1,14 +1,18 @@
 # The dsh-mud-core bundle patch: the MUD core service row set (telnet client,
 # perception/rule pipeline, and the agent bridge published as `ctx.mud`).
 # UI shells are separate rows: add `@deepseek-ai/dsh-mud-tui` and/or
-# `@deepseek-ai/dsh-mud-web` after this row in a profile patch to pick a face.
+# `@deepseek-ai/dsh-mud-webui` after this row in a profile patch to pick a face.
+#
+# `name` points at the tsc build output (dist), so the row loads under plain
+# Node ESM without any tsx involvement. Rebuild before boot:
+#   pnpm --dir D:/Code/dsh-mud-agent -r build
 #
 # Deployment values live in the profile's own cordis.patch.yml (server,
 # account, session pacing) — never in this bundle.
 
 - insert:
     - id: mud-core
-      name: '@deepseek-ai/dsh-mud-core'
+      name: 'file:///D:/Code/dsh-mud-agent/packages/mud-core/dist/index.js'
       config:
         host: mud.pkuxkx.net
         port: 8081
