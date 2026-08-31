@@ -47,7 +47,7 @@ import { createMudAgent, sendGameOutput, type CreateMudAgentOptions } from './ag
 import type { AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { MudWorldSnapshot } from './mud-events.ts'
+import type { MudDecisionEvent, MudLogEvent, MudWorldEvent, MudWorldSnapshot } from './mud-events.ts'
 import { MudWebSocketHub, type MudUiItem } from './ws.ts'
 import type {
   MudConnectOptions, MudConnectionStatus, MudCoreService, MudDiag, MudGameRead,
@@ -181,7 +181,12 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     }
   }
 
-  /** 追加自定义事件到 agent session (进程内外壳消费: 决策/日志/状态)。 */
+  /**
+   * 广播自定义事件给进程内外壳 (TUI): 决策/日志/状态。
+   * 经 ctx.emit 进程内广播, 不再写进 agent session 日志 — mud/* 事件无需
+   * 持久化 (TUI 与 host 同进程实时消费, browser 走 /mud/ws), 而写入 session
+   * 日志会因类型不在 KNOWN_SESSION_EVENT_TYPES 导致重启读史失败。
+   */
   function sessionAppend(
     type: 'mud/decision',
     data: { actor: 'rule' | 'router' | 'agent'; ruleId?: string; eventType?: string; action: string; result?: string; text: string; time: number },
@@ -207,17 +212,14 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       time: number
     },
   ): void {
-    try {
-      // 目标 session: 优先 agent handle 的会话, 否则用宿主已 materialize 的
-      // live session (界面 open/激活或 prepareAgent 创建; connect 不创建会话,
-      // 只向已存在的会话输送游戏信息)。游戏文本 (mud/game) 不经此路径 —
-      // 一次性状态流只进内存缓冲/WS 通道, 避免会话无限增长。
-      const s = agent?.agent.session
-        ?? (activeSessionId === null ? undefined : ctx.get('sessions')?.get(activeSessionId as never))
-      if (s) {
-        s.append(type as 'mud/decision', data as never)
-      }
-    } catch { /* ignore */ }
+    // 进程内广播给外壳 (TUI): 不写进 agent session 日志 (详见上方注释)。
+    if (type === 'mud/decision') {
+      ctx.events.emit('mud/decision', data as MudDecisionEvent)
+    } else if (type === 'mud/log') {
+      ctx.events.emit('mud/log', data as MudLogEvent)
+    } else {
+      ctx.events.emit('mud/world', data as MudWorldEvent)
+    }
   }
 
   /** world 变化 → 节流推送快照 (500ms 合并; session 事件 + WS 广播, 替换语义)。 */

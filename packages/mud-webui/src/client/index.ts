@@ -75,6 +75,63 @@ export function apply(ctx: ClientContext): void {
   // One shared /mud/ws channel per page: game/log/decision/world push frames.
   const mudSocket = new MudSocketController()
 
+  // 共建一个用户的会话: 幂等 create 登记进浏览器端 ctx.sessions 列表,
+  // open 打开, 并用一个静默占位 prompt 触发官方 engaged → blank:false,
+  // 让原生会话头渲染 游戏/日志 tab。占位文本无游戏意图, 避免 agent 误操作。
+  const ensureAndOpenUserSession = (serverId: string, userId: string, shouldEngage: boolean): void => {
+    const server = mud.getSnapshot().servers.find(candidate => candidate.id === serverId)
+    const user = server?.users.find(candidate => candidate.id === userId)
+    if (server === undefined || user === undefined) return
+    const sessions = ctx.get('sessions') as ISessions | undefined
+    if (sessions === undefined) return
+    const sid = user.sessionId as SessionId
+    const engage = (face: {
+      prompt: (content: Array<{ type: 'text'; text: string }>, mode: 'queue' | 'steer') => Promise<unknown>
+      getSnapshot?: () => { blank?: boolean }
+    } | undefined) => {
+      if (!shouldEngage || face === undefined) return
+      // 幂等: 仅当会话仍为 blank 才补一次占位 prompt (避免每次点击重复跑
+      // agent LLM 回合)。失败忽略 (会话可能已 engaged 或 host 正忙碌)。
+      if (face.getSnapshot?.().blank === false) return
+      void face.prompt([{ type: 'text', text: 'MUD 游戏尚未登录，无需做出任何动作和回答，等待后续问题' }], 'queue').catch(() => { /* best-effort */ })
+    }
+    const listed = () => sessions.list.getSnapshot().ids.includes(sid)
+    const openIfListed = () => {
+      if (!listed()) return
+      sessions.open(sid)
+      engage(sessions.binding(sid)?.session as never)
+    }
+    try {
+      openIfListed()
+    } catch (err) {
+      mud.setConn({
+        ...mud.getSnapshot().conn,
+        state: 'error',
+        serverId,
+        userId,
+        sessionId: sid,
+        label: `${server.name} / ${user.name}`,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+    // 旧用户 (修复前创建) 从未在列表 → 幂等 create 补登记, 成功后 open+engage。
+    if (!listed()) {
+      void sessions.create({ sessionId: sid, ...(server.cwd !== '' ? { cwd: server.cwd } : {}) })
+        .then(() => {
+          sessions.open(sid)
+          engage(sessions.binding(sid)?.session as never)
+        })
+        .catch(() => {
+          // 会话可能已存在于 host (旧用户): 拉权威列表补登记, 再 open+engage。
+          void sessions.refresh().then(() => {
+            if (!listed()) return
+            sessions.open(sid)
+            engage(sessions.binding(sid)?.session as never)
+          }).catch(() => { /* best-effort */ })
+        })
+    }
+  }
+
   /** Shared inject face: the hook sources plus the action surface. */
   const injectFace = (): MudClientInjected => ({
     hooks: {
@@ -93,32 +150,33 @@ export function apply(ctx: ClientContext): void {
     addUser: (serverId, input) => {
       const user = mud.addUser(serverId, input)
       if (user === null) return
-      // 创建用户即预建会话: host 创建/恢复该用户的 agent 会话并注入初始
-      // 消息 (不连 telnet; 会话进列表后, 点击用户即可打开视图)。
+      // 创建用户 = 创建会话 (用户=会话): 走官方新建会话流程, 把该用户的
+      // 专属会话 (唯一 sessionId) 登记进浏览器端 ctx.sessions 列表并打开,
+      // 再发一个静默占位 prompt 触发 engaged → blank:false, 让原生会话头
+      // 渲染 游戏/日志 tab。host 侧 /mud/prepare 物化 agent (同一 sessionId)。
       const server = mud.getSnapshot().servers.find(candidate => candidate.id === serverId)
-      void fetch('/mud/prepare', {
+      const cwd = server?.cwd ?? ''
+      fetch('/mud/prepare', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sessionId: user.sessionId, cwd: server?.cwd ?? '' }),
+        body: JSON.stringify({ sessionId: user.sessionId, cwd }),
       }).catch(() => { /* best-effort: 连接时 host 仍会确保会话 */ })
+      ensureAndOpenUserSession(serverId, user.id, true)
     },
     removeUser: (serverId, userId) => { mud.removeUser(serverId, userId) },
+    // 共建: 委托给上面的 ensureAndOpenUserSession (幂等 create + open +
+    // 静默占位 engage, 让原生会话头渲染 游戏/日志 tab)。
+    ensureAndOpenUserSession: (serverId, userId, shouldEngage) => {
+      ensureAndOpenUserSession(serverId, userId, shouldEngage)
+    },
     connectUser: (serverId, userId) => mud.connectUser(serverId, userId),
     disconnect: () => mud.disconnect(),
     refreshStatus: () => mud.refreshStatus(),
-    // 点击用户: 选中该用户 + 打开其专属会话视图 (会话由创建用户时的
-    // /mud/prepare 预建; unarchive 防历史归档清扫; open 失败则下次点击重试)。
+    // 点击用户: 选中该用户 + 打开其专属会话视图, 并 (幂等) engage 会话,
+    // 确保原生会话头渲染 游戏/日志 tab。
     openUserSession: (serverId, userId) => {
-      const server = mud.getSnapshot().servers.find(candidate => candidate.id === serverId)
-      const user = server?.users.find(candidate => candidate.id === userId)
-      if (server === undefined || user === undefined) return
       mud.setActive(serverId, userId)
-      const sessions = ctx.get('sessions') as ISessions | undefined
-      if (sessions === undefined) return
-      const sid = user.sessionId as SessionId
-      try {
-        sessions.open(sid)
-      } catch { /* 会话可能尚未列出: 由下一次点击重试 */ }
+      ensureAndOpenUserSession(serverId, userId, true)
     },
     sendCommand: async (cmd) => {
       try {

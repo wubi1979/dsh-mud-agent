@@ -46,6 +46,8 @@ export interface MudClientInjected {
   refreshStatus: () => Promise<void>
   /** Select a user and open its dedicated session view (the game page drives the connection). */
   openUserSession: (serverId: string, userId: string) => void
+  /** Ensure a user's session exists in the list (幂等 create), open it, and engage it so the 游戏/日志 tabs render. */
+  ensureAndOpenUserSession: (serverId: string, userId: string, shouldEngage: boolean) => void
   /** Send one game command straight to the game (bypasses the agent). */
   sendCommand: (cmd: string) => Promise<boolean>
   toggleSidebar: () => void

@@ -20,43 +20,69 @@ export interface MudWorldSnapshot {
   flags: Record<string, unknown>
 }
 
+/**
+ * One decision the MUD host or its agent made: who acted (rule engine,
+ * perception router, or the agent's tool call), why (rule id / perception
+ * event), and what was done (tool + command). The WebUI decision rail
+ * renders these; the payload carries the structured fields plus a
+ * preformatted display text.
+ */
+export interface MudDecisionEvent {
+  /** Who made the decision. */
+  actor: 'rule' | 'router' | 'agent'
+  /** The rule id that fired (actor 'rule'). */
+  ruleId?: string
+  /** The perception event type routed (actor 'router'). */
+  eventType?: string
+  /** What was done: tool + command (rule/agent) or routing target (router). */
+  action: string
+  /** Result of the action (tool ok/note), when available. */
+  result?: string
+  /** Preformatted display text (fallback when structured fields are absent). */
+  text: string
+  /** Epoch-ms time. */
+  time: number
+}
+
+/**
+ * One plain log line (system/connection/injection noise) the MUD host
+ * published. The WebUI log tab renders these; the payload is the display
+ * text plus its epoch-ms time.
+ */
+export interface MudLogEvent {
+  text: string
+  time: number
+}
+
+/**
+ * One throttled world snapshot the MUD host published after a perception
+ * or GMCP change. The WebUI details rail renders the latest one as the
+ * status panel; the payload is the serialized WorldModel sections.
+ */
+export interface MudWorldEvent {
+  world: MudWorldSnapshot
+  time: number
+}
+
+/**
+ * Mud 实时广播事件 (进程内, 驱动 TUI): 决策/日志/世界。
+ * mud-core 经 ctx.emit 广播, 不再写进 agent session 日志 — mud/* 事件无需
+ * 持久化 (TUI 与 host 同进程实时消费, browser 走 /mud/ws), 而写入 session
+ * 日志会因类型不在 KNOWN_SESSION_EVENT_TYPES 导致重启读史失败。
+ */
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    'mud/decision': MudDecisionEvent
+    'mud/log': MudLogEvent
+    'mud/world': MudWorldEvent
+  }
+}
+
 declare module '@deepseek-ai/dsh-session/types' {
   interface SessionEventMap {
-    /**
-     * One decision the MUD host or its agent made: who acted (rule engine,
-     * perception router, or the agent's tool call), why (rule id / perception
-     * event), and what was done (tool + command). The WebUI decision rail
-     * renders these; the payload carries the structured fields plus a
-     * preformatted display text.
-     */
-    'mud/decision': {
-      /** Who made the decision. */
-      actor: 'rule' | 'router' | 'agent'
-      /** The rule id that fired (actor 'rule'). */
-      ruleId?: string
-      /** The perception event type routed (actor 'router'). */
-      eventType?: string
-      /** What was done: tool + command (rule/agent) or routing target (router). */
-      action: string
-      /** Result of the action (tool ok/note), when available. */
-      result?: string
-      /** Preformatted display text (fallback when structured fields are absent). */
-      text: string
-      /** Epoch-ms time. */
-      time: number
-    }
-    /**
-     * One plain log line (system/connection/injection noise) the MUD host
-     * published. The WebUI log tab renders these; the payload is the display
-     * text plus its epoch-ms time.
-     */
-    'mud/log': { text: string; time: number }
-    /**
-     * One throttled world snapshot the MUD host published after a perception
-     * or GMCP change. The WebUI details rail renders the latest one as the
-     * status panel; the payload is the serialized WorldModel sections.
-     */
-    'mud/world': { world: MudWorldSnapshot; time: number }
+    'mud/decision': MudDecisionEvent
+    'mud/log': MudLogEvent
+    'mud/world': MudWorldEvent
     /**
      * One game-output batch the MUD host pushed directly (agentEnabled=false,
      * agent pause mode): the game text plus a per-connection monotonic seq

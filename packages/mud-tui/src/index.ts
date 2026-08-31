@@ -8,6 +8,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { MudTuiApp, type MudTuiConfig } from './app.ts'
 
 /** 插件名。 */
@@ -30,6 +31,18 @@ export function apply(ctx: Context, config: MudTuiConfig = {}): void {
     throw new Error('mud-tui 需要 ctx.mud 服务 — 请与 @deepseek-ai/dsh-mud-core 同 profile 组合')
   }
   const app = new MudTuiApp(mud, config)
+  // mud 事件 (决策/日志/世界): 由 mud-core 经 ctx.events 进程内广播, 实时驱动 TUI
+  // (不再写进 agent session 日志, 避免污染持久化读史)。agent 对话事件仍走
+  // session/event 投影。
+  ctx.events.on('mud/decision', (data) => {
+    app.handleEvent({ type: 'mud/decision', data } as SessionEvent, null, mud.status().sessionId)
+  })
+  ctx.events.on('mud/log', (data) => {
+    app.handleEvent({ type: 'mud/log', data } as SessionEvent, null, mud.status().sessionId)
+  })
+  ctx.events.on('mud/world', (data) => {
+    app.handleEvent({ type: 'mud/world', data } as SessionEvent, null, mud.status().sessionId)
+  })
   // 会话事件 → TUI (对话转录 / 决策轨迹 / 世界快照)。
   ctx.on('session/event', (session, event) => {
     app.handleEvent(event, String(session.id), mud.status().sessionId)
