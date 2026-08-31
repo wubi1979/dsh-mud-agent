@@ -2,7 +2,7 @@
   "name": "dsh-mud-agent",
   "version": "0.1.0",
   "private": true,
-  "description": "MUD agent plugins for deepseek-harness (pkuxkx): mud-core / mud-webui, hosted as an independent npm package workspace",
+  "description": "MUD agent plugins for deepseek-harness (pkuxkx): mud-core (core) with mud-webui / mud-tui shells, hosted as an independent npm package workspace",
   "type": "module",
   "license": "MIT",
   "packageManager": "pnpm@11.7.0",
@@ -10,8 +10,10 @@
     "build": "pnpm -r build",
     "clean": "pnpm -r run clean",
     "test": "pnpm --filter @deepseek-ai/dsh-mud-core test && pnpm --filter @deepseek-ai/dsh-mud-tui test",
-    "dev": "pnpm build && pnpm --dir D:/Code/deepseek-harness dsh web --patch D:/Code/dsh-mud-agent/packages/mud-core/cordis.patch.yml --patch D:/Code/dsh-mud-agent/packages/mud-webui/cordis.patch.yml",
-    "restart": "pnpm run dev"
+    "dev:web": "pnpm build && pnpm --dir D:/Code/deepseek-harness dsh web --patch D:/Code/dsh-mud-agent/packages/mud-core/cordis.patch.yml --patch D:/Code/dsh-mud-agent/packages/mud-webui/cordis.patch.yml",
+    "dev:tui": "pnpm build && pnpm --dir D:/Code/deepseek-harness dsh web --patch D:/Code/dsh-mud-agent/packages/mud-core/cordis.patch.yml --patch D:/Code/dsh-mud-agent/packages/mud-tui/cordis.patch.yml",
+    "restart:web": "pnpm run dev:web",
+    "restart:tui": "pnpm run dev:tui"
   },
   "devDependencies": {
     "@types/node": "^22.20.0",
