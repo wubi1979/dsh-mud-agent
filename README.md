@@ -1,51 +1,80 @@
 # dsh-mud-agent
 
-[deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) 的 **仓库外 MUD 插件**（pkuxkx，`mud.pkuxkx.net`），独立维护，不参与 harness 的根 workspace 构建链。
+[deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) 的 **仓库外 MUD 插件 workspace**（pkuxkx，`mud.pkuxkx.net`），独立构建、独立从 npm registry 安装依赖，不参与 harness 的根 workspace 构建链。
 
 三个兄弟子包：
 
 | 包 | 目录 | 角色 |
 | --- | --- | --- |
-| `@deepseek-ai/dsh-mud-core` | `mud-core/` | MUD 核心服务（telnet/GMCP 客户端、感知/规则管线、agent 桥）、发布为 `ctx.mud` |
-| `@deepseek-ai/dsh-mud-tui` | `mud-tui/` | 终端壳（pi-tui 双栏布局），消费 `ctx.mud` |
-| `@deepseek-ai/dsh-mud-webui` | `mud-webui/` | WebUI 壳（xterm + 决策日志），消费 `ctx.mud` |
+| `@deepseek-ai/dsh-mud-core` | `packages/mud-core/` | MUD 核心服务（telnet/GMCP 客户端、感知/规则管线、agent 桥），发布为 `ctx.mud` |
+| `@deepseek-ai/dsh-mud-tui` | `packages/mud-tui/` | 终端壳（pi-tui 双栏布局），消费 `ctx.mud` |
+| `@deepseek-ai/dsh-mud-webui` | `packages/mud-webui/` | WebUI 壳（xterm + 决策日志），消费 `ctx.mud` |
 
-> 本仓库的 tsconfig/package.json 保留了对 harness workspace 的 `workspace:^` / `references` 引用（指向原 `packages/mud/*` 布局的遗留配置）。本仓库**不作为独立可运行/可安装的 workspace**，只作为源码载体。
+三包独立以 tsc/tsdown 产出 `dist/`，插件的 `cordis.patch.yml` 把 `name` 指向 `dist/index.js` 的绝对路径（`file:///` 形式），按标准 npm 包发布。
 
-## 加载方式
+> mud-core 是统一 host 引擎，mud-tui / mud-webui 是两种可互换的外壳。一次启动挂 **core + 一个壳**，换壳只需换 patch。
 
-本仓库的包通过 harness 的源码执行机制（`node --import tsx/esm` + tsconfig `paths`）**零构建直跑**。在 **harness 主仓库**中（此时 tsx 使用 harness 的 tsconfig `paths` 解析 `@deepseek-ai/dsh-*` 与 `@deepseek-ai/cordis`），把本仓库 patch 的 `name` 指向本仓库 **src 源码的绝对路径**：
+---
 
-```bash
-# 在 deepseek-harness 主仓库根目录：
-pnpm dsh web --patch <abs>/dsh-mud-agent/mud-core/cordis.patch.yml --patch-extra ...
-```
+## 开发模式
 
-对应的 `cordis.patch.yml` 里 `name` 使用绝对路径指向 src（而不是包名）：
+当前各包以 registry 自装依赖、`dist/` 产物通过 harness 的 **`web` profile** 加载（无需新建 profile 目录——harness 对 `web` 有内置模板，自动创建并借 module-fallback 解析 `@deepseek-ai/*` 上游）。
 
-```yaml
-- insert:
-    - id: mud-core
-      name: 'D:/code/dsh-mud-agent/mud-core/src/index.ts'
-      config:
-        host: mud.pkuxkx.net
-        port: 8081
-        # ...
-```
-
-`dsh-mud-tui` / `dsh-mud-webui` 同理，`name` 分别指向 `mud-tui/src/index.ts` / `mud-webui/src/index.ts`。
-
-如需换 UI 壳，在 profile patch 里追加对应行（MUD core + 任一面壳）。
-
-> **注意（包间互引）**：`mud-tui` / `mud-webui` 内部以包名 `@deepseek-ai/dsh-mud-core`（及 `…/src/client/wire.ts` 深层路径）引用 core，而 harness 的 tsconfig `paths` 没有这些映射。上述绝对路径加载要求这两个互引在 harness 侧能解析（或在 patch 加载前于 harness tsconfig 补 `paths` 映射 `@deepseek-ai/dsh-mud-core -> <abs>/mud-core/src`）。harness 侧其余依赖（`dsh-agent`、`dsh-session`、`dsh-tools`、`dsh-invariants`、`@deepseek-ai/cordis` 等）均由 harness 的 tsconfig `paths` 解析，无需额外处理。
-
-### 构建（如需烧录成 profile 插件产物）
-
-本仓库三个包仍是 harness `packages/mud/*` 的 bundle 形态（`dsh.bundle.patch` / `dsh.client`）。若要从本仓库产出可 `dsh plugin add` 的装配插件，需在其父 workspace（含 harness 全部 `@deepseek-ai/dsh-*` 源）内构建；本仓库单独无法 `pnpm install` 通过（`workspace:^` 依赖无来源）。
-
-## 开发
+前置：`pnpm`、harness 克隆于 `D:/Code/deepseek-harness`、Node `^22.19 || >=24`。
 
 ```bash
-# 仅跑泥包自身的 vitest（需在含 harness 源的 workspace 内执行）
-pnpm --dir <harness> exec vitest run packages/mud/mud-core/tests
+pnpm install          # 首次：按 pnpm-workspace.yaml 装全部依赖
+
+pnpm dev:web          # core + webui：构建并启动 harness web profile（浏览器壳）
+pnpm dev:tui          # core + mud-tui：构建并启动 harness web profile（终端壳）
+pnpm restart:web      # 等价 pnpm run dev:web
+pnpm restart:tui      # 等价 pnpm run dev:tui
+
+pnpm build            # 全量构建 packages/* → dist/
+pnpm test             # core + mud-tui 两套 vitest（80 + 7）
 ```
+
+等价的手工命令（`dev:web`）：
+
+```bash
+pnpm --dir D:/Code/deepseek-harness dsh web \
+  --patch D:/Code/dsh-mud-agent/packages/mud-core/cordis.patch.yml \
+  --patch D:/Code/dsh-mud-agent/packages/mud-webui/cordis.patch.yml
+```
+
+`dev:tui` 把第二个 `--patch` 换成 `packages/mud-tui/cordis.patch.yml`。
+
+要点：
+
+- `dsh web` 等价 `dsh --profile web`；harness 内置 `web` 模板，无 profile 时自动创建，无需手动写 `~/.dsh/profiles/web`。
+- patch `name` 用 `file:///D:/Code/dsh-mud-agent/packages/<pkg>/dist/index.js` 绝对路径，指向 `dist` 产物。
+- harness 的 `web` profile 自带 `@deepseek-ai/dsh-web-app` bundle，开发模式下会一并加载（绑定 Web 端口、打开浏览器 dashboard）。**已知取舍**：终端壳 `dev:tui` 也会带上 web-app，但 TUI 本身照常工作；如需纯净底座，走下文「正式安装 + 启动」。
+- 部署值（服务器地址、账号等）写在 `~/.dsh/profiles/web/cordis.patch.yml`，不进本仓库。
+
+---
+
+## 正式安装 + 启动
+
+> **状态占位**：以下流程要在三个 mud 包发布到 npm 之后才能完整执行。
+>
+> 当前三包均为 `0.1.1-rc.2`，**未发布**；且 `mud-webui` 对 `mud-core` 依赖仍是 `workspace:^` 本地链接——发布顺序须为 **core →（webui / tui）**。到时先 `pnpm publish` core，再发布两个壳。
+
+正式安装走 harness 的 **profile + bundle 装配**（dsh-TUI 的 standalone 模式）：把 mud 包装进一个自定义 profile，用 `dsh --profile` 启动。做法（一次性建立 `mud` profile）：
+
+```bash
+# 装核心 + 一个壳（在 harness 目录下执行；以 webui 为例，tui 同理）
+pnpm --dir D:/Code/deepseek-harness dsh plugin --profile mud add @deepseek-ai/dsh-mud-core
+pnpm --dir D:/Code/deepseek-harness dsh plugin --profile mud add @deepseek-ai/dsh-mud-webui
+
+# 启动
+pnpm --dir D:/Code/deepseek-harness dsh --profile mud
+```
+
+要点：
+
+- `dsh plugin --profile mud add <pkg>` 创建 `~/.dsh/profiles/mud`，把包写进 `dsh.profile.bundles` 清单，并建立 module-fallback 链接。
+- `dsh --profile mud` 按 `bundles` 顺序加载 mud-core 与所选壳的 patch（一个 profile 只挂 **core + 一个壳**）。
+- 部署值（服务器、账号）写 `~/.dsh/profiles/mud/cordis.patch.yml`。
+- 后续 `pnpm publish` 新版后，在 profile 内 `pnpm update` 即可。
+
+> 发布前的开发期若不绑 web-app，可在 `~/.dsh/profiles/mud/package.json` 的 `dsh.profile.bundles` 只留 `@deepseek-ai/dsh-base`，让 `mud` profile 仅含底座 + 两个 mud 包。
