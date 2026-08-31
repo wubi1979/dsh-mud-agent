@@ -7,10 +7,14 @@
  * @module @deepseek-ai/dsh-mud-tui/xterm-view
  */
 
-import { Terminal, type IBufferCell, type IBufferLine } from '@xterm/headless'
+import { createRequire } from 'node:module'
+import type { IBufferCell, IBufferLine, Terminal as XtermTerminal } from '@xterm/headless'
 import { LAYOUT_NODE } from '@earendil-works/pi-tui/dist/layout-node.js'
 import type { Component } from '@earendil-works/pi-tui'
 import { truncateToWidth } from '@earendil-works/pi-tui'
+
+const require = createRequire(import.meta.url)
+const { Terminal } = require('@xterm/headless') as typeof import('@xterm/headless')
 
 /** 单元格属性 → SGR 序列 (与上次不同才输出)。 */
 function cellSgr(cell: IBufferCell): string {
@@ -63,7 +67,7 @@ function serializeLine(line: IBufferLine, width: number): string {
  * (布局节点的 component 必须是纯内容子组件, 指向自身会无限递归)。
  */
 export class XtermView implements Component {
-  private readonly term: Terminal
+  private readonly term: XtermTerminal
   private _viewportHeight = 0
 
   // 纯内容面: 从字符网格序列化可见窗口。

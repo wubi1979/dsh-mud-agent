@@ -5,7 +5,7 @@
 
 - insert:
     - id: mud-tui
-      name: '@deepseek-ai/dsh-mud-tui'
+      name: 'file:///D:/Code/dsh-mud-agent/packages/mud-tui/dist/index.js'
       config:
         refreshMs: 500
         rightWidth: 42
