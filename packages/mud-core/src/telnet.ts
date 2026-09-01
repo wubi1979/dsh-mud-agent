@@ -34,6 +34,7 @@ const DO = 253
 const WONT = 252
 const WILL = 251
 const SB = 250
+const GA = 249
 const SE = 240
 
 const OPT = {
@@ -103,10 +104,10 @@ export class TelnetClient extends EventEmitter {
    * 内部 —— 保证感知层绝对行号稳定、规则匹配不被 TCP 块边界切碎。见 ansi.ts。
    */
   private readonly ansi = new AnsiStreamParser()
-  /** 行尾静默定时器: 无换行的提示符行在静默到期后刷出 (对齐 Mudlet 思路)。 */
+  /** 行尾静默定时器: 无换行的提示符行/片断在静默到期后刷出 (对齐 Mudlet posting timer)。 */
   private flushTimer: ReturnType<typeof setTimeout> | null = null
-  /** 行尾静默刷出延迟。 */
-  private static readonly FLUSH_IDLE_MS = 400
+  /** 行尾静默刷出延迟: 对齐 Mudlet cTelnet::mTimeOut = 300ms 的静默推送。 */
+  private static readonly FLUSH_IDLE_MS = 300
   /** 主文本流解码器: 流式调用 (appendText), 跨包持有未完的多字节序列。 */
   private readonly decoder = new TextDecoder('utf-8', { fatal: false })
   /**
@@ -235,6 +236,14 @@ export class TelnetClient extends EventEmitter {
         }
         continue
       }
+      if (cmd === GA) {
+        // pkuxkx 的提交标志: GA 表示"一段完整文字已发送完毕" (登录期不发送,
+        // 一定是欢迎进入+上线地点房间描述+系统信息都显示完了才发一个)。作为
+        // 提交边界: 立即把滞留的"无换行行尾"刷成完整行, 不必等 300ms 静默。
+        const tail = this.ansi.flush()
+        if (tail !== null) this.emit('parsed', [tail])
+        this.emit('ga')
+      }
       // NOP / GA / EOR / stray SE — skip two bytes.
       this.buffer = this.buffer.subarray(2)
     }
@@ -266,16 +275,22 @@ export class TelnetClient extends EventEmitter {
     const lines = this.ansi.write(text)
     if (lines.length > 0) {
       this.emit('parsed', lines)
-      this.clearFlushTimer()
-    } else if (this.ansi.pending) {
-      // 有未完结行尾 (无换行的提示符等): 静默到期强制刷出, 避免感知游标滞留。
-      this.scheduleFlush()
     }
+    // Mudlet 行尾静默推送模型 (对齐 cTelnet::slot_timerPosting / mTimeOut=300):
+    // 完整行即时刷出, 只滞留"无换行的尾片断" (提示符等), 每收到新数据都重置
+    // 300ms 静默计时, 静默到期后强制把片断刷成完整行 —— 否则横幅 + 登录提示
+    // 同块到达时提示行会一直滞留到连接关闭, 感知/登录流程看不到它。
+    this.scheduleFlush()
   }
 
-  /** Flush a stalled no-newline tail as a complete (prompt) line. */
+  /** Flush a stalled no-newline tail as a complete (prompt) line (Mudlet posting timer)。 */
   private scheduleFlush(): void {
-    if (this.flushTimer !== null) return
+    if (!this.ansi.pending) {
+      this.clearFlushTimer()
+      return
+    }
+    // 每块数据重置静默计时: 片断在"最后一次到达后 300ms"刷出。
+    if (this.flushTimer !== null) clearTimeout(this.flushTimer)
     this.flushTimer = setTimeout(() => {
       this.flushTimer = null
       const tail = this.ansi.flush()
