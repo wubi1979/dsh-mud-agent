@@ -37,7 +37,7 @@ export function LogView({ mudSocket }: LogViewProps) {
     () => mudSocket.getView().logs,
   )
   return (
-    <div style={LOG_STYLE}>
+    <div style={LOG_STYLE} data-mud-no-width="">
       {logs.length === 0
         ? <div style={{ color: '#666' }}>(等待日志…)</div>
         : logs.map(l => (

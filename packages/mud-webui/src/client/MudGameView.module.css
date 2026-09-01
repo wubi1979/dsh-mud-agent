@@ -57,22 +57,35 @@
  * NO padding here — xterm's fit computes available height as the parent's
  * height minus the xterm ELEMENT's own padding; parent padding is not
  * deducted and would overflow the last line (a few px of vertical scroll).
- * Padding lives on `.xterm` itself so fit accounts for it. */
+ * Padding lives on `.xterm` itself so fit accounts for it.
+ * 左、下侧 8px 间距用 margin 承载: 只让终端面板内缩, 不推挤顶部工具栏也
+ * 不打父级 padding (避免 fit 末行溢出); margin-bottom 使 flex 分配高度变小,
+ * fit 按新高度重算行数, 无溢出。 */
 .xtermHost {
   flex: 1;
   min-height: 0;
   position: relative;
   overflow: hidden;
-  background: #0a0a0a;
+  margin: 0 0 8px 8px;
+  /* 背景交由终端自身 (theme) 承载: 这里不设深色, 避免 fit 间隙漏出
+     #0a0a0a 形成"黑边"。 */
 }
 
 /* Pin the terminal element to the host box (fit only tunes rows/cols inside);
- * padding here is measured by fit and deducted from the available area. */
+ * padding here is measured by fit and deducted from the available area.
+ * 终端面板底色放 .xterm 本体 (被 host overflow 裁剪, 不越界)。 */
 .xtermHost :global(.xterm) {
   height: 100%;
   width: 100%;
   padding: 8px 12px;
   box-sizing: border-box;
+  background: #0a0a0a;
+}
+
+/* 去掉主题内联到滚动元素的深色 (rgb(10,10,10)) — 滚动/溢出的黑边即它造成的;
+ * 底色改由 .xterm 本体承载 (上面), 滚动区域透明, 不再露出一圈黑边。 */
+.xtermHost :global(.xterm .xterm-scrollable-element) {
+  background-color: transparent !important;
 }
 
 /* Hard ceiling for the terminal's rendering surface: even a bad fit cannot

@@ -29,7 +29,7 @@ export interface MudWorldSnapshot {
  */
 export interface MudDecisionEvent {
   /** Who made the decision. */
-  actor: 'rule' | 'router' | 'agent'
+  actor: 'rule' | 'router' | 'agent' | 'flow'
   /** The rule id that fired (actor 'rule'). */
   ruleId?: string
   /** The perception event type routed (actor 'router'). */

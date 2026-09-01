@@ -31,18 +31,23 @@
 import { TelnetClient } from './telnet.ts'
 import type { ParsedLine } from './ansi.ts'
 import {
-  PerceptionBuffer, Perceptor, StateTracker, MAX_PENDING_LINES,
+  PerceptionBuffer, PerceptionDriver, MAX_PENDING_LINES,
 } from './perception.ts'
-import { LineInjector, INJECT_IDLE_MS } from './inject.ts'
+import { TriggerService } from './triggers.ts'
+import { StateService } from './state.ts'
+import type { MudPerceptEvent } from './events.ts'
+import { Transcript, INJECT_IDLE_MS } from './transcript.ts'
 import {
-  createWorld, applyGmcp, applyPatch, worldSnapshot, flattenWorld, type WorldModel,
+  createWorld, applyPatch, worldSnapshot, flattenWorld, type WorldModel,
 } from './world.ts'
-import { RuleEngine } from './decision.ts'
 import { CommandQueue, renderTemplate } from './execution.ts'
 import { buildMudTools, type MudTools } from './tools.ts'
+import { FlowService, LoginFlow, type FlowHost } from './flow.ts'
+import { DecisionCenter } from './dispatcher.ts'
 import defaultPerceptionRules from './config/rules.ts'
 import defaultDecisionRules from './config/rules-decision.ts'
-import defaultSkills, { skillsTextForAgent } from './config/skills.ts'
+import { SkillService } from './skills.ts'
+import { makeSystemEvent, type MudSystemEvent } from './events.ts'
 import { createMudAgent, sendGameOutput, type CreateMudAgentOptions } from './agent-bridge.ts'
 import type { AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
@@ -58,6 +63,9 @@ export const name = 'mud-core'
 
 /** 必需服务: agents 注册表 (dsh-agent-loop 提供 factory)。 */
 export const inject = ['agents']
+
+/** 断流阈值: 30s 无感知事件 → 唤醒 agent 主动决策。 */
+const DEAD_AIR_MS = 30_000
 
 export type { MudWorldSnapshot }
 export type {
@@ -133,20 +141,18 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   // 当前连接账户 (WebUI 侧栏按用户连接时设置; 规则渲染登录命令用)。
   let activeAccount: { name: string; pass: string } | null = null
   const world: WorldModel = createWorld()
-  const ruleDedup = new Map<string, number>() // eventType → lastHandledAt (同类语义事件短窗去重)
   let agent: AgentHandle | null = null
   // 当前 agent 的会话 id (用户即会话: 切换用户 → 重建 agent, 各自历史恢复)。
   let activeSessionId: string | null = null
-  // ── 流程级决策聚合 ────────────────────────────────────────
-  const flowStarted = new Map<string, string>() // skill → 启动规则 id
-  let loginTimer: ReturnType<typeof setTimeout> | null = null
-  let loginLog: string[] = [] // 登录期间规则自动执行的进展 (登录完成后反馈给 agent)
+  // ── 登录流程进展记录 ──────────────────────────────────────────
+  let loginLog: string[] = [] // 登录期间流程自动执行的进展 (登录完成后反馈给 agent)
+  let deadAirTimer: ReturnType<typeof setTimeout> | null = null // 断流 30s → 唤醒 agent
   let worldTimer: ReturnType<typeof setTimeout> | null = null // world 快照推送节流
   // 注入节流: agent 忙时合并游戏输出 (状态流, 中间桶过期), 空闲后注入最新
   let agentBusy = false
   let pendingInjection = ''
-  // ── 注入队列 (agent 输入侧; 与感知共用 MudLine 缓冲, 见 src/inject.ts) ──
-  let injector: LineInjector | null = null
+  // ── 注入录制器 (agent 输入侧; 30s 时间窗 + 折叠视图, 见 src/transcript.ts) ──
+  let injector: Transcript | null = null
   let injectTimer: ReturnType<typeof setTimeout> | null = null
   let disposed = false // teardown 已开始, 停止新的注入/泵出
   // 诊断: 最近一次 connect/ensureAgent 失败 (不依赖 agent 会话, 供 diag() 读取)。
@@ -189,7 +195,7 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
    */
   function sessionAppend(
     type: 'mud/decision',
-    data: { actor: 'rule' | 'router' | 'agent'; ruleId?: string; eventType?: string; action: string; result?: string; text: string; time: number },
+    data: { actor: 'rule' | 'router' | 'agent' | 'flow'; ruleId?: string; eventType?: string; action: string; result?: string; text: string; time: number },
   ): void
   function sessionAppend(
     type: 'mud/log',
@@ -202,7 +208,7 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   function sessionAppend(
     type: 'mud/decision' | 'mud/log' | 'mud/world',
     data: {
-      actor?: 'rule' | 'router' | 'agent'
+      actor?: 'rule' | 'router' | 'agent' | 'flow'
       ruleId?: string
       eventType?: string
       action?: string
@@ -303,72 +309,143 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     log: (t: string) => tuiLog(t),
   })
 
-  // ── 决策路由: 轻量处理器 (规则) / 重型处理器 (agent) ──────
-  const ruleEngine = new RuleEngine({ stateProvider: () => flattenWorld(world) })
-  for (const r of defaultDecisionRules) ruleEngine.register(r)
-  const perceptor = new Perceptor()
-  for (const r of defaultPerceptionRules) perceptor.register(r)
+  // ── 触发服务 (ctx.mud.trigger): 匹配 → MudEvent → 事件总线 ──
+  const trigger = new TriggerService({ bus: ctx })
+  for (const r of defaultPerceptionRules) trigger.register(r)
 
-  /**
-   * 规则拦截一次消息并替 agent 执行。返回 true = 已拦截 (消息不进 agent);
-   * false = 未拦截 / 声明式 (action:"llm") → 照常注入 agent 思考。
-   */
-  function decide(eventType: string): boolean {
-    const rule = ruleEngine.match({ eventType, state: flattenWorld(world) })
-    if (!rule) return false // 未命中 → agent
-    const a = rule.action
-    if (a.action === 'llm' || a.action === 'no_action') return false // 声明式 → agent
-    const tool = mudTools[a.tool]
-    if (tool) {
-      const account = activeAccount ?? config.account
-      const cmd = renderTemplate(a.cmd ?? '', {
-        name: account?.name ?? '',
-        pass: account?.pass ?? '',
-      })
-      const result = tool.execute({ cmd })
-      emitRuleDecision(rule, a.tool, cmd, result)
-      // 登录进展: 记录规则替 agent 执行的步骤, 登录完成后反馈给 agent
-      if (rule.skill === 'login' && rule.id !== 'login:failed') {
-        loginLog.push(`[自动登录] ${rule.description} — 已执行`)
+  // ── 统一事件决策中心 (ctx.mud.dispatcher): 规则 → 技能激活 → agent 兜底 ──
+  // 可行动事件的统一路由。规则命中 (action:"tool") → 执行工具 (确定性短路);
+  // 未命中 → 技能激活 (如 login); 仍未命中 → agent 兜底。
+  const center = new DecisionCenter({
+    stateProvider: () => flattenWorld(world),
+    executeRule: (rule, eventType) => {
+      void eventType
+      const a = rule.action
+      if (a.action !== 'tool') return
+      const tool = mudTools[a.tool]
+      if (tool) {
+        const account = activeAccount ?? config.account
+        const cmd = renderTemplate(a.cmd ?? '', {
+          name: account?.name ?? '',
+          pass: account?.pass ?? '',
+        })
+        const result = tool.execute({ cmd })
+        emitRuleDecision(rule, a.tool, cmd, result)
+      } else {
+        tuiDecision({
+          actor: 'rule',
+          ruleId: rule.id,
+          action: `未知工具 ${a.tool}`,
+          text: `[规则] ${rule.id} → 未知工具 ${a.tool}`,
+        })
       }
-    } else {
-      tuiDecision({
-        actor: 'rule',
-        ruleId: rule.id,
-        action: `未知工具 ${a.tool}`,
-        text: `[规则] ${rule.id} → 未知工具 ${a.tool}`,
-      })
-    }
-    // 命中副作用: 写 world 标志 (防重复等)
-    if (rule.after) applyPatch(world, rule.after)
-    return true
-  }
-
-  // ── 感知 (世界同步 + 事件 → 决策路由) ─────────────────────
-  const buffer = new PerceptionBuffer()
-  injector = new LineInjector(buffer)
-  const tracker = new StateTracker({
-    world,
-    buffer,
-    perceptor,
-    maxPending: MAX_PENDING_LINES,
-    emit: (hit, patch) => {
-      // 世界同步: patch → 语义分组 (logged_in→flags.logged_in, in_combat→combat.in_combat)
-      if (patch && Object.keys(patch).length > 0) { applyPatch(world, patch); pushWorld() }
-      const eventType = hit.eventType
-      // 同类语义事件短窗去重 (战斗开始的"杀气/向你扑来"等多行只处理一次)
-      const now = Date.now()
-      const lastHandled = ruleDedup.get(eventType)
-      if (lastHandled && now - lastHandled < (config.ruleDedupMs ?? 1500)) return
-      // 决策路由: 规则命中 → 轻量处理; 未命中 → 注入 agent (重型)
-      const handled = decide(eventType)
-      if (handled) ruleDedup.set(eventType, now)
+      // 命中副作用: 写 world 标志 (防重复等)
+      if (rule.after) applyPatch(world, rule.after)
+    },
+    onRoute: (eventType, layer, id) => {
+      // skill/flow 激活 (如登录) 是低频实质决策 — 记 `flow` 决策节点, 进决策栏,
+      // 而非高频感知路由噪音 (后者归 router 且被 WebUI 决策栏过滤)。
+      if (layer === 'skill') {
+        tuiDecision({
+          actor: 'flow',
+          eventType,
+          action: `start ${id ?? ''}`,
+          text: `[决策] ${eventType} → 激活${id !== undefined ? ` ${id}` : ''}`,
+        })
+        return
+      }
+      const label = layer === 'rule' ? '规则' : 'agent'
       tuiDecision({
         actor: 'router',
         eventType,
-        action: handled ? '规则' : 'agent',
-        text: `[感知] ${eventType}${handled ? ' → 规则' : ' → agent'}`,
+        action: label,
+        text: `[感知] ${eventType} → ${label}`,
       })
+    },
+    dedupMs: config.ruleDedupMs ?? 1500,
+  })
+  for (const r of defaultDecisionRules) center.registerRule(r)
+
+  // ── 感知协调器 + 状态捕获 + 决策路由 (总线消费者) ──────────
+  const buffer = new PerceptionBuffer()
+  // 注入录制器: 30s 时间窗 + 最小行阈值 + 折叠视图 (取代原 LineInjector)。
+  injector = new Transcript(buffer)
+  // 状态捕获: 订阅总线感知事件 → world 字段映射; GMCP 经 state.onGmcp 直连。
+  const state = new StateService({
+    bus: ctx,
+    world,
+    onChanged: () => pushWorld(),
+  })
+  // 感知协调器: 驱动触发匹配 → 发布感知事件到总线。
+  const driver = new PerceptionDriver({ buffer, trigger, maxPending: MAX_PENDING_LINES })
+  // 决策中心 (总线消费者): 可行动感知事件 → 统一路由 (规则/技能激活/agent 兜底)。
+  const disposePercept = ctx.events.on('mud/percept', (e: MudPerceptEvent) => {
+    resetDeadAir() // 感知事件到达 → 重置断流计时 (登录期不 armed, 见实现)
+    center.onPercept(e)
+  })
+  // 系统级状态事件 → 决策中心 (如 login:required 激活登录 skill)。
+  const disposeSystem = ctx.events.on('mud/system', (e: MudSystemEvent) => {
+    center.onSystem(e)
+  })
+
+  // ── 流程引擎 (ctx.mud.flow): 确定性事务流程 (登录) ─────────
+  const flow = new FlowService()
+  const loginHost: FlowHost = {
+    bus: ctx,
+    world,
+    trigger,
+    getAccount: () => ({
+      name: activeAccount?.name ?? config.account?.name ?? '',
+      pass: activeAccount?.pass ?? config.account?.pass ?? '',
+    }),
+    send: (cmd) => { mudTools['mud_send']?.execute({ cmd }) },
+    onProgress: (msg) => {
+      loginLog.push(`[自动登录] ${msg}`)
+      tuiDecision({ actor: 'flow', action: 'send', text: `[流程] login: ${msg}` })
+    },
+    onEvent: (e, action) => {
+      // 命中的提示行折叠进注入录制器: agent 不再重复分析, 仅见"事件→动作"条目。
+      injector?.fold({
+        eventType: e.type,
+        startAbs: e.line,
+        endAbs: e.line,
+        text: `[事件(L${e.line})] 感知 "${e.type}" → ${action}`,
+        time: e.ts,
+      })
+    },
+    onFailed: (reason) => {
+      tuiDecision({ actor: 'flow', eventType: 'login-failed', action: 'agent', text: `[流程] login: ${reason}` })
+      const prefix = loginLog.length > 0 ? loginLog.join('\n') + '\n' : ''
+      const tail = (injector?.text().trim() || reason)
+      injector?.reset()
+      if (agent) injectToAgent(prefix + tail)
+    },
+    loginTimeoutMs: config.loginTimeoutMs ?? 20000,
+  }
+  flow.register(new LoginFlow(ctx))
+  // ── 登录 skill 处理器 (注册制): 只声明"怎么执行", 触发时机由规则表决定 —
+  //    rules-decision.ts `on-login-required` (when login:required && !logged_in →
+  //    action:"skill" login) 由决策中心统一调度; agent 主动需要登录时同样发布
+  //    mud/system login:required, 走同一条激活路径 (不再由宿主硬编码订阅)。
+  center.registerSkill({
+    id: 'login',
+    activate: () => {
+      if (flow.status('login') === 'running') return // 已在运行, 幂等
+      flow.start('login', loginHost)
+    },
+  })
+
+  // ── 技能服务 (ctx.mud.skill): 预制目录 + agent 动态生成的技能注册 ──────
+  // 目录变化 → 释放当前 agent: 下次 ensureAgent 重建 (resume 恢复上下文) 时
+  // 用最新 skills 文本注入 mud-skills 区段。
+  const skillService = new SkillService({
+    onChange: () => {
+      if (agent && typeof agent.dispose === 'function') {
+        try { void agent.dispose() } catch { /* ignore */ }
+      }
+      agent = null
+      activeSessionId = null
+      tuiLog('[技能] 技能目录已更新, agent 将在下次交互时加载')
     },
   })
 
@@ -383,7 +460,7 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     if (lines.length === 0) return
     if (!injector) return // 感知组件尚未就绪 (理论不可达, 防御)
     buffer.appendLines(lines)
-    tracker.onData()
+    driver.onData()
     if (injectTimer) { clearTimeout(injectTimer); injectTimer = null }
     const text = injector.drain()
     if (text !== null) handleInjection(text)
@@ -454,6 +531,39 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     injectToAgent(text)
   }
 
+  /**
+   * 主动请求 agent 决策 (第三路触发): 断流 / 登录失败 / 命令路由等程序主动唤醒。
+   * 抑制条件与注入一致: agent 未接入 / 未就绪 / 忙时忽略。
+   */
+  function requestAgent(reason: string, context: string): void {
+    if (!agent || disposed) return
+    if (!(config.agentEnabled ?? false)) return
+    if (agentBusy) return
+    tuiDecision({ actor: 'agent', eventType: reason, action: 'agent', text: `[决策] ${reason}` })
+    injectToAgent(context)
+  }
+
+  /** 断流计时: 30s 无感知事件 → 唤醒 agent 主动决策 (登录期/接入关停/忙时抑制)。 */
+  function armDeadAir(): void {
+    if (deadAirTimer || disposed) return
+    if (!(config.agentEnabled ?? false)) return
+    if (!world.flags.logged_in) return // 登录期由 flow 驱动, 不唤醒
+    deadAirTimer = setTimeout(() => {
+      deadAirTimer = null
+      if (agentBusy) {
+        armDeadAir() // 忙时重排 (注入节奏 = agent 决策速度)
+        return
+      }
+      requestAgent('断流 30s', '已 30 秒无游戏事件, 请自主行动 (查看状态 / 探索 / 规划下一步)。')
+    }, DEAD_AIR_MS)
+  }
+
+  /** 重置断流计时 (每次感知事件到达): 清除旧定时并重排。 */
+  function resetDeadAir(): void {
+    if (deadAirTimer) { clearTimeout(deadAirTimer); deadAirTimer = null }
+    armDeadAir()
+  }
+
   // ── 连接 (手动: WebUI 游戏页面按钮触发) ──────────────────
   function connect(
     host: string,
@@ -484,34 +594,21 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       appendConnectMarker(connectCount === 1 ? 'connect' : 'reconnect')
       applyPatch(world, { sent_name: false, sent_pass: false })
       loginLog = []
-      if (!(config.agentEnabled ?? false)) return
-      if (loginTimer) clearTimeout(loginTimer)
-      loginTimer = setTimeout(() => {
-        if (world.flags.logged_in) return
-        tuiDecision({
-          actor: 'router',
-          eventType: 'login-timeout',
-          action: 'agent',
-          text: '[决策] 登录超时 → 交给 agent 处理',
-        })
-        const ctxText = loginLog.length > 0 ? loginLog.join('\n') + '\n' : ''
-        const text = (injector?.text().trim() || '登录流程超时, 尚未登录。请按\'登录流程\'技能步骤, 用 mud_send 完成登录。')
-        injector?.reset()
-        if (agent) injectToAgent(ctxText + text)
-      }, config.loginTimeoutMs ?? 20000)
+      // 未登录: 发布系统级事件 → 登录 skill 由流程引擎激活 (登录提示 → 发对应输入)
+      ctx.events.emit('mud/system', makeSystemEvent('login:required'))
     })
     client.on('text', (text: string) => feedRaw(text))
     client.on('parsed', (lines: ParsedLine[]) => feedParsed(lines))
     client.on('gmcp', (msg) => {
-      applyGmcp(world, msg.package, msg.payload)
-      pushWorld()
+      // GMCP 系统事件 → 状态捕获直连 (world 映射 + 派生事件上总线)。
+      state.onGmcp(msg.package, msg.payload)
     })
     client.on('error', (err: Error) => {
       lastError = err.message
       tuiLog(`[SYS] 连接错误: ${err.message}`)
     })
     client.on('close', () => {
-      if (loginTimer) clearTimeout(loginTimer)
+      flow.abort('login')
       const e = connections.get(SID)
       if (e) e.state = 'idle'
       tuiLog('[SYS] 连接关闭')
@@ -533,7 +630,7 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       sessionId,
       ...(cwd !== undefined && cwd !== '' ? { cwd } : {}),
       persona: config.persona || buildPersona(),
-      skills: skillsTextForAgent(defaultSkills),
+      skills: skillService.textForAgent(),
       tools: mudTools,
       onAgentTool: (name, args) => {
         const argsJson = JSON.stringify(args)
@@ -560,7 +657,7 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
 
   /** 决策事件 (规则命中/感知路由): WebUI 决策栏 + TUI 决策轨迹。 */
   function tuiDecision(d: {
-    actor: 'rule' | 'router' | 'agent'
+    actor: 'rule' | 'router' | 'agent' | 'flow'
     ruleId?: string
     eventType?: string
     action: string
@@ -571,53 +668,22 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   }
 
   /**
-   * 规则命中 → 流程级聚合决策。同一 skill 的规则构成流程:
-   *   首次命中 → [规则] 命中X → 启动Y流程 (决策节点)
-   *   :done/:failed → [流程] Y流程执行成功/失败 (决策结果)
-   *   中间步骤 → 只进日志 (tuiLog), 不进决策栏 (执行过程不是决策)。
+   * 规则命中 → 决策节点 (战斗/死亡反射)。规则不再构成多步骤流程
+   * (确定性事务已归 flow 引擎), 命中即单条决策记录。
    */
   function emitRuleDecision(
-    rule: { id: string; skill: string | null; description: string },
+    rule: { id: string; description: string },
     toolName: string,
     cmd: string,
     result: { ok: boolean; note: string },
   ): void {
-    const skill = rule.skill
-    if (skill === null || skill === '') {
-      tuiDecision({
-        actor: 'rule',
-        ruleId: rule.id,
-        action: `${toolName} ${cmd}`,
-        ...(result.ok ? {} : { result: `失败: ${result.note}` }),
-        text: `[规则] ${rule.id} → ${toolName} ${cmd}`,
-      })
-      return
-    }
-    const isEnd = rule.id.endsWith(':done') || rule.id.endsWith(':failed')
-    if (isEnd) {
-      const ok = rule.id.endsWith(':done')
-      flowStarted.delete(skill)
-      tuiDecision({
-        actor: 'rule',
-        ruleId: rule.id,
-        action: ok ? `${skill} 流程执行成功` : `${skill} 流程执行失败`,
-        ...(ok ? {} : { result: result.note }),
-        text: `[流程] ${skill} 流程${ok ? '执行成功' : '执行失败'}`,
-      })
-      return
-    }
-    const startedBy = flowStarted.get(skill)
-    if (startedBy === undefined) {
-      flowStarted.set(skill, rule.id)
-      const why = rule.description !== '' ? rule.description : `命中 ${rule.id}`
-      tuiDecision({
-        actor: 'rule',
-        ruleId: rule.id,
-        action: `启动 ${skill} 流程`,
-        text: `[规则] ${why} → 启动 ${skill} 流程`,
-      })
-    }
-    tuiLog(`[流程] ${skill}: ${rule.id} → ${toolName} ${cmd}${result.ok ? '' : ` (失败: ${result.note})`}`)
+    tuiDecision({
+      actor: 'rule',
+      ruleId: rule.id,
+      action: `${toolName} ${cmd}`,
+      ...(result.ok ? {} : { result: `失败: ${result.note}` }),
+      text: `[规则] ${rule.id} → ${toolName} ${cmd}`,
+    })
   }
 
   /**
@@ -644,6 +710,10 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
 
   // ── ctx.mud 服务 (进程内面: mud-tui / headless 等 node 外壳消费) ──
   const service: MudCoreService = {
+    trigger,
+    flow,
+    skill: skillService,
+    dispatcher: center,
     connect(options: MudConnectOptions = {}): void {
       const targetHost = typeof options.host === 'string' && options.host.trim() !== ''
         ? options.host.trim()
@@ -919,8 +989,11 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   ctx.effect(() => () => {
     disposed = true
     if (injectTimer) clearTimeout(injectTimer)
-    if (loginTimer) clearTimeout(loginTimer)
     if (worldTimer) clearTimeout(worldTimer)
+    flow.dispose()
+    disposePercept()
+    disposeSystem()
+    state.dispose()
     if (hub) hub.dispose()
     if (disposeConnectRoute) disposeConnectRoute()
     if (disposePrepareRoute) disposePrepareRoute()

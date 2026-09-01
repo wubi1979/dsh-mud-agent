@@ -21,7 +21,15 @@ const RAIL_STYLE: React.CSSProperties = {
   gap: 16,
 }
 
-const TITLE_STYLE: React.CSSProperties = { fontSize: 13, fontWeight: 600, marginBottom: 8 }
+const TITLE_STYLE: React.CSSProperties = {
+  fontSize: 13,
+  fontWeight: 600,
+  marginBottom: 8,
+  // 标题条: 淡灰底与下方数据行区分 (浅色主题下用实色 #f1f1f1)。
+  background: '#f1f1f1',
+  padding: '5px 8px',
+  borderRadius: 4,
+}
 
 const DECISION_STYLE: React.CSSProperties = {
   fontSize: 12,
@@ -38,6 +46,7 @@ function actorOf(d: MudUiItem): { label: string; color: string } {
   switch (d.actor) {
     case 'rule': return { label: '规则', color: '#5c9cf5' }
     case 'agent': return { label: 'agent', color: '#7fd88f' }
+    case 'flow': return { label: '流程', color: '#b78cf5' }
     default: return { label: '路由', color: '#d8a15a' }
   }
 }
@@ -88,17 +97,18 @@ export function Rail({ mudSocket, onRailMounted }: PropsRuntime<'details'> & Inj
     () => mudSocket.getView(),
   )
   const decisions = view.decisions
-  // 只显示实质决策 (规则执行 / agent 工具调用 / 引擎初始化); 过滤高频感知路由噪音。
+  // 只显示实质决策 (规则执行 / 流程激活 / agent 工具调用 / 引擎初始化);
+  // 过滤高频感知路由噪音 (per 感知事件 → 规则/agent 的路由行)。
   // 注: agent 工具调用决策暂缺 (session tool/call 折叠已随通道迁移移除),
   // 交付三由 host 工具包装层补记。
   const meaningful = decisions.filter(d =>
-    d.actor === 'rule' || d.actor === 'agent'
+    d.actor === 'rule' || d.actor === 'agent' || d.actor === 'flow'
     || (d.actor === 'router' && d.eventType === 'init'))
   const statusLines = statusLinesOf(view.world as Parameters<typeof statusLinesOf>[0])
   return (
     <div style={RAIL_STYLE}>
-      {/* 决策区固定高度 + 独立滚动: 内容多时滚动, 面板高度不再被撑高。 */}
-      <div style={{ flex: 'none', maxHeight: 500, minHeight: 0, overflowY: 'auto' }}>
+      {/* 决策区: 与状态区各占右侧栏一半; 内容多时自身滚动, 面板高度不被撑高。 */}
+      <div style={{ flex: '1 1 50%', minHeight: 0, overflowY: 'auto' }}>
         <div style={{ ...TITLE_STYLE, color: '#5c9cf5' }}>决策</div>
         {meaningful.length === 0
           ? <div style={{ color: '#666', fontSize: 12 }}>(等待决策…)</div>
@@ -111,7 +121,8 @@ export function Rail({ mudSocket, onRailMounted }: PropsRuntime<'details'> & Inj
             )
           })}
       </div>
-      <div style={{ flex: 'none' }}>
+      {/* 状态区: 与决策区各占一半; 独立滚动。 */}
+      <div style={{ flex: '1 1 50%', minHeight: 0, overflowY: 'auto' }}>
         <div style={{ ...TITLE_STYLE, color: '#7fd88f' }}>状态</div>
         {statusLines.length === 0
           ? <div style={{ color: '#666', fontSize: 12 }}>(等待连接…)</div>

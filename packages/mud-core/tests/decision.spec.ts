@@ -62,33 +62,6 @@ describe('summarizeState 世界摘要', () => {
 })
 
 describe('默认决策规则', () => {
-  it('登录原子规则 (when 进度标志 + 模板 + after 副作用)', () => {
-    const r = new RuleEngine()
-    for (const rule of defaultDecisionRules) r.register(rule)
-
-    const hit = r.match({ eventType: 'p:login:prompt', state: { 'flags.sent_name': false } })
-    expect(hit?.id).toBe('login:send-name')
-    expect(hit?.action.action).toBe('tool')
-    expect(hit?.action.action === 'tool' && hit.action.tool).toBe('mud_send')
-    expect(hit?.action.action === 'tool' && hit.action.cmd).toBe('{name}')
-    expect(hit?.after).toEqual({ 'flags.sent_name': true })
-
-    expect(r.match({ eventType: 'p:login:prompt', state: { 'flags.sent_name': true } })).toBeNull()
-
-    const pass = r.match({ eventType: 'p:login:pass', state: { 'flags.sent_pass': false } })
-    expect(pass?.id).toBe('login:send-pass')
-    expect(pass?.action.action === 'tool' && pass.action.cmd).toBe('{pass}')
-    expect(pass?.after).toEqual({ 'flags.sent_pass': true })
-
-    const done = r.match({ eventType: 'p:login:done', state: {} })
-    expect(done?.id).toBe('login:done')
-    expect(done?.action.action === 'tool' && done.action.cmd).toBe('look')
-
-    const failed = r.match({ eventType: 'p:login:failed', state: {} })
-    expect(failed?.id).toBe('login:failed')
-    expect(failed?.action.action).toBe('llm')
-  })
-
   it('战斗/死亡规则 (确定性 halt + 声明式死亡)', () => {
     const r = new RuleEngine()
     for (const rule of defaultDecisionRules) r.register(rule)

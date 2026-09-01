@@ -48,12 +48,13 @@ export type GameViewProps =
  * @returns the game surface or the disconnected placeholder.
  */
 export function GameView({
+  sessionId,
   useServers,
   connectUser,
   disconnect,
   mudSocket,
 }: GameViewProps) {
-  const { conn } = useServers(s => s)
+  const { servers, conn } = useServers(s => s)
   const connected = conn.state === 'connected'
   const connecting = conn.state === 'connecting'
   const [connectingLocal, setConnectingLocal] = useState(false)
@@ -61,6 +62,23 @@ export function GameView({
   const termRef = useRef<Terminal | null>(null)
   // 已写入终端的最新 seq (跨挂载保留: 断开重连续拉不重复)。
   const lastSeqRef = useRef(0)
+
+  // 连接目标: 优先取"本会话已绑定的用户" (用户=会话, 当前 tab 即该用户的会话),
+  // 兜底取最近一次连接/选中记录。会话绑定优先 → 无需在左侧重复"选择用户"。
+  const target = (() => {
+    if (sessionId !== undefined) {
+      for (const server of servers) {
+        const user = server.users.find(u => u.sessionId === sessionId)
+        if (user !== undefined) {
+          return { serverId: server.id, userId: user.id, label: `${server.name} / ${user.name}` }
+        }
+      }
+    }
+    if (conn.serverId !== null && conn.userId !== null) {
+      return { serverId: conn.serverId, userId: conn.userId, label: conn.label }
+    }
+    return null
+  })()
 
   // 终端生命周期: 组件挂载时创建, 与连接状态解耦 — 断开保留, 重连分段,
   // 只在 host 进程重启 (页面刷新) 时重建 (挂载即空)。
@@ -129,22 +147,22 @@ export function GameView({
 
   // 顶部工具条: 连接/断开按钮 + 连接状态 (不覆盖终端; 终端常驻不卸载)。
   const handleConnect = (): void => {
-    if (conn.serverId === null || conn.userId === null) return
+    if (target === null) return
     setConnectingLocal(true)
-    void Promise.resolve(connectUser(conn.serverId, conn.userId)).finally(() => { setConnectingLocal(false) })
+    void Promise.resolve(connectUser(target.serverId, target.userId)).finally(() => { setConnectingLocal(false) })
   }
   const busyState = connecting || connectingLocal
-  const hasTarget = conn.serverId !== null && conn.userId !== null
+  const hasTarget = target !== null
   const statusText = connected
-    ? (conn.label !== null ? `已连接: ${conn.label}` : '已连接')
+    ? (target?.label ?? conn.label ?? '已连接')
     : conn.state === 'error'
       ? (conn.error ?? '连接失败')
       : hasTarget
-        ? (conn.label !== null ? `未连接: ${conn.label}` : '未连接')
-        : '未连接 — 请在左侧选择用户'
+        ? `未连接: ${target?.label ?? '已绑定会话'}`
+        : '未连接 — 请在左侧添加/选择用户'
 
   return (
-    <div className={css.gameRoot}>
+    <div className={css.gameRoot} data-mud-no-width="">
       <div className={css.toolbar}>
         {connected ? (
           <button

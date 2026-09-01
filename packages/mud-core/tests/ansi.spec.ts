@@ -9,8 +9,13 @@
 
 import { describe, expect, it } from 'vitest'
 import { AnsiStreamParser, stripAnsi, isPromptText } from '../src/ansi.ts'
-import { PerceptionBuffer, Perceptor, StateTracker } from '../src/perception.ts'
-import { createWorld, flattenWorld } from '../src/world.ts'
+import { PerceptionBuffer, PerceptionDriver } from '../src/perception.ts'
+import { Perceptor, TriggerService, type PerceptHit } from '../src/triggers.ts'
+import { createWorld, flattenWorld, applyPatch } from '../src/world.ts'
+import { patchForPercept } from '../src/state.ts'
+
+/** 仅用于 publish=false 的触发服务 (不发总线, 事件对象无碍)。 */
+const stubBus = { events: { emit: () => {}, on: () => {}, off: () => {} } } as never
 
 describe('分行', () => {
   it('按 \\n 拆分, 保留空行', () => {
@@ -219,20 +224,17 @@ describe('与感知层集成 (行号稳定)', () => {
   it('world 状态经感知管线照常更新', () => {
     const world = createWorld()
     const buf = new PerceptionBuffer()
-    const perceptor = new Perceptor()
-    perceptor.register({ id: 'login:done', eventType: 'p:login:done', regex: [/欢迎/] })
-    const applied: Array<Record<string, unknown>> = []
-    const tracker = new StateTracker({
-      world,
-      buffer: buf,
-      perceptor,
-      emit: (_hit, patch) => { if (Object.keys(patch).length > 0) applied.push(patch) },
-    })
+    const trigger = new TriggerService({ bus: stubBus, publish: false })
+    trigger.register({ id: 'login:done', eventType: 'p:login:done', regex: [/欢迎/] })
+    const published: PerceptHit[] = []
+    const driver = new PerceptionDriver({ buffer: buf, trigger, publishHook: h => published.push(h) })
     const p = new AnsiStreamParser()
     buf.appendLines(p.write('欢迎来到北大侠客行！\n'))
-    tracker.onData()
+    driver.onData()
+    // 状态捕获: 命中事件 → world patch (原 StateTracker.apply 语义)
+    for (const hit of published) applyPatch(world, patchForPercept(hit.eventType))
     expect(flattenWorld(world)['flags.logged_in']).toBe(true)
-    expect(applied.length).toBe(1)
+    expect(published.length).toBe(1)
   })
 })
 

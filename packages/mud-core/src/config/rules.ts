@@ -18,62 +18,11 @@
  * @module @deepseek-ai/dsh-mud-core/config/rules
  */
 
-import type { PerceptionRule } from '../perception.ts'
+import type { PerceptionRule } from '../triggers.ts'
 
-/** 登录/战斗/死亡/房间 感知规则 (常驻)。 */
-export default [
-  // ── 登录提示 (常驻感知: 提示出现 → 决策规则发对应输入) ──
-  {
-    id: 'login:username',
-    eventType: 'p:login:prompt',
-    priority: 35,
-    regex: [/^\s*您的英文名字（要注册新人物请输入new。）：/],
-    extract: (record) => {
-      const line = record.rows.map(r => r.text).find(t => /英文名字|注册新人物/.test(t))
-      return { line: line ? line.slice(0, 80) : null }
-    },
-  },
-  {
-    id: 'login:password',
-    eventType: 'p:login:pass',
-    priority: 35,
-    regex: [/^\s*此ID档案已存在，请输入密码：/],
-    extract: (record) => {
-      const line = record.rows.map(r => r.text).find(t => /密码/.test(t))
-      return { line: line ? line.slice(0, 80) : null }
-    },
-  },
-  {
-    id: 'login:success',
-    eventType: 'p:login:done',
-    priority: 35,
-    regex: [/^\s+欢迎来到北大侠客行！/, /^\s*重新连线完毕。/],
-    extract: (record) => {
-      const line = record.rows.map(r => r.text).find(t => /欢迎|重新连线/.test(t))
-      return { line: line ? line.slice(0, 80) : null }
-    },
-  },
-  {
-    id: 'login:replace',
-    eventType: 'p:login:replace',
-    priority: 35,
-    regex: [/替换.*y\/n/],
-    extract: (record) => {
-      const line = record.rows.map(r => r.text).find(t => /替换/.test(t))
-      return { line: line ? line.slice(0, 80) : null }
-    },
-  },
-  {
-    id: 'login:failed',
-    eventType: 'p:login:failed',
-    priority: 35,
-    regex: [/密码错误/],
-    extract: (record) => {
-      const line = record.rows.map(r => r.text).find(t => /密码错误/.test(t))
-      return { line: line ? line.slice(0, 80) : null }
-    },
-  },
-
+/** 战斗/死亡/房间 感知规则 (常驻)。登录提示规则不再常驻 — 由登录流程激活时
+ * 动态注册 (src/flow.ts LOGIN_TRIGGERS, owner "flow:login"), 完成即注销。 */
+const defaultPerceptionRules: readonly PerceptionRule[] = [
   // ── 战斗 / 死亡 / 房间 (全局常驻) ──
   {
     id: 'combat:start',
@@ -118,4 +67,5 @@ export default [
       return { line: line ? line.slice(0, 80) : null }
     },
   },
-] satisfies readonly PerceptionRule[]
+]
+export default defaultPerceptionRules

@@ -52,7 +52,14 @@ function ensureXtermCss(): void {
   if (typeof document === 'undefined' || document.getElementById('mud-xterm-css')) return
   const tag = document.createElement('style')
   tag.id = 'mud-xterm-css'
-  tag.textContent = xtermCss
+  tag.textContent = [
+    xtermCss,
+    // 隐藏 mud 视图 (游戏/日志) 下的聊天宽度拖拽条: 作用域由视图根元素上的
+    // [data-mud-no-width] 决定 (任意 mud 激活即生效), 聊天/轨迹等原生视图
+    // 不受影响。不依赖 [data-conversation-composer-overlay] —— 那会顺带把
+    // 输入座改成绝对定位、覆盖到终端/日志底部。
+    '[data-phase]:has([data-conversation-scroll] [data-mud-no-width]) [data-width-handle]{display:none}',
+  ].join('\n')
   document.head.appendChild(tag)
 }
 

@@ -6,19 +6,27 @@
  *
  * 决策路由:
  *   事件 → RuleEngine.match (when 条件匹配扁平 WorldModel)
- *     → 命中 → 宿主执行规则动作 (工具调用)
+ *     → 命中 → 宿主执行规则动作 (工具调用 / 激活命名 skill)
  *     → 未命中 / action:{action:"llm"} → 交给 DSH agent
  *
  * 规则形态:
- *   { id, priority, match: { event?, when? }, action: { action:"tool"|"llm",
- *     tool?, cmd? }, after? }
- *   cmd 支持 {name}/{pass} 模板 (登录, 宿主从 config.account 渲染)。
+ *   { id, priority, match: { event?, when? }, action: { action:"tool"|"skill"|"llm",
+ *     tool?, cmd?, skill? }, after? }
+ *   cmd 支持 {name}/{pass} 模板 (登录, 宿主从 config.account 渲染);
+ *   action:{action:"skill"} 由决策中心查 skill 注册表启动对应 flow/skill。
  * @module @deepseek-ai/dsh-mud-core/decision
  */
 
-/** 规则动作: 工具调用 (确定性短路) 或声明式交给 agent。 */
+/**
+ * 规则动作: 决策中心的统一 "then"。
+ *   - tool   确定性单步: 执行工具 (战斗/死亡反射, 轻量短路);
+ *   - skill  激活命名 skill/flow (如登录流程): 由决策中心查 skill 注册表启动;
+ *   - llm    声明式: 不短路, 交给 agent (重型);
+ *   - no_action 匹配但不动作。
+ */
 export type RuleAction =
   | { action: 'tool'; tool: string; cmd?: string }
+  | { action: 'skill'; skill: string }
   | { action: 'llm' }
   | { action: 'no_action' }
 
@@ -37,8 +45,8 @@ export interface DecisionRule {
   description?: string
 }
 
-/** 归一化后的内部规则。 */
-interface NormalizedRule extends Required<Pick<DecisionRule, 'id' | 'priority' | 'match' | 'after' | 'skill' | 'description'>> {
+/** 归一化后的内部规则 (宿主执行回调引用)。 */
+export interface NormalizedRule extends Required<Pick<DecisionRule, 'id' | 'priority' | 'match' | 'after' | 'skill' | 'description'>> {
   when: Record<string, unknown> | null
   action: RuleAction
 }

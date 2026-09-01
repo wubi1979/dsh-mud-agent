@@ -34,7 +34,7 @@ export interface MudUiItem {
   text: string
   time: number
   /** decision 专用: 决策来源。 */
-  actor?: 'rule' | 'router' | 'agent'
+  actor?: 'rule' | 'router' | 'agent' | 'flow'
   ruleId?: string
   eventType?: string
   action?: string

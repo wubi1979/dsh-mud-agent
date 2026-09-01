@@ -9,6 +9,10 @@
  */
 
 import type { MudWorldSnapshot } from './mud-events.ts'
+import type { TriggerService } from './triggers.ts'
+import type { FlowService } from './flow.ts'
+import type { SkillService } from './skills.ts'
+import type { DecisionCenter } from './dispatcher.ts'
 
 /** connect() 参数 (全部缺省回落插件 config 默认值)。 */
 export interface MudConnectOptions {
@@ -64,6 +68,18 @@ export interface MudGameRead {
  * 会话事件契约见 mud-events.ts。
  */
 export interface MudCoreService {
+  /** 感知触发服务: register/unregister/unregisterByOwner, 命中 → MudEvent → 事件总线。 */
+  trigger: TriggerService
+  /** 流程引擎: start/abort/status/register/nanes (登录等确定性事务流程)。 */
+  flow: FlowService
+  /** 技能服务: 预制基线 + agent 动态生成的技能注册, 注入 agent 系统提示。 */
+  skill: SkillService
+  /**
+   * 统一事件决策中心: 可行动事件的统一路由。决策知识集中在规则表
+   * (action:"tool" 单步反射 / action:"skill" 激活 skill), agent 兜底。
+   * skill/flow 以处理器注册制接入 (只声明激活动作, 触发时机由规则决定)。
+   */
+  dispatcher: DecisionCenter
   /**
    * 建立 telnet 连接 (幂等: 已连接时忽略)。目标会话必须已 materialize
    * (先调用 {@link prepareAgent} 或由界面激活会话)。
