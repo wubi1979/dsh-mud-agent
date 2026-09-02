@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyExtract, applyGmcp, applyPatch, createWorld, flattenWorld, setWorldField,
   worldSnapshot, writeField,
-} from '../src/world.ts'
+} from '../src/world/world.ts'
 
 describe('GMCP 包解析', () => {
   it('Char.Vitals → char 分组, 数值归一化', () => {

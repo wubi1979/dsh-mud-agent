@@ -1,5 +1,6 @@
 /**
- * dsh-mud-core — 会话日志事件声明 (SessionEventMap merge), host half.
+ * dsh-mud-core — 外壳桥接 (Shell Bridge) 事件契约 (SessionEventMap merge),
+ * host half. host 与 UI 外壳 (webui / tui) 之间的会话事件桥:
  *
  * 插件自定义会话事件:
  *   - mud/decision  决策事件 (规则命中 / 感知路由 / agent 工具调用 →
@@ -9,7 +10,7 @@
  *   - mud/command   客户端 → host 命令通道 (WebUI 无输入框, 保留供未来扩展)
  *
  * 事件数据必须 lossless-JSON 可序列化 (Session.append 强制)。
- * @module @deepseek-ai/dsh-mud-core/mud-events
+ * @module @deepseek-ai/dsh-mud-core/shell-bridge
  */
 
 /** 世界快照 (worldSnapshot 产物, JSON 可序列化)。 */

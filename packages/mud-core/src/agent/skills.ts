@@ -11,7 +11,7 @@
  * @module @deepseek-ai/dsh-mud-core/skills
  */
 
-import { defaultSkills, skillsTextForAgent, type MudSkill } from './config/skills.ts'
+import { defaultSkills, skillsTextForAgent, type MudSkill } from '../config/skills.ts'
 
 /** SkillService 构造参数。 */
 export interface SkillServiceOptions {

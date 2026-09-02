@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest'
 import net from 'node:net'
 import type { AddressInfo } from 'node:net'
-import { TelnetClient } from '../src/telnet.ts'
+import { TelnetClient } from '../src/net/telnet.ts'
 
 describe('TelnetClient 行尾静默刷出', () => {
   it('横幅 + 无换行的登录提示在同一块到达: 连接保持期间即刷出为 parsed 行', async () => {

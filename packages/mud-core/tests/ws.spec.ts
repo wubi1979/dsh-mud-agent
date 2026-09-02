@@ -11,7 +11,7 @@ import type { Duplex } from 'node:stream'
 import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 import WebSocket from 'ws'
-import { MudWebSocketHub, type MudGameItem, type MudUiItem } from '../src/ws.ts'
+import { MudWebSocketHub, type MudGameItem, type MudUiItem } from '../src/net/ws.ts'
 
 interface Harness {
   url: string

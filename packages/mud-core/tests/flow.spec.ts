@@ -6,9 +6,9 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { FlowRuntime, FlowService, type FlowHost } from '../src/flow.ts'
+import { FlowRuntime, FlowService, type FlowHost } from '../src/agent/flow.ts'
 import loginWorkflow from '../src/config/workflows.ts'
-import { createWorld, flattenWorld } from '../src/world.ts'
+import { createWorld, flattenWorld } from '../src/world/world.ts'
 import type { MudPerceptEvent } from '../src/events.ts'
 
 /** 极简总线桩 (cordis ctx.events.on/emit)。 */

@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { buildMudTools, MOVE_ALIASES, MOVE_DIRS, STATUS_CMDS, type MudTools } from '../src/tools.ts'
+import { buildMudTools, MOVE_ALIASES, MOVE_DIRS, STATUS_CMDS, type MudTools } from '../src/agent/tools.ts'
 
 function makeTools(): { tools: MudTools; sent: string[]; logs: string[] } {
   const sent: string[] = []

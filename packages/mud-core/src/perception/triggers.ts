@@ -16,9 +16,9 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { MudLine, StyleRun } from './ansi.ts'
-import { StyleFlag } from './ansi.ts'
-import { makePerceptEvent, type MudPerceptEvent } from './events.ts'
+import type { MudLine, StyleRun } from '../net/ansi.ts'
+import { StyleFlag } from '../net/ansi.ts'
+import { makePerceptEvent, type MudPerceptEvent } from '../events.ts'
 
 /** 颜色触发条件 (Mudlet 颜色触发对齐): 与 style run 逐段匹配。 */
 export interface ColorCond {

@@ -19,7 +19,7 @@
  * @module @deepseek-ai/dsh-mud-core/perception
  */
 
-import type { MudLine, ParsedLine, StyleRun } from './ansi.ts'
+import type { MudLine, ParsedLine, StyleRun } from '../net/ansi.ts'
 import type { TriggerService, PerceptHit } from './triggers.ts'
 
 export const MAX_BUFFER_ROWS = 2000

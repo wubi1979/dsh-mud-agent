@@ -8,7 +8,7 @@
  *
  * 消费者: 状态捕获 (state, 静默更新 world) / 规则引擎 (rules, 分支决策) /
  * 流程引擎 (flow, 顺序事务) / agent 路由 (未覆盖事件 + 断流 + 主动请求)。
- * 与 UI 层事件 (mud/decision|log|world) 隔离 — UI 事件见 mud-events.ts。
+ * 与 UI 层事件 (mud/decision|log|world) 隔离 — UI 事件见 shell-bridge.ts。
  *
  * 事件数据必须 lossless-JSON 可序列化 (Session.append 强制, 对齐全家桶约定)。
  * @module @deepseek-ai/dsh-mud-core/events

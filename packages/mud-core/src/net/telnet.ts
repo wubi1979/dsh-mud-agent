@@ -1,25 +1,24 @@
 /**
- * dsh-mud-core — Telnet client (Node `net` + `zlib`).
+ * dsh-mud-core — Telnet 客户端 (Node `net` + `zlib`)。
  *
- * Protocol surface mirrors the Python project's MUDTelnetClient (telnetlib3):
- *   - RFC 854 negotiation: ECHO / SGA / NAWS / TTYPE / CHARSET / BINARY
- *   - GMCP (201), MSSP (70), MSP (90), MCCP2 (86)
- *   - UTF-8 both directions; ANSI stripped; lines flushed immediately
+ * 协议面与 Python 项目的 MUDTelnetClient (telnetlib3) 对齐:
+ *   - RFC 854 协商: ECHO / SGA / NAWS / TTYPE / CHARSET / BINARY
+ *   - GMCP (201)、MSSP (70)、MSP (90)、MCCP2 (86)
+ *   - 双向 UTF-8; ANSI 剥离; 完整逻辑行即时刷出
  *
- * MCCP2 model (the user's architecture — decompressor in FRONT of the
- * original telnet decoder, activated only by the marker):
- *   - the ORIGINAL decoder (parseFeed/processBuffer) always receives
- *     UNCOMPRESSED data — protocol and game text alike;
- *   - before the marker `IAC SB COMPRESS2 IAC SE` everything flows to the
- *     original decoder as plain characters;
- *   - when the marker is seen, the decompressor starts; every byte from then
- *     on goes to it, and its output is handed back to the original decoder;
- *   - zlib first, auto-fallback to raw deflate (pkuxkx) on first-chunk failure;
- *   - on a decompression error the stream is dropped and logged.
+ * MCCP2 模型 (解压器置于原始 telnet 解码器之前, 仅由压缩标记激活):
+ *   - 原始解码器 (parseFeed/processBuffer) 永远只收到未压缩数据 —
+ *     协议字节与游戏文本一视同仁;
+ *   - 在标记 `IAC SB COMPRESS2 IAC SE` 出现之前, 一切字节都作为普通字符
+ *     直接进入原始解码器;
+ *   - 一旦见到该标记即启动解压器, 此后的每个字节先送解压器, 其输出再交还
+ *     原始解码器;
+ *   - 优先按 zlib 解压, 首个数据块失败时自动回退为裸 deflate (pkuxkx);
+ *   - 解压出错则丢弃该数据流并记录日志。
  *
- * Events: 'connect' | 'close' | 'error' | 'log' ({level,text}) |
- *         'text' (raw text) | 'parsed' (ParsedLine[]) | 'gmcp' ({package, payload}) |
- *         'mssp' (pairs)
+ * 事件: 'connect' | 'close' | 'error' | 'log' ({level,text}) |
+ *        'text' (原始文本) | 'parsed' (ParsedLine[]) | 'gmcp' ({package, payload}) |
+ *        'mssp' (pairs)
  * @module @deepseek-ai/dsh-mud-core/telnet
  */
 

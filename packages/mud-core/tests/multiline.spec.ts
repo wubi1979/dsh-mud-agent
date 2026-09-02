@@ -7,9 +7,9 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Perceptor, type PerceptHit } from '../src/triggers.ts'
-import { StyleFlag, type ParsedLine, type StyleRun } from '../src/ansi.ts'
-import { PerceptionBuffer, type MudLine } from '../src/perception.ts'
+import { Perceptor, type PerceptHit } from '../src/perception/triggers.ts'
+import { StyleFlag, type ParsedLine, type StyleRun } from '../src/net/ansi.ts'
+import { PerceptionBuffer, type MudLine } from '../src/perception/perception.ts'
 
 function parsed(text: string, style: StyleRun[] = []): ParsedLine {
   return { text, raw: text, style, time: 0, isPrompt: false }

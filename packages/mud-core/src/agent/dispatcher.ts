@@ -19,7 +19,7 @@
  */
 
 import { RuleEngine, type DecisionRule, type NormalizedRule } from './decision.ts'
-import type { MudPerceptEvent, MudSystemEvent } from './events.ts'
+import type { MudPerceptEvent, MudSystemEvent } from '../events.ts'
 
 /** 路由落点。 */
 export type RouteLayer = 'rule' | 'skill' | 'agent'

@@ -19,9 +19,9 @@
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
-import type { MudGameItem, MudUiItem, MudWorldSnapshot } from './client/wire.ts'
+import type { MudGameItem, MudUiItem, MudWorldSnapshot } from '../client/wire.ts'
 
-export type { MudGameItem, MudUiItem, MudWorldSnapshot } from './client/wire.ts'
+export type { MudGameItem, MudUiItem, MudWorldSnapshot } from '../client/wire.ts'
 
 /** MudWebSocketHub 构造依赖。 */
 export interface MudWebSocketHubOptions {

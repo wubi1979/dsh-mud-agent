@@ -8,8 +8,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Transcript, TRANSCRIPT_MIN_LINES } from '../src/transcript.ts'
-import { PerceptionBuffer } from '../src/perception.ts'
+import { Transcript, TRANSCRIPT_MIN_LINES } from '../src/perception/transcript.ts'
+import { PerceptionBuffer } from '../src/perception/perception.ts'
 
 interface Row { text: string; time: number }
 function pushRows(buffer: PerceptionBuffer, rows: Row[]): void {

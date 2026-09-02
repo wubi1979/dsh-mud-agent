@@ -14,7 +14,7 @@
  */
 
 import { applyGmcp, applyPatch, type WorldModel } from './world.ts'
-import { makeGmcpEvent, type MudPerceptEvent } from './events.ts'
+import { makeGmcpEvent, type MudPerceptEvent } from '../events.ts'
 import type { Context } from '@deepseek-ai/cordis'
 
 /** 感知事件 type → world patch (文本推断)。与旧 StateTracker.apply 语义一致。 */

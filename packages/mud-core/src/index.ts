@@ -28,33 +28,33 @@
  * @module @deepseek-ai/dsh-mud-core
  */
 
-import { TelnetClient } from './telnet.ts'
-import type { ParsedLine } from './ansi.ts'
+import { TelnetClient } from './net/telnet.ts'
+import type { ParsedLine } from './net/ansi.ts'
 import {
   PerceptionBuffer, PerceptionDriver, MAX_PENDING_LINES,
-} from './perception.ts'
-import { TriggerService } from './triggers.ts'
-import { StateService } from './state.ts'
+} from './perception/perception.ts'
+import { TriggerService } from './perception/triggers.ts'
+import { StateService } from './world/state.ts'
 import type { MudPerceptEvent } from './events.ts'
-import { Transcript, INJECT_IDLE_MS, TRANSCRIPT_MIN_LINES } from './transcript.ts'
+import { Transcript, INJECT_IDLE_MS, TRANSCRIPT_MIN_LINES } from './perception/transcript.ts'
 import {
   createWorld, applyPatch, worldSnapshot, flattenWorld, type WorldModel,
-} from './world.ts'
-import { CommandQueue, renderTemplate } from './execution.ts'
-import { buildMudTools, type MudTools } from './tools.ts'
-import { FlowService, FlowRuntime, type FlowHost } from './flow.ts'
+} from './world/world.ts'
+import { CommandQueue, renderTemplate } from './agent/execution.ts'
+import { buildMudTools, type MudTools } from './agent/tools.ts'
+import { FlowService, FlowRuntime, type FlowHost } from './agent/flow.ts'
 import loginWorkflow from './config/workflows.ts'
-import { DecisionCenter } from './dispatcher.ts'
+import { DecisionCenter } from './agent/dispatcher.ts'
 import defaultPerceptionRules from './config/trigger-rules.ts'
 import defaultDecisionRules from './config/decision-rules.ts'
-import { SkillService } from './skills.ts'
+import { SkillService } from './agent/skills.ts'
 import { makeSystemEvent, type MudSystemEvent } from './events.ts'
-import { createMudAgent, sendGameOutput, type CreateMudAgentOptions } from './agent-bridge.ts'
+import { createMudAgent, sendGameOutput, type CreateMudAgentOptions } from './agent/agent-bridge.ts'
 import type { AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { MudDecisionEvent, MudLogEvent, MudWorldEvent, MudWorldSnapshot } from './mud-events.ts'
-import { MudWebSocketHub, type MudUiItem } from './ws.ts'
+import type { MudDecisionEvent, MudLogEvent, MudWorldEvent, MudWorldSnapshot } from './shell-bridge.ts'
+import { MudWebSocketHub, type MudUiItem } from './net/ws.ts'
 import type {
   MudConnectOptions, MudConnectionStatus, MudCoreService, MudDiag, MudGameRead,
 } from './service.ts'
@@ -152,7 +152,7 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   // 注入节流: agent 忙时合并游戏输出 (状态流, 中间桶过期), 空闲后注入最新
   let agentBusy = false
   let pendingInjection = ''
-  // ── 注入录制器 (agent 输入侧; 30s 时间窗 + 折叠视图, 见 src/transcript.ts) ──
+  // ── 注入录制器 (agent 输入侧; 30s 时间窗 + 折叠视图, 见 src/perception/transcript.ts) ──
   let injector: Transcript | null = null
   let injectTimer: ReturnType<typeof setTimeout> | null = null
   let disposed = false // teardown 已开始, 停止新的注入/泵出

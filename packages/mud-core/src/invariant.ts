@@ -1,5 +1,5 @@
 /**
- * Package-owned invariant companion for `@deepseek-ai/dsh-mud-core`.
+ * `@deepseek-ai/dsh-mud-core` 的包级 invariant 伴生注册插件 (companion)。
  * @module @deepseek-ai/dsh-mud-core/invariant
  */
 

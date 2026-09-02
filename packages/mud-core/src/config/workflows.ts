@@ -17,7 +17,7 @@
  * @module @deepseek-ai/dsh-mud-core/config/workflows
  */
 
-import type { WorkflowConfig } from '../flow.ts'
+import type { WorkflowConfig } from '../agent/flow.ts'
 
 /** 登录流程 (确定性事务): "服务器提示 → 发对应输入 → 完成"。含 replace 旁路与
  * failed 提前终止 (分支, 非纯串行), 故用事件分发而非简单顺序步骤。 */
@@ -122,4 +122,4 @@ const loginWorkflow = {
 } satisfies WorkflowConfig
 
 export default loginWorkflow
-export type { WorkflowConfig } from '../flow.ts'
+export type { WorkflowConfig } from '../agent/flow.ts'

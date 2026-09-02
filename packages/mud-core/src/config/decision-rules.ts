@@ -29,7 +29,7 @@
  * @module @deepseek-ai/dsh-mud-core/config/decision-rules
  */
 
-import type { DecisionRule } from '../decision.ts'
+import type { DecisionRule } from '../agent/decision.ts'
 
 /** 决策规则 (战斗/死亡反射 + skill 激活; 登录步骤执行见 flow.ts)。 */
 export default [

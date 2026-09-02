@@ -18,7 +18,7 @@
  * @module @deepseek-ai/dsh-mud-core/config/trigger-rules
  */
 
-import type { PerceptionRule } from '../triggers.ts'
+import type { PerceptionRule } from '../perception/triggers.ts'
 
 /** 战斗/死亡/房间 感知规则 (常驻)。登录提示规则不再常驻 — 由登录流程激活时
  * 动态注册 (config/workflows.ts loginWorkflow.triggers, owner "flow:login"), 完成即注销。 */

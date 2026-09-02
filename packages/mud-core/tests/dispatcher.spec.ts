@@ -8,8 +8,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { DecisionCenter, type DecisionCenterHost } from '../src/dispatcher.ts'
-import type { DecisionRule, NormalizedRule } from '../src/decision.ts'
+import { DecisionCenter, type DecisionCenterHost } from '../src/agent/dispatcher.ts'
+import type { DecisionRule, NormalizedRule } from '../src/agent/decision.ts'
 import type { MudPerceptEvent, MudSystemEvent } from '../src/events.ts'
 
 function makeCenter(over?: Partial<DecisionCenterHost>) {

@@ -8,11 +8,11 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { AnsiStreamParser, stripAnsi, isPromptText } from '../src/ansi.ts'
-import { PerceptionBuffer, PerceptionDriver } from '../src/perception.ts'
-import { Perceptor, TriggerService, type PerceptHit } from '../src/triggers.ts'
-import { createWorld, flattenWorld, applyPatch } from '../src/world.ts'
-import { patchForPercept } from '../src/state.ts'
+import { AnsiStreamParser, stripAnsi, isPromptText } from '../src/net/ansi.ts'
+import { PerceptionBuffer, PerceptionDriver } from '../src/perception/perception.ts'
+import { Perceptor, TriggerService, type PerceptHit } from '../src/perception/triggers.ts'
+import { createWorld, flattenWorld, applyPatch } from '../src/world/world.ts'
+import { patchForPercept } from '../src/world/state.ts'
 
 /** 仅用于 publish=false 的触发服务 (不发总线, 事件对象无碍)。 */
 const stubBus = { events: { emit: () => {}, on: () => {}, off: () => {} } } as never

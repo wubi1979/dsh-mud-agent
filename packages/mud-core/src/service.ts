@@ -8,11 +8,11 @@
  * @module @deepseek-ai/dsh-mud-core/service
  */
 
-import type { MudWorldSnapshot } from './mud-events.ts'
-import type { TriggerService } from './triggers.ts'
-import type { FlowService } from './flow.ts'
-import type { SkillService } from './skills.ts'
-import type { DecisionCenter } from './dispatcher.ts'
+import type { MudWorldSnapshot } from './shell-bridge.ts'
+import type { TriggerService } from './perception/triggers.ts'
+import type { FlowService } from './agent/flow.ts'
+import type { SkillService } from './agent/skills.ts'
+import type { DecisionCenter } from './agent/dispatcher.ts'
 
 /** connect() 参数 (全部缺省回落插件 config 默认值)。 */
 export interface MudConnectOptions {
@@ -65,7 +65,7 @@ export interface MudGameRead {
 
 /**
  * MUD 核心服务 (`ctx.mud`)。宿主进程内单例, 由 mud-core 插件提供;
- * 会话事件契约见 mud-events.ts。
+ * 会话事件契约见 shell-bridge.ts。
  */
 export interface MudCoreService {
   /** 感知触发服务: register/unregister/unregisterByOwner, 命中 → MudEvent → 事件总线。 */

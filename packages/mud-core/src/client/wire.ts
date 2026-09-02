@@ -1,21 +1,19 @@
 /**
- * dsh-mud-core — shared wire contract (pure type module, no Node runtime).
+ * dsh-mud-core — 外壳线路契约 (纯类型模块, 无 Node 运行时依赖)。
  *
- * The persistent-transport gap between the host half and the browser/terminal
- * shells: the terminal keeps its own one-time game text out of the session log
- * (which would otherwise grow unbounded), so game frames travel over a
- * high-throughput `/mud/ws` channel instead. This module is the single source
- * of truth for those frame types, imported type-only by both faces so the
- * `import type` statement erases at compile time and no runtime dependency
- * (Node, `ws`, …) ever leaks into the browser bundle.
+ * 解决 host 半面与浏览器/终端外壳之间的持久传输空隙: 终端把一次性游戏文本
+ * 挡在会话日志之外 (否则会话将无界增长), 因此游戏帧改走高吞吐的 `/mud/ws`
+ * 通道。本模块是这些帧类型的唯一事实源 (single source of truth), 双方都只
+ * 做 type-only 导入, 使 `import type` 在编译期被擦除, 任何运行时依赖
+ * (Node、`ws` …) 都不会泄漏进浏览器 bundle。
  *
- * 帧协议 (JSON text frames):
+ * 帧协议 (JSON 文本帧):
  *   client → server: `{type:'hello', lastGameSeq?, lastUiSeq?}`
  *   server → client: `{ch:'game', items}` / `{ch:'ui', items}` / `{ch:'world', world}`
  * @module @deepseek-ai/dsh-mud-core/client/wire
  */
 
-import type { MudWorldSnapshot } from '../mud-events.ts'
+import type { MudWorldSnapshot } from '../shell-bridge.ts'
 
 /** 世界快照 (worldSnapshot 产物, JSON 可序列化)。 */
 export type { MudWorldSnapshot }

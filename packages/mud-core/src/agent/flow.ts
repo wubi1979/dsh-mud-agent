@@ -21,9 +21,9 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { applyPatch, type WorldModel } from './world.ts'
-import type { MudPerceptEvent } from './events.ts'
-import type { PerceptionRule, TriggerService } from './triggers.ts'
+import { applyPatch, type WorldModel } from '../world/world.ts'
+import type { MudPerceptEvent } from '../events.ts'
+import type { PerceptionRule, TriggerService } from '../perception/triggers.ts'
 
 /** 流程运行状态。 */
 export type FlowStatus = 'idle' | 'running' | 'done' | 'failed' | 'aborted'
@@ -77,7 +77,7 @@ export interface WorkflowDriver {
   /** 标记某语义步骤已处理。 */
   markHandled: (step: string) => void
   /** 写 WorldModel (进度标志等)。 */
-  patchWorld: (patch: object) => void
+  patchWorld: (patch: Record<string, unknown>) => void
   /** 进展反馈 (宿主汇总给 agent / 展示)。 */
   progress: (msg: string) => void
   /** 已处理一条感知事件 (宿主把命中的行折叠进注入录制器)。 */
