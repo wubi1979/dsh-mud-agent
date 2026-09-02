@@ -48,6 +48,7 @@ import { DecisionCenter } from './agent/dispatcher.ts'
 import defaultPerceptionRules from './config/trigger-rules.ts'
 import defaultDecisionRules from './config/decision-rules.ts'
 import { SkillService } from './agent/skills.ts'
+import { commandsTextForAgent } from './config/commands.ts'
 import { makeSystemEvent, type MudSystemEvent } from './events.ts'
 import { createMudAgent, sendGameOutput, type CreateMudAgentOptions } from './agent/agent-bridge.ts'
 import type { AgentHandle } from '@deepseek-ai/dsh-agent'
@@ -683,6 +684,7 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       ...(cwd !== undefined && cwd !== '' ? { cwd } : {}),
       persona: config.persona || buildPersona(),
       skills: skillService.textForAgent(),
+      commands: commandsTextForAgent(),
       tools: mudTools,
       onAgentTool: (name, args) => {
         const argsJson = JSON.stringify(args)

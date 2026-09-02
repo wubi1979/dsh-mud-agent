@@ -16,6 +16,7 @@
 
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ParameterSchemaSpec, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
+import { FORBIDDEN_COMMANDS } from '../config/commands.ts'
 
 /** 工具统一返回。 */
 export interface MudToolResult {
@@ -68,6 +69,12 @@ const OUT_RENDER = (_args: unknown, value: MudToolResult): ContentBlock[] => [{
   type: 'text',
   text: value.ok ? value.note : `工具拒绝: ${value.note}`,
 }]
+
+/** 命中任一安全禁用命令前缀 (硬边界, 原始命令层拦截)。 */
+function isForbidden(cmd: string): boolean {
+  const head = String(cmd).trim().toLowerCase().split(/[\s;]+/)[0] ?? ''
+  return FORBIDDEN_COMMANDS.includes(head)
+}
 
 /** 一条 MUD 工具 (defineTool 兼容定义; 规则直接调用 execute)。 */
 export interface MudTool {
@@ -185,6 +192,11 @@ export function buildMudTools({ send = () => {}, log = () => {} }: {
         // 命令序列: 允许空命令成员; 整体至少有一条合法命令才成功。
         const series = Array.isArray(args.cmds) ? args.cmds.map((c) => String(c)) : null
         if (series && series.length > 0) {
+          for (const c of series) {
+            if (isForbidden(c)) {
+              return { ok: false, note: `安全禁用命令, 拒绝发送: ${String(c).trim()}`, cmd: '' }
+            }
+          }
           for (const c of series) send(c)
           log(`[工具] mud_send 序列 → ${series.length} 条命令`)
           return { ok: true, note: '命令序列', cmd: '' }
@@ -192,6 +204,9 @@ export function buildMudTools({ send = () => {}, log = () => {} }: {
         // 单体命令: 空命令拒绝 (与既有行为一致)。
         const cmd = String(args.cmd ?? '').trim()
         if (!cmd) return { ok: false, note: '空命令', cmd: '' }
+        if (isForbidden(cmd)) {
+          return { ok: false, note: `安全禁用命令, 拒绝发送: ${cmd}`, cmd: '' }
+        }
         send(cmd)
         log(`[工具] mud_send → ${cmd}`)
         return { ok: true, note: cmd, cmd }

@@ -35,6 +35,8 @@ export interface CreateMudAgentOptions {
   persona: string
   /** 技能目录文本 (注入 systemPrompt 区段)。 */
   skills: string
+  /** 命令参考文本 (注入 systemPrompt mud-commands 区段; 紧凑命令语法参考)。 */
+  commands?: string
   /** 工具表 { name: defineTool 兼容定义 } — 规则与 agent 共用。 */
   tools: MudTools
   /** 活动回调 (日志)。 */
@@ -56,7 +58,7 @@ export interface CreateMudAgentOptions {
  */
 export async function createMudAgent(
   ctx: Context,
-  { sessionId, cwd, persona, skills = '', tools = {}, onActivity = () => {}, onAgentTool }: CreateMudAgentOptions,
+  { sessionId, cwd, persona, skills = '', commands = '', tools = {}, onActivity = () => {}, onAgentTool }: CreateMudAgentOptions,
 ): Promise<AgentHandle> {
   void onActivity
   // 默认模型选择 (agent-default-model 服务, dsh-base 提供; 缺失时 agent 无路由)
@@ -83,6 +85,14 @@ export async function createMudAgent(
           name: 'mud-skills',
           order: -50,
           text: skills,
+        })
+      }
+      // 命令参考: 常用命令语法 (紧凑, 一行一条) — 让 agent 用 mud_send 拼对
+      if (commands) {
+        agentCtx.systemPrompt.section({
+          name: 'mud-commands',
+          order: -40,
+          text: commands,
         })
       }
       // 工具: 注册宿主提供的工具集 (规则与 agent 同一条执行路径)
