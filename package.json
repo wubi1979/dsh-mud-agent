@@ -10,8 +10,8 @@
     "build": "pnpm -r build",
     "clean": "pnpm -r run clean",
     "test": "pnpm --filter @deepseek-ai/dsh-mud-core test && pnpm --filter @deepseek-ai/dsh-mud-tui test",
-    "dev:web": "pnpm build && pnpm --dir D:/Code/deepseek-harness dsh web --patch D:/Code/dsh-mud-agent/packages/mud-core/cordis.patch.yml --patch D:/Code/dsh-mud-agent/packages/mud-webui/cordis.patch.yml",
-    "dev:tui": "pnpm build && pnpm --dir D:/Code/deepseek-harness dsh web --patch D:/Code/dsh-mud-agent/packages/mud-core/cordis.patch.yml --patch D:/Code/dsh-mud-agent/packages/mud-tui/cordis.patch.yml",
+    "dev:web": "pnpm build && pnpm --dir D:/Code/deepseek-harness dsh web --patch D:/Code/dsh-mud-agent/packages/mud-core/cordis.patch.yml --patch D:/Code/dsh-mud-agent/packages/mud-webui/cordis.patch.yml --port 3081",
+    "dev:tui": "pnpm build && pnpm --dir D:/Code/deepseek-harness dsh web --patch D:/Code/dsh-mud-agent/packages/mud-core/cordis.patch.yml --patch D:/Code/dsh-mud-agent/packages/mud-tui/cordis.patch.yml --port 3081",
     "restart:web": "pnpm run dev:web",
     "restart:tui": "pnpm run dev:tui"
   },
