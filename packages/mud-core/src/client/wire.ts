@@ -35,6 +35,8 @@ export interface MudUiItem {
   time: number
   /** decision 专用: 决策来源。 */
   actor?: 'rule' | 'router' | 'agent' | 'flow'
+  /** decision 专用: 所属流程名 (actor 'flow' 时, 如 'login')。 */
+  flow?: string
   ruleId?: string
   eventType?: string
   action?: string

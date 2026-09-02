@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { RuleEngine, matchWhen, summarizeState } from '../src/decision.ts'
-import defaultDecisionRules from '../src/config/rules-decision.ts'
+import defaultDecisionRules from '../src/config/decision-rules.ts'
 
 describe('RuleEngine 事件匹配', () => {
   it('优先级短路 + 不匹配事件', () => {

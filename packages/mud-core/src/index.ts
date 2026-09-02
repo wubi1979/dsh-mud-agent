@@ -36,16 +36,17 @@ import {
 import { TriggerService } from './triggers.ts'
 import { StateService } from './state.ts'
 import type { MudPerceptEvent } from './events.ts'
-import { Transcript, INJECT_IDLE_MS } from './transcript.ts'
+import { Transcript, INJECT_IDLE_MS, TRANSCRIPT_MIN_LINES } from './transcript.ts'
 import {
   createWorld, applyPatch, worldSnapshot, flattenWorld, type WorldModel,
 } from './world.ts'
 import { CommandQueue, renderTemplate } from './execution.ts'
 import { buildMudTools, type MudTools } from './tools.ts'
-import { FlowService, LoginFlow, type FlowHost } from './flow.ts'
+import { FlowService, FlowRuntime, type FlowHost } from './flow.ts'
+import loginWorkflow from './config/workflows.ts'
 import { DecisionCenter } from './dispatcher.ts'
-import defaultPerceptionRules from './config/rules.ts'
-import defaultDecisionRules from './config/rules-decision.ts'
+import defaultPerceptionRules from './config/trigger-rules.ts'
+import defaultDecisionRules from './config/decision-rules.ts'
 import { SkillService } from './skills.ts'
 import { makeSystemEvent, type MudSystemEvent } from './events.ts'
 import { createMudAgent, sendGameOutput, type CreateMudAgentOptions } from './agent-bridge.ts'
@@ -157,6 +158,23 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   let disposed = false // teardown 已开始, 停止新的注入/泵出
   // 诊断: 最近一次 connect/ensureAgent 失败 (不依赖 agent 会话, 供 diag() 读取)。
   let lastError: string | null = null
+  // ── 系统日志通道 (提前声明供全 apply 内 tuiLog/tuiDecision 引用, 避免 TDZ) ──
+  // mud: 普通运行流水 → 日志窗 (exporter 转发); mud-decision: 决策留档, 只落盘。
+  const mudLogger = ctx.logger('mud')
+  const decisionLogger = ctx.logger('mud-decision')
+  // mud 命名空间日志 → 转发到 webui/tui 日志窗 (纯传输, 不改内容)。
+  // 提前注册: 让 apply 装配早期的启动日志也能投递到日志窗。
+  ctx.logger.exporter({
+    export: (message) => {
+      if (message.name !== 'mud') return
+      pushUiItem({ kind: 'log', text: `[${message.type.toUpperCase()}] ${renderLogArgs(message.args)}`, time: message.ts })
+    },
+  })
+  /** 把日志 args (printf 格式串 + 参数) 渲染为纯文本 (转发用, 不改内容)。 */
+  function renderLogArgs(args: readonly unknown[]): string {
+    if (args.length === 0) return ''
+    return args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')
+  }
   // ── 游戏输出缓冲 (终端独立通道) ─────────────────────────
   // host 进程级内存环形缓冲: 游戏输出只进这里 (不进 session 事件流, 避免
   // 会话膨胀)。生命周期 = host 进程 — 重启即空 (终端随之清空); 断开重连
@@ -272,6 +290,7 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
         time: item.time,
         ...(item.ruleId !== undefined ? { ruleId: item.ruleId } : {}),
         ...(item.eventType !== undefined ? { eventType: item.eventType } : {}),
+        ...(item.flow !== undefined ? { flow: item.flow } : {}),
         ...(item.result !== undefined ? { result: item.result } : {}),
       })
     } else {
@@ -291,9 +310,15 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   /** 发送命令到游戏连接。actor = 命令来源 (规则/agent 队列 → 'agent')。 */
   function sendCommand(cmd: string, actor: 'agent' | 'user' = 'agent'): boolean {
     const c = connections.get(SID)
-    if (!c || c.state !== 'connected') return false
+    if (!c || c.state !== 'connected') {
+      tuiLog(`[发送] 忽略命令 (未连接): ${JSON.stringify(cmd)}`)
+      return false
+    }
     const sent = c.client.send(String(cmd))
-    if (sent) appendCommandEcho(String(cmd), actor)
+    if (sent) {
+      appendCommandEcho(String(cmd), actor)
+      tuiLog(`[发送] ${cmd === '' ? '<空行>' : cmd}`)
+    }
     return sent
   }
 
@@ -302,16 +327,19 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     minInterval: config.commandIntervalMs ?? 400,
     onSend: (cmd: string) => { sendCommand(cmd) },
   })
+  tuiLog(`[执行] 命令队列就绪 (最小间隔 ${config.commandIntervalMs ?? 400}ms)`)
 
   /** 工具集: 语义工具 (move/look/status) + mud_send 兜底。校验在工具层。 */
   const mudTools: MudTools = buildMudTools({
     send: (cmd: string) => queue.send(cmd),
     log: (t: string) => tuiLog(t),
   })
+  tuiLog(`[执行] 工具集就绪: ${Object.keys(mudTools).join(', ')}`)
 
   // ── 触发服务 (ctx.mud.trigger): 匹配 → MudEvent → 事件总线 ──
   const trigger = new TriggerService({ bus: ctx })
   for (const r of defaultPerceptionRules) trigger.register(r)
+  tuiLog(`[触发] 感知触发服务就绪, 已注册 ${defaultPerceptionRules.length} 条感知规则`)
 
   // ── 统一事件决策中心 (ctx.mud.dispatcher): 规则 → 技能激活 → agent 兜底 ──
   // 可行动事件的统一路由。规则命中 (action:"tool") → 执行工具 (确定性短路);
@@ -348,23 +376,26 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       if (layer === 'skill') {
         tuiDecision({
           actor: 'flow',
+          flow: 'login',
           eventType,
-          action: `start ${id ?? ''}`,
-          text: `[决策] ${eventType} → 激活${id !== undefined ? ` ${id}` : ''}`,
+          action: '启动登录流程',
+          text: `由"${FLOW_EVENT_LABELS[eventType] ?? eventType}"事件启动流程`,
         })
         return
       }
       const label = layer === 'rule' ? '规则' : 'agent'
       tuiDecision({
         actor: 'router',
+        ...(id ? { ruleId: id } : {}),
         eventType,
         action: label,
-        text: `[感知] ${eventType} → ${label}`,
+        text: `[感知] ${eventType} → ${label}${id ? ` (${id})` : ''}`,
       })
     },
     dedupMs: config.ruleDedupMs ?? 1500,
   })
   for (const r of defaultDecisionRules) center.registerRule(r)
+  tuiLog(`[决策] 决策中心就绪, 已注册 ${defaultDecisionRules.length} 条决策规则`)
 
   // ── 感知协调器 + 状态捕获 + 决策路由 (总线消费者) ──────────
   const buffer = new PerceptionBuffer()
@@ -378,6 +409,9 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   })
   // 感知协调器: 驱动触发匹配 → 发布感知事件到总线。
   const driver = new PerceptionDriver({ buffer, trigger, maxPending: MAX_PENDING_LINES })
+  tuiLog(`[感知] 缓冲 ${buffer.maxRows} 行 / 注入录制器 30s 窗 (≥${TRANSCRIPT_MIN_LINES} 行)`)
+  tuiLog('[状态] 状态捕获就绪 (world 同步 + GMCP 直连)')
+  tuiLog('[流程] 流程引擎就绪 (确定性事务流程)')
   // 决策中心 (总线消费者): 可行动感知事件 → 统一路由 (规则/技能激活/agent 兜底)。
   const disposePercept = ctx.events.on('mud/percept', (e: MudPerceptEvent) => {
     resetDeadAir() // 感知事件到达 → 重置断流计时 (登录期不 armed, 见实现)
@@ -387,8 +421,14 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   const disposeSystem = ctx.events.on('mud/system', (e: MudSystemEvent) => {
     center.onSystem(e)
   })
+  tuiLog('[事件] 总线订阅就绪: mud/percept + mud/system → 决策中心')
 
   // ── 流程引擎 (ctx.mud.flow): 确定性事务流程 (登录) ─────────
+  // 流程语义事件 → 决策栏可读文案 (如 login:required → "未登录")。
+  const FLOW_EVENT_LABELS: Record<string, string> = {
+    'login:required': '未登录',
+    'login-failed': '登录失败',
+  }
   const flow = new FlowService()
   const loginHost: FlowHost = {
     bus: ctx,
@@ -398,10 +438,18 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       name: activeAccount?.name ?? config.account?.name ?? '',
       pass: activeAccount?.pass ?? config.account?.pass ?? '',
     }),
-    send: (cmd) => { mudTools['mud_send']?.execute({ cmd }) },
+    // 走 mud_send 工具执行路径 (与 agent/规则共用); 命令序列 → cmds (允许空命令退 MXP)。
+    send: (cmd) => {
+      if (Array.isArray(cmd)) mudTools['mud_send']?.execute({ cmds: cmd })
+      else mudTools['mud_send']?.execute({ cmd })
+    },
     onProgress: (msg) => {
       loginLog.push(`[自动登录] ${msg}`)
-      tuiDecision({ actor: 'flow', action: 'send', text: `[流程] login: ${msg}` })
+      // 决策栏格式: [流程] HH:mm:ss (login): 收到xx提示 → 发送xx
+      tuiDecision({ actor: 'flow', flow: 'login', eventType: 'login:step', action: msg, text: msg })
+    },
+    onDone: () => {
+      tuiDecision({ actor: 'flow', flow: 'login', eventType: 'login:done', action: 'done', text: '"成功"结束流程' })
     },
     onEvent: (e, action) => {
       // 命中的提示行折叠进注入录制器: agent 不再重复分析, 仅见"事件→动作"条目。
@@ -414,7 +462,7 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       })
     },
     onFailed: (reason) => {
-      tuiDecision({ actor: 'flow', eventType: 'login-failed', action: 'agent', text: `[流程] login: ${reason}` })
+      tuiDecision({ actor: 'flow', flow: 'login', eventType: 'login-failed', action: 'agent', text: `"失败"结束流程: ${reason}` })
       const prefix = loginLog.length > 0 ? loginLog.join('\n') + '\n' : ''
       const tail = (injector?.text().trim() || reason)
       injector?.reset()
@@ -422,9 +470,9 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     },
     loginTimeoutMs: config.loginTimeoutMs ?? 20000,
   }
-  flow.register(new LoginFlow(ctx))
+  flow.register(new FlowRuntime(ctx, loginWorkflow))
   // ── 登录 skill 处理器 (注册制): 只声明"怎么执行", 触发时机由规则表决定 —
-  //    rules-decision.ts `on-login-required` (when login:required && !logged_in →
+  //    decision-rules.ts `on-login-required` (when login:required && !logged_in →
   //    action:"skill" login) 由决策中心统一调度; agent 主动需要登录时同样发布
   //    mud/system login:required, 走同一条激活路径 (不再由宿主硬编码订阅)。
   center.registerSkill({
@@ -607,6 +655,10 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       lastError = err.message
       tuiLog(`[SYS] 连接错误: ${err.message}`)
     })
+    client.on('log', (e: { level: string; text: string }) => {
+      // 网络层协商调试 (MCCP2/GMCP/回显等); 错误级已由 error 事件处理, 避免重复。
+      if (e.level === 'info') tuiLog(`[NET] ${e.text}`)
+    })
     client.on('close', () => {
       flow.abort('login')
       const e = connections.get(SID)
@@ -649,10 +701,12 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     return agent
   }
 
-  // ── 日志通道 (双写): WS 推送 (webui) + session 事件 (tui) ──
-  /** 普通日志流水 (系统/连接/注入): WebUI 日志 tab + TUI 日志。 */
+  // ── 日志通道 (走系统 ctx.logger; WS 转发 webui + session 事件 tui) ──
+  // 日志内容统一由系统 logger 产生 (harness 落盘/控制台); WebUI 日志 tab 与
+  // TUI 只是消费该日志流的转发。不再自行拼装日志内容。
+  // (mudLogger / decisionLogger / exporter / renderLogArgs 已在 apply 顶部定义。)
   function tuiLog(text: string): void {
-    pushUiItem({ kind: 'log', text: String(text), time: Date.now() })
+    mudLogger.info(String(text))
   }
 
   /** 决策事件 (规则命中/感知路由): WebUI 决策栏 + TUI 决策轨迹。 */
@@ -660,11 +714,22 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     actor: 'rule' | 'router' | 'agent' | 'flow'
     ruleId?: string
     eventType?: string
+    flow?: string
     action: string
     result?: string
     text: string
   }): void {
     pushUiItem({ kind: 'decision', ...d, time: Date.now() })
+    // 决策同步落盘留档 (系统日志通道, 独立命名空间 mud-decision):
+    // 结构化字段随 args 保存, 便于审计回溯; 不进前台日志窗 (exporter 只转发 mud)。
+    decisionLogger.info(`${d.text}${d.result ? ` — ${d.result}` : ''}`, {
+      actor: d.actor,
+      ruleId: d.ruleId ?? null,
+      eventType: d.eventType ?? null,
+      flow: d.flow ?? null,
+      action: d.action,
+      result: d.result ?? null,
+    })
   }
 
   /**
@@ -677,6 +742,7 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     cmd: string,
     result: { ok: boolean; note: string },
   ): void {
+    tuiLog(`[捕获] 规则 ${rule.id} 命中 → ${toolName} ${JSON.stringify(cmd)} (${result.ok ? '成功' : `失败: ${result.note}`})`)
     tuiDecision({
       actor: 'rule',
       ruleId: rule.id,

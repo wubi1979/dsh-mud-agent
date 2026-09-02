@@ -30,7 +30,7 @@ export type RuleAction =
   | { action: 'llm' }
   | { action: 'no_action' }
 
-/** 一条决策规则 (配置来源, config/rules-decision.ts)。 */
+/** 一条决策规则 (配置来源, config/decision-rules.ts)。 */
 export interface DecisionRule {
   id: string
   priority?: number

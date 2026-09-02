@@ -51,10 +51,22 @@ function actorOf(d: MudUiItem): { label: string; color: string } {
   }
 }
 
-/** 决策行: [HH:mm:ss] [actor] 为什么 → 做了什么 [结果]。不含 text (冗余)。 */
+/** 语义事件 → 可读文案 (非流程决策行"原因"显示用; 未映射的原样显示)。 */
+const EVENT_LABELS: Record<string, string> = {
+  'init': '',
+  'agent-mode': 'agent 模式',
+}
+
+/** 决策行: 流程 = [HH:mm:ss] (login): 消息; 其他 = [HH:mm:ss] [原因] → 动作 [结果]。 */
 function decisionLine(d: MudUiItem): string {
   const when = new Date(d.time).toLocaleTimeString('zh-CN', { hour12: false })
-  const why = d.actor === 'rule' ? (d.ruleId ?? '') : d.eventType ?? ''
+  if (d.actor === 'flow') {
+    // 流程统一消息式: (login): 由"xx"启动 / 收到xx → 发送xx / "成功|失败"结束流程
+    return `${when} (${d.flow ?? 'login'}): ${d.text ?? d.action ?? ''}`
+  }
+  const why = d.actor === 'rule'
+    ? (d.ruleId ?? '')
+    : (EVENT_LABELS[d.eventType ?? ''] ?? d.eventType ?? '')
   const reason = why !== '' ? `[${why}]` : ''
   const action = d.action !== '' ? ` → ${d.action}` : ''
   const result = d.result !== undefined && d.result !== '' ? ` — ${d.result}` : ''

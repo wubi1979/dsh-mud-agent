@@ -6,7 +6,7 @@
  * 状态捕获 (state) / 规则引擎 (rules) / 流程引擎 (flow) / agent 路由消费。
  *
  * 注册模型:
- *   - 启动时静态注册 (内置登录/战斗/房间触发, 见 config/rules.ts);
+ *   - 启动时静态注册 (内置登录/战斗/房间触发, 见 config/trigger-rules.ts);
  *   - 运行中动态 register / unregister / unregisterByOwner (技能/插件可
  *     动态增删触发), 且不依赖感知层实现 — 感知只做协调与文本标准化。
  *
@@ -75,7 +75,7 @@ export interface PerceptHit {
   reason?: string
 }
 
-/** 感知规则 (配置来源, config/rules.ts)。 */
+/** 感知规则 (配置来源, config/trigger-rules.ts)。 */
 export interface PerceptionRule {
   id: string
   eventType?: string

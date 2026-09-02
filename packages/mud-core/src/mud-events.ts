@@ -34,6 +34,8 @@ export interface MudDecisionEvent {
   ruleId?: string
   /** The perception event type routed (actor 'router'). */
   eventType?: string
+  /** The flow name (actor 'flow'), e.g. 'login'. */
+  flow?: string
   /** What was done: tool + command (rule/agent) or routing target (router). */
   action: string
   /** Result of the action (tool ok/note), when available. */

@@ -26,7 +26,7 @@
  *
  * 规则 = 确定性知识 (火克金、金克木这类), 静态配置为主; 若后期需 agent 沉淀
  * 规则再提升能力。
- * @module @deepseek-ai/dsh-mud-core/config/rules-decision
+ * @module @deepseek-ai/dsh-mud-core/config/decision-rules
  */
 
 import type { DecisionRule } from '../decision.ts'

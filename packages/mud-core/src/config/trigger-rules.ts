@@ -15,13 +15,13 @@
  *   multiline true 时对窗口连接文本整体匹配（跨行）；否则逐行匹配
  *   guard     (record) => boolean 可选的守门函数，返回 false 则跳过该规则
  *   extract   (record) => object 可选的命中数据提取，作为事件 data 附带
- * @module @deepseek-ai/dsh-mud-core/config/rules
+ * @module @deepseek-ai/dsh-mud-core/config/trigger-rules
  */
 
 import type { PerceptionRule } from '../triggers.ts'
 
 /** 战斗/死亡/房间 感知规则 (常驻)。登录提示规则不再常驻 — 由登录流程激活时
- * 动态注册 (src/flow.ts LOGIN_TRIGGERS, owner "flow:login"), 完成即注销。 */
+ * 动态注册 (config/workflows.ts loginWorkflow.triggers, owner "flow:login"), 完成即注销。 */
 const defaultPerceptionRules: readonly PerceptionRule[] = [
   // ── 战斗 / 死亡 / 房间 (全局常驻) ──
   {

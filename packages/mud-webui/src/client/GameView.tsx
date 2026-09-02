@@ -84,13 +84,14 @@ export function GameView({
   // 只在 host 进程重启 (页面刷新) 时重建 (挂载即空)。
   useEffect(() => {
     const term = new Terminal({
-      cursorBlink: true,
+      cursorBlink: false,
+      // 光标颜色同背景 → 不可见 (保留鼠标选择/复制; 闪烁光标在游戏终端无意义)。
       fontSize: 14,
       lineHeight: 1.25,
       fontFamily: "Consolas, 'Courier New', monospace",
       convertEol: true,
       scrollback: 10000,
-      theme: { background: '#0a0a0a', foreground: '#eeeeee' },
+      theme: { background: '#0a0a0a', foreground: '#eeeeee', cursor: '#0a0a0a', cursorAccent: '#eeeeee' },
     })
     const fit = new FitAddon()
     term.loadAddon(fit)

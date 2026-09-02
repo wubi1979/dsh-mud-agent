@@ -62,6 +62,12 @@ describe('mud_send 兜底', () => {
     expect(tools.mud_send!.execute({ cmd: '' }).ok).toBe(false)
     expect(sent).toEqual(['ask zhang about 拜师'])
   })
+  it('命令序列允许空命令 (退 MXP 检测)', () => {
+    const { tools, sent } = makeTools()
+    expect(tools.mud_send!.execute({ cmds: ['', 'look'] }))
+      .toEqual({ ok: true, note: '命令序列', cmd: '' })
+    expect(sent).toEqual(['', 'look'])
+  })
 })
 
 describe('工具常量完备', () => {

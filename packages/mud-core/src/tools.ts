@@ -163,19 +163,33 @@ export function buildMudTools({ send = () => {}, log = () => {} }: {
       },
     },
 
-    /** 兜底: 发送任意原始命令 (无专用工具时用; 规则确定性动作也走这里)。 */
+    /** 兜底: 发送任意原始命令 (无专用工具时用; 规则确定性动作也走这里)。
+     *  `cmds` 数组 = 命令序列 (允许含空命令, 如"空行退 MXP 检测 + look");
+     *  单体 `cmd` 依旧拒绝空命令。 */
     mud_send: {
       name: 'mud_send',
-      description: '向 MUD 游戏发送一条原始命令。优先使用 mud_move / mud_look / mud_status 等专用工具; 仅在无专用工具时 (如 ask/使用特殊物品) 使用本工具。',
+      description: '向 MUD 游戏发送一条原始命令 (或一组命令序列)。优先使用 mud_move / mud_look / mud_status 等专用工具; 仅在无专用工具时 (如 ask/使用特殊物品) 使用本工具。',
       parameters: {
         cmd: {
           type: 'string',
-          required: true,
-          description: '游戏命令, 如 ask <npc> about <话题> / eat baozi',
+          description: '游戏命令, 如 ask <npc> about <话题> / eat baozi (单体命令, 空命令拒绝)',
+        },
+        cmds: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '命令序列, 依次发出 (允许含空命令, 用于退出检测模式)。与 cmd 二选一',
         },
       },
       output: { schema: OUT_SCHEMA, render: OUT_RENDER },
       execute: (args) => {
+        // 命令序列: 允许空命令成员; 整体至少有一条合法命令才成功。
+        const series = Array.isArray(args.cmds) ? args.cmds.map((c) => String(c)) : null
+        if (series && series.length > 0) {
+          for (const c of series) send(c)
+          log(`[工具] mud_send 序列 → ${series.length} 条命令`)
+          return { ok: true, note: '命令序列', cmd: '' }
+        }
+        // 单体命令: 空命令拒绝 (与既有行为一致)。
         const cmd = String(args.cmd ?? '').trim()
         if (!cmd) return { ok: false, note: '空命令', cmd: '' }
         send(cmd)

@@ -25,6 +25,11 @@ const LOG_STYLE: React.CSSProperties = {
 
 const ROW_STYLE: React.CSSProperties = { whiteSpace: 'pre-wrap', wordBreak: 'break-all' }
 
+/** 时间戳 (HH:mm:ss)。 */
+function stampOf(time: number): string {
+  return new Date(time).toLocaleTimeString('zh-CN', { hour12: false })
+}
+
 /** Log view props: the conversation-view runtime kit + injected MUD face. */
 export type LogViewProps =
   PropsRuntime<'conversation.view'>
@@ -41,7 +46,10 @@ export function LogView({ mudSocket }: LogViewProps) {
       {logs.length === 0
         ? <div style={{ color: '#666' }}>(等待日志…)</div>
         : logs.map(l => (
-          <div key={l.seq} style={ROW_STYLE}>{l.text}</div>
+          <div key={l.seq} style={ROW_STYLE}>
+            <span style={{ color: '#666', marginRight: 6 }}>{stampOf(l.time)}</span>
+            {l.text}
+          </div>
         ))}
     </div>
   )

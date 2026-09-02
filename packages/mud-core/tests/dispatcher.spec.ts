@@ -47,7 +47,7 @@ function system(type: string): MudSystemEvent {
   return { type, data: null, ts: Date.now() }
 }
 
-/** 登录激活规则 (对齐 config/rules-decision.ts on-login-required)。 */
+/** 登录激活规则 (对齐 config/decision-rules.ts on-login-required)。 */
 const loginRule: DecisionRule = {
   id: 'on-login-required',
   priority: 30,

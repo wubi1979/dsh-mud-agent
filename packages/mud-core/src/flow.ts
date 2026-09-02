@@ -5,14 +5,18 @@
  * 提示驱动"的序列, 与规则引擎的"分支决策"分界 —— 规则负责单步组织 (战斗/
  * 应激反射), 流程负责顺序把握整体 (登录这样的步骤事务)。
  *
- * 与规则引擎协作: 流程期间感知事件 (p:login:*) 也会进总线; 流程订阅这些语义
- * 事件按进度发对应命令。进度由 world 标志 (sent_name/sent_pass/logged_in)
- * 与流程内去重共同防止重复发送。
+ * 与规则引擎协作: 流程期间感知事件 (p:*) 也会进总线; 流程订阅这些语义事件按
+ * 进度发对应命令。
+ *
+ * 本模块是**通用 (workflow-agnostic) 运行器**: 具体流程 (登录/交易/任务)
+ * 由 config/workflows.ts 的 WorkflowConfig 用纯函数声明 (触发正则 + 事件分支
+ * 处理 + 超时), 本模块的 FlowRuntime 只负责生命周期/触发器注册注销/计时, 不
+ * 含任何具体业务 —— 消除 login 专属执行器。
  *
  * 激活模型:
  *   - 系统级事件 "login:required" (未登录) 激活登录 skill → flow.start;
- *   - 激活后流程注册自身的感知触发规则 (owner "flow:login"), 第一步进入等待;
- *   - 登录完成 → 注销触发规则 (触发器仅在流程活跃期间注入)。
+ *   - 激活后运行器注册该 workflow 的触发规则 (owner), 第一步进入等待;
+ *   - 完成 → 注销触发规则 (触发器仅在流程活跃期间注入)。
  * @module @deepseek-ai/dsh-mud-core/flow
  */
 
@@ -34,10 +38,12 @@ export interface FlowHost {
   trigger: Pick<TriggerService, 'register' | 'unregisterByOwner'>
   /** 取得账号密码 (activeAccount ?? config.account)。 */
   getAccount: () => { name: string; pass: string }
-  /** 发一条命令 (与 agent 同一条 mud_send 执行路径)。 */
-  send: (cmd: string) => void
+  /** 发命令 (与 agent 同一条 mud_send 执行路径)。数组 = 命令序列 (允许空命令, 如登录后空行退 MXP)。 */
+  send: (cmd: string | string[]) => void
   /** 流程进展 (宿主汇总反馈 agent / 展示)。 */
   onProgress?: (msg: string) => void
+  /** 流程成功结束 (登录完成) — 宿主据此记录"成功"结束决策。 */
+  onDone?: () => void
   /** 流程已处理一条感知事件 (宿主把命中的行折叠进注入录制器)。 */
   onEvent?: (e: MudPerceptEvent, action: string) => void
   /** 流程失败 (密码错等 / 超时) → 宿主把上下文交给 agent。 */
@@ -55,62 +61,76 @@ interface Flow {
   dispose(): void
 }
 
-/** 登录流程注册的感知触发规则 (激活期注入, 完成即注销; owner "flow:login")。 */
-const LOGIN_TRIGGERS: readonly PerceptionRule[] = [
-  {
-    id: 'login:username',
-    eventType: 'p:login:prompt',
-    priority: 35,
-    regex: [/^\s*您的英文名字（要注册新人物请输入new。）：/],
-  },
-  {
-    id: 'login:password',
-    eventType: 'p:login:pass',
-    priority: 35,
-    regex: [/^\s*此ID档案已存在，请输入密码：/],
-  },
-  {
-    id: 'login:success',
-    eventType: 'p:login:done',
-    priority: 35,
-    regex: [/^\s+欢迎来到北大侠客行！/, /^\s*重新连线完毕。/],
-  },
-  {
-    id: 'login:replace',
-    eventType: 'p:login:replace',
-    priority: 35,
-    regex: [/替换.*y\/n/],
-  },
-  {
-    id: 'login:failed',
-    eventType: 'p:login:failed',
-    priority: 35,
-    regex: [/密码错误/],
-  },
-]
-
-/** 登录流程触发规则 owner (用于批量注销)。 */
-const LOGIN_OWNER = 'flow:login'
+/**
+ * workflow 配置提供的驱动句柄: 运行器把宿主依赖 + 运行器状态 (防重/收尾) 封装
+ * 成纯数据/纯动作传给 config 的函数, 使 workflow 配置不知道运行时内部。
+ */
+export interface WorkflowDriver {
+  /** 目标 WorldModel (读进度标志 / 写 patchWorld)。 */
+  world: WorldModel
+  /** 取得账号密码。 */
+  account: () => { name: string; pass: string }
+  /** 发命令 (数组 = 命令序列, 允许空命令退 MXP)。 */
+  send: (cmd: string | string[]) => void
+  /** 本次会话内某语义步骤是否已处理 (防重复)。 */
+  handled: (step: string) => boolean
+  /** 标记某语义步骤已处理。 */
+  markHandled: (step: string) => void
+  /** 写 WorldModel (进度标志等)。 */
+  patchWorld: (patch: object) => void
+  /** 进展反馈 (宿主汇总给 agent / 展示)。 */
+  progress: (msg: string) => void
+  /** 已处理一条感知事件 (宿主把命中的行折叠进注入录制器)。 */
+  event: (e: MudPerceptEvent, action: string) => void
+  /** 成功收尾 (触发宿主 onDone)。 */
+  done: () => void
+  /** 静默成功收尾 (不触发宿主 onDone; 用于"超时但已成功"类场景)。 */
+  markDone: () => void
+  /** 失败收尾 (触发宿主 onFailed 交给 agent)。 */
+  failed: (ctx: string) => void
+}
 
 /**
- * 登录流程 (第一个确定性事务): "提示出现 → 发对应输入"。
- * 事件驱动 (游戏提示到达顺序天然保序), 进度标志防重, 超时 → 交给 agent。
- * 语义与原 rules-decision 的 login:* 原子规则 + index 登录定时器等价。
+ * 一份确定性事务流程的静态配置 (由 config/workflows.ts 提供)。运行器 (FlowRuntime)
+ * 读取它: 以及触发正则 + 事件分支处理 + 超时处理, 全部为纯函数, 不含运行时构造。
  */
-export class LoginFlow implements Flow {
-  readonly name = 'login'
+export interface WorkflowConfig {
+  /** workflow 名 (FlowService 注册键 / skill 绑定执行后端)。 */
+  id: string
+  /** 触发规则批量注销标识。 */
+  owner: string
+  /** 默认超时 (宿主 loginTimeoutMs 可覆盖)。 */
+  timeoutMs: number
+  /** 激活期注册的感知触发规则。 */
+  triggers: readonly PerceptionRule[]
+  /** 纯函数: 感知事件 → 分支响应 (用 driver 声明要做什么)。 */
+  onPercept: (driver: WorkflowDriver, e: MudPerceptEvent) => void
+  /** 纯函数: 超时处理。 */
+  onTimeout: (driver: WorkflowDriver) => void
+}
+
+/**
+ * 通用流程运行器 (workflow-agnostic): 读取一份 WorkflowConfig, 管理生命周期 /
+ * 触发器注册注销 / 计时, 具体业务 (正则 + 分支 + 超时) 委托给配置的纯函数。
+ * skill 是声明式能力, workflow 是确定性执行体; 本类 = 执行后端的薄壳。
+ */
+export class FlowRuntime implements Flow {
+  readonly name: string
+  private readonly cfg: WorkflowConfig
   private readonly bus: Pick<Context, 'events'>
   private host: FlowHost | null = null
   private active = false
   private timer: ReturnType<typeof setTimeout> | null = null
   private flowStatus: FlowStatus = 'idle'
-  /** 每次会话内已处理的语义步骤 (防提示重复出发送精确一次)。 */
+  /** 本次会话内已处理的语义步骤 (防提示重复出发送精确一次)。 */
   private readonly handled = new Set<string>()
   /** 取消订阅函数。 */
   private readonly unsubscribe: () => unknown
 
-  constructor(bus: Pick<Context, 'events'>) {
+  constructor(bus: Pick<Context, 'events'>, cfg: WorkflowConfig) {
     this.bus = bus
+    this.cfg = cfg
+    this.name = cfg.id
     this.unsubscribe = this.bus.events.on('mud/percept', (e: MudPerceptEvent) => this.onPercept(e))
   }
 
@@ -119,23 +139,28 @@ export class LoginFlow implements Flow {
     this.active = true
     this.flowStatus = 'running'
     this.handled.clear()
-    // 激活: 注册本流程的感知触发规则 (owner "flow:login"), 第一步进入等待。
-    for (const t of LOGIN_TRIGGERS) host.trigger.register(t, LOGIN_OWNER)
+    // 激活: 注册本 workflow 的感知触发规则, 进入等待。
+    for (const t of this.cfg.triggers) host.trigger.register(t, this.cfg.owner)
     if (this.timer) clearTimeout(this.timer)
-    this.timer = setTimeout(() => this.onTimeout(), host.loginTimeoutMs ?? 20000)
+    this.timer = setTimeout(() => this.onTimeout(), host.loginTimeoutMs ?? this.cfg.timeoutMs)
   }
 
-  /** 结束流程 (完成/失败/中止/销毁): 注销本流程注入的触发规则。 */
+  /** 结束流程 (完成/失败/中止/销毁): 注销本 workflow 注入的触发规则。 */
   private releaseTriggers(): void {
-    if (this.host) this.host.trigger.unregisterByOwner(LOGIN_OWNER)
+    if (this.host) this.host.trigger.unregisterByOwner(this.cfg.owner)
+  }
+
+  /** 统一收尾: 置状态 + 退出活跃 + 注销触发规则 + 停计时。 */
+  private finalize(status: FlowStatus): void {
+    this.active = false
+    this.flowStatus = status
+    this.releaseTriggers()
+    if (this.timer) { clearTimeout(this.timer); this.timer = null }
   }
 
   abort(): void {
-    this.active = false
-    this.flowStatus = 'aborted'
-    if (this.timer) clearTimeout(this.timer)
-    this.timer = null
-    this.releaseTriggers()
+    if (!this.active) return
+    this.finalize('aborted')
   }
 
   status(): FlowStatus {
@@ -147,91 +172,40 @@ export class LoginFlow implements Flow {
     this.unsubscribe()
   }
 
-  private onTimeout(): void {
-    this.timer = null
-    if (!this.active) return
-    if (this.host?.world.flags.logged_in) {
-      this.flowStatus = 'done'
-      this.active = false
-      this.releaseTriggers()
-      return
-    }
-    // 登录超时: 交给 agent (宿主注入上下文)
-    this.flowStatus = 'failed'
-    this.active = false
-    this.releaseTriggers()
-    const host = this.host
-    if (host?.onFailed) {
-      const progress = host.onProgress !== undefined
-      let ctx = ''
-      // 进展反馈由宿主自行维护 (onProgress 已记录); 此处仅提示超时原因
-      void progress
-      ctx = '登录流程超时, 尚未登录。请按 \'登录流程\' 技能步骤, 用 mud_send 完成登录。'
-      host.onFailed(ctx)
+  /** 装配 driver: 把宿主依赖 + 运行器收尾状态暴露给 workflow 配置。 */
+  private makeDriver(host: FlowHost): WorkflowDriver {
+    return {
+      world: host.world,
+      account: () => host.getAccount(),
+      send: (cmd) => host.send(cmd),
+      handled: (step) => this.handled.has(step),
+      markHandled: (step) => { this.handled.add(step) },
+      patchWorld: (patch) => applyPatch(host.world, patch),
+      progress: (msg) => host.onProgress?.(msg),
+      event: (e, action) => host.onEvent?.(e, action),
+      done: () => { this.finalize('done'); host.onDone?.() },
+      markDone: () => { this.finalize('done') },
+      failed: (ctx) => { this.finalize('failed'); host.onFailed?.(ctx) },
     }
   }
 
-  /** 感知事件 → 按进度发对应命令 (actlactive 时)。 */
+  private onTimeout(): void {
+    this.timer = null
+    if (!this.active || !this.host) return
+    this.cfg.onTimeout(this.makeDriver(this.host))
+  }
+
+  /** 感知事件 → 交给 workflow 配置的 onPercept 分支处理。 */
   private onPercept(e: MudPerceptEvent): void {
     if (!this.active || !this.host) return
-    const host = this.host
-    const world = host.world
-    switch (e.type) {
-      case 'p:login:prompt': {
-        if (this.handled.has('name')) return
-        if (world.flags.sent_name) return
-        this.handled.add('name')
-        applyPatch(world, { sent_name: true })
-        host.send(host.getAccount().name)
-        host.onProgress?.('用户名提示 → 发账号')
-        host.onEvent?.(e, '发送用户名')
-        break
-      }
-      case 'p:login:pass': {
-        if (this.handled.has('pass')) return
-        if (world.flags.sent_pass) return
-        this.handled.add('pass')
-        applyPatch(world, { sent_pass: true })
-        host.send(host.getAccount().pass)
-        host.onProgress?.('密码提示 → 发密码')
-        host.onEvent?.(e, '发送密码')
-        break
-      }
-      case 'p:login:replace': {
-        if (this.handled.has('replace')) return
-        this.handled.add('replace')
-        host.send('y')
-        host.onProgress?.('同名档案替换 → 确认 y')
-        host.onEvent?.(e, '确认替换 (y)')
-        break
-      }
-      case 'p:login:done': {
-        if (this.handled.has('done')) return
-        this.handled.add('done')
-        host.send('look')
-        this.flowStatus = 'done'
-        this.active = false
-        this.releaseTriggers()
-        host.onProgress?.('登录成功 → look 刷新房间')
-        host.onEvent?.(e, 'look 刷新房间')
-        break
-      }
-      case 'p:login:failed': {
-        this.flowStatus = 'failed'
-        this.active = false
-        this.releaseTriggers()
-        host.onFailed?.('登录失败 (密码错误等), 请修订登录策略。')
-        break
-      }
-      default:
-        break
-    }
+    this.cfg.onPercept(this.makeDriver(this.host), e)
   }
 }
 
 /**
  * 流程引擎服务 (`ctx.mud.flow`): 命名流程注册表, 提供 start/abort/status。
- * 当前内置登录流程 (LoginFlow); 后续事务流程 (交易/任务) 注册到此。
+ * 每个流程由 FlowRuntime(WorkflowConfig) 实例注册 (config/workflows.ts 定义);
+ * 后续事务流程 (交易/任务) 只需新增 config 条目 + 注册一个 FlowRuntime。
  */
 export class FlowService {
   private readonly flows = new Map<string, Flow>()

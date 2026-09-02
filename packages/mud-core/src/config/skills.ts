@@ -2,7 +2,7 @@
  * dsh-mud-core — 技能目录 (Skills, agent 可读), config.
  *
  * 流程级能力的命名清单。每个 skill = 名称 + 描述 + 涉及工具 + 步骤序列:
- *   - **确定性执行** (轻量处理器): 由 config/rules-decision.ts 的原子规则实现
+ *   - **确定性执行** (轻量处理器): 由 config/decision-rules.ts 的原子规则实现
  *     (登录的"提示 → 发对应输入"映射), agent 不参与;
  *   - **agent 知识** (重型处理器): 描述/步骤注入 agent 系统提示, 规则未覆盖
  *     的场景 (重连/异常/提示变体) 由 agent 按序列手动执行。
