@@ -104,7 +104,7 @@ function statusLinesOf(world: {
 
 /** 右栏: 决策摘要 (上) + 状态 (下)。挂载时 (会话打开) 确保 details 面板打开。
  *  同时承载 fullme 验证码对话框 (全局唯一, 由 /mud/ws captcha 帧驱动)。 */
-export function Rail({ mudSocket, sendCommand, onRailMounted }: PropsRuntime<'details'> & InjectFace<MudClientInjected> & { onRailMounted?: () => void }) {
+export function Rail({ mudSocket, sendCommand, refreshCaptcha, onRailMounted }: PropsRuntime<'details'> & InjectFace<MudClientInjected> & { onRailMounted?: () => void }) {
   useEffect(() => { onRailMounted?.() }, [onRailMounted])
   const view = useSyncExternalStore(
     listener => mudSocket.subscribeView(listener),
@@ -122,7 +122,7 @@ export function Rail({ mudSocket, sendCommand, onRailMounted }: PropsRuntime<'de
   return (
     <div style={RAIL_STYLE}>
       {/* fullme 验证码对话框: 状态在 mudSocket captcha 存储, 替换语义全局唯一。 */}
-      <CaptchaDialog mudSocket={mudSocket} sendCommand={sendCommand} />
+      <CaptchaDialog mudSocket={mudSocket} sendCommand={sendCommand} refreshCaptcha={refreshCaptcha} />
       {/* 决策区: 与状态区各占右侧栏一半; 内容多时自身滚动, 面板高度不被撑高。 */}
       <div style={{ flex: '1 1 50%', minHeight: 0, overflowY: 'auto' }}>
         <div style={{ ...TITLE_STYLE, color: '#5c9cf5' }}>决策</div>

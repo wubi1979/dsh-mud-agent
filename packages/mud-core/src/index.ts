@@ -199,6 +199,8 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   let latestWorld: MudWorldSnapshot | null = null
   // WS 推送通道 (webServer 解析后创建; 此前的日志/决策只进缓冲, 不广播)。
   let hub: MudWebSocketHub | null = null
+  // 验证码刷新映射: 图片URL → robot.php URL (供前端刷新按钮重新获取图片)。
+  const robotUrlMap = new Map<string, string>()
 
   /** 目标会话是否已在 host materialize (client open/激活或 prepareAgent 创建)。 */
   function isSessionLive(sessionId: string): boolean {
@@ -380,6 +382,8 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     } catch {
       tuiLog(`[验证码] 解析真实图片失败, 回退原地址: ${url}`)
     }
+    // 存储映射: 真实图片URL → robot.php URL (供刷新按钮使用)。
+    robotUrlMap.set(displayUrl, url)
     tuiLog(`[验证码] 捕获图片 → 推送确认框: ${displayUrl}`)
     pushUiItem({ kind: 'captcha', text: 'fullme 验证码', url: displayUrl, cmd: 'fullme', time: Date.now() })
     void ocrCaptcha(displayUrl)
@@ -446,9 +450,13 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   })
   const fullmeHost = makeFlowHost('fullme', {
     onDone: () => {
+      // 流程成功结束: 清理验证码刷新映射。
+      robotUrlMap.clear()
       tuiDecision({ actor: 'flow', flow: 'fullme', eventType: 'fullme:done', action: 'done', text: '"成功"结束流程' })
     },
     onFailed: (reason) => {
+      // 流程失败: 清理验证码刷新映射。
+      robotUrlMap.clear()
       tuiDecision({ actor: 'flow', flow: 'fullme', eventType: 'fullme-failed', action: 'failed', text: `"失败"结束流程: ${reason}` })
     },
     onCaptcha: pushCaptcha,
@@ -1096,6 +1104,24 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
           return
         }
         readJsonBody(req).then((body) => {
+          const cmds = Array.isArray(body.cmds)
+            ? body.cmds
+              .filter((c): c is string => typeof c === 'string')
+              .map(c => c.trim())
+              .filter(c => c !== '')
+            : null
+          if (cmds !== null) {
+            if (cmds.length === 0) {
+              sendJson(res, 400, { ok: false, error: 'empty command' })
+              return
+            }
+            let ok = true
+            for (const c of cmds) {
+              ok = sendCommand(c) && ok
+            }
+            sendJson(res, 200, { ok })
+            return
+          }
           const cmd = typeof body.cmd === 'string' ? body.cmd.trim() : ''
           if (cmd === '') {
             sendJson(res, 400, { ok: false, error: 'empty command' })
@@ -1105,6 +1131,46 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
           sendJson(res, 200, { ok: sent })
         }).catch((err: unknown) => {
           tuiLog(`[SYS] 命令请求解析失败: ${err instanceof Error ? err.message : String(err)}`)
+          sendJson(res, 400, { ok: false, error: 'invalid body' })
+        })
+      },
+    })
+    : undefined
+
+  const disposeCaptchaRefreshRoute = createRoute !== null
+    ? createRoute({
+      kind: 'exact',
+      path: '/mud/captcha/refresh',
+      handler: (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'POST') {
+          sendJson(res, 405, { ok: false, error: 'method not allowed' })
+          return
+        }
+        readJsonBody(req).then(async (body) => {
+          const imageUrl = typeof body.imageUrl === 'string' ? body.imageUrl.trim() : ''
+          if (imageUrl === '') {
+            sendJson(res, 400, { ok: false, error: 'missing imageUrl' })
+            return
+          }
+          const robotUrl = robotUrlMap.get(imageUrl)
+          if (robotUrl === undefined) {
+            sendJson(res, 400, { ok: false, error: 'unknown captcha image' })
+            return
+          }
+          // 删除旧映射, 重新解析获取新图片。
+          robotUrlMap.delete(imageUrl)
+          try {
+            const newDisplayUrl = await resolveCaptchaImage(robotUrl)
+            robotUrlMap.set(newDisplayUrl, robotUrl)
+            tuiLog(`[验证码] 刷新图片: ${newDisplayUrl}`)
+            pushUiItem({ kind: 'captcha', text: 'fullme 验证码', url: newDisplayUrl, cmd: 'fullme', time: Date.now() })
+            sendJson(res, 200, { ok: true, url: newDisplayUrl })
+          } catch (err) {
+            tuiLog(`[验证码] 刷新失败: ${err instanceof Error ? err.message : String(err)}`)
+            sendJson(res, 500, { ok: false, error: 'refresh failed' })
+          }
+        }).catch((err: unknown) => {
+          tuiLog(`[SYS] 验证码刷新请求解析失败: ${err instanceof Error ? err.message : String(err)}`)
           sendJson(res, 400, { ok: false, error: 'invalid body' })
         })
       },
@@ -1127,6 +1193,7 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     if (disposeStatusRoute) disposeStatusRoute()
     if (disposeDiagRoute) disposeDiagRoute()
     if (disposeCommandRoute) disposeCommandRoute()
+    if (disposeCaptchaRefreshRoute) disposeCaptchaRefreshRoute()
     if (agent && typeof agent.dispose === 'function') {
       try { void agent.dispose() } catch { /* ignore */ }
     }

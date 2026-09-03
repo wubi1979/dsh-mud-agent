@@ -50,6 +50,8 @@ export interface MudClientInjected {
   ensureAndOpenUserSession: (serverId: string, userId: string, shouldEngage: boolean) => void
   /** Send one game command straight to the game (bypasses the agent). */
   sendCommand: (cmd: string) => Promise<boolean>
+  /** Refresh the captcha image (re-fetch robot.php and push a new captcha event). */
+  refreshCaptcha: (imageUrl: string) => Promise<string | null>
   toggleSidebar: () => void
 }
 

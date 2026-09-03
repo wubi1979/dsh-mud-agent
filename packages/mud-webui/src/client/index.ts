@@ -187,16 +187,38 @@ export function apply(ctx: ClientContext): void {
     },
     sendCommand: async (cmd) => {
       try {
+        // 命令序列格式 [halt,fullme text] → 发送 cmds 数组; 否则单命令。
+        const seqMatch = /^\[(.+)\]$/.exec(cmd)
+        let body: Record<string, unknown>
+        if (seqMatch !== null && seqMatch[1] !== undefined) {
+          body = { cmds: seqMatch[1].split(',').map(c => c.trim()).filter(c => c !== '') }
+        } else {
+          body = { cmd }
+        }
         const res = await fetch('/mud/command', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ cmd }),
+          body: JSON.stringify(body),
         })
         if (!res.ok) return false
-        const body = (await res.json()) as { ok?: unknown }
-        return body.ok === true
+        const resBody = (await res.json()) as { ok?: unknown }
+        return resBody.ok === true
       } catch {
         return false
+      }
+    },
+    refreshCaptcha: async (imageUrl): Promise<string | null> => {
+      try {
+        const res = await fetch('/mud/captcha/refresh', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ imageUrl }),
+        })
+        if (!res.ok) return null
+        const body = (await res.json()) as { ok?: unknown; url?: unknown }
+        return body.ok === true && typeof body.url === 'string' ? body.url : null
+      } catch {
+        return null
       }
     },
     toggleSidebar: () => { ctx.layout.toggleSidebar() },

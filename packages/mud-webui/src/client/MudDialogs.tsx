@@ -156,15 +156,25 @@ export function ServerDialog({ open, onClose, onAdd }: {
 const CAPTCHA_IMG_STYLE: React.CSSProperties = {
   display: 'block',
   maxWidth: '100%',
+  maxHeight: 220,
   marginTop: 10,
+  marginLeft: 'auto',
+  marginRight: 'auto',
   borderRadius: 6,
   border: '1px solid var(--dsw-alias-interactive-bg-hover)',
   background: '#fff',
+  objectFit: 'contain',
 }
 
 const HINT_STYLE: React.CSSProperties = {
   fontSize: 12,
   color: 'var(--dsw-alias-label-secondary)',
+  marginTop: 10,
+}
+
+const WARN_STYLE: React.CSSProperties = {
+  fontSize: 12,
+  color: '#d85f5f',
   marginTop: 10,
 }
 
@@ -175,23 +185,25 @@ const HINT_STYLE: React.CSSProperties = {
  * /mud/command 并行发送 (不经过 agent/流程); 中止 → 仅关闭。用户可随时
  * 修改命令框内容再发送。
  */
-export function CaptchaDialog({ mudSocket, sendCommand }: {
+export function CaptchaDialog({ mudSocket, sendCommand, refreshCaptcha }: {
   mudSocket: MudSocketController
   sendCommand: (cmd: string) => Promise<boolean>
+  refreshCaptcha: (imageUrl: string) => Promise<string | null>
 }) {
   const snapshot = useSyncExternalStore(
     listener => mudSocket.subscribeCaptcha(listener),
     () => mudSocket.getCaptcha(),
   )
   const captcha = snapshot.captcha
-  const [cmd, setCmd] = useState('fullme')
+  const [cmd, setCmd] = useState('fullme ')
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
 
-  // 新验证码事件 → 重置命令预填 (host: 'fullme' 或 OCR 后 'fullme <文字>')。
+  // 新验证码事件 → 重置命令预填为初始值 'fullme ' (带半角空格, 便于直接输入文字)。
   useEffect(() => {
     if (captcha === null) return
-    setCmd(captcha.cmd ?? 'fullme')
+    setCmd('fullme ')
     setError(null)
   }, [captcha])
 
@@ -203,12 +215,24 @@ export function CaptchaDialog({ mudSocket, sendCommand }: {
       return
     }
     setSending(true)
-    void Promise.resolve(sendCommand(trimmed))
+    // 命令序列 [halt, fullme 文字]: 打坐/战斗等持续状态会阻断 fullme, 先 halt 再发送。
+    void Promise.resolve(sendCommand(`[${['halt', trimmed].join(',')}]`))
       .then((ok) => {
         if (ok) { close() } else { setError('发送失败 (游戏可能未连接), 请重试') }
       })
       .catch(() => { setError('发送失败, 请重试') })
       .finally(() => { setSending(false) })
+  }
+  const refresh = (): void => {
+    if (refreshing || captcha === null) return
+    setRefreshing(true)
+    setError(null)
+    void Promise.resolve(refreshCaptcha(captcha.url ?? ''))
+      .then((newUrl) => {
+        if (newUrl === null) setError('刷新失败, 请重试')
+      })
+      .catch(() => { setError('刷新失败, 请重试') })
+      .finally(() => { setRefreshing(false) })
   }
   const enter = useEnterSubmit(() => { if (!sending) submit() })
 
@@ -231,18 +255,24 @@ export function CaptchaDialog({ mudSocket, sendCommand }: {
         <>
           {/* eslint-disable-next-line @next/next/no-img-element -- 内部对话框, 直接用 img */}
           <img src={captcha.url ?? ''} alt="验证码图片" style={CAPTCHA_IMG_STYLE} />
-          <div style={HINT_STYLE}>请输入图片中的文字 (识别错误可在游戏内重试)</div>
+          <div style={{...HINT_STYLE, display: 'flex', alignItems: 'center', gap: 4}}>
+            请输入图片中的文字，如看不清可按 <span style={{cursor: 'pointer'}} onClick={refresh}>刷新 ↻</span>
+          </div>
           <input
             style={{ ...FIELD_STYLE, marginTop: 4 }}
             value={cmd}
             autoFocus
-            onFocus={(e) => { e.target.select() }}
+            onFocus={(e) => {
+              const len = e.target.value.length
+              e.target.setSelectionRange(len, len)
+            }}
             onChange={(e) => { setCmd(e.target.value); setError(null) }}
             onCompositionStart={() => { enter.composing.current = true }}
             onCompositionEnd={() => { enter.composing.current = false }}
             onKeyDown={enter.onKeyDown}
           />
           {error !== null && <div style={ERROR_STYLE} role="alert">{error}</div>}
+          <div style={WARN_STYLE}>强行打断练功、战斗可能存在危险。</div>
         </>
       )}
     </Modal>
