@@ -14,6 +14,15 @@
 
 > mud-core 是统一 host 引擎，mud-tui / mud-webui 是两种可互换的外壳。一次启动挂 **core + 一个壳**，换壳只需换 patch。
 
+## 词汇表
+
+- **skill**：agent 的决策单元与程序性知识（被动，给 LLM 看）；steps 编排 tool/flow，由 agent loop 逐步执行，无自动执行引擎。
+- **flow**：确定性事务（主动，给运行时看）；唯一激活入口 `flow.start`，调用来源 = 系统 watch / 人类 UI / agent（经 skill 绑定）。
+- **watch**：flow 声明的常驻探测触发器，运行时代为注册（owner `watch:<id>`），命中 → `flow.start` 可携捕获数据。
+- **触发器不变式**：`flow.start` 原子注册全部事务触发器，严格先于任何 `driver.send`（先捕获再执行 / 先执行再捕获都靠它）。
+- **步骤粒度**：结果需 agent 判断 → skill step；无需判断连着跑 → 包成 flow（flow 一次调用一个结果）。
+- **flow 是执行事实的唯一来源**：skill 描述引用 flow 语义，不复述步骤，防两份菜单漂移。
+
 ---
 
 ## 开发模式

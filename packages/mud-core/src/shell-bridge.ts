@@ -68,7 +68,23 @@ export interface MudWorldEvent {
 }
 
 /**
- * Mud 实时广播事件 (进程内, 驱动 TUI): 决策/日志/世界。
+ * One captcha interaction the fullme flow published: the captured image URL
+ * plus the prefilled command ("fullme <text>"; text empty until OCR fills
+ * it). Replacement semantics — a new event replaces the frontend dialog
+ * state (never stacks). The WebUI dialog receives this via /mud/ws ui frames
+ * (kind 'captcha'); the TUI consumes it as a session event.
+ */
+export interface MudCaptchaEvent {
+  /** Captcha image URL (as echoed by the game). */
+  url: string
+  /** Prefilled command, e.g. 'fullme' or 'fullme <recognized text>'. */
+  cmd: string
+  /** Epoch-ms time. */
+  time: number
+}
+
+/**
+ * Mud 实时广播事件 (进程内, 驱动 TUI): 决策/日志/世界/验证码。
  * mud-core 经 ctx.emit 广播, 不再写进 agent session 日志 — mud/* 事件无需
  * 持久化 (TUI 与 host 同进程实时消费, browser 走 /mud/ws), 而写入 session
  * 日志会因类型不在 KNOWN_SESSION_EVENT_TYPES 导致重启读史失败。
@@ -78,6 +94,7 @@ declare module '@deepseek-ai/cordis' {
     'mud/decision': MudDecisionEvent
     'mud/log': MudLogEvent
     'mud/world': MudWorldEvent
+    'mud/captcha': MudCaptchaEvent
   }
 }
 
@@ -86,6 +103,7 @@ declare module '@deepseek-ai/dsh-session/types' {
     'mud/decision': MudDecisionEvent
     'mud/log': MudLogEvent
     'mud/world': MudWorldEvent
+    'mud/captcha': MudCaptchaEvent
     /**
      * One game-output batch the MUD host pushed directly (agentEnabled=false,
      * agent pause mode): the game text plus a per-connection monotonic seq

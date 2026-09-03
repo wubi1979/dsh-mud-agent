@@ -32,6 +32,11 @@ const GAME_RETAIN_MAX = 5000
 const LOGS_RETAIN_MAX = 500
 const DECISIONS_RETAIN_MAX = 200
 
+/** 稳定的 useSyncExternalStore 快照容器 (captcha 替换语义, 全局唯一)。 */
+export interface MudCaptchaSnapshot {
+  readonly captcha: MudUiItem | null
+}
+
 /** Stable view snapshot for useSyncExternalStore consumers (LogView/Rail). */
 export interface MudViewSnapshot {
   readonly logs: readonly MudUiItem[]
@@ -76,6 +81,10 @@ export class MudSocketController {
   private view: MudViewSnapshot = { logs: this.logs, decisions: this.decisions, world: null }
   private readonly viewListeners = new Set<() => void>()
 
+  // ── 验证码交互 (替换语义): 新 captcha 条目整体替换, 全局唯一不叠开 ──
+  private captchaState: MudCaptchaSnapshot = { captcha: null }
+  private readonly captchaListeners = new Set<() => void>()
+
   private readonly gameHandlers = new Set<GameHandler>()
   private readonly uiHandlers = new Set<UiHandler>()
   private readonly worldHandlers = new Set<WorldHandler>()
@@ -107,6 +116,24 @@ export class MudSocketController {
   subscribeView(listener: () => void): () => void {
     this.viewListeners.add(listener)
     return () => { this.viewListeners.delete(listener) }
+  }
+
+  /** 当前验证码交互快照 (null = 无待确认验证码; 引用仅在新事件时更换)。 */
+  getCaptcha(): MudCaptchaSnapshot {
+    return this.captchaState
+  }
+
+  /** Captcha subscription for useSyncExternalStore. */
+  subscribeCaptcha(listener: () => void): () => void {
+    this.captchaListeners.add(listener)
+    return () => { this.captchaListeners.delete(listener) }
+  }
+
+  /** 用户确认/中止后清除对话框状态 (不发任何命令 — 发送由组件走 /mud/command)。 */
+  clearCaptcha(): void {
+    if (this.captchaState.captcha === null) return
+    this.captchaState = { captcha: null }
+    for (const listener of [...this.captchaListeners]) listener()
   }
 
   /** Retained game items — a late-mounting surface replays these on mount. */
@@ -192,6 +219,13 @@ export class MudSocketController {
         }
         const logs = items.filter(item => item.kind === 'log')
         const decisions = items.filter(item => item.kind === 'decision')
+        // captcha: 替换语义 — 取本批最后一条整体覆盖 (host 保证 OCR 增量
+        // 事件也走同一通道, 前端只需"新事件替换旧事件")。
+        const captcha = items.filter(item => item.kind === 'captcha')
+        if (captcha.length > 0) {
+          this.captchaState = { captcha: captcha[captcha.length - 1] ?? null }
+          for (const listener of [...this.captchaListeners]) listener()
+        }
         if (logs.length > 0) {
           this.logs = [...this.logs, ...logs].slice(-LOGS_RETAIN_MAX)
         }

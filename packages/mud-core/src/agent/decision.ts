@@ -6,27 +6,28 @@
  *
  * 决策路由:
  *   事件 → RuleEngine.match (when 条件匹配扁平 WorldModel)
- *     → 命中 → 宿主执行规则动作 (工具调用 / 激活命名 skill)
+ *     → 命中 → 宿主执行规则动作 (工具调用 / 直调 flow)
  *     → 未命中 / action:{action:"llm"} → 交给 DSH agent
  *
  * 规则形态:
- *   { id, priority, match: { event?, when? }, action: { action:"tool"|"skill"|"llm",
- *     tool?, cmd?, skill? }, after? }
+ *   { id, priority, match: { event?, when? }, action: { action:"tool"|"flow"|"llm",
+ *     tool?, cmd?, flow? }, after? }
  *   cmd 支持 {name}/{pass} 模板 (登录, 宿主从 config.account 渲染);
- *   action:{action:"skill"} 由决策中心查 skill 注册表启动对应 flow/skill。
+ *   action:{action:"flow"} 由决策中心经宿主回调 flow.start 启动确定性事务
+ *   (唯一激活入口 flow.start; 如 login)。
  * @module @deepseek-ai/dsh-mud-core/decision
  */
 
 /**
  * 规则动作: 决策中心的统一 "then"。
  *   - tool   确定性单步: 执行工具 (战斗/死亡反射, 轻量短路);
- *   - skill  激活命名 skill/flow (如登录流程): 由决策中心查 skill 注册表启动;
+ *   - flow   确定性命中直调 flow (唯一激活入口 flow.start; 如 login);
  *   - llm    声明式: 不短路, 交给 agent (重型);
  *   - no_action 匹配但不动作。
  */
 export type RuleAction =
   | { action: 'tool'; tool: string; cmd?: string }
-  | { action: 'skill'; skill: string }
+  | { action: 'flow'; flow: string }
   | { action: 'llm' }
   | { action: 'no_action' }
 
@@ -40,13 +41,11 @@ export interface DecisionRule {
   action?: RuleAction
   /** 命中副作用: 写入 WorldModel 的字段 (防重复等)。 */
   after?: Record<string, unknown> | null
-  /** 规则归属的流程能力 (agent 的 skill 知识)。 */
-  skill?: string | null
   description?: string
 }
 
 /** 归一化后的内部规则 (宿主执行回调引用)。 */
-export interface NormalizedRule extends Required<Pick<DecisionRule, 'id' | 'priority' | 'match' | 'after' | 'skill' | 'description'>> {
+export interface NormalizedRule extends Required<Pick<DecisionRule, 'id' | 'priority' | 'match' | 'after' | 'description'>> {
   when: Record<string, unknown> | null
   action: RuleAction
 }
@@ -73,7 +72,6 @@ export class RuleEngine {
       when: rule.when ?? rule.match?.when ?? null,
       action: rule.action ?? { action: 'no_action' },
       after: rule.after ?? null,
-      skill: rule.skill ?? null,
       description: rule.description ?? '',
     }
     let i = 0

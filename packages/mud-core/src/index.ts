@@ -43,7 +43,7 @@ import {
 import { CommandQueue, renderTemplate } from './agent/execution.ts'
 import { buildMudTools, type MudTools } from './agent/tools.ts'
 import { FlowService, FlowRuntime, type FlowHost } from './agent/flow.ts'
-import loginWorkflow from './config/workflows.ts'
+import defaultFlows from './config/flows.ts'
 import { DecisionCenter } from './agent/dispatcher.ts'
 import defaultPerceptionRules from './config/trigger-rules.ts'
 import defaultDecisionRules from './config/decision-rules.ts'
@@ -54,8 +54,11 @@ import { createMudAgent, sendGameOutput, type CreateMudAgentOptions } from './ag
 import type { AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { MudDecisionEvent, MudLogEvent, MudWorldEvent, MudWorldSnapshot } from './shell-bridge.ts'
+import type {
+  MudCaptchaEvent, MudDecisionEvent, MudLogEvent, MudWorldEvent, MudWorldSnapshot,
+} from './shell-bridge.ts'
 import { MudWebSocketHub, type MudUiItem } from './net/ws.ts'
+import { resolveCaptchaImage } from './net/captcha.ts'
 import type {
   MudConnectOptions, MudConnectionStatus, MudCoreService, MudDiag, MudGameRead,
 } from './service.ts'
@@ -225,7 +228,11 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     data: { world: MudWorldSnapshot; time: number },
   ): void
   function sessionAppend(
-    type: 'mud/decision' | 'mud/log' | 'mud/world',
+    type: 'mud/captcha',
+    data: { url: string; cmd: string; time: number },
+  ): void
+  function sessionAppend(
+    type: 'mud/decision' | 'mud/log' | 'mud/world' | 'mud/captcha',
     data: {
       actor?: 'rule' | 'router' | 'agent' | 'flow'
       ruleId?: string
@@ -234,6 +241,8 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       result?: string
       text?: string
       world?: MudWorldSnapshot
+      url?: string
+      cmd?: string
       time: number
     },
   ): void {
@@ -242,6 +251,8 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       ctx.events.emit('mud/decision', data as MudDecisionEvent)
     } else if (type === 'mud/log') {
       ctx.events.emit('mud/log', data as MudLogEvent)
+    } else if (type === 'mud/captcha') {
+      ctx.events.emit('mud/captcha', data as unknown as MudCaptchaEvent)
     } else {
       ctx.events.emit('mud/world', data as MudWorldEvent)
     }
@@ -274,7 +285,7 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     hub?.pushGame([item])
   }
 
-  /** 追加一条 UI 条目 (日志/决策): 进缓冲经 WS 广播 + session 事件双写。 */
+  /** 追加一条 UI 条目 (日志/决策/验证码): 进缓冲经 WS 广播 + session 事件双写。 */
   function pushUiItem(item: Omit<MudUiItem, 'seq'>): void {
     uiTailSeq += 1
     const entry: MudUiItem = { ...item, seq: uiTailSeq }
@@ -293,6 +304,13 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
         ...(item.eventType !== undefined ? { eventType: item.eventType } : {}),
         ...(item.flow !== undefined ? { flow: item.flow } : {}),
         ...(item.result !== undefined ? { result: item.result } : {}),
+      })
+    } else if (item.kind === 'captcha') {
+      // 验证码交互 (替换语义): WebUI 经 /mud/ws ui 帧, TUI 经进程内事件。
+      sessionAppend('mud/captcha', {
+        url: item.url ?? '',
+        cmd: item.cmd ?? 'fullme',
+        time: item.time,
       })
     } else {
       sessionAppend('mud/log', { text: item.text, time: item.time })
@@ -342,11 +360,112 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   for (const r of defaultPerceptionRules) trigger.register(r)
   tuiLog(`[触发] 感知触发服务就绪, 已注册 ${defaultPerceptionRules.length} 条感知规则`)
 
-  // ── 统一事件决策中心 (ctx.mud.dispatcher): 规则 → 技能激活 → agent 兜底 ──
+  // ── 流程引擎 (ctx.mud.flow): 确定性事务流程 (登录/fullme) ──
+  // 流程语义事件 → 决策栏可读文案 (如 login:required → "未登录")。
+  const FLOW_EVENT_LABELS: Record<string, string> = {
+    'login:required': '未登录',
+    'login-failed': '登录失败',
+  }
+  const flow = new FlowService({ bus: ctx, trigger })
+
+  /** 验证码交互推送 (fullme flow onCaptcha → WebUI 对话框 / TUI 事件)。
+   *  替换语义: 新事件整体替换前端对话框状态 (全局唯一, 不叠开)。
+   *  游戏回显的是 robot.php 页面而非真实图片: 先异步请求该页面解析出真实
+   *  图片地址 (jpg), 再把真实图片推给前端; 解析失败/超时退化为回显原地址
+   *  (用户可粘贴到浏览器手动看图)。单次抓取不重试 (refresh 有限、3 分钟失效)。 */
+  async function pushCaptcha(url: string): Promise<void> {
+    let displayUrl = url
+    try {
+      displayUrl = await resolveCaptchaImage(url)
+    } catch {
+      tuiLog(`[验证码] 解析真实图片失败, 回退原地址: ${url}`)
+    }
+    tuiLog(`[验证码] 捕获图片 → 推送确认框: ${displayUrl}`)
+    pushUiItem({ kind: 'captcha', text: 'fullme 验证码', url: displayUrl, cmd: 'fullme', time: Date.now() })
+    void ocrCaptcha(displayUrl)
+  }
+
+  /**
+   * 后台 OCR (best-effort 钩子): 识别完成 → 以增量 captcha 事件预填
+   * "fullme <文字>" (前端对话框替换命令预填, 用户仍可修改)。
+   * 依赖 attachments 服务 (图片导入) + 侧路 LLM 补全; 当前宿主未接入该
+   * 服务 — 走设计兜底: 对话框手动输入, 用户确认/修改后经 mud/command 发送。
+   */
+  async function ocrCaptcha(url: string): Promise<void> {
+    void url
+    tuiLog('[验证码] 后台 OCR 未接入 (需 attachments 服务), 请在确认框手动输入文字')
+  }
+
+  /** 每流程宿主: 共享执行路径 (bus/world/trigger/getAccount/send/onEvent),
+   *  流程间差异只在进展/收尾回调与 flow 名。 */
+  function makeFlowHost(flowId: string, over: Partial<FlowHost> = {}): FlowHost {
+    return {
+      bus: ctx,
+      world,
+      trigger,
+      getAccount: () => ({
+        name: activeAccount?.name ?? config.account?.name ?? '',
+        pass: activeAccount?.pass ?? config.account?.pass ?? '',
+      }),
+      // 走 mud_send 工具执行路径 (与 agent/规则共用); 命令序列 → cmds (允许空命令退 MXP)。
+      send: (cmd) => {
+        if (Array.isArray(cmd)) mudTools['mud_send']?.execute({ cmds: cmd })
+        else mudTools['mud_send']?.execute({ cmd })
+      },
+      onProgress: (msg) => {
+        if (flowId === 'login') loginLog.push(`[自动登录] ${msg}`)
+        // 决策栏格式: [流程] HH:mm:ss (flow): 收到xx提示 → 发送xx
+        tuiDecision({ actor: 'flow', flow: flowId, eventType: `${flowId}:step`, action: msg, text: msg })
+      },
+      onEvent: (e, action) => {
+        // 命中的提示行折叠进注入录制器: agent 不再重复分析, 仅见"事件→动作"条目。
+        injector?.fold({
+          eventType: e.type,
+          startAbs: e.line,
+          endAbs: e.line,
+          text: `[事件(L${e.line})] 感知 "${e.type}" → ${action}`,
+          time: e.ts,
+        })
+      },
+      ...over,
+    }
+  }
+  const loginHost = makeFlowHost('login', {
+    onDone: () => {
+      tuiDecision({ actor: 'flow', flow: 'login', eventType: 'login:done', action: 'done', text: '"成功"结束流程' })
+    },
+    onFailed: (reason) => {
+      tuiDecision({ actor: 'flow', flow: 'login', eventType: 'login-failed', action: 'agent', text: `"失败"结束流程: ${reason}` })
+      const prefix = loginLog.length > 0 ? loginLog.join('\n') + '\n' : ''
+      const tail = (injector?.text().trim() || reason)
+      injector?.reset()
+      if (agent) injectToAgent(prefix + tail)
+    },
+    // 登录超时覆盖 (config.loginTimeoutMs → FlowHost.timeoutMs)。
+    timeoutMs: config.loginTimeoutMs ?? 20000,
+  })
+  const fullmeHost = makeFlowHost('fullme', {
+    onDone: () => {
+      tuiDecision({ actor: 'flow', flow: 'fullme', eventType: 'fullme:done', action: 'done', text: '"成功"结束流程' })
+    },
+    onFailed: (reason) => {
+      tuiDecision({ actor: 'flow', flow: 'fullme', eventType: 'fullme-failed', action: 'failed', text: `"失败"结束流程: ${reason}` })
+    },
+    onCaptcha: pushCaptcha,
+  })
+  // 装配全部流程 (config/flows.ts): 运行器 + 装配期宿主 + watch 常驻探测注册。
+  const flowHosts: Record<string, FlowHost> = { login: loginHost, fullme: fullmeHost }
+  for (const cfg of defaultFlows) {
+    flow.register(new FlowRuntime(ctx, cfg), flowHosts[cfg.id] ?? null)
+  }
+  tuiLog(`[流程] 流程引擎就绪 (${flow.names().join(', ')})`)
+
+  // ── 统一事件决策中心 (ctx.mud.dispatcher): 规则 → tool/flow 直调 → agent 兜底 ──
   // 可行动事件的统一路由。规则命中 (action:"tool") → 执行工具 (确定性短路);
-  // 未命中 → 技能激活 (如 login); 仍未命中 → agent 兜底。
+  // 命中 (action:"flow") → flow.start 直调; 未命中 → agent 兜底。
   const center = new DecisionCenter({
     stateProvider: () => flattenWorld(world),
+    startFlow: (flowId) => flow.start(flowId),
     executeRule: (rule, eventType) => {
       void eventType
       const a = rule.action
@@ -372,14 +491,14 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       if (rule.after) applyPatch(world, rule.after)
     },
     onRoute: (eventType, layer, id) => {
-      // skill/flow 激活 (如登录) 是低频实质决策 — 记 `flow` 决策节点, 进决策栏,
+      // flow 直调 (如登录) 是低频实质决策 — 记 `flow` 决策节点, 进决策栏,
       // 而非高频感知路由噪音 (后者归 router 且被 WebUI 决策栏过滤)。
-      if (layer === 'skill') {
+      if (layer === 'flow') {
         tuiDecision({
           actor: 'flow',
-          flow: 'login',
+          ...(id ? { flow: id } : {}),
           eventType,
-          action: '启动登录流程',
+          action: `启动 ${id} 流程`,
           text: `由"${FLOW_EVENT_LABELS[eventType] ?? eventType}"事件启动流程`,
         })
         return
@@ -412,77 +531,16 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   const driver = new PerceptionDriver({ buffer, trigger, maxPending: MAX_PENDING_LINES })
   tuiLog(`[感知] 缓冲 ${buffer.maxRows} 行 / 注入录制器 30s 窗 (≥${TRANSCRIPT_MIN_LINES} 行)`)
   tuiLog('[状态] 状态捕获就绪 (world 同步 + GMCP 直连)')
-  tuiLog('[流程] 流程引擎就绪 (确定性事务流程)')
-  // 决策中心 (总线消费者): 可行动感知事件 → 统一路由 (规则/技能激活/agent 兜底)。
+  // 决策中心 (总线消费者): 可行动感知事件 → 统一路由 (规则/flow 直调/agent 兜底)。
   const disposePercept = ctx.events.on('mud/percept', (e: MudPerceptEvent) => {
     resetDeadAir() // 感知事件到达 → 重置断流计时 (登录期不 armed, 见实现)
     center.onPercept(e)
   })
-  // 系统级状态事件 → 决策中心 (如 login:required 激活登录 skill)。
+  // 系统级状态事件 → 决策中心 (如 login:required 直调登录 flow)。
   const disposeSystem = ctx.events.on('mud/system', (e: MudSystemEvent) => {
     center.onSystem(e)
   })
   tuiLog('[事件] 总线订阅就绪: mud/percept + mud/system → 决策中心')
-
-  // ── 流程引擎 (ctx.mud.flow): 确定性事务流程 (登录) ─────────
-  // 流程语义事件 → 决策栏可读文案 (如 login:required → "未登录")。
-  const FLOW_EVENT_LABELS: Record<string, string> = {
-    'login:required': '未登录',
-    'login-failed': '登录失败',
-  }
-  const flow = new FlowService()
-  const loginHost: FlowHost = {
-    bus: ctx,
-    world,
-    trigger,
-    getAccount: () => ({
-      name: activeAccount?.name ?? config.account?.name ?? '',
-      pass: activeAccount?.pass ?? config.account?.pass ?? '',
-    }),
-    // 走 mud_send 工具执行路径 (与 agent/规则共用); 命令序列 → cmds (允许空命令退 MXP)。
-    send: (cmd) => {
-      if (Array.isArray(cmd)) mudTools['mud_send']?.execute({ cmds: cmd })
-      else mudTools['mud_send']?.execute({ cmd })
-    },
-    onProgress: (msg) => {
-      loginLog.push(`[自动登录] ${msg}`)
-      // 决策栏格式: [流程] HH:mm:ss (login): 收到xx提示 → 发送xx
-      tuiDecision({ actor: 'flow', flow: 'login', eventType: 'login:step', action: msg, text: msg })
-    },
-    onDone: () => {
-      tuiDecision({ actor: 'flow', flow: 'login', eventType: 'login:done', action: 'done', text: '"成功"结束流程' })
-    },
-    onEvent: (e, action) => {
-      // 命中的提示行折叠进注入录制器: agent 不再重复分析, 仅见"事件→动作"条目。
-      injector?.fold({
-        eventType: e.type,
-        startAbs: e.line,
-        endAbs: e.line,
-        text: `[事件(L${e.line})] 感知 "${e.type}" → ${action}`,
-        time: e.ts,
-      })
-    },
-    onFailed: (reason) => {
-      tuiDecision({ actor: 'flow', flow: 'login', eventType: 'login-failed', action: 'agent', text: `"失败"结束流程: ${reason}` })
-      const prefix = loginLog.length > 0 ? loginLog.join('\n') + '\n' : ''
-      const tail = (injector?.text().trim() || reason)
-      injector?.reset()
-      if (agent) injectToAgent(prefix + tail)
-    },
-    loginTimeoutMs: config.loginTimeoutMs ?? 20000,
-  }
-  flow.register(new FlowRuntime(ctx, loginWorkflow))
-  // ── 登录 skill 处理器 (注册制): 只声明"怎么执行", 触发时机由规则表决定 —
-  //    decision-rules.ts `on-login-required` (when login:required && !logged_in →
-  //    action:"skill" login) 由决策中心统一调度; agent 主动需要登录时同样发布
-  //    mud/system login:required, 走同一条激活路径 (不再由宿主硬编码订阅)。
-  center.registerSkill({
-    id: 'login',
-    activate: () => {
-      if (flow.status('login') === 'running') return // 已在运行, 幂等
-      flow.start('login', loginHost)
-    },
-  })
 
   // ── 技能服务 (ctx.mud.skill): 预制目录 + agent 动态生成的技能注册 ──────
   // 目录变化 → 释放当前 agent: 下次 ensureAgent 重建 (resume 恢复上下文) 时

@@ -25,20 +25,24 @@ export interface MudGameItem {
   time: number
 }
 
-/** 一条 UI 流帧条目 (日志或结构化决策)。 */
+/** 一条 UI 流帧条目 (日志、结构化决策或验证码交互)。 */
 export interface MudUiItem {
   seq: number
-  kind: 'log' | 'decision'
+  kind: 'log' | 'decision' | 'captcha'
   text: string
   time: number
   /** decision 专用: 决策来源。 */
   actor?: 'rule' | 'router' | 'agent' | 'flow'
-  /** decision 专用: 所属流程名 (actor 'flow' 时, 如 'login')。 */
+  /** decision 专用: 所属流程名 (actor 'flow' 时, 如 'login' / 'fullme')。 */
   flow?: string
   ruleId?: string
   eventType?: string
   action?: string
   result?: string
+  /** captcha 专用: 验证码图片地址 (替换语义 — 新事件整体替换前端对话框状态)。 */
+  url?: string
+  /** captcha 专用: 预填命令 ("fullme <识别文字>"; OCR 完成前缺省 'fullme')。 */
+  cmd?: string
 }
 
 /** Client → server hello handshake: resume from the last-seen seqs (zero = replay). */

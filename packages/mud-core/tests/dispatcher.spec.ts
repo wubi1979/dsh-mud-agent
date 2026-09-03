@@ -1,9 +1,9 @@
 /**
- * dsh-mud-core 统一事件决策中心测试 — DecisionCenter (规则 → tool/skill → agent 兜底)。
+ * dsh-mud-core 统一事件决策中心测试 — DecisionCenter (规则 → tool/flow 直调 → agent 兜底)。
  *
  * 决策知识全部集中在规则表:
  *   action:"tool"  → 单步反射执行工具 (战斗/死亡)
- *   action:"skill" → 激活命名 skill/flow (触发时机由规则决定, 不在 skill 内)
+ *   action:"flow"  → 直调命名 flow (唯一激活入口 flow.start; 触发时机由规则决定)
  *   llm / 未命中   → agent 兜底
  */
 
@@ -14,13 +14,17 @@ import type { MudPerceptEvent, MudSystemEvent } from '../src/events.ts'
 
 function makeCenter(over?: Partial<DecisionCenterHost>) {
   const executed: { rule: string; eventType: string }[] = []
-  const activated: string[] = []
+  const started: string[] = []
   const routes: { eventType: string; layer: string; id?: string }[] = []
   let state: Record<string, unknown> = {}
   const center = new DecisionCenter({
     stateProvider: () => state,
     executeRule: (rule: NormalizedRule, eventType: string) => {
       executed.push({ rule: rule.id, eventType })
+    },
+    startFlow: (flowId: string) => {
+      started.push(flowId)
+      return true
     },
     onRoute: (eventType, layer, id) => {
       routes.push({ eventType, layer, ...(id !== undefined ? { id } : {}) })
@@ -30,12 +34,9 @@ function makeCenter(over?: Partial<DecisionCenterHost>) {
   return {
     center,
     executed,
-    activated,
+    started,
     routes,
     setState: (s: Record<string, unknown>) => { state = s },
-    addSkill: (id: string) => {
-      center.registerSkill({ id, activate: () => activated.push(id) })
-    },
   }
 }
 
@@ -47,13 +48,13 @@ function system(type: string): MudSystemEvent {
   return { type, data: null, ts: Date.now() }
 }
 
-/** 登录激活规则 (对齐 config/decision-rules.ts on-login-required)。 */
+/** 登录直调规则 (对齐 config/decision-rules.ts on-login-required)。 */
 const loginRule: DecisionRule = {
   id: 'on-login-required',
   priority: 30,
   match: { event: 'login:required' },
   when: { 'flags.logged_in': { falsy: true } },
-  action: { action: 'skill', skill: 'login' },
+  action: { action: 'flow', flow: 'login' },
 }
 
 const combatRule: DecisionRule = {
@@ -96,50 +97,40 @@ describe('DecisionCenter 规则 action:"tool" (单步反射)', () => {
   })
 })
 
-describe('DecisionCenter 规则 action:"skill" (技能激活)', () => {
-  it('系统事件命中规则 → 激活注册的 skill 并记录 route=skill', () => {
-    const { center, activated, routes, addSkill } = makeCenter()
+describe('DecisionCenter 规则 action:"flow" (直调确定性事务)', () => {
+  it('系统事件命中规则 → 直调 flow 并记录 route=flow', () => {
+    const { center, started, routes } = makeCenter()
     center.registerRule(loginRule)
-    addSkill('login')
     center.onSystem(system('login:required'))
-    expect(activated).toEqual(['login'])
-    expect(routes.at(-1)).toEqual({ eventType: 'login:required', layer: 'skill', id: 'login' })
+    expect(started).toEqual(['login'])
+    expect(routes.at(-1)).toEqual({ eventType: 'login:required', layer: 'flow', id: 'login' })
   })
 
-  it('when 状态守卫不满足 (已登录) → 不激活', () => {
-    const { center, activated, addSkill, setState } = makeCenter()
+  it('when 状态守卫不满足 (已登录) → 不直调', () => {
+    const { center, started, setState } = makeCenter()
     center.registerRule(loginRule)
-    addSkill('login')
     setState({ 'flags.logged_in': true })
     center.onSystem(system('login:required'))
-    expect(activated).toEqual([])
-    expect(center.skillNames()).toEqual(['login'])
+    expect(started).toEqual([])
   })
 
-  it('感知事件未命中 tool 规则 → 命中 skill 规则则激活 (优先于 agent 兜底)', () => {
-    const { center, activated, routes, addSkill } = makeCenter()
-    center.registerRule({ id: 'on-task', match: { event: 'p:task:start' }, action: { action: 'skill', skill: 'task' } })
-    addSkill('task')
+  it('感知事件未命中 tool 规则 → 命中 flow 规则则直调 (优先于 agent 兜底)', () => {
+    const { center, started, routes } = makeCenter()
+    center.registerRule({ id: 'on-task', match: { event: 'p:task:start' }, action: { action: 'flow', flow: 'task' } })
     center.onPercept(percept('p:task:start'))
-    expect(activated).toEqual(['task'])
-    expect(routes.at(-1)?.layer).toBe('skill')
+    expect(started).toEqual(['task'])
+    expect(routes.at(-1)?.layer).toBe('flow')
   })
 
-  it('skill 未注册时规则命中不激活 (静默)', () => {
-    const { center, activated } = makeCenter()
+  it('flow.start 返回 false (已运行防重) 仍记录 route=flow (幂等语义)', () => {
+    const { center, started, routes } = makeCenter({
+      // 防重场景: flow.start 返回 false (已活跃), 但 route 仍记录 (幂等语义)。
+      startFlow: (flowId) => { started.push(flowId); return false },
+    })
     center.registerRule(loginRule)
     center.onSystem(system('login:required'))
-    expect(activated).toEqual([])
-  })
-
-  it('unregisterSkill 后不再激活', () => {
-    const { center, activated, addSkill } = makeCenter()
-    center.registerRule(loginRule)
-    addSkill('login')
-    expect(center.unregisterSkill('login')).toBe(true)
-    center.onSystem(system('login:required'))
-    expect(activated).toEqual([])
-    expect(center.unregisterSkill('login')).toBe(false)
+    expect(started).toEqual(['login'])
+    expect(routes.at(-1)).toEqual({ eventType: 'login:required', layer: 'flow', id: 'login' })
   })
 
   it('未命中任何规则的系统事件静默 (不落 agent 兜底)', () => {

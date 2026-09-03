@@ -70,14 +70,14 @@ export interface MudGameRead {
 export interface MudCoreService {
   /** 感知触发服务: register/unregister/unregisterByOwner, 命中 → MudEvent → 事件总线。 */
   trigger: TriggerService
-  /** 流程引擎: start/abort/status/register/nanes (登录等确定性事务流程)。 */
+  /** 流程引擎: start/abort/status/register/names (登录等确定性事务流程)。 */
   flow: FlowService
   /** 技能服务: 预制基线 + agent 动态生成的技能注册, 注入 agent 系统提示。 */
   skill: SkillService
   /**
    * 统一事件决策中心: 可行动事件的统一路由。决策知识集中在规则表
-   * (action:"tool" 单步反射 / action:"skill" 激活 skill), agent 兜底。
-   * skill/flow 以处理器注册制接入 (只声明激活动作, 触发时机由规则决定)。
+   * (action:"tool" 单步反射 / action:"flow" 直调确定性事务), agent 兜底。
+   * flow 经宿主回调 flow.start 激活 (触发时机由规则表决定)。
    */
   dispatcher: DecisionCenter
   /**

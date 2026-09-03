@@ -2,13 +2,18 @@
  * dsh-mud-webui — roster dialogs (client half).
  *
  * Controlled Modal forms for adding a MUD server (host:port) and adding a
- * user account to a server. Plain controlled inputs; Enter submits, Escape
- * closes via the Modal. Product copy is Chinese, comments are English.
+ * user account to a server, plus the self-driven fullme captcha dialog
+ * (state lives in the MudSocketController captcha store — replacement
+ * semantics, one dialog page-wide; confirm sends the prefilled command via
+ * POST /mud/command, abort just closes). Plain controlled inputs; Enter
+ * submits, Escape closes via the Modal. Product copy is Chinese, comments
+ * are English.
  * @module @deepseek-ai/dsh-mud-webui/client/MudDialogs
  */
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { MudSocketController } from './mud-socket.ts'
 
 const FIELD_STYLE: React.CSSProperties = {
   width: '100%',
@@ -144,6 +149,102 @@ export function ServerDialog({ open, onClose, onAdd }: {
         onKeyDown={enter.onKeyDown}
       />
       {error !== null && <div style={ERROR_STYLE} role="alert">{error}</div>}
+    </Modal>
+  )
+}
+
+const CAPTCHA_IMG_STYLE: React.CSSProperties = {
+  display: 'block',
+  maxWidth: '100%',
+  marginTop: 10,
+  borderRadius: 6,
+  border: '1px solid var(--dsw-alias-interactive-bg-hover)',
+  background: '#fff',
+}
+
+const HINT_STYLE: React.CSSProperties = {
+  fontSize: 12,
+  color: 'var(--dsw-alias-label-secondary)',
+  marginTop: 10,
+}
+
+/**
+ * fullme 验证码对话框 (自驱动): 状态在 MudSocketController 的 captcha 存储
+ * (替换语义, 全局唯一不叠开) — 新 captcha 事件整体覆盖当前对话框 (含 host
+ * 侧 OCR 完成后的增量预填事件, 命令框预填 "fullme <文字>")。确认 → 经
+ * /mud/command 并行发送 (不经过 agent/流程); 中止 → 仅关闭。用户可随时
+ * 修改命令框内容再发送。
+ */
+export function CaptchaDialog({ mudSocket, sendCommand }: {
+  mudSocket: MudSocketController
+  sendCommand: (cmd: string) => Promise<boolean>
+}) {
+  const snapshot = useSyncExternalStore(
+    listener => mudSocket.subscribeCaptcha(listener),
+    () => mudSocket.getCaptcha(),
+  )
+  const captcha = snapshot.captcha
+  const [cmd, setCmd] = useState('fullme')
+  const [error, setError] = useState<string | null>(null)
+  const [sending, setSending] = useState(false)
+
+  // 新验证码事件 → 重置命令预填 (host: 'fullme' 或 OCR 后 'fullme <文字>')。
+  useEffect(() => {
+    if (captcha === null) return
+    setCmd(captcha.cmd ?? 'fullme')
+    setError(null)
+  }, [captcha])
+
+  const close = (): void => { mudSocket.clearCaptcha() }
+  const submit = (): void => {
+    const trimmed = cmd.trim()
+    if (trimmed === '') {
+      setError('请输入完整命令 (fullme 文字)')
+      return
+    }
+    setSending(true)
+    void Promise.resolve(sendCommand(trimmed))
+      .then((ok) => {
+        if (ok) { close() } else { setError('发送失败 (游戏可能未连接), 请重试') }
+      })
+      .catch(() => { setError('发送失败, 请重试') })
+      .finally(() => { setSending(false) })
+  }
+  const enter = useEnterSubmit(() => { if (!sending) submit() })
+
+  return (
+    <Modal
+      open={captcha !== null}
+      onClose={close}
+      title="fullme 验证码"
+      closeLabel="关闭"
+      footer={(
+        <>
+          <Button variant="outline" onClick={close}>中止</Button>
+          <Button variant="primary" onClick={submit} disabled={sending}>
+            {sending ? '发送中…' : '确认发送'}
+          </Button>
+        </>
+      )}
+    >
+      {captcha !== null && (
+        <>
+          {/* eslint-disable-next-line @next/next/no-img-element -- 内部对话框, 直接用 img */}
+          <img src={captcha.url ?? ''} alt="验证码图片" style={CAPTCHA_IMG_STYLE} />
+          <div style={HINT_STYLE}>请输入图片中的文字 (识别错误可在游戏内重试)</div>
+          <input
+            style={{ ...FIELD_STYLE, marginTop: 4 }}
+            value={cmd}
+            autoFocus
+            onFocus={(e) => { e.target.select() }}
+            onChange={(e) => { setCmd(e.target.value); setError(null) }}
+            onCompositionStart={() => { enter.composing.current = true }}
+            onCompositionEnd={() => { enter.composing.current = false }}
+            onKeyDown={enter.onKeyDown}
+          />
+          {error !== null && <div style={ERROR_STYLE} role="alert">{error}</div>}
+        </>
+      )}
     </Modal>
   )
 }

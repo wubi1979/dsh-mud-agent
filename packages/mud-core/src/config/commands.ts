@@ -1,5 +1,5 @@
 /**
- * dsh-mud-core — 命令注册表 (Commands), config.
+ * dsh-mud-core — 命令注册表字典 (Commands), config.
  *
  * 迁移前项目 `data/skills/*.yaml` 的命令级 API 静态编译版。这些是 pkuxkx 的
  * 命令行语法/参数契约 (一步成事的 `command` 模板), 不是流程级技能 (后者见

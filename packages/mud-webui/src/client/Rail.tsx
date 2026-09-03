@@ -11,6 +11,7 @@ import { useEffect, useSyncExternalStore } from 'react'
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { MudClientInjected } from './MudSidebar.tsx'
 import type { MudUiItem } from '@deepseek-ai/dsh-mud-core/src/client/wire.ts'
+import { CaptchaDialog } from './MudDialogs.tsx'
 
 const RAIL_STYLE: React.CSSProperties = {
   display: 'flex',
@@ -101,8 +102,9 @@ function statusLinesOf(world: {
   return lines
 }
 
-/** 右栏: 决策摘要 (上) + 状态 (下)。挂载时 (会话打开) 确保 details 面板打开。 */
-export function Rail({ mudSocket, onRailMounted }: PropsRuntime<'details'> & InjectFace<MudClientInjected> & { onRailMounted?: () => void }) {
+/** 右栏: 决策摘要 (上) + 状态 (下)。挂载时 (会话打开) 确保 details 面板打开。
+ *  同时承载 fullme 验证码对话框 (全局唯一, 由 /mud/ws captcha 帧驱动)。 */
+export function Rail({ mudSocket, sendCommand, onRailMounted }: PropsRuntime<'details'> & InjectFace<MudClientInjected> & { onRailMounted?: () => void }) {
   useEffect(() => { onRailMounted?.() }, [onRailMounted])
   const view = useSyncExternalStore(
     listener => mudSocket.subscribeView(listener),
@@ -119,6 +121,8 @@ export function Rail({ mudSocket, onRailMounted }: PropsRuntime<'details'> & Inj
   const statusLines = statusLinesOf(view.world as Parameters<typeof statusLinesOf>[0])
   return (
     <div style={RAIL_STYLE}>
+      {/* fullme 验证码对话框: 状态在 mudSocket captcha 存储, 替换语义全局唯一。 */}
+      <CaptchaDialog mudSocket={mudSocket} sendCommand={sendCommand} />
       {/* 决策区: 与状态区各占右侧栏一半; 内容多时自身滚动, 面板高度不被撑高。 */}
       <div style={{ flex: '1 1 50%', minHeight: 0, overflowY: 'auto' }}>
         <div style={{ ...TITLE_STYLE, color: '#5c9cf5' }}>决策</div>

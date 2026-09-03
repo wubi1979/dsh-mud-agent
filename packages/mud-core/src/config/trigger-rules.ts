@@ -20,8 +20,9 @@
 
 import type { PerceptionRule } from '../perception/triggers.ts'
 
-/** 战斗/死亡/房间 感知规则 (常驻)。登录提示规则不再常驻 — 由登录流程激活时
- * 动态注册 (config/workflows.ts loginWorkflow.triggers, owner "flow:login"), 完成即注销。 */
+/** 战斗/死亡/房间 感知规则 (常驻静默状态类)。登录提示等 flow 专属触发规则
+ * 不在此常驻 — 由 flow 声明 (config/flows.ts): watch 装配期注册, 事务 triggers
+ * 激活时注册 (owner "flow:<id>"), 完成/失败即注销。 */
 const defaultPerceptionRules: readonly PerceptionRule[] = [
   // ── 战斗 / 死亡 / 房间 (全局常驻) ──
   {

@@ -9,12 +9,13 @@
  * 路由模型 (单条管线, 决策知识全部集中在规则表):
  *   事件 → 规则匹配 (when 条件)
  *     ├─ action:"tool"  确定性单步 (战斗/死亡反射): 执行工具, 轻量短路;
- *     ├─ action:"skill" 激活命名 skill/flow (如登录): 查 skill 注册表启动;
+ *     ├─ action:"flow"  直调命名 flow (唯一激活入口 flow.start, 如 login):
+ *     │                 经宿主回调 startFlow 启动, 幂等 (已运行时忽略);
  *     └─ 未命中 / action:"llm" → agent 兜底 (重型, 游戏输出注入 agent)。
  *
- * 技能注册制 (SkillHandler): skill 只提供"怎么执行" (激活回调), 不声明"何时
- * 触发" — 触发时机是决策知识, 由规则表统一管理 (如 when login:required →
- * action:"skill" login)。宿主不再硬编码订阅, 登录/任务各自一条激活规则。
+ * flow 激活不经过 skill 注册表: skill 是 agent 的决策单元 (被动, 给 LLM 看),
+ * 系统确定性调用的执行体是 flow — 触发时机 (规则表) 与执行体 (FlowService)
+ * 在此解耦。
  * @module @deepseek-ai/dsh-mud-core/dispatcher
  */
 
@@ -22,15 +23,7 @@ import { RuleEngine, type DecisionRule, type NormalizedRule } from './decision.t
 import type { MudPerceptEvent, MudSystemEvent } from '../events.ts'
 
 /** 路由落点。 */
-export type RouteLayer = 'rule' | 'skill' | 'agent'
-
-/** 技能处理器: 一个 skill/flow 的激活动作 (触发时机由规则表决定, 不在 skill 内)。 */
-export interface SkillHandler {
-  /** skill id (与规则 action:"skill" 的 skill 字段对应, 如 login)。 */
-  id: string
-  /** 激活动作 (宿主: 启动对应 flow / skill)。 */
-  activate: () => void
-}
+export type RouteLayer = 'rule' | 'flow' | 'agent'
 
 /** 决策中心宿主依赖 (index 装配期注入)。 */
 export interface DecisionCenterHost {
@@ -38,6 +31,8 @@ export interface DecisionCenterHost {
   stateProvider: () => Record<string, unknown>
   /** 规则命中 (action:"tool") → 宿主执行工具 + 应用副作用 + 记录。 */
   executeRule: (rule: NormalizedRule, eventType: string) => void
+  /** 规则命中 (action:"flow") → 宿主 flow.start (幂等: 已运行返回 false)。 */
+  startFlow: (flowId: string) => boolean
   /** 路由结果记录 (tuiDecision)。 */
   onRoute?: (eventType: string, layer: RouteLayer, id?: string) => void
   /** 同类语义事件去重窗口 (ms)。 */
@@ -46,11 +41,10 @@ export interface DecisionCenterHost {
 
 /**
  * 统一事件决策中心 (`ctx.mud.dispatcher`): 可行动事件的统一路由。
- * 决策知识集中在规则表 (tool 单步 / skill 激活), agent 兜底。
+ * 决策知识集中在规则表 (tool 单步 / flow 直调), agent 兜底。
  */
 export class DecisionCenter {
   private readonly ruleEngine: RuleEngine
-  private readonly skills = new Map<string, SkillHandler>()
   private readonly dedup = new Map<string, number>()
   private readonly host: DecisionCenterHost
   private readonly dedupMs: number
@@ -61,28 +55,13 @@ export class DecisionCenter {
     this.ruleEngine = new RuleEngine({ stateProvider: () => host.stateProvider() })
   }
 
-  /** 注册一条决策规则 (单步反射 / 技能激活; 按 priority 排序)。 */
+  /** 注册一条决策规则 (单步反射 / flow 直调; 按 priority 排序)。 */
   registerRule(rule: DecisionRule): void {
     this.ruleEngine.register(rule)
   }
 
-  /** 注册一个技能处理器 (只声明激活动作, 触发时机由规则表决定)。 */
-  registerSkill(handler: SkillHandler): void {
-    this.skills.set(handler.id, handler)
-  }
-
-  /** 注销一个技能处理器 (按 id; 返回是否成功)。 */
-  unregisterSkill(id: string): boolean {
-    return this.skills.delete(id)
-  }
-
-  /** 已注册技能 id 列表 (状态展示/调试)。 */
-  skillNames(): string[] {
-    return [...this.skills.keys()]
-  }
-
   /**
-   * 可行动感知事件 → 统一路由: 规则(tool 执行 / skill 激活) → agent 兜底。
+   * 可行动感知事件 → 统一路由: 规则(tool 执行 / flow 直调) → agent 兜底。
    * 同类语义事件短窗去重 (战斗开始的"杀气/向你扑来"等多行只处理一次)。
    */
   onPercept(e: MudPerceptEvent): void {
@@ -102,8 +81,8 @@ export class DecisionCenter {
   }
 
   /**
-   * 系统级状态事件 → 统一路由: 规则匹配 (如 login:required → action:"skill" login)。
-   * 系统事件不进入 agent 兜底 — 用于激活 skill 而非单步决策/重型思考。
+   * 系统级状态事件 → 统一路由: 规则匹配 (如 login:required → action:"flow" login)。
+   * 系统事件不进入 agent 兜底 — 用于激活 flow 而非单步决策/重型思考。
    */
   onSystem(e: MudSystemEvent): void {
     const state = this.host.stateProvider()
@@ -112,18 +91,16 @@ export class DecisionCenter {
     if (hit) this.host.onRoute?.(e.type, hit.layer, hit.id)
   }
 
-  /** 规则动作分派: tool → 宿主执行; skill → 查注册表激活; llm/no_action → 不动作。 */
-  private dispatch(eType: string, rule: NormalizedRule): { layer: 'rule' | 'skill'; id: string } | null {
+  /** 规则动作分派: tool → 宿主执行; flow → 宿主 flow.start; llm/no_action → 不动作。 */
+  private dispatch(eType: string, rule: NormalizedRule): { layer: 'rule' | 'flow'; id: string } | null {
     const a = rule.action
     if (a.action === 'tool') {
       this.host.executeRule(rule, eType)
       return { layer: 'rule', id: rule.id }
     }
-    if (a.action === 'skill') {
-      const handler = this.skills.get(a.skill)
-      if (!handler) return null
-      handler.activate()
-      return { layer: 'skill', id: a.skill }
+    if (a.action === 'flow') {
+      this.host.startFlow(a.flow)
+      return { layer: 'flow', id: a.flow }
     }
     return null // llm / no_action: 声明式, 交 agent
   }
