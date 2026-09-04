@@ -68,5 +68,16 @@ const defaultPerceptionRules: readonly PerceptionRule[] = [
       return { line: line ? line.slice(0, 80) : null }
     },
   },
+  // ── save 档案保存提醒 (常驻): 文本到 → 决策规则回 save (确定性反射) ──
+  {
+    id: 'save:prompt',
+    eventType: 'p:save:prompt',
+    priority: 30,
+    contains: ['建议经常使用save命令保存档案，避免造成意外损失。'],
+    extract: (record) => {
+      const line = record.rows.map(r => r.text).find(t => /save命令/.test(t))
+      return { line: line ? line.slice(0, 120) : null }
+    },
+  },
 ]
 export default defaultPerceptionRules

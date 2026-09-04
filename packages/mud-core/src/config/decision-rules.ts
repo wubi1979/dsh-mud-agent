@@ -67,4 +67,13 @@ export default [
     action: { action: 'llm' },
     description: '死亡 → 交给 agent 修订目标 (学武功防身等)',
   },
+  // ── 档案保存提醒反射 (确定性): 提示 → save (轻量短路, 无需 agent) ──
+  {
+    id: 'on-save-prompt',
+    priority: 55,
+    match: { event: 'p:save:prompt' },
+    when: { 'flags.logged_in': { truthy: true } },
+    action: { action: 'tool', tool: 'mud_send', cmd: 'save' },
+    description: '系统提示建议保存档案 → 自动发送 save',
+  },
 ] satisfies readonly DecisionRule[]
