@@ -1,0 +1,16 @@
+# The dsh-mud-map bundle patch: the MUD navigation sub-package row.
+# Compose with dsh-mud-core in a profile to activate map/position/navigation:
+#   [dsh-base, dsh-mud-core, dsh-mud-map]
+#
+# `name` points at the tsc build output (dist), so the row loads under plain
+# Node ESM without any tsx involvement. Rebuild before boot:
+#   pnpm --dir D:/Code/dsh-mud-agent -r build
+#
+# Deployment values live in the profile's own cordis.patch.yml — never here.
+
+- insert:
+    - id: mud-map
+      name: 'file:///D:/Code/dsh-mud-agent/packages/mud-map/dist/index.js'
+      config:
+        # 持久化文件路径 (缺省: 当前目录 mud-map.json)
+        storePath: ''
