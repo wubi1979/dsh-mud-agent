@@ -22,6 +22,10 @@
       "types": "./dist/invariant.d.ts",
       "default": "./dist/invariant.js"
     },
+    "./extensions": {
+      "types": "./dist/extensions.d.ts",
+      "default": "./dist/extensions.js"
+    },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./client-wire": {
       "types": "./dist/client/wire.d.ts",

@@ -62,6 +62,7 @@ import { resolveCaptchaImage } from './net/captcha.ts'
 import type {
   MudConnectOptions, MudConnectionStatus, MudCoreService, MudDiag, MudGameRead,
 } from './service.ts'
+import type { MudMapCapability } from './extensions.ts'
 
 /** 插件名。 */
 export const name = 'mud-core'
@@ -81,6 +82,7 @@ export type {
   MudGameEntry,
   MudGameRead,
 } from './service.ts'
+export type { MudMapCapability, MudMapPosition, MudMapLookResult } from './extensions.ts'
 
 /** MUD 核心部署配置 (cordis.yml 行 config; 默认值在 bundle patch, 账户在 profile patch)。 */
 export interface MudAgentConfig {
@@ -835,6 +837,8 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   })
 
   // ── ctx.mud 服务 (进程内面: mud-tui / headless 等 node 外壳消费) ──
+  // 导航/地图服务槽 (由 @deepseek-ai/dsh-mud-map 经 registerMap 注册)。
+  let mapSlot: MudMapCapability | undefined
   const service: MudCoreService = {
     trigger,
     flow,
@@ -923,6 +927,12 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
         action: enabled ? 'agent 接入开启' : 'agent 接入关闭',
         text: `[模式] ${enabled ? '开启' : '关闭'} agent 接入`,
       })
+    },
+    get map(): MudMapCapability | undefined {
+      return mapSlot
+    },
+    registerMap(map: MudMapCapability): void {
+      mapSlot = map
     },
   }
   ctx.provide('mud', service)
