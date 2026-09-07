@@ -1,7 +1,7 @@
 # The dsh-mud-core bundle patch: the MUD core service row set (telnet client,
-# perception/rule pipeline, and the agent bridge published as `ctx.mud`).
-# UI shells are separate rows: add `@deepseek-ai/dsh-mud-tui` and/or
-# `@deepseek-ai/dsh-mud-webui` after this row in a profile patch to pick a face.
+# perception/rule pipeline, trigger-llm, and the agent bridge published as `ctx.mud`).
+# UI shell (`@deepseek-ai/dsh-mud-webui`) is a separate row added after this
+# one in a profile patch to pick the face.
 #
 # `name` points at the tsc build output (dist), so the row loads under plain
 # Node ESM without any tsx involvement. Rebuild before boot:

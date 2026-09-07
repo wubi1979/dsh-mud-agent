@@ -16,13 +16,15 @@
  *
  * 决策流程 (统一入口 = 决策中心 dispatcher):
  *   - 感知事件 (p:*) / 系统事件 (login:required) → 规则引擎匹配
- *   - 命中 action:"tool" → 直接调用工具 (确定性短路, 与 agent 同一条执行路径)
  *   - 命中 action:"flow" → flow.start 启动确定性事务 (如登录流程)
  *   - 未命中 / action:"llm" → 交给 DSH agent (游戏输出注入, LLM 用同一组工具)
  *
- * 规则引擎定位: 战斗 / 应激反射 / 人物状态捕获 / **flow 直调**。**确定性事务
- * 流程 (登录步骤执行) 不在本表, 由流程引擎 flow.ts 负责** —— 本表只留"等不起
- * LLM 延时的分支反射" + "何时启动哪个 flow" 两类确定性知识。
+ * v5 说明: 旧的战斗单步 action:"tool" 反射规则 (战斗 halt / 战后 look) 已迁移到
+ * 感知 lite 捕获器 (LiteCapture, src/perception/lite-capture.ts) — 它走
+ * "捕获 → lite marker → agent 会话 → 确定性 mud-trigger adapter → 官方工具
+ * 管道" 链路, 取代本表的战斗反射短路。非战斗的确定性单步反射 (如档案保存
+ * 提醒 on-save-prompt) 仍保留在表内; 连同 flow 直调 (on-login-required) 与
+ * 声明式 llm (on-death)。
  *
  * 规则 = 确定性知识 (火克金、金克木这类), 静态配置为主; 若后期需 agent 沉淀
  * 规则再提升能力。
@@ -31,7 +33,7 @@
 
 import type { DecisionRule } from '../agent/decision.ts'
 
-/** 决策规则 (战斗/死亡反射 + flow 直调; 登录步骤执行见 config/flows.ts)。 */
+/** 决策规则 (flow 直调 + 声明式 llm; 战斗反射由 LiteCapture 处理, 见 decision-rules 头注)。 */
 export default [
   // ── flow 直调 (决策中心统一调度: 系统就绪 → 未登录 → 启动登录流程) ──
   {
@@ -43,23 +45,7 @@ export default [
     description: '未登录 (login:required) → 启动登录流程 (flow: login)',
   },
 
-  // ── 战斗 / 死亡 (等不起 LLM 延时的确定性反射) ───────────
-  {
-    id: 'on-combat-start',
-    priority: 80,
-    match: { event: 'p:combat:start' },
-    when: { 'flags.logged_in': { truthy: true } },
-    action: { action: 'tool', tool: 'mud_send', cmd: 'halt' },
-    description: '战斗开始 → 立即 halt (安全默认)',
-  },
-  {
-    id: 'on-combat-end',
-    priority: 70,
-    match: { event: 'p:combat:end' },
-    when: { 'flags.logged_in': { truthy: true } },
-    action: { action: 'tool', tool: 'mud_send', cmd: 'look' },
-    description: '战斗结束 → look 刷新房间',
-  },
+  // ── 死亡 (声明式: 不短路, 交给 agent 修订目标) ──────────
   {
     id: 'on-death',
     priority: 95,

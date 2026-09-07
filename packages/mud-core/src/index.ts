@@ -1,5 +1,5 @@
 /**
- * dsh-mud-core — MUD 玩家 agent 核心 (DSH agent 原生架构), host face.
+ * dsh-mud-agent — MUD 玩家 agent 核心 (DSH agent 原生架构), host face.
  *
  * 心智模型 (对齐 agent 规范):
  *   - 游戏内容就是提问内容: 游戏输出本该全部注入 agent, agent 用工具/skill 回答。
@@ -17,14 +17,10 @@
  * 降级 (cascade): 登录规则链超时 (20s 未登录) → 把登录上下文注入 agent,
  *   agent 按 skills 区段中的 login skill 步骤手动完成。
  *
- * 双面 (dual-face) 架构 — 本包是统一 host 引擎, 服务两种外壳:
- *   - 进程内面 (node 外壳, 如 mud-tui / headless): `ctx.mud` 服务 +
- *     session 自定义事件 (mud/decision, mud/log, mud/world) — 官方进程内外壳
- *     模式 (对齐 bundle/headless: 服务 + ctx.on('session/event'))。
- *   - 网络面 (浏览器外壳, 如 mud-webui): 游戏文本是一次性状态流 (不落会话, 避免
- *     会话无限增长), 走独立 /mud/ws 高吞吐通道 + /mud/* HTTP 路由; 借官方
- *     webServer.registerUpgrade 传载体 (复用 Host/Origin 信任围栏 + 心跳思路),
- *     不改官方源码。
+ * 单面 (web face) 架构: 本包是统一 host 引擎, 唯一外壳为浏览器 WebUI
+ *   (mud-webui)。游戏文本是一次性状态流 (不落会话, 避免会话无限增长), 走
+ *   独立 /mud/ws 高吞吐通道 + /mud/* HTTP 路由; 借官方 webServer.registerUpgrade
+ *   传载体 (复用 Host/Origin 信任围栏 + 心跳思路), 不改官方源码。
  * @module @deepseek-ai/dsh-mud-core
  */
 
@@ -47,6 +43,8 @@ import defaultFlows from './config/flows.ts'
 import { DecisionCenter } from './agent/dispatcher.ts'
 import defaultPerceptionRules from './config/trigger-rules.ts'
 import defaultDecisionRules from './config/decision-rules.ts'
+import { TriggerRouter } from './trigger-llm/router.ts'
+import { LiteCapture, type LiteActionDef } from './perception/lite-capture.ts'
 import { SkillService } from './agent/skills.ts'
 import { commandsTextForAgent } from './config/commands.ts'
 import { makeSystemEvent, type MudSystemEvent } from './events.ts'
@@ -54,15 +52,12 @@ import { createMudAgent, sendGameOutput, type CreateMudAgentOptions } from './ag
 import type { AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type {
-  MudCaptchaEvent, MudDecisionEvent, MudLogEvent, MudWorldEvent, MudWorldSnapshot,
-} from './shell-bridge.ts'
 import { MudWebSocketHub, type MudUiItem } from './net/ws.ts'
 import { resolveCaptchaImage } from './net/captcha.ts'
+import type { MudWorldSnapshot } from './shell-bridge.ts'
 import type {
   MudConnectOptions, MudConnectionStatus, MudCoreService, MudDiag, MudGameRead,
 } from './service.ts'
-import type { MudMapCapability } from './extensions.ts'
 
 /** 插件名。 */
 export const name = 'mud-core'
@@ -82,7 +77,6 @@ export type {
   MudGameEntry,
   MudGameRead,
 } from './service.ts'
-export type { MudMapCapability, MudMapPosition, MudMapLookResult } from './extensions.ts'
 
 /** MUD 核心部署配置 (cordis.yml 行 config; 默认值在 bundle patch, 账户在 profile patch)。 */
 export interface MudAgentConfig {
@@ -192,8 +186,8 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
    *  client 当普通输出显示 — 位置天然正确, 无时序竞态)。 */
   const gameBuffer: { seq: number; text: string; time: number }[] = []
   let connectCount = 0 // telnet 连接次数 (首次 connect / 后续 reconnect)
-  // ── UI 流缓冲 (WS 通道; 与 session 双写) ─────────────────
-  // 日志/决策: 进程级环形缓冲经 /mud/ws 推送 (webui) + session 事件 (tui)。
+  // ── UI 流缓冲 (WS 通道; 日志/决策/验证码) ─────────────
+  // 日志/决策: 进程级环形缓冲经 /mud/ws 推送 (webui)。
   const UI_BUFFER_MAX = 2000
   const uiBuffer: MudUiItem[] = []
   let uiTailSeq = 0
@@ -214,60 +208,12 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   }
 
   /**
-   * 广播自定义事件给进程内外壳 (TUI): 决策/日志/状态。
-   * 经 ctx.emit 进程内广播, 不再写进 agent session 日志 — mud/* 事件无需
-   * 持久化 (TUI 与 host 同进程实时消费, browser 走 /mud/ws), 而写入 session
-   * 日志会因类型不在 KNOWN_SESSION_EVENT_TYPES 导致重启读史失败。
+   * world 变化 → 节流推送快照 (500ms 合并; WS 广播, 替换语义)。
    */
-  function sessionAppend(
-    type: 'mud/decision',
-    data: { actor: 'rule' | 'router' | 'agent' | 'flow'; ruleId?: string; eventType?: string; action: string; result?: string; text: string; time: number },
-  ): void
-  function sessionAppend(
-    type: 'mud/log',
-    data: { text: string; time: number },
-  ): void
-  function sessionAppend(
-    type: 'mud/world',
-    data: { world: MudWorldSnapshot; time: number },
-  ): void
-  function sessionAppend(
-    type: 'mud/captcha',
-    data: { url: string; cmd: string; time: number },
-  ): void
-  function sessionAppend(
-    type: 'mud/decision' | 'mud/log' | 'mud/world' | 'mud/captcha',
-    data: {
-      actor?: 'rule' | 'router' | 'agent' | 'flow'
-      ruleId?: string
-      eventType?: string
-      action?: string
-      result?: string
-      text?: string
-      world?: MudWorldSnapshot
-      url?: string
-      cmd?: string
-      time: number
-    },
-  ): void {
-    // 进程内广播给外壳 (TUI): 不写进 agent session 日志 (详见上方注释)。
-    if (type === 'mud/decision') {
-      ctx.events.emit('mud/decision', data as MudDecisionEvent)
-    } else if (type === 'mud/log') {
-      ctx.events.emit('mud/log', data as MudLogEvent)
-    } else if (type === 'mud/captcha') {
-      ctx.events.emit('mud/captcha', data as unknown as MudCaptchaEvent)
-    } else {
-      ctx.events.emit('mud/world', data as MudWorldEvent)
-    }
-  }
-
-  /** world 变化 → 节流推送快照 (500ms 合并; session 事件 + WS 广播, 替换语义)。 */
   function pushWorld(): void {
     if (worldTimer) clearTimeout(worldTimer)
     worldTimer = setTimeout(() => {
       latestWorld = worldSnapshot(world)
-      sessionAppend('mud/world', { world: latestWorld, time: Date.now() })
       hub?.broadcastWorld(latestWorld)
     }, 500)
   }
@@ -289,36 +235,15 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     hub?.pushGame([item])
   }
 
-  /** 追加一条 UI 条目 (日志/决策/验证码): 进缓冲经 WS 广播 + session 事件双写。 */
+  /** 追加一条 UI 条目 (日志/决策/验证码): 进缓冲并经 WS 广播 (替换语义)。 */
   function pushUiItem(item: Omit<MudUiItem, 'seq'>): void {
     uiTailSeq += 1
     const entry: MudUiItem = { ...item, seq: uiTailSeq }
     uiBuffer.push(entry)
     if (uiBuffer.length > UI_BUFFER_MAX) uiBuffer.shift()
     hub?.pushUi([entry])
-    if (item.kind === 'decision') {
-      // tuiDecision 保证 decision 必有 actor/action; exactOptionalPropertyTypes
-      // 下用条件展开避免把 undefined 显式赋给可选字段。
-      sessionAppend('mud/decision', {
-        actor: item.actor ?? 'router',
-        action: item.action ?? '',
-        text: item.text,
-        time: item.time,
-        ...(item.ruleId !== undefined ? { ruleId: item.ruleId } : {}),
-        ...(item.eventType !== undefined ? { eventType: item.eventType } : {}),
-        ...(item.flow !== undefined ? { flow: item.flow } : {}),
-        ...(item.result !== undefined ? { result: item.result } : {}),
-      })
-    } else if (item.kind === 'captcha') {
-      // 验证码交互 (替换语义): WebUI 经 /mud/ws ui 帧, TUI 经进程内事件。
-      sessionAppend('mud/captcha', {
-        url: item.url ?? '',
-        cmd: item.cmd ?? 'fullme',
-        time: item.time,
-      })
-    } else {
-      sessionAppend('mud/log', { text: item.text, time: item.time })
-    }
+    // 决策/验证码经 WS ui 帧 (kind decision/captcha) 由前端消费; 日志系统
+    // 通道见 tuiLog/tuiDecision (走 ctx.logger, 落盘 + mud 命名空间转发)。
   }
 
   /**
@@ -358,6 +283,64 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     log: (t: string) => tuiLog(t),
   })
   tuiLog(`[执行] 工具集就绪: ${Object.keys(mudTools).join(', ')}`)
+
+  // ── 触发器 LLM (trigger-llm): 确定性 adapter, 借道官方 agent 工具管道 ──
+  // lite 用户消息 → mud-trigger 假 provider → mud_send 等 agent 视角工具。
+  // 挂宿主 ctx: agent/pre-step + agent/request 按 agent 作用域分发, 覆盖所有用户 agent。
+  //
+  // 依赖 ctx.llm (LLM 运行时服务, 与 agents 栈一起装配)。经 ctx.inject 延迟到
+  // llm 就绪后装配; llm 卸载时由 inject 触发的 cleanup 置空 (lite 捕获随之停用)。
+  let triggerRouter: TriggerRouter | null = null
+  let liteCapture: LiteCapture | null = null
+  // 延迟装配: 等 llm 服务就绪 (与 agents 栈一起加载); 卸载时返回的 cleanup 置空。
+  ctx.inject(['llm'], () => {
+    triggerRouter = new TriggerRouter(ctx)
+    // ── 感知 lite 捕获器: 感知事件 → 确定性 lite 动作 (战斗反射 / 战后刷新) ──
+    // 取代旧 dispatcher 的单步 action:"tool" 规则: 工具执行统一走 agent 会话 + 官方工具管道。
+    // 抢占 (interrupt) = cancel(keepInbox) + 后续 lite 消息; 普通 = next-turn 排队。
+    const liteActions: Record<string, LiteActionDef> = {
+      'p:combat:start': {
+        label: '战斗开始 → 立即 halt',
+        toolCalls: [{ name: 'mud_send', args: { cmd: 'halt' } }],
+        interrupt: true,
+        dedupMs: config.ruleDedupMs ?? 1500,
+      },
+      'p:combat:end': {
+        label: '战斗结束 → look 刷新',
+        toolCalls: [{ name: 'mud_send', args: { cmd: 'look' } }],
+        interrupt: false,
+        dedupMs: config.ruleDedupMs ?? 1500,
+      },
+    }
+    liteCapture = new LiteCapture({
+      bus: ctx,
+      actions: liteActions,
+      // 发送守卫: 需已登录 + agent 会话存在 + 未进入 teardown。
+      guard: () => agent !== null && !disposed && world.flags.logged_in === true,
+      sendLite: (marker) => {
+        const handle = agent
+        const router = triggerRouter
+        if (handle === null || router === null) return
+        if (liteCapture!.requiresInterrupt(marker.groupId)) {
+          // 抢占: 打断当前回合 (保留 inbox), 随即可用的小流量 lite 消息抢得下个循环。
+          handle.agent.cancel({ kind: 'user' }, { keepInbox: true })
+          tuiDecision({ actor: 'router', eventType: marker.groupId, action: '抢占中断', text: `[触发] 抢占: ${marker.renderedCmd}` })
+        }
+        handle.agent.send(router.makeLiteMessage(marker), 'next-turn', true)
+        const hint = marker.capturedText[0] ? ` ← ${marker.capturedText[0]}` : ''
+        tuiLog(`[触发] lite → ${marker.renderedCmd}${hint}`)
+        tuiDecision({ actor: 'router', eventType: marker.groupId, action: marker.renderedCmd, text: `[触发] ${marker.renderedCmd}` })
+      },
+    })
+    tuiLog(`[触发] lite 捕获器就绪: ${Object.keys(liteActions).join(', ')}`)
+    // inject 的 fiber 卸载 (llm 移除) 时清理, 避免悬空监听。
+    return () => {
+      try { if (liteCapture) liteCapture.dispose() } catch { /* ignore */ }
+      try { if (triggerRouter) triggerRouter.dispose() } catch { /* ignore */ }
+      liteCapture = null
+      triggerRouter = null
+    }
+  })
 
   // ── 触发服务 (ctx.mud.trigger): 匹配 → MudEvent → 事件总线 ──
   const trigger = new TriggerService({ bus: ctx })
@@ -844,9 +827,7 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     text: '[初始化] 决策引擎就绪',
   })
 
-  // ── ctx.mud 服务 (进程内面: mud-tui / headless 等 node 外壳消费) ──
-  // 导航/地图服务槽 (由 @deepseek-ai/dsh-mud-map 经 registerMap 注册)。
-  let mapSlot: MudMapCapability | undefined
+  // ── ctx.mud 服务 (host API; WebUI 壳经 HTTP 路由 + /mud/ws 消费) ──
   const service: MudCoreService = {
     trigger,
     flow,
@@ -935,12 +916,6 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
         action: enabled ? 'agent 接入开启' : 'agent 接入关闭',
         text: `[模式] ${enabled ? '开启' : '关闭'} agent 接入`,
       })
-    },
-    get map(): MudMapCapability | undefined {
-      return mapSlot
-    },
-    registerMap(map: MudMapCapability): void {
-      mapSlot = map
     },
   }
   ctx.provide('mud', service)

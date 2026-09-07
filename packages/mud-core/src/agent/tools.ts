@@ -7,6 +7,9 @@
  * 收敛策略: 不做 70+ 个命令工具 (撑爆上下文), 而是按意图/技能分组为
  * 语义化工具 (mud_move / mud_look / mud_status / mud_send 兜底)。
  *
+ * v5 原则: 命名全部为 **agent 视角** 的中立 MUD 操作, 触发器只是借道;
+ * 触发器开关组用 mud_flow_* (避免 MUD "group" 组队歧义)。
+ *
  * 所有工具返回 { ok, note, cmd }:
  *   ok   是否成功入队
  *   note 结果说明 (工具层校验失败时的拒绝原因)
@@ -95,10 +98,23 @@ export type MudTools = Record<string, MudTool>
  * 构建工具集。
  * @param opts.send (cmd) => void 命令入队 (宿主接 CommandQueue)。
  * @param opts.log  (text) => void 活动日志 (WebUI 决策通道)。
+ * @param opts.recall (n) => string[] 回看最近 n 行游戏输出 (mud_recall)。
+ * @param opts.flowControl 触发器组开关/状态 (mud_flow_*; M4 落地前缺省不可用)。
  */
-export function buildMudTools({ send = () => {}, log = () => {} }: {
+export function buildMudTools({
+  send = () => {},
+  log = () => {},
+  recall = () => [],
+  flowControl,
+}: {
   send?: (cmd: string) => void
   log?: (text: string) => void
+  recall?: (count: number) => string[]
+  flowControl?: {
+    enable: (groupId: string) => boolean
+    disable: (groupId: string) => boolean
+    status: () => Record<string, 'enabled' | 'disabled' | 'unknown'>
+  }
 } = {}): MudTools {
   return {
     /** 移动: 只接受合法方向 (全名或别名), 非法方向拒绝。 */
@@ -210,6 +226,87 @@ export function buildMudTools({ send = () => {}, log = () => {} }: {
         send(cmd)
         log(`[工具] mud_send → ${cmd}`)
         return { ok: true, note: cmd, cmd }
+      },
+    },
+
+    /** 回看: 最近 n 行游戏输出 (终端缓冲; 不走游戏)。 */
+    mud_recall: {
+      name: 'mud_recall',
+      description: '回看最近 count 行游戏输出 (含命令回显; 从缓冲读取, 不发送任何命令)。',
+      parameters: {
+        count: {
+          type: 'integer',
+          description: '要回看的行数 (1-200, 缺省 20)',
+        },
+      },
+      output: { schema: OUT_SCHEMA, render: OUT_RENDER },
+      execute: (args) => {
+        const raw = Number(args.count ?? 20)
+        const count = Number.isFinite(raw) ? Math.max(1, Math.min(200, Math.floor(raw))) : 20
+        const lines = recall(count)
+        log(`[工具] mud_recall → 最近 ${lines.length} 行`)
+        return { ok: true, note: lines.map(l => l.replace(/\x1b\[[0-9;]*m/g, '')).join('\n'), cmd: '' }
+      },
+    },
+
+    /** 触发器组: 恢复启用 (恢复被 mud_flow_disable 关闭的常驻组入口)。 */
+    mud_flow_enable: {
+      name: 'mud_flow_enable',
+      description: '恢复启用指定的触发器组 (一次启用后该组条目重新对游戏输出生效)。groupId 为空 = 启用全部已禁用组。',
+      parameters: {
+        groupId: {
+          type: 'string',
+          description: '组 id (缺省 = 全部已禁用组)',
+        },
+      },
+      output: { schema: OUT_SCHEMA, render: OUT_RENDER },
+      execute: (args) => {
+        if (!flowControl) return { ok: false, note: '触发器组管理未装配 (M4)', cmd: '' }
+        const groupId = String(args.groupId ?? '').trim()
+        const ok = flowControl.enable(groupId)
+        log(`[工具] mud_flow_enable → ${groupId || '<全部>'} (${ok ? '已启用' : '失败'})`)
+        return { ok, note: ok ? '组已恢复启用' : '组不存在或未禁用', cmd: '' }
+      },
+    },
+
+    /** 触发器组: 关闭 (禁用该组全部条目; 常驻组入口保留, 可被 mud_flow_enable 恢复)。 */
+    mud_flow_disable: {
+      name: 'mud_flow_disable',
+      description: '禁用指定的触发器组 (该组条目暂停对游戏输出生效)。groupId 为空 = 禁用全部常驻组。',
+      parameters: {
+        groupId: {
+          type: 'string',
+          description: '组 id (缺省 = 全部常驻组)',
+        },
+      },
+      output: { schema: OUT_SCHEMA, render: OUT_RENDER },
+      execute: (args) => {
+        if (!flowControl) return { ok: false, note: '触发器组管理未装配 (M4)', cmd: '' }
+        const groupId = String(args.groupId ?? '').trim()
+        const ok = flowControl.disable(groupId)
+        log(`[工具] mud_flow_disable → ${groupId || '<全部>'} (${ok ? '已禁用' : '失败'})`)
+        return { ok, note: ok ? '组已禁用' : '组不存在', cmd: '' }
+      },
+    },
+
+    /** 触发器组: 查看状态 (启/停/未知)。 */
+    mud_flow_status: {
+      name: 'mud_flow_status',
+      description: '查看各触发器组当前状态 (enabled = 生效, disabled = 已禁用, unknown = 未注册)。',
+      parameters: {
+        groupId: {
+          type: 'string',
+          description: '可选: 只查指定组 (缺省 = 全部组)',
+        },
+      },
+      output: { schema: OUT_SCHEMA, render: OUT_RENDER },
+      execute: (args) => {
+        if (!flowControl) return { ok: false, note: '触发器组管理未装配 (M4)', cmd: '' }
+        const groupId = String(args.groupId ?? '').trim()
+        const status = flowControl.status()
+        const view = groupId ? { [groupId]: status[groupId] ?? 'unknown' } : status
+        log(`[工具] mud_flow_status → ${JSON.stringify(view)}`)
+        return { ok: true, note: JSON.stringify(view), cmd: '' }
       },
     },
   }

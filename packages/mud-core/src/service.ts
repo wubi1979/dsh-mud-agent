@@ -2,9 +2,8 @@
  * dsh-mud-core — MUD 核心服务定义 (Service Definition), host face.
  *
  * 声明 `ctx.mud` 服务接口: 连接管理、状态查询、命令下发与游戏输出缓冲。
- * 界面插件 (mud-web / mud-tui) 是该服务的 Consumer — 只消费本接口与
- * session 事件 (mud/decision|mud/log|mud/world|mud/game), 与实现零耦合,
- * 可通过 profile patch 自由组合替换。
+ * WebUI 壳 (mud-webui) 是该服务的 Consumer — 经 HTTP 路由 + /mud/ws 通道
+ * 消费, 与实现零耦合。
  * @module @deepseek-ai/dsh-mud-core/service
  */
 
@@ -13,10 +12,6 @@ import type { TriggerService } from './perception/triggers.ts'
 import type { FlowService } from './agent/flow.ts'
 import type { SkillService } from './agent/skills.ts'
 import type { DecisionCenter } from './agent/dispatcher.ts'
-import type { MudMapCapability } from './extensions.ts'
-
-/** 重新导出地图服务契约接口, 供消费者依赖 (host face). */
-export type { MudMapCapability, MudMapPosition, MudMapLookResult } from './extensions.ts'
 
 /** connect() 参数 (全部缺省回落插件 config 默认值)。 */
 export interface MudConnectOptions {
@@ -110,15 +105,6 @@ export interface MudCoreService {
   askAgent(text: string): boolean
   /** 运行时切换 agent 接入模式 (等价 config.agentEnabled 的动态开关)。 */
   setAgentEnabled(enabled: boolean): void
-  /**
-   * 可选: 地图服务能力槽。仅当专用服务插件 (@deepseek-ai/dsh-mud-map)
-   * 加载并经 {@link MudCoreService.registerMap} 注册后存在; 未加载为 undefined。
-   * 类型为最小结构契约 {@link MudMapCapability} (core 需要地图服务提供的
-   * 定位与导航能力; 自治声明, 不依赖下游插件)。
-   */
-  map?: MudMapCapability | undefined
-  /** 注册地图服务到 ctx.mud.map (幂等: 已注册则覆盖; 供专用服务插件挂载)。 */
-  registerMap(map: MudMapCapability): void
 }
 
 declare module '@deepseek-ai/cordis' {

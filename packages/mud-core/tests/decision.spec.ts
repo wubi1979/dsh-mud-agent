@@ -62,19 +62,29 @@ describe('summarizeState 世界摘要', () => {
 })
 
 describe('默认决策规则', () => {
-  it('战斗/死亡规则 (确定性 halt + 声明式死亡)', () => {
+  it('v5: 战斗反射已迁出 (由 LiteCapture 处理); 非战斗单步反射 (on-save-prompt) 保留', () => {
     const r = new RuleEngine()
     for (const rule of defaultDecisionRules) r.register(rule)
 
-    const combat = r.match({ eventType: 'p:combat:start', state: { 'flags.logged_in': true } })
-    expect(combat?.id).toBe('on-combat-start')
-    expect(combat?.action.action).toBe('tool')
-    expect(combat?.action.action === 'tool' && combat.action.cmd).toBe('halt')
-
-    expect(r.match({ eventType: 'p:combat:start', state: { 'flags.logged_in': false } })).toBeNull()
+    // 战斗反射 (on-combat-*) 已从配置表迁出 → 无 on-combat-* 规则, 战斗事件不命中。
+    expect(defaultDecisionRules.some(x => x.id === 'on-combat-start')).toBe(false)
+    expect(defaultDecisionRules.some(x => x.id === 'on-combat-end')).toBe(false)
+    expect(r.match({ eventType: 'p:combat:start', state: { 'flags.logged_in': true } })).toBeNull()
+    // 非战斗单步反射仍保留 (档案保存提醒 → save)。
+    expect(defaultDecisionRules.some(x => x.id === 'on-save-prompt' && x.action.action === 'tool')).toBe(true)
+    expect(r.match({ eventType: 'p:save:prompt', state: { 'flags.logged_in': true } })?.id).toBe('on-save-prompt')
 
     const death = r.match({ eventType: 'p:death', state: {} })
     expect(death?.id).toBe('on-death')
     expect(death?.action.action).toBe('llm')
+  })
+
+  it('on-login-required: 未登录 → 直调 login flow (不受登录态影响)', () => {
+    const r = new RuleEngine()
+    for (const rule of defaultDecisionRules) r.register(rule)
+    const login = r.match({ eventType: 'login:required', state: { 'flags.logged_in': false } })
+    expect(login?.id).toBe('on-login-required')
+    expect(login?.action.action).toBe('flow')
+    expect(login?.action.action === 'flow' && login.action.flow).toBe('login')
   })
 })
