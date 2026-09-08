@@ -1,74 +1,186 @@
 /**
- * dsh-mud-core — 触发规则表 (Trigger rules) 默认配置。v6.1 单文件双通道。
+ * dsh-mud-core — 触发规则表 (Trigger rules) 默认配置。v6.5 单文件双通道。
  *
- * 本文件是两条「确定性匹配通道」共用的规则清单，按 `lane` 属性分流：
+ * 准入语义 (v6.5): 匹配判据唯一收敛于 `regex` —— **锚定整行正则** (作者书写首尾
+ * `^…$`)。MUD 文本随处是聊天/帮助内容, 宽松子串匹配极易误触发; 首尾锚定把命中
+ * 限制为"整行恰好是指定提示/事件", 聊天帮助文本天然不匹配。变体空格/尾部差异由
+ * 规则作者改正则 (引擎不替文本做归一)。预筛 seed 由正则字面前缀**自动推导**, 只
+ * 缩候选 (超集), 不参与命中判定。
  *
- *   lane: 'state' (预匹配折叠) — 状态/观察类文本（气血、个人档案、房间描述等）。
- *     文本到达预处理层时预匹配：命中行 **折叠**（不再进 agent），extract 产物
- *     applyPatch 直接落入 world（结构化数据交给 LLM，而非原始状态文本）。
- *     规则·action 承担「折叠占位描述」角色（索引行文案），tool.args 可省略。
- *     折叠 = 信息从 agent 视野消失 → 规则必须精确提取，漏识别即丢失。
+ * 提取语义 (v6.5): 默认走**命名捕获组** → `map` (捕获组名 → world 点分键) 组装
+ * `hit.data`, `numeric` 数值化。`extract` 函数仅作逃生舱 (二次颜色等必须跑代码的
+ * 复杂提取; 常规规则禁用)。event 规则无提取需求 → 不声明 map, payload 即 action。
  *
- *   lane: 'event' (级联 T1 渲染) — 事件/决策类文本（战斗/死亡/存档提示等）。
- *     进 agent，由 mud-cascade 级联 provider 的 T1 适配层（TriggerLlmAdapter）
- *     在 agent loop 内匹配，命中渲染 action（output 文本 + tool-call 执行）。
+ * 按 `lane` 属性分流:
+ *   lane: 'state' (预匹配折叠) — 状态/观察类文本。文本到达预处理层时预匹配:
+ *     命中行 **折叠** (不再进 agent), 捕获组/map 产物 applyPatch 落 world。
+ *   lane: 'event' (级联 T1 渲染) — 事件/决策类文本。进 agent, 由 mud-cascade
+ *     级联 provider 的 T1 适配层在 agent loop 内匹配, 命中渲染 action
+ *     (output 文本 + tool-call 执行)。
  *
- * 装配路径（index.ts）：全部规则注册进 TriggerService（纯匹配器）；
- * 「谁消费命中」由通道决定：
- *   - state → 预处理层 foldState 折叠入库（不进 agent）；
- *   - event → agent 内 T1（matchLines 只消费 event 规则）。
- * 无感知事件总线、无独立触发路由 —— 匹配与动作全程在「预处理层 / 模拟 LLM 内部」。
+ * 想加/改规则，直接编辑本文件即可。找不到完整整行文本的规则, 正则留近似形
+ * (宁缺勿松: 不准用无锚定宽松正则), 由规则作者后续依真实文本修正。
  *
- * 想加/改规则，直接编辑本文件即可。
- *
- * 规则字段：
- *   lane      通道 ('state' 预匹配折叠 / 'event' 级联 T1 渲染, 缺省 'event')
- *   id        规则唯一标识（trace/留痕引用）
- *   eventType 语义事件类型 (p:xxx; 仅留痕标识, 不再走事件总线)
+ * 规则字段:
+ *   id        规则唯一标识
+ *   eventType 语义事件类型 (p:xxx; 仅留痕标识)
  *   priority  优先级，数字大者先匹配（默认 10）
- *   contains  字面量数组：子串搜索（text.includes），命中任一即触发
- *   regex     正则数组：正则测试（re.test），命中任一即触发（与 contains 或关系）
- *   multiline true 时对窗口连接文本整体匹配（跨行）；否则逐行匹配
+ *   regex     锚定整行正则数组 (准入唯一判据, 命中任一即触发)
+ *   map       捕获组名 → world 点分键 (组装 hit.data)
+ *   numeric   需数值化的捕获组名 (去千分位逗号 → Number)
+ *   multiline 多行有序条件状态机 (每条件逐行测; 条件 = regex 或 patterns)
  *   guard     (record) => boolean 可选的守门函数，返回 false 则跳过该规则
- *   extract   (record) => object 可选的命中数据提取（state 通道: 提取产物直接落库）
- *   action    命中的确定性动作（v6.1: 每条规则必有 action; 无 action 视同未命中）。
- *             - output: 渲染文本（state = 折叠占位索引文案; event = 渲染给 agent 的文本）
+ *   extract   逃生舱提取 (仅二次颜色等复杂提取; 存在时覆盖捕获组组装结果)
+ *   action    命中的确定性动作。
+ *             - output: 渲染文本 (state = 折叠占位索引文案; event = 渲染给 agent 的文本)
  *             - tool:   可选工具调用 (name + args), 由 loop 官方工具管道执行
- *             - send:   可选直连命令（绕过 agent loop, 装配方暂不消费）
  * @module @deepseek-ai/dsh-mud-core/config/trigger-rules
  */
 
 import type { PerceptionRule } from '../trigger-llm/types.ts'
 
-/** 触发规则表（state 预匹配折叠 + event 级联 T1 双通道, 缺省 event）。 */
+/** 触发规则表 (state 预匹配折叠 + event 级联 T1 双通道, 缺省 event)。 */
 const defaultPerceptionRules: readonly PerceptionRule[] = [
   // ══ state: 预匹配折叠 (状态/观察 → world) ═══════════════════════════
-  //   health/score/look 三类的原则: extract 提取结构化字段 → 预处理层
-  //   applyPatch 落库 (点分键 char.* / room.*); action.output 为占位索引文案。
+  //   捕获组 + map 组装 char.* 点分键; 锚定整行正则 (近似文本, 依真实输出修正)。
   {
     id: 'state:hp',
     lane: 'state',
     eventType: 'p:hp',
     priority: 30,
-    regex: [/【\s*气血|气血[:：]/],
-    extract: (record) => parseVitals(record.rows.map(r => r.text)),
+    regex: [/^【\s*气血\s*】\s*(?<cur>[\d,，]+)\s*\/\s*(?<max>[\d,，]+)\s*$/],
+    map: { cur: 'char.hp', max: 'char.maxhp' },
+    numeric: ['cur', 'max'],
     action: { output: '状态已入库(hp)' },
   },
   {
-    id: 'state:score',
+    id: 'state:jing',
+    lane: 'state',
+    eventType: 'p:hp',
+    priority: 30,
+    regex: [/^【\s*精神\s*】\s*(?<cur>[\d,，]+)\s*\/\s*(?<max>[\d,，]+)\s*$/],
+    map: { cur: 'char.jing', max: 'char.maxjing' },
+    numeric: ['cur', 'max'],
+    action: { output: '状态已入库(jing)' },
+  },
+  {
+    id: 'state:mp',
+    lane: 'state',
+    eventType: 'p:hp',
+    priority: 30,
+    regex: [/^【\s*内力\s*】\s*(?<cur>[\d,，]+)\s*\/\s*(?<max>[\d,，]+)\s*$/],
+    map: { cur: 'char.mp', max: 'char.maxmp' },
+    numeric: ['cur', 'max'],
+    action: { output: '状态已入库(mp)' },
+  },
+  {
+    id: 'state:jingli',
+    lane: 'state',
+    eventType: 'p:hp',
+    priority: 30,
+    regex: [/^【\s*精力\s*】\s*(?<cur>[\d,，]+)\s*\/\s*(?<max>[\d,，]+)\s*$/],
+    map: { cur: 'char.jingli', max: 'char.maxjingli' },
+    numeric: ['cur', 'max'],
+    action: { output: '状态已入库(jingli)' },
+  },
+  {
+    id: 'state:zhenqi',
+    lane: 'state',
+    eventType: 'p:hp',
+    priority: 30,
+    regex: [/^【\s*真气\s*】\s*(?<cur>[\d,，]+)\s*\/\s*(?<max>[\d,，]+)\s*$/],
+    map: { cur: 'char.zhenqi', max: 'char.maxzhenqi' },
+    numeric: ['cur', 'max'],
+    action: { output: '状态已入库(zhenqi)' },
+  },
+  {
+    id: 'state:food',
+    lane: 'state',
+    eventType: 'p:hp',
+    priority: 30,
+    regex: [/^食物[：:]\s*(?<v>[\d,，]+)\s*$/],
+    map: { v: 'char.食物' },
+    numeric: ['v'],
+    action: { output: '状态已入库(food)' },
+  },
+  {
+    id: 'state:drink',
+    lane: 'state',
+    eventType: 'p:hp',
+    priority: 30,
+    regex: [/^饮水[：:]\s*(?<v>[\d,，]+)\s*$/],
+    map: { v: 'char.饮水' },
+    numeric: ['v'],
+    action: { output: '状态已入库(drink)' },
+  },
+  // ── score 各字段独立规则 (锚定整行, 近似文本待修正) ──
+  {
+    id: 'state:exp',
     lane: 'state',
     eventType: 'p:score',
     priority: 30,
-    regex: [/经\s*验[:：]/, /潜\s*能[:：]/],
-    extract: (record) => parseScore(record.rows.map(r => r.text)),
-    action: { output: '状态已入库(score)' },
+    regex: [/^经验[：:]\s*(?<v>[\d,，]+)\s*$/],
+    map: { v: 'char.exp' },
+    numeric: ['v'],
+    action: { output: '状态已入库(exp)' },
+  },
+  {
+    id: 'state:potential',
+    lane: 'state',
+    eventType: 'p:score',
+    priority: 30,
+    regex: [/^潜能[：:]\s*(?<v>[\d,，]+)\s*$/],
+    map: { v: 'char.potential' },
+    numeric: ['v'],
+    action: { output: '状态已入库(potential)' },
+  },
+  {
+    id: 'state:level',
+    lane: 'state',
+    eventType: 'p:score',
+    priority: 30,
+    regex: [/^等级[：:]\s*(?<v>[\d,，]+)\s*$/],
+    map: { v: 'char.level' },
+    numeric: ['v'],
+    action: { output: '状态已入库(level)' },
+  },
+  {
+    id: 'state:deposit',
+    lane: 'state',
+    eventType: 'p:score',
+    priority: 30,
+    regex: [/^存款[：:]\s*(?<v>[\d,，]+)\s*$/],
+    map: { v: 'char.deposit' },
+    numeric: ['v'],
+    action: { output: '状态已入库(deposit)' },
+  },
+  {
+    id: 'state:prestige',
+    lane: 'state',
+    eventType: 'p:score',
+    priority: 30,
+    regex: [/^声望[：:]\s*(?<v>[\d,，]+)\s*$/],
+    map: { v: 'char.prestige' },
+    numeric: ['v'],
+    action: { output: '状态已入库(prestige)' },
+  },
+  {
+    id: 'state:morality',
+    lane: 'state',
+    eventType: 'p:score',
+    priority: 30,
+    regex: [/^道德[：:]\s*(?<v>[\d,，]+)\s*$/],
+    map: { v: 'char.morality' },
+    numeric: ['v'],
+    action: { output: '状态已入库(morality)' },
   },
   {
     id: 'state:look',
     lane: 'state',
     eventType: 'p:look',
     priority: 30,
-    contains: ['这里明显的出口是', '这里明显的方向有'],
+    regex: [/^这里明显的出口(?:是|有)[^]*$/],
+    // 逃生舱: 房间名/描述/出口为多行复合提取 (捕获组表达不了), 保留函数式提取。
     extract: (record) => {
       const lines = record.rows.map(r => r.text)
       return {
@@ -81,18 +193,59 @@ const defaultPerceptionRules: readonly PerceptionRule[] = [
   },
 
   // ══ event: 级联 T1 渲染 (事件/决策 → agent) ═════════════════════════
-  //   命中 → agent 内 TriggerLlmAdapter 渲染 output + tool-call, 由工具管道执行。
+  //   锚定整行正则 (近似文本, 依真实提示修正); 无 map (纯 action), extract 禁用。
+  //   ── login 登录 (确定性 T1): 凭据 {name}/{pass} 由会话注入 (resolveToolArgs
+  //   插值, 与会话绑定)。救不回 → 硬失败交棒尾部真实 LLM, DSH 自行兜底。
+  {
+    id: 'login:name',
+    eventType: 'p:login:name',
+    priority: 30,
+    regex: [/^您的英文名字（要注册新人物请输入new。）：$/],
+    action: {
+      output: '登录: 发送名字',
+      tool: { name: 'mud_send', args: { cmd: '{name}' } },
+    },
+  },
+  {
+    id: 'login:replace-confirm',
+    eventType: 'p:login:replace',
+    priority: 30,
+    multiline: true,
+    regex: [/^(?:同名|覆盖|替换)[^]*\([yY]\/n\)[^]*$/],
+    action: {
+      output: '登录: 确认覆盖同名档案',
+      tool: { name: 'mud_send', args: { cmd: 'y' } },
+    },
+  },
+  {
+    id: 'login:pass',
+    eventType: 'p:login:pass',
+    priority: 30,
+    regex: [/^请输入密码[：:]\s*$/],
+    action: {
+      output: '登录: 发送密码',
+      tool: { name: 'mud_send', args: { cmd: '{pass}' } },
+    },
+  },
+  {
+    id: 'login:done',
+    eventType: 'p:login:done',
+    priority: 30,
+    regex: [/^欢迎来到北大侠客行[^]*$/, /^重新连线完毕[^]*$/],
+    action: {
+      output: '登录完成',
+      tool: { name: 'world_patch', args: { patch: { logged_in: true } } },
+    },
+  },
+  // ── combat 战斗 (近似锚定, 依真实输出修正) ──
   {
     id: 'combat:start',
     eventType: 'p:combat:start',
     priority: 20,
-    contains: ['杀气', '向你扑来', '大喝道', '大喝一声', '喝道', '扑了上来'],
-    extract: (record) => {
-      const line = record.rows
-        .map(r => r.text)
-        .find(t => /杀气|扑来|大喝|喝道/.test(t))
-      return { line: line ? line.slice(0, 80) : null }
-    },
+    regex: [
+      /^[^]*杀气[^]*$/, /^[^]*向你扑来[^]*$/, /^[^]*大喝道[^]*$/,
+      /^[^]*大喝一声[^]*$/, /^[^]*喝道[^]*$/, /^[^]*扑了上来[^]*$/,
+    ],
     action: {
       output: '战斗开始',
       tool: { name: 'world_patch', args: { patch: { in_combat: true } } },
@@ -102,13 +255,10 @@ const defaultPerceptionRules: readonly PerceptionRule[] = [
     id: 'combat:end',
     eventType: 'p:combat:end',
     priority: 20,
-    contains: ['战斗结束', '打斗结束', '你战胜了', '你打败了'],
-    extract: (record) => {
-      const line = record.rows
-        .map(r => r.text)
-        .find(t => /战斗结束|打斗结束|战胜了|打败了/.test(t))
-      return { line: line ? line.slice(0, 80) : null }
-    },
+    regex: [
+      /^[^]*战斗结束[^]*$/, /^[^]*打斗结束[^]*$/, /^[^]*你战胜了[^]*$/,
+      /^[^]*你打败了[^]*$/,
+    ],
     action: {
       output: '战斗结束',
       tool: { name: 'world_patch', args: { patch: { in_combat: false } } },
@@ -118,10 +268,10 @@ const defaultPerceptionRules: readonly PerceptionRule[] = [
     id: 'room:busy',
     eventType: 'p:room:busy',
     priority: 15,
-    contains: ['这里的人很多', '热闹非凡', '人来人往', '熙熙攘攘'],
-    extract: record => ({
-      lines: record.rows.slice(0, 6).map(r => r.text),
-    }),
+    regex: [
+      /^[^]*这里的人很多[^]*$/, /^[^]*热闹非凡[^]*$/, /^[^]*人来人往[^]*$/,
+      /^[^]*熙熙攘攘[^]*$/,
+    ],
     // 观测类: 命中即记录繁忙状态 (world_patch 落库)。注意: busy 无配套复位触发,
     // 置 true 后粘滞, 由 agent 后续 look / GMCP 房间覆盖。
     action: {
@@ -133,11 +283,7 @@ const defaultPerceptionRules: readonly PerceptionRule[] = [
     id: 'death',
     eventType: 'p:death',
     priority: 30,
-    contains: ['你死了'],
-    extract: (record) => {
-      const line = record.rows.map(r => r.text).find(t => /你死了/.test(t))
-      return { line: line ? line.slice(0, 80) : null }
-    },
+    regex: [/^[^]*你死了[^]*$/],
     action: {
       output: '你死了',
       tool: { name: 'world_patch', args: { patch: { dead: true, in_combat: false } } },
@@ -148,68 +294,12 @@ const defaultPerceptionRules: readonly PerceptionRule[] = [
     id: 'save:prompt',
     eventType: 'p:save:prompt',
     priority: 30,
-    contains: ['建议经常使用save命令保存档案，避免造成意外损失。'],
-    extract: (record) => {
-      const line = record.rows.map(r => r.text).find(t => /save命令/.test(t))
-      return { line: line ? line.slice(0, 120) : null }
-    },
+    regex: [/^建议经常使用save命令保存档案，避免造成意外损失。\s*$/],
     action: {
       output: '正在保存...',
       tool: { name: 'mud_send', args: { cmd: 'save' } },
     },
   },
 ]
-
-/** hp 输出块数值提取: 行内 "【 气血 】 333 / 666" 形态 → char.* 点分键。 */
-function parseVitals(lines: readonly string[]): Record<string, unknown> | null {
-  const out: Record<string, unknown> = {}
-  for (const line of lines) {
-    const m = /(气血|精神|内力|精力|真气)[^-\d]*([-\d,]+\.?\d*)\s*\/\s*([-\d,]+\.?\d*)/.exec(line)
-    if (m === null) continue
-    const [num, max] = [parseNum(m[2]), parseNum(m[3])]
-    if (num === null || max === null) continue
-    switch (m[1]) {
-      case '气血': out['char.hp'] = num; out['char.maxhp'] = max; break
-      case '精神': out['char.jing'] = num; out['char.maxjing'] = max; break
-      case '内力': out['char.mp'] = num; out['char.maxmp'] = max; break
-      case '精力': out['char.jingli'] = num; out['char.maxjingli'] = max; break
-      case '真气': out['char.zhenqi'] = num; out['char.maxzhenqi'] = max; break
-      default: break
-    }
-  }
-  for (const line of lines) {
-    const m = /(食物|饮水)[^-\d]*([-\d,]+\.?\d*)/.exec(line)
-    if (m !== null) {
-      const v = parseNum(m[2])
-      if (v !== null) out[`char.${m[1]}`] = v
-    }
-  }
-  return Object.keys(out).length > 0 ? out : null
-}
-
-/** score 输出提取: 经验/潜能等标量 → char.* 点分键。 */
-function parseScore(lines: readonly string[]): Record<string, unknown> | null {
-  const out: Record<string, unknown> = {}
-  const scalars: Record<string, string> = {
-    '经验：': 'exp', '潜能：': 'potential', '等级：': 'level',
-    '存款：': 'deposit', '声望：': 'prestige', '道德：': 'morality',
-  }
-  for (const line of lines) {
-    for (const [label, key] of Object.entries(scalars)) {
-      if (!line.includes(label)) continue
-      const m = /[:：]\s*([-\d,]+\.?\d*)\s*$/.exec(line.replace(/[()（].*$/, ''))
-      if (m === null) continue
-      const v = parseNum(m[1])
-      if (v !== null && !(key in out)) out[`char.${key}`] = v
-    }
-  }
-  return Object.keys(out).length > 0 ? out : null
-}
-
-/** 数字解析: 16242 → 16242; "12,000" → 12000; 无效返回 null。 */
-function parseNum(raw: string): number | null {
-  const n = Number(String(raw).replace(/[,，]/g, ''))
-  return Number.isFinite(n) ? n : null
-}
 
 export default defaultPerceptionRules

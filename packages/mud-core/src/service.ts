@@ -8,7 +8,7 @@
  */
 
 import type { MudWorldSnapshot } from './client/wire.ts'
-import type { TriggerService } from './trigger-llm/service.ts'
+import type { TriggerMatchService } from './trigger-llm/service.ts'
 import type { SkillService } from './agent/skills.ts'
 
 /** connect() 参数 (全部缺省回落插件 config 默认值)。 */
@@ -64,8 +64,10 @@ export interface MudGameRead {
  * MUD 核心服务 (`ctx.mud`)。宿主进程内单例, 由 mud-core 插件提供。
  */
 export interface MudCoreService {
-  /** 触发服务: 纯规则匹配 + 注册管理 (v6: 无事件总线; 命中由 agent 级联 provider 消费)。 */
-  trigger: TriggerService
+  /** 匹配服务: state 桶 (预匹配折叠) — 无事件总线; 命中由装配方 (index.ts) 消费落库。 */
+  stateTrigger: TriggerMatchService
+  /** 匹配服务: event 桶 (T1 渲染) — agent 级联 provider 消费。 */
+  eventTrigger: TriggerMatchService
   /** 技能服务: 预制基线 + agent 动态生成的技能注册, 注入 agent 系统提示。 */
   skill: SkillService
   /**
@@ -94,8 +96,6 @@ export interface MudCoreService {
   askAgent(text: string): boolean
   /** 运行时切换 agent 接入模式 (等价 config.agentEnabled 的动态开关)。 */
   setAgentEnabled(enabled: boolean): void
-  /** 运行时切换触发器确定性渲染 (mud-cascade T1): false = 跳过 T1 直接真实 LLM。 */
-  setMimicEnabled(enabled: boolean): void
 }
 
 declare module '@deepseek-ai/cordis' {

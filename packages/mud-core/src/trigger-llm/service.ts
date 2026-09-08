@@ -1,21 +1,31 @@
 /**
- * dsh-mud-core — 触发服务 (TriggerService) + 匹配器 (Perceptor), host half.
+ * dsh-mud-core — 匹配服务 (TriggerMatchService) + 匹配器 (Perceptor), host half.
  *
- * v6 单路径下触发服务的职责收窄为纯匹配:
- *   - Perceptor: 确定性规则匹配器 (字面量/正则/颜色/多行状态机), 语义与
- *     Mudlet / Python Matcher 对齐 (自原 perception/triggers.ts 迁入, 无变化);
- *   - TriggerService (`ctx.mud.trigger`): 包一层 Perceptor, 注册管理 +
- *     matchText (整批 agent 文本入口: 拆临时行 → 只匹配未消费的新行)。
+ * v6.5 语义: 准入唯一判据 = 锚定整行正则 (作者书写 `^…$`; 宽松 includes/contains
+ * 已废弃 —— MUD 聊天/帮助文本误触发风险)。两段式匹配:
+ *   - 预筛 (候选集): 由正则字面前缀自动推导 seed, 只缩候选 (超集, 绝不误杀);
+ *     `^` 锚定 → prefix 模式 (startsWith), 否则必需字面段 → substring 模式。无字面前缀的
+ *     规则全量跑。预筛是纯性能路径, 命中判定永远由二级正则承载。
+ *   - 准入+提取: 锚定正则 .test → 首个匹配正则的命名捕获组 → map 组装 data
+ *     (numeric 数值化); extract 逃生舱 (二次颜色等复杂提取) 存在时覆盖。
  *
- * 事件总线 (mud/percept) 与 publish 已随事件机制移除; 文本语义统一走
- * agent (级联 provider T1 在此匹配, 命中动作渲染进 agent 响应)。
+ * v6.2 保留: 匹配功能抽离为独立服务，支持 state/event 双桶; 行号由 AnsiStreamParser
+ * 分配 (MudLine.abs)。多行是 Mudlet 逐条件状态机 (每条件测单一行), 不拼窗。
  * @module @deepseek-ai/dsh-mud-core/trigger-llm/service
  */
 
 import type { MudLine, StyleRun } from '../preprocess/ansi.ts'
-import { StyleFlag, isPromptText } from '../preprocess/ansi.ts'
-import type { ColorCond, MultiCond, PerceptionRule, PerceptHit, ActionSpec } from './types.ts'
-import { MULTI_LINE_DELTA } from './types.ts'
+import { StyleFlag } from '../preprocess/ansi.ts'
+import type {
+  ActionSpec,
+  ColorCond,
+  MatchContext,
+  MultiCond,
+  MultiMatchState,
+  PerceptionRule,
+  PerceptHit,
+} from './types.ts'
+import { createMatchContext, MULTI_LINE_DELTA } from './types.ts'
 
 function rgbEq(a: [number, number, number] | null | undefined,
   b: [number, number, number] | null | undefined): boolean {
@@ -40,40 +50,103 @@ export function styleMatchesColor(rows: readonly { style: readonly StyleRun[] }[
   }))
 }
 
-/** 归一化触发规则。 */
+/** 预筛 seed: 从锚定正则字面前缀推导的"必要出现"条件 (超集, 只缩候选不判命中)。 */
+interface Seed {
+  mode: 'prefix' | 'substring'
+  text: string
+}
+
+/** 正则元字符 (ASCII; CJK 全角字符一律按字面处理)。 */
+const REGEX_META = new Set(['\\', '.', '^', '$', '*', '+', '?', '(', ')', '[', ']', '{', '}', '|'])
+
+/** 从正则源码推导预筛 seed: `^字面…` → { prefix, 字面段 }; 否则 { substring, 首段字面 }。
+ *  无字面前缀 (纯元字符开头) 返回 null → 该规则不做预筛。 */
+function deriveSeed(src: string): Seed | null {
+  let i = 0
+  const anchored = src[0] === '^'
+  if (anchored) i = 1
+  let run = ''
+  while (i < src.length) {
+    const c = src[i] as string
+    if (c === '\\') {
+      const next = src[i + 1]
+      if (next === undefined) break
+      if ('dDwWsSbB0123456789'.includes(next)) break // 字符类/边界/回溯引用 → 非字面
+      run += next
+      i += 2
+      continue
+    }
+    if (REGEX_META.has(c)) break
+    run += c
+    i += 1
+  }
+  if (run === '') return null
+  return { mode: anchored ? 'prefix' : 'substring', text: run }
+}
+
+/** 预筛通过: seed 为空 → 全量; 任一 seed 满足即为候选 (超集, 准入仍由正则负责)。 */
+function seedPasses(seeds: readonly Seed[], text: string): boolean {
+  if (seeds.length === 0) return true
+  for (const s of seeds) {
+    if (s.mode === 'prefix' ? text.startsWith(s.text) : text.includes(s.text)) return true
+  }
+  return false
+}
+
+/** 数值化: 去千分位逗号 [,，] 后 Number; 无法解析返回 null。 */
+function toNumber(raw: string): number | null {
+  const n = Number(String(raw).replace(/[,，]/g, ''))
+  return Number.isFinite(n) ? n : null
+}
+
+/** 由命名捕获组按 map/numeric 组装 data; 无有效捕获返回 null。
+ *  numeric 组解析失败则省略该键 (对齐 parseVitals 语义: 无效字段不入库)。 */
+function buildMapData(
+  map: Record<string, string>,
+  numeric: readonly string[] | undefined,
+  groups: Record<string, string> | undefined,
+): Record<string, unknown> | null {
+  if (groups === null || groups === undefined) return null
+  const out: Record<string, unknown> = {}
+  let any = false
+  for (const [gname, dotKey] of Object.entries(map)) {
+    const raw = groups[gname]
+    if (raw === undefined) continue
+    if (numeric?.includes(gname) ?? false) {
+      const n = toNumber(raw)
+      if (n === null) continue
+      any = true
+      out[dotKey] = n
+    } else {
+      any = true
+      out[dotKey] = raw
+    }
+  }
+  return any ? out : null
+}
+
+/** 归一化触发规则 (配置态, 无运行时状态)。 */
 interface NormalizedTriggerRule {
   id: string
   eventType: string
   priority: number
   multiline: boolean
   greedy: boolean
-  contains: string[]
   regex: RegExp[]
-  /** 多行: 有序条件 (multiline=true 时使用)。派生自 patterns 或 contains+regex。 */
+  /** 预筛种子 (字面前缀派生; 空 = 全量)。 */
+  seeds: Seed[]
+  /** 多行: 有序条件 (multiline=true 时使用)。派生自 patterns 或 regex。 */
   multiConds: MultiCond[]
   /** 多行: 首末条件最大间隔行数。 */
   lineDelta: number
-  /** 多行运行态: 活跃的跨行状态机 (逐行 feed, 跨 match 调用保持)。 */
-  multiStates: MultiMatchState[]
-  /** 多行运行态: 已喂入状态机的最大行号 (窗口重复回传时防重复推进)。 */
-  multiLastAbs: number
   color: ColorCond | null
   guard: ((record: { rows: MudLine[] }) => boolean) | null
   extract: ((record: { rows: MudLine[] }) => Record<string, unknown> | null) | null
+  /** 捕获组 → world 点分键 (命中后组装 data)。 */
+  map: Record<string, string> | null
+  numeric: readonly string[] | null
   /** 命中动作 (v6: 规则携带; 装配方据此渲染)。 */
   action: ActionSpec | null
-}
-
-/** 多行匹配状态机的一个活跃实例 (Mudlet TMatchState 对齐)。 */
-interface MultiMatchState {
-  /** 下一个待匹配条件下标 (首条件已在创建时消费)。 */
-  next: number
-  /** 自状态创建以来的行数 (超 lineDelta 即过期)。 */
-  lineCount: number
-  /** 当前处于 spacer 条件时已等待的行数。 */
-  spacerCount: number
-  /** 各条件命中的捕获 (按条件顺序)。 */
-  captures: { text: string; abs: number; row: MudLine }[]
 }
 
 /** 构造去 g 标志的正则 (防 lastIndex 跨行错位; Mudlet 无全局串联语义)。 */
@@ -87,7 +160,7 @@ function stripG(re: RegExp): RegExp {
   return new RegExp(re.source, flags)
 }
 
-/** 推导多行有序条件 (patterns 优先, 否则 contains 在前 + regex 在后)。 */
+/** 推导多行有序条件 (patterns 优先, 否则 regex 逐条)。 */
 function buildMultiConds(rule: PerceptionRule, multiline: boolean): MultiCond[] {
   if (rule.patterns && rule.patterns.length > 0) {
     return rule.patterns.map(p => {
@@ -100,7 +173,6 @@ function buildMultiConds(rule: PerceptionRule, multiline: boolean): MultiCond[] 
     })
   }
   const out: MultiCond[] = []
-  for (const lit of rule.contains ?? []) out.push({ kind: 'substring', text: String(lit) })
   for (const r of rule.regex ?? []) {
     const re = typeof r === 'string' ? makeRegex(r, multiline) : stripG(r)
     out.push({ kind: 'regex', regex: re })
@@ -110,12 +182,12 @@ function buildMultiConds(rule: PerceptionRule, multiline: boolean): MultiCond[] 
 
 /**
  * 触发器匹配器 (Perceptor): 确定性规则匹配器, 对齐 Python Matcher。
- * match(lines) 一次跑完窗口内全部规则, 返回按行号排序的结果。
+ * match(lines, ctx) 一次跑完窗口内全部规则, 返回按行号排序的结果。
+ * 运行态 (多行状态机) 由 MatchContext 承载, 与规则定义分离。
  */
 export class Perceptor {
   private rules: NormalizedTriggerRule[] = []
-  private readonly keywordIndex = new Map<string, string[]>() // 字面量首字符 → rule id 列表
-  private readonly owners = new Map<string, string>() // rule id → owner
+  private readonly owners = new Map<string, string>()
 
   register(rule: PerceptionRule, owner = ''): NormalizedTriggerRule {
     const multiline = !!rule.multiline
@@ -129,54 +201,49 @@ export class Perceptor {
           ...(rule.bgTrue !== undefined ? { bgTrue: rule.bgTrue } : {}),
         }
         : null
+    const regex: RegExp[] = (rule.regex ?? []).map(r =>
+      typeof r === 'string' ? makeRegex(r, multiline) : stripG(r),
+    )
     const norm: NormalizedTriggerRule = {
       id: rule.id,
       eventType: rule.eventType || rule.id,
       priority: rule.priority ?? 10,
       multiline,
       greedy: !!rule.greedy,
-      contains: (rule.contains ?? []).map(String),
-      regex: (rule.regex ?? []).map(r =>
-        typeof r === 'string' ? makeRegex(r, multiline) : stripG(r),
-      ),
+      regex,
+      seeds: multiline ? [] : this.deriveSeeds(regex),
       multiConds: buildMultiConds(rule, multiline),
       lineDelta: rule.lineDelta ?? MULTI_LINE_DELTA,
-      multiStates: [],
-      multiLastAbs: -1,
       color,
       guard: rule.guard ?? null,
       extract: rule.extract ?? null,
+      map: rule.map ?? null,
+      numeric: rule.numeric ?? null,
       action: rule.action ?? null,
     }
-    // 同 id 覆盖: 先清旧索引
     this.unregister(norm.id)
     let i = 0
     while (i < this.rules.length && (this.rules[i]?.priority ?? 0) >= norm.priority) i += 1
     this.rules.splice(i, 0, norm)
-    for (const lit of norm.contains) {
-      const key = lit.slice(0, 1)
-      if (!key) continue
-      const list = this.keywordIndex.get(key) ?? []
-      list.push(norm.id)
-      this.keywordIndex.set(key, list)
-    }
     if (owner) this.owners.set(norm.id, owner)
     return norm
   }
 
-  /** 注销一条规则 (同 id 覆盖时也调用)。 */
+  private deriveSeeds(regex: readonly RegExp[]): Seed[] {
+    const out: Seed[] = []
+    for (const re of regex) {
+      const seed = deriveSeed(re.source)
+      if (seed) out.push(seed)
+    }
+    return out
+  }
+
   unregister(ruleId: string): void {
     const idx = this.rules.findIndex(r => r.id === ruleId)
     if (idx >= 0) this.rules.splice(idx, 1)
     this.owners.delete(ruleId)
-    for (const [key, list] of this.keywordIndex) {
-      const i = list.indexOf(ruleId)
-      if (i >= 0) list.splice(i, 1)
-      if (list.length === 0) this.keywordIndex.delete(key)
-    }
   }
 
-  /** 按 owner 批量注销。 */
   unregisterByOwner(owner: string): number {
     const ids: string[] = []
     for (const [ruleId, ow] of this.owners) {
@@ -186,35 +253,19 @@ export class Perceptor {
     return ids.length
   }
 
-  /** 关键词快路径: 待匹配集里出现过哪些字面量首字符 → 候选规则 id 集。 */
-  private candidates(lines: MudLine[]): Set<string> {
-    const out = new Set<string>()
-    for (const line of lines) {
-      for (const ch of line.text) {
-        const list = this.keywordIndex.get(ch)
-        if (list) for (const id of list) out.add(id)
-      }
-    }
-    return out
-  }
-
-  /** 窗口匹配: 返回 [{ id, eventType, lineNumber, data }] 按 lineNumber 排序。
-   *  非多行逐行匹配 (快路径); 多行走逐行状态机 (跨调用保持, 见 feedMultiline)。 */
-  match(lines: MudLine[]): PerceptHit[] {
+  /** 窗口匹配: 返回按 lineNumber 排序的结果。运行态由 ctx 承载。 */
+  match(lines: MudLine[], ctx: MatchContext): PerceptHit[] {
     if (!lines || lines.length === 0) return []
     const results: PerceptHit[] = []
-    const candidates = this.candidates(lines)
     for (const rule of this.rules) {
       if (rule.multiline) {
-        // 多行: 每个新到行逐行喂状态机 (Mudlet 逐条件模型)。不走候选快路径 —
-        // 首条件可能是正则/间隔, 且状态必须看到每一行 (计行/过期)。
         for (const line of lines) {
-          const r = this.feedMultiline(rule, line)
+          const r = this.feedMultiline(rule, line, ctx)
           if (r) results.push(r)
         }
       } else {
-        if (rule.contains.length > 0 && !candidates.has(rule.id)) continue
         for (const line of lines) {
+          if (!seedPasses(rule.seeds, line.text)) continue
           const r = this.matchLine(rule, line)
           if (r) results.push(r)
         }
@@ -224,7 +275,6 @@ export class Perceptor {
     return results
   }
 
-  /** 已注册规则快照 (按优先级序; 调试/状态展示)。 */
   getRules(): NormalizedTriggerRule[] {
     return this.rules.slice()
   }
@@ -233,21 +283,11 @@ export class Perceptor {
     if (rule.color !== null && !styleMatchesColor(record.rows, rule.color)) return false
     if (rule.guard && !rule.guard(record)) return false
     const text = record.rows.map(r => r.text).join('\n')
-    const hasPattern = rule.contains.length > 0 || rule.regex.length > 0
-    if (rule.contains.length > 0) {
-      for (const lit of rule.contains) {
-        if (text.includes(lit)) return true
-      }
+    for (const re of rule.regex) {
+      re.lastIndex = 0
+      if (re.test(text)) return true
     }
-    if (rule.regex.length > 0) {
-      for (const re of rule.regex) {
-        re.lastIndex = 0
-        if (re.test(text)) return true
-      }
-    }
-    // 无文本模式: 纯颜色条件本身就是模式 (颜色触发); 否则退化为 extract 触发。
-    if (!hasPattern) return rule.color !== null || !!rule.extract
-    return false
+    return rule.color !== null || !!rule.extract
   }
 
   private matchLine(rule: NormalizedTriggerRule, line: MudLine): PerceptHit | null {
@@ -257,13 +297,46 @@ export class Perceptor {
       id: rule.id,
       eventType: rule.eventType,
       lineNumber: line.abs,
-      data: rule.extract ? rule.extract(record) : null,
+      data: rule.extract
+        ? (rule.extract(record) ?? null)
+        : this.collectSingleData(rule, line.text),
     }
     if (rule.action) hit.action = rule.action
     return hit
   }
 
-  /** 单条件与一行文本的匹配 (正则测试会复位 lastIndex)。 */
+  /** 准入命中后: 首个匹配正则的命名捕获组 → map/numeric 组装 data。 */
+  private collectSingleData(rule: NormalizedTriggerRule, text: string): Record<string, unknown> | null {
+    if (rule.map === null) return null
+    for (const re of rule.regex) {
+      re.lastIndex = 0
+      const m = re.exec(text)
+      if (m !== null && m.groups !== undefined) {
+        const d = buildMapData(rule.map, rule.numeric ?? undefined, m.groups)
+        if (d) return d
+      }
+    }
+    return null
+  }
+
+  /** 多行命中后: 各条件正则的命名捕获组合并 → map/numeric 组装 data。 */
+  private collectMultiData(rule: NormalizedTriggerRule, st: MultiMatchState): Record<string, unknown> | null {
+    if (rule.map === null) return null
+    const groups: Record<string, string> = {}
+    let ci = 0
+    for (const cond of rule.multiConds) {
+      if (cond.kind === 'spacer') continue
+      const cap = st.captures[ci]
+      ci += 1
+      if (cap === undefined || cond.kind !== 'regex') continue
+      const re = typeof cond.regex === 'string' ? makeRegex(cond.regex, false) : cond.regex
+      re.lastIndex = 0
+      const m = re.exec(cap.text)
+      if (m !== null && m.groups !== undefined) Object.assign(groups, m.groups)
+    }
+    return buildMapData(rule.map, rule.numeric ?? undefined, groups)
+  }
+
   private condMatch(cond: MultiCond, line: MudLine): boolean {
     if (cond.kind === 'substring') return line.text.includes(cond.text)
     if (cond.kind === 'regex') {
@@ -271,14 +344,9 @@ export class Perceptor {
       re.lastIndex = 0
       return re.test(line.text)
     }
-    return false // spacer 由 stepMulti 计行, 不在此匹配
+    return false
   }
 
-  /**
-   * 用一行推进状态机的期望条件 (Mudlet TMatchState / updateMultistates 对齐):
-   * 每个状态每行最多推进一个条件位置 — 遇 spacer 计行, 遇 pattern 命中则消费该
-   * 条件并记录捕获。返回是否已满足全部条件。
-   */
   private stepMulti(rule: NormalizedTriggerRule, st: MultiMatchState, line: MudLine): boolean {
     if (st.next >= rule.multiConds.length) return true
     const cond = rule.multiConds[st.next]
@@ -296,16 +364,16 @@ export class Perceptor {
     return st.next >= rule.multiConds.length
   }
 
-  /**
-   * 多行状态机: 每个"新到行"驱动规则的所有活跃状态, 并可播种新状态。
-   * 用 multiLastAbs 保证每行只喂一次 (窗口会重复回传历史行)。
-   * 全部条件满足 → 返回命中; 否则 null。
-   */
-  private feedMultiline(rule: NormalizedTriggerRule, line: MudLine): PerceptHit | null {
-    if (line.abs <= rule.multiLastAbs) return null
-    rule.multiLastAbs = line.abs
+  /** 多行状态机: 使用 ctx 中的状态, 而非规则上的可变状态。 */
+  private feedMultiline(rule: NormalizedTriggerRule, line: MudLine, ctx: MatchContext): PerceptHit | null {
+    const lastAbs = ctx.multiLastAbs.get(rule.id) ?? -1
+    if (line.abs <= lastAbs) return null
+    ctx.multiLastAbs.set(rule.id, line.abs)
+
     const conds = rule.multiConds
     if (conds.length === 0) return null
+
+    const states = ctx.multiStates.get(rule.id) ?? []
     const completed: MultiMatchState[] = []
     const kept: MultiMatchState[] = []
     const step = (st: MultiMatchState): void => {
@@ -313,7 +381,8 @@ export class Perceptor {
       if (this.stepMulti(rule, st, line)) completed.push(st)
       else if (st.lineCount <= rule.lineDelta) kept.push(st)
     }
-    for (const st of rule.multiStates) step(st)
+    for (const st of states) step(st)
+
     const first = conds[0]
     if (first !== undefined && first.kind !== 'spacer' && this.condMatch(first, line)) {
       const seed: MultiMatchState = {
@@ -325,9 +394,9 @@ export class Perceptor {
       if (seed.next >= conds.length) completed.push(seed)
       else kept.push(seed)
     }
-    rule.multiStates = kept
+    ctx.multiStates.set(rule.id, kept)
+
     if (completed.length === 0) return null
-    // 取最后完成的状态 (最晚触发的有效序列) 构造命中。
     const st = completed[completed.length - 1]
     if (st === undefined) return null
     const rows = st.captures.map(c => c.row)
@@ -338,7 +407,9 @@ export class Perceptor {
       eventType: rule.eventType,
       lineNumber: line.abs,
       reason: 'multiline',
-      data: rule.extract ? rule.extract({ rows }) : null,
+      data: rule.extract
+        ? (rule.extract({ rows }) ?? null)
+        : this.collectMultiData(rule, st),
     }
     if (rule.action) hit.action = rule.action
     return hit
@@ -346,13 +417,23 @@ export class Perceptor {
 }
 
 /**
- * 触发服务 (`ctx.mud.trigger`): 包一层 Perceptor。注册管理 + 纯匹配。
- * 无事件总线: 命中由装配方 (agent-bridge 级联 provider) 直接消费。
+ * 匹配服务 (TriggerMatchService): 独立实例，管理规则集 + 匹配上下文 + 行对象缓存。
+ * 每个实例维护独立的 MatchContext (多行状态机运行态)。
+ *
+ * 典型用法:
+ *   - stateInstance: 预匹配折叠 (状态/观察 → world)
+ *   - eventInstance: T1 渲染 (事件/决策 → agent)
  */
-export class TriggerService {
+export class TriggerMatchService {
   private readonly perceptor = new Perceptor()
-  /** 临时行单调 abs 分配器 (matchText 文本入口专用; 行号从 0 递增)。 */
-  private textLineCounter = 0
+  private readonly ctx: MatchContext = createMatchContext()
+  private recentLines: MudLine[] = []
+
+  constructor(rules?: PerceptionRule[], owner = '') {
+    if (rules) {
+      for (const r of rules) this.perceptor.register(r, owner)
+    }
+  }
 
   /** 注册一个触发规则; owner 用于批量注销。 */
   register(rule: PerceptionRule, owner = ''): void {
@@ -380,33 +461,30 @@ export class TriggerService {
   }
 
   /**
-   * 整批文本入口 (级联 provider T1 使用): 拆临时行 (单调 abs, 无样式) →
-   * 匹配全部行 → 返回按行号排序的命中。
-   *
-   * 同一批文本重复调用会重复命中 — 去重由 adapter 层 (内容级) 负责,
-   * TriggerService 本身是无状态纯匹配器。
-   *
-   * 注意: 临时行不含 style, 颜色触发条件 (fg/bg/fgTrue/bgTrue) 在纯文本
-   * 输入下不满足, 颜色规则不会误命中。
+   * 预处理层推送行对象 (供 T1 转发时查找)。
+   * 每次 feedParsed 调用时更新。
    */
-  matchText(text: string): PerceptHit[] {
-    const cleaned = String(text ?? '')
-    if (cleaned === '') return []
-    const parts = cleaned.split(/\r?\n/)
-    const rows: MudLine[] = parts.map((t, i) => ({
-      text: t,
-      raw: t,
-      style: [],
-      abs: this.textLineCounter + i,
-      time: Date.now(),
-      isPrompt: isPromptText(t),
-    }))
-    this.textLineCounter += parts.length
-    return this.perceptor.match(rows)
+  feedLines(lines: MudLine[]): void {
+    this.recentLines = lines
   }
 
-  /** 重置文本入口游标 (主要用于测试隔离)。 */
-  resetTextCursor(): void {
-    this.textLineCounter = 0
+  /** 获取最近推送的行对象 (T1 转发时用 l.text 拼接)。 */
+  getRecentLines(): MudLine[] {
+    return this.recentLines
+  }
+
+  /**
+   * 匹配入口: 传入行对象 (已由 AnsiStreamParser 分配 abs)，返回按行号排序的命中。
+   * 运行态 (多行状态机) 由内部 MatchContext 承载。
+   */
+  match(lines: MudLine[]): PerceptHit[] {
+    return this.perceptor.match(lines, this.ctx)
+  }
+
+  /** 重置匹配上下文 (多行状态机清空; 主要用于测试隔离)。 */
+  resetContext(): void {
+    this.ctx.multiStates.clear()
+    this.ctx.multiLastAbs.clear()
+    this.recentLines = []
   }
 }

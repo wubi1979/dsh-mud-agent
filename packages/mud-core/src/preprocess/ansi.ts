@@ -12,7 +12,7 @@
  *   - style  逐段样式 run (run-length, start/end 落在 text 坐标系) —— 颜色触发/富渲染
  *
  * 样式游标跨行保持 (符合 ANSI 语义); 行末未显式清零则延续到下一行。
- * v6: abs 由装配/适配层分配 (解析器产出时未携带), 见 trigger-llm/service。
+ * v6.2: abs 由 AnsiStreamParser 自分配 (标准行携带行号)。
  * @module @deepseek-ai/dsh-mud-core/preprocess/ansi
  */
 
@@ -45,7 +45,7 @@ export interface StyleRun {
 
 /**
  * 完整逻辑行 (标准行对象, 全链路消费方统一的数据形态)。
- * abs 由装配/适配层分配 (如 trigger-llm/service 的临时行游标)。
+ * abs 由 AnsiStreamParser 自分配 (复位即从 0 重新递增)。
  */
 export interface MudLine {
   /** 纯文本 (无 ANSI): agent 注入、规则匹配。 */
@@ -54,7 +54,7 @@ export interface MudLine {
   raw: string
   /** 逐段样式 run; 无颜色/样式时为空数组。 */
   style: StyleRun[]
-  /** 绝对行号 (单调递增, 由装配/适配层分配)。 */
+  /** 绝对行号 (单调递增, 由 AnsiStreamParser 分配)。 */
   abs: number
   /** 该行最后收尾时间戳。 */
   time: number
@@ -62,7 +62,7 @@ export interface MudLine {
   isPrompt: boolean
 }
 
-/** 解析器单次产出的一行 (尚未分配 abs)。 */
+/** 解析器历史产出行的简化形态 (无 abs; 测试/工具入参用)。 */
 export interface ParsedLine {
   text: string
   raw: string
@@ -136,6 +136,8 @@ export class AnsiStreamParser {
   // 跨块残留的控制序列内容
   private csiBuf = ''
   private oscBuf = ''
+  // 绝对行号分配器 (每批完结行依次递增; flush 会话边界时复位)
+  private absSeq = 0
 
   /** 是否还有未完结的行尾/半截序列 (供 telnet 侧调度 flush 定时器)。 */
   get pending(): boolean {
@@ -157,12 +159,13 @@ export class AnsiStreamParser {
     this.runs = []
     this.csiBuf = ''
     this.oscBuf = ''
+    this.absSeq = 0
   }
 
-  /** 写入一块解码后的文本, 返回本块内完结的完整行。 */
-  write(chunk: string): ParsedLine[] {
+  /** 写入一块解码后的文本, 返回本块内完结的完整行 (携带自分配递增 abs)。 */
+  write(chunk: string): MudLine[] {
     if (chunk.length === 0) return []
-    const out: ParsedLine[] = []
+    const out: MudLine[] = []
     let i = 0
     while (i < chunk.length) {
       if (this.state === State.Text) {
@@ -239,7 +242,7 @@ export class AnsiStreamParser {
   }
 
   /** 流结束: 强制把未换行的行尾刷出 (返回 null = 无可显示内容)。 */
-  flush(): ParsedLine | null {
+  flush(): MudLine | null {
     if (this.textLen === 0 && this.runs.length === 0) {
       this.reset()
       return null
@@ -413,19 +416,21 @@ export class AnsiStreamParser {
     this.openStyle()
   }
 
-  /** 把当前积累的行提交为 ParsedLine, 复位行内缓冲。 */
-  private commitLine(): ParsedLine {
+  /** 把当前积累的行提交为 MudLine (携带本实例自分配递增 abs), 复位行内缓冲。 */
+  private commitLine(): MudLine {
     this.closeStyle()
     const text = this.text.join('')
     const raw = this.raw.join('')
     const style = this.runs
-    const line: ParsedLine = {
+    const line: MudLine = {
       text,
       raw,
       style,
+      abs: this.absSeq,
       time: Date.now(),
       isPrompt: isPromptText(text),
     }
+    this.absSeq += 1
     this.raw = []
     this.text = []
     this.textLen = 0

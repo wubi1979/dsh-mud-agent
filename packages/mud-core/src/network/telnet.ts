@@ -17,7 +17,7 @@
  *   - 解压出错则丢弃该数据流并记录日志。
  *
  * 事件: 'connect' | 'close' | 'error' | 'log' ({level,text}) |
- *        'text' (原始文本) | 'parsed' (ParsedLine[]) | 'gmcp' ({package, payload}) |
+ *        'text' (原始文本) | 'parsed' (MudLine[]) | 'gmcp' ({package, payload}) |
  *        'mssp' (pairs)
  * @module @deepseek-ai/dsh-mud-core/telnet
  */
@@ -268,8 +268,8 @@ export class TelnetClient extends EventEmitter {
     // 'text': RAW decoded text with ANSI escape sequences and control chars
     // preserved — the display channel (xterm) renders this verbatim.
     this.emit('text', text)
-    // 'parsed': complete logical lines (text/raw/style views, abs 由行缓冲分配) —
-    // the perception/agent feeds consume this. Partial line tails and half-cut
+    // 'parsed': complete logical lines (text/raw/style views, abs 由 AnsiStreamParser
+    // 自分配) — the perception/agent feeds consume this. Partial line tails and half-cut
     // escape sequences stay buffered inside this.ansi until a newline or flush.
     const lines = this.ansi.write(text)
     if (lines.length > 0) {

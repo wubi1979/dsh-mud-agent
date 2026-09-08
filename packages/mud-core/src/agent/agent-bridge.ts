@@ -5,9 +5,17 @@
  * agent 的工具调用就是游戏命令。DSH 全套机制 (LLM 路由/重试、
  * 会话持久化/工具循环) 直接复用, 不再自造决策引擎。
  *
- * v6 单路径: 所有文本统一进 agent; agent 使用 mud-cascade 级联 provider:
+ * v6.2 单路径: 所有文本统一进 agent; agent 使用 mud-cascade 级联 provider:
  *   T1 (确定性): TriggerLlmAdapter 触发匹配 → 渲染动作 (文本 + tool-call);
  *   T2 (真实 LLM): 未命中时转发 agentDefaultModel 的真实 provider/model。
+ *
+ * v6.2 变更: 匹配服务拆分为 state/event 双实例，输入从纯文本改为 MudLine[]。
+ *
+ * v6.3 瀑布数组: 配置容器 = 本文件。级联 provider 改为阶段行走器, 按 stages
+ *   逐级: trigger 级 (T1 确定性渲染) / 显式 model 级 (硬失败交棒) / 尾部默认级
+ *   (DSH 默认配置 agentDefaultModel)。每次调用重读 getCascadeStages(), 无热拔插;
+ *   默认瀑布即「T1 事件触发 + 尾部 DSH 默认」。mimicEnabled/realAllowed 已移除,
+ *   由 stages 的 enabled 与数组内容统一表达。
  * @module @deepseek-ai/dsh-mud-core/agent-bridge
  */
 
@@ -16,57 +24,108 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { type AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { TriggerService } from '../trigger-llm/service.ts'
 import { TriggerLlmAdapter } from '../trigger-llm/adapter.ts'
-import type { TriggerAction } from '../trigger-llm/types.ts'
+import { TriggerMatchService } from '../trigger-llm/service.ts'
+import type { CascadeStage, PerceptionRule, TriggerAction } from '../trigger-llm/types.ts'
+import type { MudLine } from '../preprocess/ansi.ts'
 import type { WorldModel } from '../world/world.ts'
 import type { MudTools } from './tools.ts'
 
-/** 级联 provider 标识 (agent 路由到此 provider → T1/T2 分支)。 */
+/** 级联 provider 标识 (agent 路由到此 provider → 阶段行走分支)。 */
 export const CASCADE_PROVIDER = 'mud-cascade' as const
 
 /** 级联 provider 注册句柄 (幂等: 重复调用不重新注册)。 */
 let cascadeRegistration: (() => void) | null = null
 
+/** 匹配服务实例 (由 registerCascadeProvider 创建; index.ts 访问做预匹配)。 */
+export let stateMatchService: TriggerMatchService | null = null
+export let eventMatchService: TriggerMatchService | null = null
+
+/** 默认瀑布: T1 事件触发级 (尾部默认级为数组外隐式兜底 = DSH 默认配置)。 */
+const DEFAULT_STAGES: readonly CascadeStage[] = [
+  { id: 't1', kind: 'trigger', lane: 'event' },
+]
+
+/** 级联瀑布配置容器 (v6.3): 每次调用经 getCascadeStages() 重读, 无热拔插。 */
+let cascadeStages: readonly CascadeStage[] = DEFAULT_STAGES
+
+/** 替换级联瀑布 (改配置下次调用即生效; stages 内 enabled:false 级跳过)。 */
+export function setCascadeStages(stages: readonly CascadeStage[]): void {
+  cascadeStages = stages
+}
+
+/** 当前级联瀑布快照。 */
+export function getCascadeStages(): readonly CascadeStage[] {
+  return cascadeStages
+}
+
+/** 会话登录凭据 (与会话绑定: 用户即会话, 按 sessionId 存取; 登录规则 T1 插值用)。 */
+export interface SessionCredentials {
+  name: string
+  pass: string
+}
+
+/** sessionId → 登录凭据 (连接时由装配方 setSessionCredentials 写入)。 */
+const sessionCredentials = new Map<string, SessionCredentials>()
+
+/** 写入某会话的登录凭据 (connect({name, pass}) 时调用; 切换用户互不泄漏)。 */
+export function setSessionCredentials(sessionId: string, creds: SessionCredentials): void {
+  if (sessionId === '' || creds === null || typeof creds !== 'object') return
+  sessionCredentials.set(sessionId, { name: creds.name ?? '', pass: creds.pass ?? '' })
+}
+
+/** 读取某会话的登录凭据 (无凭据返回 undefined)。 */
+export function getSessionCredentials(sessionId: string | undefined): SessionCredentials | undefined {
+  return sessionId ? sessionCredentials.get(sessionId) : undefined
+}
+
+/** 工具参数插值: 用会话凭据替换 {name}/{pass} 占位符 (逐字符串值替换)。 */
+export function interpolateCredentials<T extends Record<string, unknown>>(
+  args: T,
+  creds: SessionCredentials | undefined,
+): Record<string, unknown> {
+  if (!creds) return args
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(args)) {
+    out[key] = typeof value === 'string'
+      ? value.replace(/\{name\}/g, creds.name).replace(/\{pass\}/g, creds.pass)
+      : value
+  }
+  return out
+}
+
 /** 注册 mud-cascade 级联 provider (幂等)。 */
 export function registerCascadeProvider(ctx: Context, opts: {
-  trigger: TriggerService
+  stateRules: PerceptionRule[]
+  eventRules: PerceptionRule[]
   world: WorldModel
-  mimicEnabled: () => boolean
-  realAllowed: () => boolean
   log?: (text: string) => void
 }): void {
   if (cascadeRegistration) return // 幂等
+
+  // 创建双实例
+  stateMatchService = new TriggerMatchService(opts.stateRules, 'state')
+  eventMatchService = new TriggerMatchService(opts.eventRules, 'event')
+
   const adapter = new TriggerLlmAdapter({
-    matchLines: (text: string): readonly TriggerAction[] => {
-      const hits = opts.trigger.matchText(text)
+    matchLines: (lines: MudLine[]): readonly TriggerAction[] => {
+      const hits = eventMatchService!.match(lines)
       const actions: TriggerAction[] = []
       for (const hit of hits) {
         if (hit.action) actions.push({ hit, action: hit.action })
       }
       return actions
     },
-    mimicEnabled: opts.mimicEnabled,
-    realAllowed: opts.realAllowed,
-    forward: async function*(options) {
-      const defaultModel = ctx.get('agentDefaultModel')
-      const selection = defaultModel?.currentSelection()
-      if (!selection) {
-        opts.log?.('[cascade] T2 转发失败: 无 agentDefaultModel 选择')
-        yield { type: 'finish', reason: { kind: 'stop' } as const }
-        return
-      }
-      const prepared = await ctx.llm.prepareCall({
-        provider: selection.provider,
-        model: selection.model,
-      })
-      // 重建 options (deep-frozen 请求需 spread) 并替换为真实 provider/model。
-      const rebuilt = { ...options, provider: selection.provider, model: selection.model }
-      yield* prepared.stream(rebuilt)
-    },
+    getRecentLines: () => eventMatchService!.getRecentLines(),
+    stages: () => cascadeStages,
+    llm: ctx.llm,
+    defaultSelection: () => ctx.get('agentDefaultModel')?.currentSelection() ?? null,
+    onLog: (text: string) => opts.log?.(text),
     onRender: (entry) => {
       opts.log?.(`[cascade] T1 命中 ${entry.hit.id}: ${entry.action.output.slice(0, 60)}`)
     },
+    // 登录规则 args 的 {name}/{pass} → 会话凭据 (与会话绑定; 无凭据原样下发)。
+    resolveToolArgs: (args, sessionId) => interpolateCredentials(args, getSessionCredentials(sessionId)),
   })
   cascadeRegistration = ctx.llm.registerAdapter([CASCADE_PROVIDER], adapter)
 }
@@ -77,6 +136,8 @@ export function disposeCascadeProvider(): void {
     try { cascadeRegistration() } catch { /* ignore */ }
     cascadeRegistration = null
   }
+  stateMatchService = null
+  eventMatchService = null
 }
 
 /** 游戏输出 → user 消息 (DSH 消息规范: ContentBlock[])。 */
@@ -124,11 +185,8 @@ export async function createMudAgent(
 ): Promise<AgentHandle> {
   void onActivity
   const commonOptions = {
-    // v6: agent 固定使用 mud-cascade 级联 provider; T1/T2 路由在 adapter 层处理,
-    // 不再需要 installModelSelection (级联 adapter 自行读 agentDefaultModel 转发)。
     agentOptions: { provider: CASCADE_PROVIDER, model: 'cascade-v1' },
     setup: async (agentCtx: Context) => {
-      // 人设: 系统提示区段 (最低 order, 最先)
       if (persona) {
         agentCtx.systemPrompt.section({
           name: 'mud-persona',
@@ -136,7 +194,6 @@ export async function createMudAgent(
           text: persona,
         })
       }
-      // 技能目录: agent 可编排的流程能力 (描述 + 步骤序列)
       if (skills) {
         agentCtx.systemPrompt.section({
           name: 'mud-skills',
@@ -144,7 +201,6 @@ export async function createMudAgent(
           text: skills,
         })
       }
-      // 命令参考: 常用命令语法 (紧凑, 一行一条) — 让 agent 用 mud_send 拼对
       if (commands) {
         agentCtx.systemPrompt.section({
           name: 'mud-commands',
@@ -152,7 +208,6 @@ export async function createMudAgent(
           text: commands,
         })
       }
-      // 工具: 注册宿主提供的工具集 (规则与 agent 同一条执行路径)
       for (const tool of Object.values(tools)) {
         agentCtx.tools.register(defineTool({
           name: tool.name,
@@ -171,10 +226,6 @@ export async function createMudAgent(
       }
     },
   }
-  // 会话已持久化 → resume (加载历史上下文); 否则 create (全新会话)。
-  // 注意: 会话由「创建用户」时的 prepareAgent 预建; connect 不再创建会话,
-  // 只用已 materialize 的 live session (MUD UI 数据自交付二起走 /mud/ws,
-  // 不再写 session)。
   const persistence = ctx.get('sessionPersistence')
   if (persistence !== undefined) {
     try {

@@ -24,9 +24,8 @@
  */
 
 import { TelnetClient } from './network/telnet.ts'
-import type { ParsedLine } from './preprocess/ansi.ts'
+import type { MudLine } from './preprocess/ansi.ts'
 import { textOfLines } from './preprocess/index.ts'
-import { TriggerService } from './trigger-llm/service.ts'
 import { StateService } from './world/state.ts'
 import {
   createWorld, applyPatch, worldSnapshot, type WorldModel,
@@ -36,7 +35,8 @@ import { buildMudTools, type MudTools } from './agent/tools.ts'
 import defaultPerceptionRules from './config/trigger-rules.ts'
 import { SkillService } from './agent/skills.ts'
 import { commandsTextForAgent } from './config/commands.ts'
-import { createMudAgent, sendGameOutput, registerCascadeProvider, disposeCascadeProvider, type CreateMudAgentOptions } from './agent/agent-bridge.ts'
+import { createMudAgent, sendGameOutput, registerCascadeProvider, disposeCascadeProvider, setCascadeStages, setSessionCredentials, stateMatchService, eventMatchService, type CreateMudAgentOptions } from './agent/agent-bridge.ts'
+import type { CascadeStage } from './trigger-llm/types.ts'
 import type { AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -84,8 +84,8 @@ export interface MudAgentConfig {
   cwd?: string
   /** 是否把游戏输出注入 agent 思考 (false = 暂停接入: 输出直推终端, agent 不介入)。 */
   agentEnabled?: boolean
-  /** 触发器确定性渲染开关 (mud-cascade T1): false = 完全跳过 T1 (直接真实 LLM)。 */
-  mimic?: boolean
+  /** 级联瀑布数组 (v6.3; 缺省 = T1 事件触发 + 尾部 DSH 默认配置)。enabled:false 级跳过。 */
+  cascade?: readonly CascadeStage[]
   persona?: string
   commandIntervalMs?: number
   /** 触发器 lite 动作去重窗口 (B 路径反射; 触发机制重构后使用)。 */
@@ -278,31 +278,30 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   })
   tuiLog(`[执行] 工具集就绪: ${Object.keys(mudTools).join(', ')}`)
 
-  // ── 级联 trigger-llm (v6 单路径): T1/T2 承载于 agent-bridge 的 mud-cascade
-  // provider (步骤 6 落地)。独立 TriggerRouter 已移除; 触发服务只做纯匹配,
-  // 命中动作在 agent 内部被级联 provider 消费。
+  // ── 级联 trigger-llm (v6.2 单路径): T1/T2 承载于 agent-bridge 的 mud-cascade
+  // provider (步骤 6 落地)。匹配服务按 lane 分桶 (state 预匹配折叠 / event T1 渲染),
+  // 由 registerCascadeProvider 统一创建双实例 (stateMatchService / eventMatchService)。
 
-  // ── 触发服务 (ctx.mud.trigger): 纯匹配 + 注册管理 (v6: 无事件总线) ──
-  // 命中动作在 agent 内部级联 provider 层次被消费 (步骤 6 接入); 此处只注册配置规则。
-  const trigger = new TriggerService()
-  for (const r of defaultPerceptionRules) trigger.register(r)
-  tuiLog(`[触发] 触发服务就绪, 已注册 ${defaultPerceptionRules.length} 条感知规则`)
+  // ── 级联 trigger-llm (v6.2 单路径, v6.3 瀑布数组): T1/T2 承载于 agent-bridge
+  // 的 mud-cascade provider。配置容器 = agent-bridge 的 cascadeStages (每调用重读,
+  // 无热拔插); 缺省瀑布 = T1 事件触发 + 尾部 DSH 默认, config.cascade 可覆盖。
+  if (config.cascade) setCascadeStages(config.cascade)
+  tuiLog(`[触发] 级联瀑布: ${config.cascade?.map(s => s.id).join(', ') || '默认 (T1 + DSH 默认)'}`)
 
-  // ── mimic 开关: true = 命中规则时 T1 确定性渲染 (不调用真实 LLM); false = 完全跳过 T1 ──
-  // 运行时经 ctx.mud.setMimicEnabled 切换。
-  let mimicEnabled = config.mimic ?? true
-
-  // ── 级联 provider (mud-cascade): T1 (确定性触发) + T2 (真实 LLM 转发) ──
+  // ── 级联 provider (mud-cascade): trigger 级 (确定性触发) + model 级 (显式) +
+  // 尾部默认级 (DSH 默认配置) ──
   // 依赖 ctx.llm; 经 ctx.inject 延迟到 llm 就绪后注册 (幂等)。
+  // 按 lane 分拣规则。
+  const stateRules = defaultPerceptionRules.filter(r => r.lane === 'state')
+  const eventRules = defaultPerceptionRules.filter(r => r.lane !== 'state')
   ctx.inject(['llm'], () => {
     registerCascadeProvider(ctx, {
-      trigger,
+      stateRules,
+      eventRules,
       world,
-      mimicEnabled: () => mimicEnabled,
-      realAllowed: () => true,
       log: (t: string) => tuiLog(t),
     })
-    tuiLog('[触发] 级联 provider (mud-cascade) 装配就绪')
+    tuiLog(`[触发] 级联 provider (mud-cascade) 装配就绪 (state ${stateRules.length} / event ${eventRules.length})`)
     return () => {
       // llm 移除时释放级联适配器路由。
       disposeCascadeProvider()
@@ -336,10 +335,29 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     pushGameEntry(text)
   }
 
-  /** 感知通道: 每批完整逻辑行 → 整批文本进 agent (单路径; 断流计时随文本流复位)。 */
-  function feedParsed(lines: ParsedLine[]): void {
+  /** 感知通道: 每批完整逻辑行 → state 预匹配折叠 + 剩余行进 agent (单路径)。
+   *  v6.2: 行号由 AnsiStreamParser 分配 (MudLine.abs); state 命中行折叠入库并移除;
+   *  剩余行由 event 匹配服务缓存 (供 T1) 并整批进 agent。 */
+  function feedParsed(lines: MudLine[]): void {
     if (lines.length === 0) return
-    resetDeadAir() // 文本到达 = 连接存活 (原事件总线 mud/percept 复位已随事件机制移除)
+    resetDeadAir() // 文本到达 = 连接存活
+
+    // state 预匹配折叠: 命中 → extract 产物 applyPatch 落库。
+    if (stateMatchService) {
+      const stateHits = stateMatchService.match(lines)
+      for (const hit of stateHits) {
+        if (hit.data) applyPatch(world, hit.data)
+      }
+      // 移除已命中行 (折叠: 命中行不进 agent)。
+      if (stateHits.length > 0) {
+        const hitLineNums = new Set(stateHits.map(h => h.lineNumber))
+        lines = lines.filter(l => !hitLineNums.has(l.abs))
+        if (lines.length === 0) return
+      }
+    }
+
+    // 缓存剩余行供 T1 匹配/转发; 整批文本进 agent。
+    eventMatchService?.feedLines(lines)
     pushToAgent(textOfLines(lines))
   }
 
@@ -415,6 +433,8 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       return
     }
     activeSessionId = sid
+    // 凭据与会话绑定: 登录规则 (T1) 按本会话插值渲染 {name}/{pass}。
+    if (account !== undefined) setSessionCredentials(sid, account)
     const client = new TelnetClient({ host, port })
     connections.set(SID, { client, state: 'connecting', host, port })
     client.on('connect', () => {
@@ -430,7 +450,7 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       // lite 假 LLM"后由感知触发器 (p:login:* 规则) 接管, 实现待重建。
     })
     client.on('text', (text: string) => feedRaw(text))
-    client.on('parsed', (lines: ParsedLine[]) => feedParsed(lines))
+    client.on('parsed', (lines: MudLine[]) => feedParsed(lines))
     client.on('gmcp', (msg) => {
       // GMCP 系统事件 → 状态捕获直连 (world 映射 + 派生事件上总线)。
       state.onGmcp(msg.package, msg.payload)
@@ -538,8 +558,11 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   })
 
   // ── ctx.mud 服务 (host API; WebUI 壳经 HTTP 路由 + /mud/ws 消费) ──
+  // 匹配服务由级联 provider 注册时创建 (stateMatchService/eventMatchService 模块级
+  // 变量, 经 getter 延迟解析 — llm 就绪后才有值)。
   const service: MudCoreService = {
-    trigger,
+    get stateTrigger() { return stateMatchService! },
+    get eventTrigger() { return eventMatchService! },
     skill: skillService,
     connect(options: MudConnectOptions = {}): void {
       const targetHost = typeof options.host === 'string' && options.host.trim() !== ''
@@ -623,16 +646,6 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
         eventType: 'agent-mode',
         action: enabled ? 'agent 接入开启' : 'agent 接入关闭',
         text: `[模式] ${enabled ? '开启' : '关闭'} agent 接入`,
-      })
-    },
-    setMimicEnabled(enabled: boolean): void {
-      if (mimicEnabled === enabled) return
-      mimicEnabled = enabled
-      tuiDecision({
-        actor: 'router',
-        eventType: 'mimic-mode',
-        action: enabled ? '触发器确定性渲染开启' : '触发器确定性渲染关闭',
-        text: `[模式] ${enabled ? '开启' : '关闭'} 触发器确定性渲染 (T1)`,
       })
     },
   }
