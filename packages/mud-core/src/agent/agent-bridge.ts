@@ -5,17 +5,79 @@
  * agent 的工具调用就是游戏命令。DSH 全套机制 (LLM 路由/重试、
  * 会话持久化/工具循环) 直接复用, 不再自造决策引擎。
  *
- * 决策路由: 规则系统 (轻量处理器, 确定性) 先于 agent; 未命中才路由到 agent
- * (重型处理器)。两者共用同一工具集 (tools 由宿主传入)。
+ * v6 单路径: 所有文本统一进 agent; agent 使用 mud-cascade 级联 provider:
+ *   T1 (确定性): TriggerLlmAdapter 触发匹配 → 渲染动作 (文本 + tool-call);
+ *   T2 (真实 LLM): 未命中时转发 agentDefaultModel 的真实 provider/model。
  * @module @deepseek-ai/dsh-mud-core/agent-bridge
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { installModelSelection, type AgentHandle } from '@deepseek-ai/dsh-agent'
+import { type AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { TriggerService } from '../trigger-llm/service.ts'
+import { TriggerLlmAdapter } from '../trigger-llm/adapter.ts'
+import type { TriggerAction } from '../trigger-llm/types.ts'
+import type { WorldModel } from '../world/world.ts'
 import type { MudTools } from './tools.ts'
+
+/** 级联 provider 标识 (agent 路由到此 provider → T1/T2 分支)。 */
+export const CASCADE_PROVIDER = 'mud-cascade' as const
+
+/** 级联 provider 注册句柄 (幂等: 重复调用不重新注册)。 */
+let cascadeRegistration: (() => void) | null = null
+
+/** 注册 mud-cascade 级联 provider (幂等)。 */
+export function registerCascadeProvider(ctx: Context, opts: {
+  trigger: TriggerService
+  world: WorldModel
+  mimicEnabled: () => boolean
+  realAllowed: () => boolean
+  log?: (text: string) => void
+}): void {
+  if (cascadeRegistration) return // 幂等
+  const adapter = new TriggerLlmAdapter({
+    matchLines: (text: string): readonly TriggerAction[] => {
+      const hits = opts.trigger.matchText(text)
+      const actions: TriggerAction[] = []
+      for (const hit of hits) {
+        if (hit.action) actions.push({ hit, action: hit.action })
+      }
+      return actions
+    },
+    mimicEnabled: opts.mimicEnabled,
+    realAllowed: opts.realAllowed,
+    forward: async function*(options) {
+      const defaultModel = ctx.get('agentDefaultModel')
+      const selection = defaultModel?.currentSelection()
+      if (!selection) {
+        opts.log?.('[cascade] T2 转发失败: 无 agentDefaultModel 选择')
+        yield { type: 'finish', reason: { kind: 'stop' } as const }
+        return
+      }
+      const prepared = await ctx.llm.prepareCall({
+        provider: selection.provider,
+        model: selection.model,
+      })
+      // 重建 options (deep-frozen 请求需 spread) 并替换为真实 provider/model。
+      const rebuilt = { ...options, provider: selection.provider, model: selection.model }
+      yield* prepared.stream(rebuilt)
+    },
+    onRender: (entry) => {
+      opts.log?.(`[cascade] T1 命中 ${entry.hit.id}: ${entry.action.output.slice(0, 60)}`)
+    },
+  })
+  cascadeRegistration = ctx.llm.registerAdapter([CASCADE_PROVIDER], adapter)
+}
+
+/** 释放 mud-cascade 级联 provider 注册 (llm 卸载时调用; 幂等)。 */
+export function disposeCascadeProvider(): void {
+  if (cascadeRegistration) {
+    try { cascadeRegistration() } catch { /* ignore */ }
+    cascadeRegistration = null
+  }
+}
 
 /** 游戏输出 → user 消息 (DSH 消息规范: ContentBlock[])。 */
 export function gameMessage(text: string) {
@@ -61,16 +123,11 @@ export async function createMudAgent(
   { sessionId, cwd, persona, skills = '', commands = '', tools = {}, onActivity = () => {}, onAgentTool }: CreateMudAgentOptions,
 ): Promise<AgentHandle> {
   void onActivity
-  // 默认模型选择 (agent-default-model 服务, dsh-base 提供; 缺失时 agent 无路由)
-  const defaultModel = ctx.get('agentDefaultModel')
-  const selection = defaultModel ? defaultModel.currentSelection() : undefined
   const commonOptions = {
-    agentOptions: selection ? { provider: selection.provider, model: selection.model } : {},
+    // v6: agent 固定使用 mud-cascade 级联 provider; T1/T2 路由在 adapter 层处理,
+    // 不再需要 installModelSelection (级联 adapter 自行读 agentDefaultModel 转发)。
+    agentOptions: { provider: CASCADE_PROVIDER, model: 'cascade-v1' },
     setup: async (agentCtx: Context) => {
-      // 模型路由: 挂载会话级模型选择 (对齐 dsh-headless)
-      if (selection) {
-        installModelSelection(agentCtx, { current: selection, assembled: undefined })
-      }
       // 人设: 系统提示区段 (最低 order, 最先)
       if (persona) {
         agentCtx.systemPrompt.section({

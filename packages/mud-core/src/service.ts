@@ -7,11 +7,9 @@
  * @module @deepseek-ai/dsh-mud-core/service
  */
 
-import type { MudWorldSnapshot } from './shell-bridge.ts'
-import type { TriggerService } from './perception/triggers.ts'
-import type { FlowService } from './agent/flow.ts'
+import type { MudWorldSnapshot } from './client/wire.ts'
+import type { TriggerService } from './trigger-llm/service.ts'
 import type { SkillService } from './agent/skills.ts'
-import type { DecisionCenter } from './agent/dispatcher.ts'
 
 /** connect() 参数 (全部缺省回落插件 config 默认值)。 */
 export interface MudConnectOptions {
@@ -63,22 +61,13 @@ export interface MudGameRead {
 }
 
 /**
- * MUD 核心服务 (`ctx.mud`)。宿主进程内单例, 由 mud-core 插件提供;
- * 会话事件契约见 shell-bridge.ts。
+ * MUD 核心服务 (`ctx.mud`)。宿主进程内单例, 由 mud-core 插件提供。
  */
 export interface MudCoreService {
-  /** 感知触发服务: register/unregister/unregisterByOwner, 命中 → MudEvent → 事件总线。 */
+  /** 触发服务: 纯规则匹配 + 注册管理 (v6: 无事件总线; 命中由 agent 级联 provider 消费)。 */
   trigger: TriggerService
-  /** 流程引擎: start/abort/status/register/names (登录等确定性事务流程)。 */
-  flow: FlowService
   /** 技能服务: 预制基线 + agent 动态生成的技能注册, 注入 agent 系统提示。 */
   skill: SkillService
-  /**
-   * 统一事件决策中心: 可行动事件的统一路由。决策知识集中在规则表
-   * (action:"tool" 单步反射 / action:"flow" 直调确定性事务), agent 兜底。
-   * flow 经宿主回调 flow.start 激活 (触发时机由规则表决定)。
-   */
-  dispatcher: DecisionCenter
   /**
    * 建立 telnet 连接 (幂等: 已连接时忽略)。目标会话必须已 materialize
    * (先调用 {@link prepareAgent} 或由界面激活会话)。
@@ -105,6 +94,8 @@ export interface MudCoreService {
   askAgent(text: string): boolean
   /** 运行时切换 agent 接入模式 (等价 config.agentEnabled 的动态开关)。 */
   setAgentEnabled(enabled: boolean): void
+  /** 运行时切换触发器确定性渲染 (mud-cascade T1): false = 跳过 T1 直接真实 LLM。 */
+  setMimicEnabled(enabled: boolean): void
 }
 
 declare module '@deepseek-ai/cordis' {

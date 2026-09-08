@@ -13,10 +13,13 @@
  * @module @deepseek-ai/dsh-mud-core/client/wire
  */
 
-import type { MudWorldSnapshot } from '../shell-bridge.ts'
-
 /** 世界快照 (worldSnapshot 产物, JSON 可序列化)。 */
-export type { MudWorldSnapshot }
+export interface MudWorldSnapshot {
+  char: Record<string, unknown>
+  room: Record<string, unknown>
+  combat: Record<string, unknown>
+  flags: Record<string, unknown>
+}
 
 /** 一条游戏输出帧条目 (与终端缓冲条目同形, 原始文本含 ANSI)。 */
 export interface MudGameItem {

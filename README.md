@@ -16,10 +16,10 @@
 ## 词汇表(v5)
 
 - **感知（perception）**：`PerceptionDriver` 把 telnet 原始行折叠成感知记录；`TriggerService` 用 `contains`/`regex`/`color`/`guard` 匹配规则，命中发 `mud/percept` 事件（`p:*`）。
-- **触发器 LLM（trigger-llm）**：确定性 LLM adapter（假 provider `mud-trigger`）。带 lite 标记的 user/message 借道官方 agent 工具管道执行确定性动作；分流在 `agent/request` 瀑布按 step 粒度完成，无标记消息走真实 LLM。
-- **感知 lite 捕获器（LiteCapture）**：订阅 `mud/percept`，对确定性反射动作（如战斗开始立即 `halt`）构造 lite marker → 抢占（`agent.cancel({kind:'user'},{keepInbox:true})`）+ `agent.send` → mud-trigger → 官方 `mud_send` 工具执行。取代旧 dispatcher 的单步 `action:"tool"` 规则。
-- **flow**：确定性事务流程（登录/fullme）；仅保留 flow 直调与声明式 llm 决策规则在 dispatcher（战斗反射已迁到 LiteCapture）。
-- **工具集（agent 视角）**：`mud_send`/`mud_recall`/`mud_status`/`mud_flow_enable|disable|status`（`mud_map_*` 在 M5）；触发器与 agent 共用同一套工具，无触发器专用工具。
+- **路径 A（标准 LLM）**：游戏输出直接以 user/message 提交 DSH agent（`sendGameOutput`），全程标准 agent 流程（无注入/折叠/忙时桶）。
+- **路径 B（触发器模拟 LLM）**：触发器命中 → lite marker → `mud-trigger` 假 provider → 官方 agent 工具管道执行确定性动作。分流在 `agent/request` 瀑布按 step 粒度完成，无标记消息走真实 LLM。
+- **工具集（agent 视角）**：`mud_send`/`mud_recall`/`mud_status`/`mud_flow_enable|disable|status`（`mud_map_*` 在 M5）；路径 A 与路径 B 共用同一套工具，无触发器专用工具。
+- **未来事项**：login 重建为「触发器 → lite 假 LLM」；v5 已移除 dispatcher/decision/flow 与感知 lite 捕获器（LiteCapture）。
 
 ---
 

@@ -5,7 +5,7 @@
  * 命令行语法/参数契约 (一步成事的 `command` 模板), 不是流程级技能 (后者见
  * `src/config/skills.ts` 的 MudSkill)。命令与技能的判定:
  *   - 命令级 (本文件): 单条命令模板, 参数到位即 `send(cmd)` — 是"事实/语法";
- *   - 流程级 (skills.ts): 多步编排序列, 供 agent/flow 按序执行。
+ *   - 流程级 (skills.ts): 多步编排序列, 供 agent 按序执行。
  *
  * 用途:
  *   - **紧凑 agent 参考** (`commandsTextForAgent`): 一行一条、按类分组的命令语法
@@ -134,13 +134,7 @@ export const mudCommands: readonly MudCommand[] = [
   { id: 'wield', category: 'trade', name: '装备武器', command: 'wield {item}', description: '装备武器 (可加 at left/right 指定手部)' },
 ]
 
-/** 按 id 查命令。 */
-export function getCommand(id: string): MudCommand | undefined {
-  return mudCommands.find(c => c.id === id)
-}
-
-/**
- * 原始命令层硬禁用命令 (安全边界)。迁移前 `lib/skills.js` 的 forbidden 判定
+/** 原始命令层硬禁用命令 (安全边界)。迁移前 `lib/skills.js` 的 forbidden 判定
  * 依据 (suicide/passwd + 禁止语义): 这些命令直接不可执行, 由 `mud_send`
  * 工具层拦截, 防止 agent 拼错导致删号/改密等不可逆操作。
  */
@@ -188,13 +182,6 @@ export function commandsTextForAgent(commands: readonly MudCommand[] = mudComman
     }
   }
   return lines.join('\n')
-}
-
-/** 渲染为纯文本命令列表 (诊断/调试用)。 */
-export function commandsTextList(commands: readonly MudCommand[] = mudCommands): string {
-  return commands
-    .map(c => `${c.id}\t${c.category}\t${c.name}\t${c.command}${c.forbidden ? '\t[禁止]' : ''}`)
-    .join('\n')
 }
 
 export default mudCommands

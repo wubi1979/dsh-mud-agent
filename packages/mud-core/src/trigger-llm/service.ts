@@ -1,47 +1,21 @@
 /**
- * dsh-mud-core — 触发服务 (Triggers), host half. (`ctx.mud.trigger`)
+ * dsh-mud-core — 触发服务 (TriggerService) + 匹配器 (Perceptor), host half.
  *
- * 底层触发服务: 接收感知协调器产出的标准行 (MudLine), 确定性匹配 (字面量/
- * 正则/颜色/Mudlet 对齐), 命中后**包装为 MudEvent 发布到事件总线**, 供
- * 状态捕获 (state) / 规则引擎 (rules) / 流程引擎 (flow) / agent 路由消费。
+ * v6 单路径下触发服务的职责收窄为纯匹配:
+ *   - Perceptor: 确定性规则匹配器 (字面量/正则/颜色/多行状态机), 语义与
+ *     Mudlet / Python Matcher 对齐 (自原 perception/triggers.ts 迁入, 无变化);
+ *   - TriggerService (`ctx.mud.trigger`): 包一层 Perceptor, 注册管理 +
+ *     matchText (整批 agent 文本入口: 拆临时行 → 只匹配未消费的新行)。
  *
- * 注册模型:
- *   - 启动时静态注册 (内置登录/战斗/房间触发, 见 config/trigger-rules.ts);
- *   - 运行中动态 register / unregister / unregisterByOwner (技能/插件可
- *     动态增删触发), 且不依赖感知层实现 — 感知只做协调与文本标准化。
- *
- * 本模块把原 perception.ts 的 Perceptor (匹配器) 迁出, perception.ts 只保留
- * 行缓冲与文本标准化 (协调器)。
- * @module @deepseek-ai/dsh-mud-core/triggers
+ * 事件总线 (mud/percept) 与 publish 已随事件机制移除; 文本语义统一走
+ * agent (级联 provider T1 在此匹配, 命中动作渲染进 agent 响应)。
+ * @module @deepseek-ai/dsh-mud-core/trigger-llm/service
  */
 
-import type { Context } from '@deepseek-ai/cordis'
-import type { MudLine, StyleRun } from '../net/ansi.ts'
-import { StyleFlag } from '../net/ansi.ts'
-import { makePerceptEvent, type MudPerceptEvent } from '../events.ts'
-
-/** 颜色触发条件 (Mudlet 颜色触发对齐): 与 style run 逐段匹配。 */
-export interface ColorCond {
-  /** 前景 256 色索引; 指定 null 表示"匹配默认前景" (Mudlet scmDefault)。 */
-  fg?: number | null
-  /** 背景 256 色索引; 指定 null 表示"匹配默认背景" (Mudlet scmDefault)。 */
-  bg?: number | null
-  /** 真彩前景 (优先级高于 fg)。 */
-  fgTrue?: [number, number, number] | null
-  /** 真彩背景 (优先级高于 bg)。 */
-  bgTrue?: [number, number, number] | null
-}
-
-/**
- * 多行触发条件 (Mudlet 对齐): 逐条件顺序状态机, 每个条件匹配**单一行**,
- * 而非把多行拼成一段文本做正则 (Mudlet 的多行是逐条件状态机, 见
- * TTrigger::updateMultistates / TMatchState)。
- */
-export type MultiCond =
-  | { kind: 'substring'; text: string }
-  | { kind: 'regex'; regex: string | RegExp }
-  /** 行间间隔: 距上一条件需隔 lines 行 (Mudlet REGEX_LINE_SPACER / lineSpacer)。 */
-  | { kind: 'spacer'; lines: number }
+import type { MudLine, StyleRun } from '../preprocess/ansi.ts'
+import { StyleFlag, isPromptText } from '../preprocess/ansi.ts'
+import type { ColorCond, MultiCond, PerceptionRule, PerceptHit, ActionSpec } from './types.ts'
+import { MULTI_LINE_DELTA } from './types.ts'
 
 function rgbEq(a: [number, number, number] | null | undefined,
   b: [number, number, number] | null | undefined): boolean {
@@ -66,42 +40,6 @@ export function styleMatchesColor(rows: readonly { style: readonly StyleRun[] }[
   }))
 }
 
-/** 感知规则命中结果。 */
-export interface PerceptHit {
-  id: string
-  eventType: string
-  lineNumber: number
-  data: Record<string, unknown> | null
-  reason?: string
-}
-
-/** 感知规则 (配置来源, config/trigger-rules.ts)。 */
-export interface PerceptionRule {
-  id: string
-  eventType?: string
-  priority?: number
-  multiline?: boolean
-  greedy?: boolean
-  contains?: readonly string[]
-  regex?: readonly (string | RegExp)[]
-  /** 多行: 有序条件列表 (Mudlet 逐条件状态机对齐)。省略时由 contains+regex 派生。
-   *  仅 multiline=true 时起作用。 */
-  patterns?: readonly MultiCond[]
-  /** 多行: 首条件到末条件之间允许的最大间隔行数 (Mudlet mConditionLineDelta)。
-   *  默认 MULTI_LINE_DELTA。 */
-  lineDelta?: number
-  /** 颜色触发: 指定后要求行内任一段 run 命中全部已指定通道。与 contains/regex 为 AND。 */
-  fg?: number | null
-  bg?: number | null
-  fgTrue?: [number, number, number] | null
-  bgTrue?: [number, number, number] | null
-  guard?: (record: { rows: MudLine[] }) => boolean
-  extract?: (record: { rows: MudLine[] }) => Record<string, unknown> | null
-}
-
-/** 多行首条件到末条件默认最大间隔行数。 */
-export const MULTI_LINE_DELTA = 100
-
 /** 归一化触发规则。 */
 interface NormalizedTriggerRule {
   id: string
@@ -122,6 +60,8 @@ interface NormalizedTriggerRule {
   color: ColorCond | null
   guard: ((record: { rows: MudLine[] }) => boolean) | null
   extract: ((record: { rows: MudLine[] }) => Record<string, unknown> | null) | null
+  /** 命中动作 (v6: 规则携带; 装配方据此渲染)。 */
+  action: ActionSpec | null
 }
 
 /** 多行匹配状态机的一个活跃实例 (Mudlet TMatchState 对齐)。 */
@@ -206,6 +146,7 @@ export class Perceptor {
       color,
       guard: rule.guard ?? null,
       extract: rule.extract ?? null,
+      action: rule.action ?? null,
     }
     // 同 id 覆盖: 先清旧索引
     this.unregister(norm.id)
@@ -312,12 +253,14 @@ export class Perceptor {
   private matchLine(rule: NormalizedTriggerRule, line: MudLine): PerceptHit | null {
     const record = { rows: [line] }
     if (!this.ruleHit(rule, record)) return null
-    return {
+    const hit: PerceptHit = {
       id: rule.id,
       eventType: rule.eventType,
       lineNumber: line.abs,
       data: rule.extract ? rule.extract(record) : null,
     }
+    if (rule.action) hit.action = rule.action
+    return hit
   }
 
   /** 单条件与一行文本的匹配 (正则测试会复位 lastIndex)。 */
@@ -390,37 +333,26 @@ export class Perceptor {
     const rows = st.captures.map(c => c.row)
     if (rule.color !== null && !styleMatchesColor(rows, rule.color)) return null
     if (rule.guard && !rule.guard({ rows })) return null
-    return {
+    const hit: PerceptHit = {
       id: rule.id,
       eventType: rule.eventType,
       lineNumber: line.abs,
       reason: 'multiline',
       data: rule.extract ? rule.extract({ rows }) : null,
     }
+    if (rule.action) hit.action = rule.action
+    return hit
   }
-}
-
-/** 触发服务构造参数。 */
-export interface TriggerServiceOptions {
-  /** 事件总线 (cordis ctx)。 */
-  bus: Pick<Context, 'events'>
-  /** 事件发布开关 (0 = 仅匹配不发总线, 供内部/测试)。 */
-  publish?: boolean
 }
 
 /**
- * 触发服务 (`ctx.mud.trigger`): 包一层 Perceptor, 命中 → MudEvent → 总线。
- * perception 协调器直接调用 feed() 喂行, 不感知匹配细节。
+ * 触发服务 (`ctx.mud.trigger`): 包一层 Perceptor。注册管理 + 纯匹配。
+ * 无事件总线: 命中由装配方 (agent-bridge 级联 provider) 直接消费。
  */
 export class TriggerService {
   private readonly perceptor = new Perceptor()
-  private readonly bus: Pick<Context, 'events'>
-  private readonly publishEnabled: boolean
-
-  constructor({ bus, publish = true }: TriggerServiceOptions) {
-    this.bus = bus
-    this.publishEnabled = publish
-  }
+  /** 临时行单调 abs 分配器 (matchText 文本入口专用; 行号从 0 递增)。 */
+  private textLineCounter = 0
 
   /** 注册一个触发规则; owner 用于批量注销。 */
   register(rule: PerceptionRule, owner = ''): void {
@@ -442,24 +374,39 @@ export class TriggerService {
     return this.perceptor.getRules().length
   }
 
-  /** 纯匹配: 返回命中 (不做去重/发布; 由协调器先过滤再 publish)。 */
-  match(lines: readonly MudLine[]): PerceptHit[] {
-    return this.perceptor.match(lines as MudLine[])
-  }
-
-  /**
-   * 发布一个命中到事件总线 (包装为 MudEvent)。
-   * 发布开关关闭 (publish=false) 时仅构造事件不广播 (内部/测试用)。
-   * @returns 构造出的感知事件。
-   */
-  publish(hit: PerceptHit): MudPerceptEvent {
-    const e = makePerceptEvent(hit.eventType, hit.data, hit.lineNumber)
-    if (this.publishEnabled) this.bus.events.emit('mud/percept', e)
-    return e
-  }
-
   /** 现有触发规则快照 (调试/状态展示)。 */
   getRules(): { id: string; eventType: string }[] {
     return this.perceptor.getRules().map(r => ({ id: r.id, eventType: r.eventType }))
+  }
+
+  /**
+   * 整批文本入口 (级联 provider T1 使用): 拆临时行 (单调 abs, 无样式) →
+   * 匹配全部行 → 返回按行号排序的命中。
+   *
+   * 同一批文本重复调用会重复命中 — 去重由 adapter 层 (内容级) 负责,
+   * TriggerService 本身是无状态纯匹配器。
+   *
+   * 注意: 临时行不含 style, 颜色触发条件 (fg/bg/fgTrue/bgTrue) 在纯文本
+   * 输入下不满足, 颜色规则不会误命中。
+   */
+  matchText(text: string): PerceptHit[] {
+    const cleaned = String(text ?? '')
+    if (cleaned === '') return []
+    const parts = cleaned.split(/\r?\n/)
+    const rows: MudLine[] = parts.map((t, i) => ({
+      text: t,
+      raw: t,
+      style: [],
+      abs: this.textLineCounter + i,
+      time: Date.now(),
+      isPrompt: isPromptText(t),
+    }))
+    this.textLineCounter += parts.length
+    return this.perceptor.match(rows)
+  }
+
+  /** 重置文本入口游标 (主要用于测试隔离)。 */
+  resetTextCursor(): void {
+    this.textLineCounter = 0
   }
 }

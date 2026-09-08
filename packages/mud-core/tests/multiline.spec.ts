@@ -1,5 +1,5 @@
 /**
- * dsh-mud-agent — 触发匹配回归测试:
+ * dsh-mud-agent — 触发匹配回归测试 (v6: 触发匹配器迁入 trigger-llm/service):
  *   - 多行匹配状态机 (Mudlet 逐条件模型: 有序条件 / spacer / lineDelta 过期 /
  *     每行只喂一次);
  *   - 正则去 g 标志 (防 lastIndex 跨窗口错位);
@@ -7,9 +7,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Perceptor, type PerceptHit } from '../src/perception/triggers.ts'
-import { StyleFlag, type ParsedLine, type StyleRun } from '../src/net/ansi.ts'
-import { PerceptionBuffer, type MudLine } from '../src/perception/perception.ts'
+import { Perceptor, type PerceptHit } from '../src/trigger-llm/service.ts'
+import { StyleFlag, type ParsedLine, type StyleRun, type MudLine } from '../src/preprocess/ansi.ts'
 
 function parsed(text: string, style: StyleRun[] = []): ParsedLine {
   return { text, raw: text, style, time: 0, isPrompt: false }
@@ -20,10 +19,21 @@ function parsed(text: string, style: StyleRun[] = []): ParsedLine {
  * 返回当前快照 (含历史行; 状态机用 multiLastAbs 自动去重, 每行只喂一次)。
  */
 function makeFeed() {
-  const buf = new PerceptionBuffer()
+  let nextAbs = 0
+  const history: MudLine[] = []
   return function feed(rows: ParsedLine[]): MudLine[] {
-    buf.appendLines(rows)
-    return buf.snapshot()
+    for (const r of rows) {
+      history.push({
+        text: r.text,
+        raw: r.raw,
+        style: r.style,
+        abs: nextAbs,
+        time: r.time,
+        isPrompt: r.isPrompt,
+      })
+      nextAbs += 1
+    }
+    return history.slice()
   }
 }
 
@@ -58,15 +68,13 @@ describe('多行匹配状态机 (Mudlet 逐条件模型)', () => {
         { kind: 'substring', text: 'B' },
       ],
     })
-    const buf = new PerceptionBuffer()
-    buf.appendLines([parsed('A'), parsed('X')]) // abs 0,1
-    let w = buf.snapshot()
+    const feed = makeFeed()
+    let w = feed([parsed('A'), parsed('X')]) // abs 0,1
     perceptor.match(w) // 播种 A (abs0); X 推进
     // 同样内容再回传 (游标未推进): A/X 已被喂过, 不应再播种/推进。
     const rehits = perceptor.match(w).filter(h => h.id === 'ml2')
     expect(rehits).toHaveLength(0)
-    buf.appendLines([parsed('B')])              // abs 2
-    w = buf.snapshot()
+    w = feed([parsed('B')]) // abs 2
     const hits = perceptor.match(w).filter(h => h.id === 'ml2')
     expect(hits).toHaveLength(1)
     expect(hits[0]?.lineNumber).toBe(2) // B 的 abs=2
@@ -131,9 +139,7 @@ describe('多行匹配状态机 (Mudlet 逐条件模型)', () => {
 
 describe('正则去 g 标志', () => {
   function buffered(rows: ParsedLine[]): MudLine[] {
-    const buf = new PerceptionBuffer()
-    buf.appendLines(rows)
-    return buf.snapshot()
+    return toRows(rows)
   }
 
   it('全局正则跨窗口重复匹配不因 lastIndex 错位', () => {
@@ -153,9 +159,7 @@ describe('正则去 g 标志', () => {
 
 describe('bold→亮色耦合 (Mudlet 对齐)', () => {
   function buffered(rows: ParsedLine[]): MudLine[] {
-    const buf = new PerceptionBuffer()
-    buf.appendLines(rows)
-    return buf.snapshot()
+    return toRows(rows)
   }
 
   it('bold 的暗色前景按亮色变体命中', () => {
@@ -172,3 +176,15 @@ describe('bold→亮色耦合 (Mudlet 对齐)', () => {
     expect(perceptor.match(buffered([dark])).length).toBe(0)
   })
 })
+
+/** ParsedLine[] → MudLine[] (abs 自 0 单调; 供一次性窗口场景 y用)。 */
+function toRows(rows: ParsedLine[]): MudLine[] {
+  return rows.map((r, i) => ({
+    text: r.text,
+    raw: r.raw,
+    style: r.style,
+    abs: i,
+    time: r.time,
+    isPrompt: r.isPrompt,
+  }))
+}

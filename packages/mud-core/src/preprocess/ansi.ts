@@ -1,5 +1,5 @@
 /**
- * dsh-mud-core — 流式 ANSI / 行解析器 (host half).
+ * dsh-mud-core — 流式 ANSI / 行解析器 (host half). 预处理层。
  *
  * 对齐 Mudlet mIncompleteSequenceBytes 的取舍: 单遍状态机把 telnet 解码后的
  * 文本流切成"完整逻辑行", 同时保留颜色/样式。跨块的不完整 ESC 序列与未换行
@@ -12,7 +12,8 @@
  *   - style  逐段样式 run (run-length, start/end 落在 text 坐标系) —— 颜色触发/富渲染
  *
  * 样式游标跨行保持 (符合 ANSI 语义); 行末未显式清零则延续到下一行。
- * @module @deepseek-ai/dsh-mud-core/ansi
+ * v6: abs 由装配/适配层分配 (解析器产出时未携带), 见 trigger-llm/service。
+ * @module @deepseek-ai/dsh-mud-core/preprocess/ansi
  */
 
 /** 样式位标志 (紧凑 bitmask, run-length 存储)。 */
@@ -43,8 +44,8 @@ export interface StyleRun {
 }
 
 /**
- * 完整逻辑行 (标准行对象, Phase 2 起为全链路消费方统一的数据形态)。
- * abs 由行缓冲 (PerceptionBuffer) 分配, 解析器产出时未携带。
+ * 完整逻辑行 (标准行对象, 全链路消费方统一的数据形态)。
+ * abs 由装配/适配层分配 (如 trigger-llm/service 的临时行游标)。
  */
 export interface MudLine {
   /** 纯文本 (无 ANSI): agent 注入、规则匹配。 */
@@ -53,7 +54,7 @@ export interface MudLine {
   raw: string
   /** 逐段样式 run; 无颜色/样式时为空数组。 */
   style: StyleRun[]
-  /** 绝对行号 (单调递增, 由行缓冲分配)。 */
+  /** 绝对行号 (单调递增, 由装配/适配层分配)。 */
   abs: number
   /** 该行最后收尾时间戳。 */
   time: number
@@ -83,7 +84,7 @@ const CONTROL_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g
 
 const ESC = '\u001b'
 
-/** prompt 启发: 默认裸 > / ＞ 行 (与 perception.isPromptRow 同规则)。 */
+/** prompt 启发: 默认裸 > / ＞ 行。 */
 export function isPromptText(text: string): boolean {
   const t = text.trim()
   return t === '>' || t === '＞' || /^[>＞]\s*$/.test(t)

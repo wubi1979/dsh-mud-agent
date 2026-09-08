@@ -25,7 +25,7 @@
 import { EventEmitter } from 'node:events'
 import net from 'node:net'
 import zlib from 'node:zlib'
-import { AnsiStreamParser, stripAnsi } from './ansi.ts'
+import { AnsiStreamParser, stripAnsi } from '../preprocess/ansi.ts'
 
 const IAC = 255
 const DONT = 254

@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it, vi, afterEach } from 'vitest'
-import { resolveCaptchaImage } from '../src/net/captcha.ts'
+import { resolveCaptchaImage } from '../src/network/captcha.ts'
 
 afterEach(() => {
   vi.unstubAllGlobals()

@@ -1,5 +1,5 @@
 /**
- * dsh-mud-core — 验证码图片解析 (net/captcha), host half.
+ * dsh-mud-core — 验证码图片解析 (network/captcha), host half.
  *
  * pkuxkx 的 fullme 验证码交互中, 游戏回显的地址并非真实图片, 而是
  * robot.php 页面 (http://fullme.pkuxkx.net/robot.php?filename=<ts>), 页面
@@ -14,7 +14,7 @@
  *   - robot.php 可刷新 2 次, 每次刷新图片地址变化 (图片内容不变);
  *   - 图片生成 3 分钟后或刷新满 2 次后, 该 robot.php 地址不再给出图片。
  *   因此这里**单次抓取即取, 不做重试** (首次即有图, 重试会浪费有限的刷新次数)。
- * @module @deepseek-ai/dsh-mud-core/net/captcha
+ * @module @deepseek-ai/dsh-mud-core/network/captcha
  */
 
 /** HTML <img> 标签中 src 为图片 (jpg/jpeg/png/gif) 的匹配; 兼容单/双引号。 */

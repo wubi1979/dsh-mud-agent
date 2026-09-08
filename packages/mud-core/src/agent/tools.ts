@@ -1,7 +1,7 @@
 /**
  * dsh-mud-core — 工具集 (Tools), host half.
  *
- * 工具 = 校验点 + 执行路径。规则 (轻量处理器) 与 DSH agent (重型处理器)
+ * 工具 = 校验点 + 执行路径。路径 A (标准 agent) 与路径 B (触发器 lite 借道)
  * 共用同一工具集; 非法参数在工具层拒绝, 不发到游戏才报"什么？"。
  *
  * 收敛策略: 不做 70+ 个命令工具 (撑爆上下文), 而是按意图/技能分组为
@@ -20,6 +20,7 @@
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ParameterSchemaSpec, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
 import { FORBIDDEN_COMMANDS } from '../config/commands.ts'
+import { applyPatch, type WorldModel } from '../world/world.ts'
 
 /** 工具统一返回。 */
 export interface MudToolResult {
@@ -106,6 +107,7 @@ export function buildMudTools({
   log = () => {},
   recall = () => [],
   flowControl,
+  world,
 }: {
   send?: (cmd: string) => void
   log?: (text: string) => void
@@ -115,6 +117,7 @@ export function buildMudTools({
     disable: (groupId: string) => boolean
     status: () => Record<string, 'enabled' | 'disabled' | 'unknown'>
   }
+  world?: WorldModel
 } = {}): MudTools {
   return {
     /** 移动: 只接受合法方向 (全名或别名), 非法方向拒绝。 */
@@ -246,6 +249,30 @@ export function buildMudTools({
         const lines = recall(count)
         log(`[工具] mud_recall → 最近 ${lines.length} 行`)
         return { ok: true, note: lines.map(l => l.replace(/\x1b\[[0-9;]*m/g, '')).join('\n'), cmd: '' }
+      },
+    },
+
+    /** world_patch: 文本推断状态 → WorldModel (置信度 0.7; GMCP 权威 1.0 优先)。 */
+    world_patch: {
+      name: 'world_patch',
+      description: '更新世界模型中的状态字段 (文本推断, 置信度 0.7)。适用于从游戏输出中推断的非 GMCP 权威状态: in_combat、logged_in、awaiting、initialized、dead 等。点分键如 "flags.sent_name" 可写入指定分组。',
+      parameters: {
+        patch: {
+          type: 'object',
+          required: true,
+          additionalProperties: true,
+          description: '要更新的字段键值对。已知语义键: in_combat (bool), logged_in (bool), awaiting (bool), initialized (bool), dead (bool); 其余键进入 flags 分组。',
+        },
+      },
+      output: { schema: OUT_SCHEMA, render: OUT_RENDER },
+      execute: (args) => {
+        if (!world) return { ok: false, note: 'world_patch 未装配 (缺少 WorldModel)', cmd: '' }
+        const patch = args.patch as Record<string, unknown> | undefined
+        if (!patch || typeof patch !== 'object') return { ok: false, note: 'patch 参数必须为对象', cmd: '' }
+        const changes = applyPatch(world, patch)
+        if (changes.length === 0) return { ok: true, note: '无变化 (值相同或置信度不足)', cmd: '' }
+        log(`[工具] world_patch → ${changes.join(', ')}`)
+        return { ok: true, note: `已更新: ${changes.join(', ')}`, cmd: '' }
       },
     },
 

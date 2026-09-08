@@ -4,18 +4,23 @@
  * 验证三类目标:
  *   1. 分行正确性: \n / \r\n / 裸 \r; 空行保留; 跨 TCP 块的行尾续接 (行号稳定)。
  *   2. 颜色捕获: 16 色 / 256 色 / 真彩 → style run 坐标对齐 text。
- *   3. 解析器集成: PerceptionBuffer/Perceptor 在跨块场景下不产生碎行、abs 单调。
+ *   3. 集成: 整批文本入口 (TriggerService.matchText) 与颜色样式保留路径。
  */
 
 import { describe, expect, it } from 'vitest'
-import { AnsiStreamParser, stripAnsi, isPromptText } from '../src/net/ansi.ts'
-import { PerceptionBuffer, PerceptionDriver } from '../src/perception/perception.ts'
-import { Perceptor, TriggerService, type PerceptHit } from '../src/perception/triggers.ts'
-import { createWorld, flattenWorld, applyPatch } from '../src/world/world.ts'
-import { patchForPercept } from '../src/world/state.ts'
+import { AnsiStreamParser, stripAnsi, isPromptText, type MudLine } from '../src/preprocess/ansi.ts'
+import { Perceptor, TriggerService } from '../src/trigger-llm/service.ts'
 
-/** 仅用于 publish=false 的触发服务 (不发总线, 事件对象无碍)。 */
-const stubBus = { events: { emit: () => {}, on: () => {}, off: () => {} } } as never
+function toRows(lines: { text: string; raw: string; style: MudLine['style'] }[]): MudLine[] {
+  return lines.map((l, i) => ({
+    text: l.text,
+    raw: l.raw,
+    style: l.style,
+    abs: i,
+    time: 0,
+    isPrompt: false,
+  }))
+}
 
 describe('分行', () => {
   it('按 \\n 拆分, 保留空行', () => {
@@ -185,56 +190,59 @@ describe('flush / prompt', () => {
   })
 })
 
-describe('与感知层集成 (行号稳定)', () => {
-  it('跨块续接的完整行只有一个 abs', () => {
-    const buf = new PerceptionBuffer()
+describe('与触发服务集成 (整批文本入口)', () => {
+  it('整批文本一次匹配: 跨块续接的完整行只有一个 abs (临时行游标分配)', () => {
+    const trigger = new TriggerService()
+    trigger.register({ id: 'combat:start', eventType: 'p:combat:start', contains: ['向你扑来'] })
     const p = new AnsiStreamParser()
-    buf.appendLines(p.write('杀气逼人'))
-    buf.appendLines(p.write('向你扑来！\r\n'))
-    expect(buf.entries.length).toBe(1)
-    expect(buf.entries[0]?.row.text).toBe('杀气逼人向你扑来！')
-    expect(buf.entries[0]?.row.abs).toBe(0)
-    expect(buf.nextAbs).toBe(1)
+    p.write('杀气逼人') // 无换行, 不产出
+    const lines = p.write('向你扑来！\r\n')
+    expect(lines.length).toBe(1)
+    expect(lines[0]?.text).toBe('杀气逼人向你扑来！')
+    const hits = trigger.matchText(lines.map(l => l.text).join('\n'))
+    expect(hits).toHaveLength(1)
+    expect(hits[0]?.id).toBe('combat:start')
+    expect(hits[0]?.lineNumber).toBe(0)
+  })
+
+  it('颜色样式数据沿原始行保留 (预处理器产出 style, 颜色触发仍可用)', () => {
+    const perceptor = new Perceptor()
+    perceptor.register({ id: 'green', eventType: 'p:green', fg: 2 })
+    const p = new AnsiStreamParser()
+    const [line] = p.write('\x1b[32m绿色的字\x1b[0m\n')
+    if (!line) throw new Error('missing line')
+    expect(line.text).toBe('绿色的字')
+    expect(line.style).toEqual([
+      { start: 0, end: 4, fg: 2, bg: null, fgTrue: null, bgTrue: null, flags: 0 },
+    ])
+    const hits = perceptor.match(toRows([line]).map(r => ({ ...r, style: line.style })))
+    expect(hits.map(h => h.id)).toEqual(['green'])
+  })
+
+  it('matchText 纯匹配: 同一文本重复调用重复命中 (去重由 adapter 内容级处理)', () => {
+    const trigger = new TriggerService()
+    trigger.register({ id: 'login:done', eventType: 'p:login:done', regex: [/欢迎/] })
+    expect(trigger.matchText('欢迎来到北大侠客行！\n')).toHaveLength(1)
+    // 纯匹配器不负责去重: 相同文本再次喂入仍命中 (adapter 层内容级去重保证幂等)。
+    expect(trigger.matchText('欢迎来到北大侠客行！\n')).toHaveLength(1)
   })
 
   it('多行规则可横跨 TCP 块命中 (不再被切碎)', () => {
-    const buf = new PerceptionBuffer()
+    const trigger = new TriggerService()
+    trigger.register({
+      id: 'ml:combat', eventType: 'p:combat:start', multiline: true,
+      patterns: [
+        { kind: 'substring', text: '你大喝一声' },
+        { kind: 'substring', text: '向你扑来' },
+      ],
+    })
     const p = new AnsiStreamParser()
-    buf.appendLines(p.write('你大喝一声'))
-    buf.appendLines(p.write('。\n'))
-    const perceptor = new Perceptor()
-    perceptor.register({ id: 'combat:start', eventType: 'p:combat:start', contains: ['大喝一声'] })
-    const hit = perceptor.match(buf.snapshot())[0]
-    expect(hit?.id).toBe('combat:start')
-    expect(hit?.lineNumber).toBe(0)
-  })
-
-  it('颜色触发数据就绪: style 携带颜色供 Phase 2 匹配', () => {
-    const buf = new PerceptionBuffer()
-    const p = new AnsiStreamParser()
-    buf.appendLines(p.write('\x1b[32m绿色的字\x1b[0m\n'))
-    const row = buf.entries[0]?.row
-    if (!row) throw new Error('missing row')
-    expect(row.text).toBe('绿色的字')
-    expect(row.style).toEqual([
-      { start: 0, end: 4, fg: 2, bg: null, fgTrue: null, bgTrue: null, flags: 0 },
-    ])
-  })
-
-  it('world 状态经感知管线照常更新', () => {
-    const world = createWorld()
-    const buf = new PerceptionBuffer()
-    const trigger = new TriggerService({ bus: stubBus, publish: false })
-    trigger.register({ id: 'login:done', eventType: 'p:login:done', regex: [/欢迎/] })
-    const published: PerceptHit[] = []
-    const driver = new PerceptionDriver({ buffer: buf, trigger, publishHook: h => published.push(h) })
-    const p = new AnsiStreamParser()
-    buf.appendLines(p.write('欢迎来到北大侠客行！\n'))
-    driver.onData()
-    // 状态捕获: 命中事件 → world patch (原 StateTracker.apply 语义)
-    for (const hit of published) applyPatch(world, patchForPercept(hit.eventType))
-    expect(flattenWorld(world)['flags.logged_in']).toBe(true)
-    expect(published.length).toBe(1)
+    p.write('你大喝一声')
+    const lines = p.write('。\n接下来，向你扑来！\n')
+    expect(lines.length).toBe(2)
+    const hits = trigger.matchText(lines.map(l => l.text).join('\n'))
+    expect(hits).toHaveLength(1)
+    expect(hits[0]?.id).toBe('ml:combat')
   })
 })
 
