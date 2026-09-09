@@ -39,7 +39,7 @@
  *   multiline 多行有序条件状态机 (仅 kind: 'regex'; 每条件逐行测)
  *   window    命中窗口声明 (仅单行规则; extract 的复合提取输入)
  *   guard     (record) => boolean 可选的守门函数，返回 false 则跳过该规则
- *   extract   逃生舱提取 (复合/跨行提取; 存在时覆盖捕获组组装结果)
+ *   extract   准入后的程序化提取 (复合/跨行; 存在时覆盖捕获组结果; 不参与准入)
  *   action    命中的确定性动作。
  *             - output: 渲染文本 (event = 渲染给 agent 的文本)
  *             - tool:   可选工具调用 (name + args), 由 loop 官方工具管道执行

@@ -17,6 +17,10 @@
  *   - window: 单行规则声明命中窗口, 批内切片装配 PerceptRecord.before/after。
  *   - 折叠 (hit.foldLines): 单行 regex/text = 仅锚点行; 单行 func = 不折叠
  *     (房间抓取类复合提取, 全部行进 agent); multiline = 全部被捕获的条件行。
+ * v6.7 (准入语义收紧): ruleHit 改合取式 —— 命中 = 主判据(regex/text/func) ∧
+ *   color(声明时, 命中后补充判定) ∧ guard。删除旧回退 (regex 未中仍以 color/extract
+ *   准入): 曾使 func+extract 规则 (state:look) 每行命中并污染 world, 且使"同词异色"
+ *   区分失效。extract 只做准入后的程序化提取, 不参与准入。
  *
  * @module @deepseek-ai/dsh-mud-core/trigger-llm/service
  */
@@ -329,26 +333,30 @@ export class Perceptor {
     return this.rules.slice()
   }
 
-  /** 准入判定 (分派到对应匹配器): 颜色 AND match 判据 AND guard。
-   *  regex 全不中时保持旧语义: 声明了 color 或 extract 的规则仍命中
-   *  (无判据的纯颜色规则兼容形态)。 */
+  /** 准入判定 (v6.7 合取语义): 命中 ⟺ 主判据命中 ∧ color(声明时) ∧ guard。
+   *  - 主判据 (v6.6 三分): regex / text / func, 分派到对应匹配器;
+   *  - color: 命中后的补充判定 (AND 门, 不单独准入) —— 同词异色区分;
+   *  - extract: 准入后的程序化提取 (matchLine 内调用), 绝不参与准入。
+   *  v6.7 删除旧回退 (regex 全不中时曾以 color/extract 直接准入): 该回退使
+   *  func+extract 规则 (state:look) 每行命中, 且 color 规则在文本未命中时误触发。 */
   private ruleHit(rule: NormalizedTriggerRule, record: PerceptRecord): boolean {
-    if (rule.color !== null && !styleMatchesColor(record.rows, rule.color)) return false
-    if (rule.guard && !rule.guard(record)) return false
-    if (rule.kind === 'text') {
-      const text = record.rows.map(r => r.text).join('\n')
-      if (rule.includes.some(s => text.includes(s))) return true
-    } else if (rule.kind === 'func') {
-      // 谓词作用于锚点行 (单行记录 rows=[锚点行])。
-      if (record.rows.length === 1 && rule.test !== null && rule.test(record.rows[0] as MudLine)) return true
-    } else {
-      const text = record.rows.map(r => r.text).join('\n')
+    const text = record.rows.map(r => r.text).join('\n')
+    if (rule.kind === 'regex') {
+      let matched = false
       for (const re of rule.regex) {
         re.lastIndex = 0
-        if (re.test(text)) return true
+        if (re.test(text)) { matched = true; break }
       }
+      if (!matched) return false
+    } else if (rule.kind === 'text') {
+      if (!rule.includes.some(s => text.includes(s))) return false
+    } else if (rule.kind === 'func') {
+      // 谓词作用于锚点行 (单行记录 rows=[锚点行]); 未命中即不准入 (无回退)。
+      if (record.rows.length !== 1 || rule.test === null || !rule.test(record.rows[0] as MudLine)) return false
     }
-    return rule.color !== null || !!rule.extract
+    if (rule.color !== null && !styleMatchesColor(record.rows, rule.color)) return false
+    if (rule.guard && !rule.guard(record)) return false
+    return true
   }
 
   /** 命中窗口装配: 锚点行前后批内切片 (声明 window 时; 跨批不追)。 */

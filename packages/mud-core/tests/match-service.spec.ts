@@ -4,7 +4,8 @@
  * 验证:
  *   - state/event 两个实例独立 (规则集不串、多行上下文不串);
  *   - v6.5: 锚定整行正则准入, 命名捕获组 + map/numeric 组装 data, extract 逃生舱;
- *   - v6.6: 三种匹配类型 (regex/text/func 分派) + 命中窗口 (before/after 装配)。
+ *   - v6.6: 三种匹配类型 (regex/text/func 分派) + 命中窗口 (before/after 装配);
+ *   - v6.7: 准入合取语义 (color/extract 不参与准入; 同词异色区分)。
  */
 
 import { describe, expect, it } from 'vitest'
@@ -331,5 +332,71 @@ describe('state:look extract (窗口提取: 地图/房间名/描述/出口/NPC)'
     expect(empty['room.name']).toBeUndefined()
     expect(empty['room.desc']).toBeUndefined()
     expect(empty['room.npcs']).toBeUndefined()
+  })
+})
+
+describe('准入语义 (v6.7): color/extract 不参与准入', () => {
+  /** 带前景色的行 fixture (单 run 覆盖整行; 无样式行 style=[])。 */
+  function coloredLines(rows: { text: string; fg: number | null }[]): MudLine[] {
+    return rows.map((r, i) => {
+      const style: MudLine['style'] = r.fg === null
+        ? []
+        : [{ start: 0, end: r.text.length, fg: r.fg, bg: null, fgTrue: null, bgTrue: null, flags: 0 }]
+      return { text: r.text, raw: r.text, style, abs: i, time: Date.now(), isPrompt: false }
+    })
+  }
+
+  it('regex 未命中 + extract → 不命中 (extract 只做准入后提取, 不再单独准入)', () => {
+    let calls = 0
+    const s = new TriggerMatchService([{
+      id: 'x', eventType: 'p:x', match: { kind: 'regex', patterns: [/^只有这行$/] },
+      extract: () => { calls += 1; return { n: 1 } },
+    }])
+    // 旧语义 (fallback): extract 存在 → 任意行命中。新语义: 必须主判据命中。
+    expect(s.match(toLines(['别的行']))).toHaveLength(0)
+    expect(s.match(toLines(['只有这行']))).toHaveLength(1)
+    expect(calls).toBe(1)
+  })
+
+  it('func+extract (state:look 形态): 仅锚点行命中, extract 只在锚点上跑', () => {
+    let calls = 0
+    const s = new TriggerMatchService([{
+      id: 'look', lane: 'state', eventType: 'p:look',
+      match: { kind: 'func', test: (l) => l.text.startsWith('这里明显的出口') },
+      window: { before: 1, after: 1 },
+      extract: () => { calls += 1; return { 'room.exits': ['north'] } },
+    }])
+    const hits = s.match(toLines(['描述行', '这里明显的出口是 north。', '店小二(xiao er)']))
+    expect(hits).toHaveLength(1)
+    expect(hits[0]?.lineNumber).toBe(1) // 窗口行不触发, 只有锚点行命中
+    expect(hits[0]?.foldLines).toEqual([]) // func 不折叠
+    expect(calls).toBe(1)
+  })
+
+  it('同词异色: 相同主判据 + 不同 fg → 各自只命中自己颜色的行', () => {
+    const s = new TriggerMatchService([
+      { id: 'poison-red', eventType: 'p:poison', match: { kind: 'regex', patterns: [/^你中毒了$/] }, fg: 1 },
+      { id: 'poison-green', eventType: 'p:poison', match: { kind: 'regex', patterns: [/^你中毒了$/] }, fg: 2 },
+    ])
+    expect(s.match(coloredLines([{ text: '你中毒了', fg: 1 }])).map(h => h.id)).toEqual(['poison-red'])
+    expect(s.match(coloredLines([{ text: '你中毒了', fg: 2 }])).map(h => h.id)).toEqual(['poison-green'])
+  })
+
+  it('regex 命中但 color 不匹配 → 不命中; color 命中但文本未命中 → 不命中 (color 是补充 AND)', () => {
+    const s = new TriggerMatchService([
+      { id: 'c', eventType: 'p:c', match: { kind: 'regex', patterns: [/^你中毒了$/] }, fg: 2 },
+    ])
+    expect(s.match(coloredLines([{ text: '你中毒了', fg: 1 }]))).toHaveLength(0) // 同词异色: 颜色不符
+    expect(s.match(coloredLines([{ text: '别的红字', fg: 2 }]))).toHaveLength(0) // 旧语义会命中 (color 单独准入)
+    expect(s.match(coloredLines([{ text: '你中毒了', fg: 2 }]))).toHaveLength(1)
+  })
+
+  it('纯颜色触发不受影响: func-true + color 形态 (Mudlet 颜色触发)', () => {
+    const s = new TriggerMatchService([
+      { id: 'alert', eventType: 'p:alert', match: { kind: 'func', test: () => true }, fg: 9 },
+    ])
+    expect(s.match(coloredLines([{ text: '任意红字行', fg: 9 }]))).toHaveLength(1)
+    expect(s.match(coloredLines([{ text: '任意绿字行', fg: 10 }]))).toHaveLength(0)
+    expect(s.match(toLines(['无样式行']))).toHaveLength(0)
   })
 })

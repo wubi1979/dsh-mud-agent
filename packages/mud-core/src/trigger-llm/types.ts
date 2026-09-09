@@ -157,7 +157,8 @@ export interface PerceptionRule {
   /** 多行逐条件状态机 (仅 match.kind='regex' 合法)。 */
   multiline?: boolean
   greedy?: boolean
-  /** 准入判据 (三种匹配类型之一, 必填)。 */
+  /** 准入唯一判据 (regex/text/func 三种之一, 必填); color 只作命中后的补充
+   *  判定、extract 只作命中后的程序化提取 —— 二者不参与准入 (v6.7)。 */
   match: MatchSpec
   /** 捕获组 → world 点分键: 命中后由首个匹配正则的命名捕获组组装 hit.data
    *  (仅 kind='regex' 有捕获组)。extract 逃生舱优先级更高 (存在即覆盖);
@@ -171,14 +172,16 @@ export interface PerceptionRule {
   /** 多行: 首条件到末条件之间允许的最大间隔行数 (Mudlet mConditionLineDelta)。
    *  默认 MULTI_LINE_DELTA。 */
   lineDelta?: number
-  /** 颜色触发: 指定后要求行内任一段 run 命中全部已指定通道。与 match 为 AND。 */
+  /** 颜色触发 (命中后的补充判定, 不单独准入): 主判据命中后, 要求行内任一段
+   *  run 命中全部已指定通道 (与 match 为 AND; 同词异色区分用)。 */
   fg?: number | null
   bg?: number | null
   fgTrue?: [number, number, number] | null
   bgTrue?: [number, number, number] | null
   guard?: (record: PerceptRecord) => boolean
-  /** 逃生舱提取 (v6.5): 复合/跨行提取 (房间抓取等必须跑代码的提取) 使用;
-   *  命中后调用, 返回非 null 时覆盖捕获组组装结果。常规规则禁用。 */
+  /** 准入后的程序化提取 (v6.5 逃生舱; 不参与准入): 复合/跨行提取 (房间抓取等
+   *  必须跑代码的提取) 使用; 命中后调用, 返回非 null 时覆盖捕获组组装结果。
+   *  常规规则禁用。 */
   extract?: (record: PerceptRecord) => Record<string, unknown> | null
   /** 命中窗口声明 (仅单行规则; multiline 不支持 — 构造时报错)。 */
   window?: WindowSpec

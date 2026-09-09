@@ -192,6 +192,27 @@ GMCP 直连 (StateService.onGmcp) → 权威同步 world (置信度 1.0)
   拒绝聊天/帮助、纯字面正则保持、捕获组+map/numeric 组装、逃生舱覆盖、无 map 纯
   action data=null、multiline 捕获合并、预筛超集不变式）。
 
+## 二点七、v6.7 准入语义修正（架构审查会话）
+
+- **动机**：`ruleHit` 旧回退 `return rule.color !== null || !!rule.extract` 使
+  color/extract 在**主判据未命中**时仍准入，与"准入唯一判据 = match"矛盾：
+  - `state:look`（func+extract）对批内**每行**都命中并运行窗口 extract → 任意
+    非空行可被解析成 room.name/desc 污染 world（折叠集为空, 行照常进 agent,
+    但 patch 已写坏）;
+  - 带 color 的规则在文本未命中时被颜色**单独触发** → "同词异色"区分失效
+    （同正则异色两条规则会对任意带色行同时命中）。
+- **变更**（trigger-llm/service.ts `ruleHit` 合取语义）：
+  `命中 = 主判据(regex/text/func) 命中 ∧ color(声明时, 补充判定 AND) ∧ guard`。
+  color 只做命中后的颜色区分, extract 只做准入后的程序化提取 —— **二者绝不
+  单独准入**。`PerceptHit.data` 仍在准入后由 `extract ?? 捕获组+map` 组装, 不变。
+- **纯颜色触发形态**：match 仍必填（准入唯一判据）；需要"整行颜色触发"
+  （Mudlet 对齐）时用 `match: { kind: 'func', test: () => true }` + fg/bg 表达
+  （显式准入, 每行判色）—— 现有 ansi/multiline spec 即此形态, 语义不受影响。
+- **回归**：`pnpm --filter @deepseek-ai/dsh-mud-core build` → EXIT=0；vitest
+  match-service.spec.ts **+5**（regex miss+extract 不命中 / func+extract 仅锚点
+  命中 / 同词异色各命中自己颜色 / color 是补充 AND 不单独准入 / 纯颜色触发不受
+  影响）→ 全量 **10 spec / 114 用例**全绿。
+
 ## 三、明确不做（后续）
 - **send 防御直连**：`ActionSpec.send` 字段保留但 adapter 不消费，agent-bridge
   后续再议。
