@@ -136,6 +136,32 @@ describe('跨块截断续接', () => {
   })
 })
 
+describe('abs 行号空间 (会话级单调)', () => {
+  it('reset / 空 flush 不复位 absSeq (GA 空刷不归零, 多行状态机不失效)', () => {
+    const p = new AnsiStreamParser()
+    const [first] = p.write('甲\n')
+    expect(first?.abs).toBe(0)
+    p.reset()
+    const [second] = p.write('乙\n')
+    expect(second?.abs).toBe(1)
+    // 空 flush (GA 到达且无滞留片断): 不产出、不归零。
+    expect(p.flush()).toBeNull()
+    const [third] = p.write('丙\n')
+    expect(third?.abs).toBe(2)
+  })
+
+  it('有滞留片断的 flush 提交行后 abs 续接', () => {
+    const p = new AnsiStreamParser()
+    p.write('甲\n')
+    p.write('提示符')
+    const tail = p.flush()
+    expect(tail?.text).toBe('提示符')
+    expect(tail?.abs).toBe(1)
+    const [next] = p.write('乙\n')
+    expect(next?.abs).toBe(2)
+  })
+})
+
 describe('OSC / 转义', () => {
   it('OSC BEL 终止不进入 text', () => {
     const p = new AnsiStreamParser()

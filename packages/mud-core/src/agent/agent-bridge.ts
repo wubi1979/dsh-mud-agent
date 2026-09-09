@@ -66,6 +66,12 @@ export function registerGameLines(text: string, lines: MudLine[]): void {
   }
 }
 
+/** 清空行注册表 (重连时调用: 旧连接的行对象 abs 已随 parser 实例归零作废,
+ *  残留条目会以旧 abs 污染新连接的多行状态机)。 */
+export function clearGameLines(): void {
+  gameLineRegistry.clear()
+}
+
 /** 注册 T1 本地模拟 provider + 瀑布路由监听器 (幂等)。 */
 export function registerTriggerProvider(ctx: Context, opts: {
   stateRules: PerceptionRule[]

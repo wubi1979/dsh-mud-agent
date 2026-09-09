@@ -35,7 +35,7 @@ import { buildMudTools, setSessionCredentials, getSessionCredentials, type MudTo
 import defaultPerceptionRules from './config/trigger-rules.ts'
 import { SkillService } from './agent/skills.ts'
 import { commandsTextForAgent } from './config/commands.ts'
-import { createMudAgent, sendGameOutput, registerTriggerProvider, disposeTriggerProvider, registerGameLines, stateMatchService, eventMatchService, type CreateMudAgentOptions } from './agent/agent-bridge.ts'
+import { createMudAgent, sendGameOutput, registerTriggerProvider, disposeTriggerProvider, registerGameLines, clearGameLines, stateMatchService, eventMatchService, type CreateMudAgentOptions } from './agent/agent-bridge.ts'
 import { CONTROL_PREFIX } from './trigger-llm/types.ts'
 import type { AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
@@ -327,8 +327,8 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   }
 
   /** 感知通道: 每批完整逻辑行 → state 预匹配折叠 + 剩余行进 agent。
-   *  行号由 AnsiStreamParser 分配 (MudLine.abs); state 命中行折叠入库并移除;
-   *  剩余行登记行注册表 (供 T1 内容寻址) 并整批进 agent。 */
+   *  行号由 AnsiStreamParser 分配 (MudLine.abs, 连接生命周期内单调); state
+   *  命中行折叠入库并移除; 剩余行登记行注册表 (供 T1 内容寻址) 并整批进 agent。 */
   function feedParsed(lines: MudLine[]): void {
     if (lines.length === 0) return
     resetDeadAir() // 文本到达 = 连接存活
@@ -439,6 +439,12 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       connectCount += 1
       appendConnectMarker(connectCount === 1 ? 'connect' : 'reconnect')
       applyPatch(world, { sent_name: false, sent_pass: false })
+      // 传输断裂 = 触发器上下文作废: 清多行半匹配 (跨连接的多行匹配不成立,
+      // 防旧半匹配 + 新行拼假命中) + 清行注册表 (旧连接的行对象 abs 已随
+      // 实例归零, 残留条目会以旧 abs 污染新状态机; 那批文本交 T2 兜底)。
+      stateMatchService?.resetContext()
+      eventMatchService?.resetContext()
+      clearGameLines()
       // 登录激活: 原经 mud/system → login flow 驱动; login 重建为"触发器 →
       // lite 假 LLM"后由感知触发器 (p:login:* 规则) 接管, 实现待重建。
     })

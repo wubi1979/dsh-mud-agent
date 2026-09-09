@@ -45,7 +45,8 @@ export interface StyleRun {
 
 /**
  * 完整逻辑行 (标准行对象, 全链路消费方统一的数据形态)。
- * abs 由 AnsiStreamParser 自分配 (复位即从 0 重新递增)。
+ * abs 由 AnsiStreamParser 自分配 (连接生命周期内单调递增; reset/flush 不复位 —
+ * GA 空刷不得归零, 否则多行状态机永久失效。重连换实例自然归零, 无碍)。
  */
 export interface MudLine {
   /** 纯文本 (无 ANSI): agent 注入、规则匹配。 */
@@ -136,7 +137,9 @@ export class AnsiStreamParser {
   // 跨块残留的控制序列内容
   private csiBuf = ''
   private oscBuf = ''
-  // 绝对行号分配器 (每批完结行依次递增; flush 会话边界时复位)
+  // 绝对行号分配器 (进程/连接生命周期内单调递增; reset/flush 不复位 —
+  // GA 空刷若归零, 多行状态机的 abs 单调保护将永久失效。重连换 parser
+  // 实例自然从 0 起, 触发器状态由宿主 resetContext 同步清空, 无需续号)
   private absSeq = 0
 
   /** 是否还有未完结的行尾/半截序列 (供 telnet 侧调度 flush 定时器)。 */
@@ -144,6 +147,8 @@ export class AnsiStreamParser {
     return this.state !== State.Text || this.textLen > 0 || this.raw.length > 0
   }
 
+  /** 复位解析状态 (行缓冲/样式游标/半截控制序列; 不动 absSeq — 行号空间
+   *  是会话级的, GA 空刷/断连清理都不得归零, 否则多行状态机永久失效)。 */
   reset(): void {
     this.state = State.Text
     this.raw = []
@@ -159,7 +164,6 @@ export class AnsiStreamParser {
     this.runs = []
     this.csiBuf = ''
     this.oscBuf = ''
-    this.absSeq = 0
   }
 
   /** 写入一块解码后的文本, 返回本块内完结的完整行 (携带自分配递增 abs)。 */

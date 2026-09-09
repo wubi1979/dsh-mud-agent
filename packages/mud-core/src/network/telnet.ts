@@ -101,6 +101,7 @@ export class TelnetClient extends EventEmitter {
   /**
    * 流式行/ANSI 解析器: 只产出完整逻辑行, 跨块的行尾与半截转义序列缓存在
    * 内部 —— 保证感知层绝对行号稳定、规则匹配不被 TCP 块边界切碎。见 ansi.ts。
+   * absSeq 连接生命周期内单调 (reset/flush 不复位); 重连换实例自然归零。
    */
   private readonly ansi = new AnsiStreamParser()
   /** 行尾静默定时器: 无换行的提示符行/片断在静默到期后刷出 (对齐 Mudlet posting timer)。 */
