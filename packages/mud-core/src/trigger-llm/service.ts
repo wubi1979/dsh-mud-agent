@@ -427,7 +427,6 @@ export class Perceptor {
 export class TriggerMatchService {
   private readonly perceptor = new Perceptor()
   private readonly ctx: MatchContext = createMatchContext()
-  private recentLines: MudLine[] = []
 
   constructor(rules?: PerceptionRule[], owner = '') {
     if (rules) {
@@ -461,19 +460,6 @@ export class TriggerMatchService {
   }
 
   /**
-   * 预处理层推送行对象 (供 T1 转发时查找)。
-   * 每次 feedParsed 调用时更新。
-   */
-  feedLines(lines: MudLine[]): void {
-    this.recentLines = lines
-  }
-
-  /** 获取最近推送的行对象 (T1 转发时用 l.text 拼接)。 */
-  getRecentLines(): MudLine[] {
-    return this.recentLines
-  }
-
-  /**
    * 匹配入口: 传入行对象 (已由 AnsiStreamParser 分配 abs)，返回按行号排序的命中。
    * 运行态 (多行状态机) 由内部 MatchContext 承载。
    */
@@ -481,10 +467,9 @@ export class TriggerMatchService {
     return this.perceptor.match(lines, this.ctx)
   }
 
-  /** 重置匹配上下文 (多行状态机清空; 主要用于测试隔离)。 */
+  /** 重置匹配上下文 (多行状态机清空; 连接重建/测试隔离)。 */
   resetContext(): void {
     this.ctx.multiStates.clear()
     this.ctx.multiLastAbs.clear()
-    this.recentLines = []
   }
 }

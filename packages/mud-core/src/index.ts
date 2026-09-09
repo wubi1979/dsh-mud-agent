@@ -4,16 +4,16 @@
  * 心智模型 (对齐 agent 规范):
  *   - 游戏内容就是提问内容: 游戏输出本该全部注入 agent, agent 用工具/skill 回答。
  *   - 工具/skill 属于 agent: 正常流程是 agent 思考 → 决定用哪个 skill → 调用工具。
- *   - 单路径 (v6 级联): 游戏输出统一以 user/message 提交 agent; agent 内
- *     mud-cascade 级联 provider 先做确定性触发匹配 (T1: trigger-llm, 命中即
- *     渲染动作, 不产生模型调用), 未命中再转发真实 LLM (T2)。
+ *   - 瀑布路由 (T1 → T2): 游戏输出统一以 user/message 提交 agent; agent 默认
+ *     路由到 T1 本地模拟模型 (trigger-llm: 规则命中 → 确定性动作, 无需模型);
+ *     T1 无应答经官方 agent/request-error 重试自然切换 T2 真实 LLM。
  *     GMCP 直连保持权威状态同步 (world); 文本语义经 agent 的 world_patch
  *     工具落库 (置信度 0.7; GMCP 权威 1.0 优先, 裁决在 world.ts)。
  *
  * 消息流:
  *   游戏输出 (telnet) → AnsiStreamParser 切完整逻辑行
  *     → 处理器: 断流计时复位 + 整批文本 (textOfLines) 提交 agent
- *     → agent → mud-cascade (T1? → 确定性动作; 未命中 → T2 真实 LLM)
+ *     → agent → T1 本地模拟 (规则命中 → 确定性动作; 无应答 → T2 真实 LLM)
  *     → 工具调用 (mud_move/mud_look/mud_status/mud_send/world_patch) → 游戏
  *
  * 单面 (web face) 架构: 本包是统一 host 引擎, 唯一外壳为浏览器 WebUI
@@ -35,8 +35,8 @@ import { buildMudTools, type MudTools } from './agent/tools.ts'
 import defaultPerceptionRules from './config/trigger-rules.ts'
 import { SkillService } from './agent/skills.ts'
 import { commandsTextForAgent } from './config/commands.ts'
-import { createMudAgent, sendGameOutput, registerCascadeProvider, disposeCascadeProvider, setCascadeStages, setSessionCredentials, stateMatchService, eventMatchService, type CreateMudAgentOptions } from './agent/agent-bridge.ts'
-import type { CascadeStage } from './trigger-llm/types.ts'
+import { createMudAgent, sendGameOutput, registerTriggerProvider, disposeTriggerProvider, registerGameLines, setSessionCredentials, stateMatchService, eventMatchService, type CreateMudAgentOptions } from './agent/agent-bridge.ts'
+import { CONTROL_PREFIX } from './trigger-llm/types.ts'
 import type { AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -84,8 +84,6 @@ export interface MudAgentConfig {
   cwd?: string
   /** 是否把游戏输出注入 agent 思考 (false = 暂停接入: 输出直推终端, agent 不介入)。 */
   agentEnabled?: boolean
-  /** 级联瀑布数组 (v6.3; 缺省 = T1 事件触发 + 尾部 DSH 默认配置)。enabled:false 级跳过。 */
-  cascade?: readonly CascadeStage[]
   persona?: string
   commandIntervalMs?: number
   /** 触发器 lite 动作去重窗口 (B 路径反射; 触发机制重构后使用)。 */
@@ -278,33 +276,24 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   })
   tuiLog(`[执行] 工具集就绪: ${Object.keys(mudTools).join(', ')}`)
 
-  // ── 级联 trigger-llm (v6.2 单路径): T1/T2 承载于 agent-bridge 的 mud-cascade
-  // provider (步骤 6 落地)。匹配服务按 lane 分桶 (state 预匹配折叠 / event T1 渲染),
-  // 由 registerCascadeProvider 统一创建双实例 (stateMatchService / eventMatchService)。
-
-  // ── 级联 trigger-llm (v6.2 单路径, v6.3 瀑布数组): T1/T2 承载于 agent-bridge
-  // 的 mud-cascade provider。配置容器 = agent-bridge 的 cascadeStages (每调用重读,
-  // 无热拔插); 缺省瀑布 = T1 事件触发 + 尾部 DSH 默认, config.cascade 可覆盖。
-  if (config.cascade) setCascadeStages(config.cascade)
-  tuiLog(`[触发] 级联瀑布: ${config.cascade?.map(s => s.id).join(', ') || '默认 (T1 + DSH 默认)'}`)
-
-  // ── 级联 provider (mud-cascade): trigger 级 (确定性触发) + model 级 (显式) +
-  // 尾部默认级 (DSH 默认配置) ──
+  // ── trigger-llm (T1 本地模拟): 承载于 agent-bridge 的 mud-t1 provider ──
+  // 匹配服务按 lane 分桶 (state 预匹配折叠 / event T1 渲染), 由
+  // registerTriggerProvider 统一创建双实例并挂 agent/request 瀑布路由。
   // 依赖 ctx.llm; 经 ctx.inject 延迟到 llm 就绪后注册 (幂等)。
   // 按 lane 分拣规则。
   const stateRules = defaultPerceptionRules.filter(r => r.lane === 'state')
   const eventRules = defaultPerceptionRules.filter(r => r.lane !== 'state')
   ctx.inject(['llm'], () => {
-    registerCascadeProvider(ctx, {
+    registerTriggerProvider(ctx, {
       stateRules,
       eventRules,
       world,
       log: (t: string) => tuiLog(t),
     })
-    tuiLog(`[触发] 级联 provider (mud-cascade) 装配就绪 (state ${stateRules.length} / event ${eventRules.length})`)
+    tuiLog(`[触发] T1 provider (mud-t1) 装配就绪 (state ${stateRules.length} / event ${eventRules.length})`)
     return () => {
-      // llm 移除时释放级联适配器路由。
-      disposeCascadeProvider()
+      // llm 移除时释放 T1 适配器路由。
+      disposeTriggerProvider()
     }
   })
 
@@ -335,9 +324,9 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     pushGameEntry(text)
   }
 
-  /** 感知通道: 每批完整逻辑行 → state 预匹配折叠 + 剩余行进 agent (单路径)。
-   *  v6.2: 行号由 AnsiStreamParser 分配 (MudLine.abs); state 命中行折叠入库并移除;
-   *  剩余行由 event 匹配服务缓存 (供 T1) 并整批进 agent。 */
+  /** 感知通道: 每批完整逻辑行 → state 预匹配折叠 + 剩余行进 agent。
+   *  行号由 AnsiStreamParser 分配 (MudLine.abs); state 命中行折叠入库并移除;
+   *  剩余行登记行注册表 (供 T1 内容寻址) 并整批进 agent。 */
   function feedParsed(lines: MudLine[]): void {
     if (lines.length === 0) return
     resetDeadAir() // 文本到达 = 连接存活
@@ -356,18 +345,18 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       }
     }
 
-    // 缓存剩余行供 T1 匹配/转发; 整批文本进 agent。
-    eventMatchService?.feedLines(lines)
-    pushToAgent(textOfLines(lines))
+    pushToAgent(textOfLines(lines), lines)
   }
 
   /** 单路径文本提取: 游戏输出以 user/message 直提 agent (无注入/折叠/忙时桶)。
-   *  v6: 全部文本 (含登录期) 统一进 agent; 登录行为由 agent + 真实 LLM 决策。 */
-  function pushToAgent(text: string): void {
+   *  全部文本 (含登录期) 统一进 agent; 登录行为由 agent + T1/T2 路由决策。
+   *  行对象按内容登记注册表 (T1 从请求尾部文本找回; 行号/style 保真)。 */
+  function pushToAgent(text: string, lines: MudLine[]): void {
     const clean = text.trim()
     if (clean === '') return
     if (!(config.agentEnabled ?? false)) return // 暂停接入: 不唤醒 agent
     if (!agent) return
+    registerGameLines(clean, lines)
     sendGameOutput(agent, clean)
     tuiLog(`[A路径] 游戏输出 → agent (${clean.length} 字符)`)
   }
@@ -395,7 +384,8 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     if (!agent || disposed) return
     if (!(config.agentEnabled ?? false)) return
     tuiDecision({ actor: 'agent', eventType: reason, action: 'agent', text: `[决策] ${reason}` })
-    sendGameOutput(agent, context)
+    // 控制消息带 [系统] 前缀: T1 视为非游戏输出 (NO_ANSWER), 由 T2 真实决策。
+    sendGameOutput(agent, `${CONTROL_PREFIX}${context}`)
   }
 
   /** 断流计时: 30s 无感知事件 → 唤醒 agent 主动决策 (登录期/接入关停抑制)。 */
@@ -630,13 +620,6 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     },
     snapshot(): MudWorldSnapshot {
       return worldSnapshot(world)
-    },
-    askAgent(text: string): boolean {
-      const trimmed = text.trim()
-      if (trimmed === '' || agent === null || disposed) return false
-      sendGameOutput(agent, `[玩家指令] ${trimmed}`)
-      tuiLog(`[指令] 玩家指令 → agent (${trimmed.length} 字符)`)
-      return true
     },
     setAgentEnabled(enabled: boolean): void {
       if (config.agentEnabled === enabled) return

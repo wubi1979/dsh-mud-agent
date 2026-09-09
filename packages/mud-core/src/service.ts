@@ -89,11 +89,6 @@ export interface MudCoreService {
   readGame(sinceSeq: number): MudGameRead
   /** 当前世界模型快照 (JSON 可序列化)。 */
   snapshot(): MudWorldSnapshot
-  /**
-   * 把用户指令作为 user 消息注入当前 agent 会话并唤醒决策。
-   * @returns 是否成功投递 (无活跃 agent 会话时为 false)。
-   */
-  askAgent(text: string): boolean
   /** 运行时切换 agent 接入模式 (等价 config.agentEnabled 的动态开关)。 */
   setAgentEnabled(enabled: boolean): void
 }

@@ -4,8 +4,8 @@
  * v6.5 触发器模型: 规则 = 锚定整行正则 (准入唯一判据) + 命名捕获组
  * (提取默认通道, map/numeric 声明式组装 data) + action (确定性动作)。
  * extract 保留为逃生舱 (二次颜色等必须跑代码的复杂提取; 常规规则禁用)。
- * 命中由级联 provider (mud-cascade) 的 T1 适配层渲染为与真实 LLM 同构的
- * assistant 输出; 无事件、无运行时状态机。
+ * 命中由 T1 本地模拟适配器 (mud-t1) 渲染为与真实 LLM 同构的 assistant
+ * 输出; 无事件、无运行时状态机。
  *
  * 匹配两段式:
  *   - 预筛 (候选集): 由规则锚定正则的**字面前缀**自动推导 (seed), 只缩候选,
@@ -31,27 +31,9 @@ export interface ActionSpec {
  *  - 'event'  事件/决策类 (缺省): 进 agent, 由级联 provider T1 渲染 action。 */
 export type TriggerLane = 'state' | 'event'
 
-/** 级联瀑布阶段 (v6.3 瀑布数组; 配置容器在 agent-bridge, 每次调用重读, 无热拔插)。
- *  - 'trigger' 确定性触发级: matchLines 命中 → 渲染动作并返回 (内容级去重保留);
- *  - 'model'   显式模型级: 走 llm.prepareCall({provider, model}); prepareCall 拒绝
- *              或首块 finish{error|aborted} 为硬失败 → 交棒下一级; 其余 commit。
- *  enabled: false 时本阶段跳过。数组耗尽后一律落到尾部默认级 (DSH 默认配置)。 */
-export type CascadeStage =
-  | {
-      id: string
-      kind: 'trigger'
-      lane: 'event'
-      /** false → 本阶段跳过。 */
-      enabled?: boolean
-    }
-  | {
-      id: string
-      kind: 'model'
-      provider: string
-      model: string
-      /** false → 本阶段跳过。 */
-      enabled?: boolean
-    }
+/** 控制消息前缀: host 主动唤醒 (断流/诊断等) 的 user 消息以此开头。
+ *  T1 视其为非游戏输出 (NO_ANSWER 交 T2); T2 借此前缀区分系统提示与游戏文本。 */
+export const CONTROL_PREFIX = '[系统] '
 
 /** 颜色触发条件 (Mudlet 颜色触发对齐): 与 style run 逐段匹配。 */
 export interface ColorCond {

@@ -3,7 +3,6 @@
  *
  * 验证:
  *   - state/event 两个实例独立 (规则集不串、多行上下文不串);
- *   - feedLines / getRecentLines 缓存行为 (供 T1 转发);
  *   - v6.5: 锚定整行正则准入, 命名捕获组 + map/numeric 组装 data, extract 逃生舱。
  */
 
@@ -42,15 +41,6 @@ describe('TriggerMatchService 双桶 (state / event)', () => {
     expect(event.match(toLines(['【 气血 】 100 / 100']))).toHaveLength(0)
   })
 
-  it('feedLines / getRecentLines: 缓存最近一批行 (供 T1 转发查找)', () => {
-    const service = new TriggerMatchService()
-    service.feedLines(toLines(['第一行', '第二行']))
-    expect(service.getRecentLines().map(l => l.text)).toEqual(['第一行', '第二行'])
-    // 再次推送覆盖。
-    service.feedLines(toLines(['新行']))
-    expect(service.getRecentLines().map(l => l.text)).toEqual(['新行'])
-  })
-
   it('多行上下文独立: 两个实例各自维护 multiStates (不互相推进)', () => {
     const mkRule = (id: string) => ({
       id, eventType: id, multiline: true,
@@ -75,16 +65,14 @@ describe('TriggerMatchService 双桶 (state / event)', () => {
     expect(aHit.map(h => h.id)).toEqual(['ml-a'])
   })
 
-  it('resetContext: 清空多行状态与行缓存', () => {
+  it('resetContext: 清空多行状态机', () => {
     const service = new TriggerMatchService([{
       id: 'ml', eventType: 'ml', multiline: true,
       patterns: [{ kind: 'substring', text: 'A' }, { kind: 'substring', text: 'B' }],
     }])
     const feed = makeFeed()
-    service.feedLines(feed(['A']))
     service.match(feed(['A']))
     service.resetContext()
-    expect(service.getRecentLines()).toHaveLength(0)
     // 状态已清: 只喂 B 不再命中。
     expect(service.match(feed(['B']))).toHaveLength(0)
   })
