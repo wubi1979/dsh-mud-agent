@@ -912,6 +912,10 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   ctx.effect(() => () => {
     disposed = true
     if (worldTimer) clearTimeout(worldTimer)
+    if (deadAirTimer) {
+      clearTimeout(deadAirTimer)
+      deadAirTimer = null
+    }
     if (hub) hub.dispose()
     if (disposeConnectRoute) disposeConnectRoute()
     if (disposePrepareRoute) disposePrepareRoute()

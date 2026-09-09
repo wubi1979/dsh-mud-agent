@@ -21,8 +21,6 @@ export interface ActionSpec {
   output: string
   /** 可选工具调用: 渲染为一个 tool-call 块, 由 loop 官方工具管道执行。 */
   tool?: { name: string; args: Record<string, unknown> }
-  /** 防御直连: 不走 agent loop、绕过工具管道直接发给游戏 (仅装配方使用)。 */
-  send?: string | readonly string[]
 }
 
 /** 规则通道 (v6.1): 预匹配折叠与 agent 内 T1 渲染的分流属性。
