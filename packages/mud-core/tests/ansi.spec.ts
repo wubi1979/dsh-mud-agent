@@ -220,7 +220,7 @@ describe('flush / prompt', () => {
 describe('与触发服务集成 (标准行入口)', () => {
   it('一批完整行一次匹配: 跨块续接的完整行只有一个 abs (Parser 分配)', () => {
     const trigger = new TriggerMatchService()
-    trigger.register({ id: 'combat:start', eventType: 'p:combat:start', regex: [/向你扑来/] })
+    trigger.register({ id: 'combat:start', eventType: 'p:combat:start', match: { kind: 'regex', patterns: [/向你扑来/] } })
     const p = new AnsiStreamParser()
     p.write('杀气逼人') // 无换行, 不产出
     const lines = p.write('向你扑来！\r\n')
@@ -234,7 +234,7 @@ describe('与触发服务集成 (标准行入口)', () => {
 
   it('颜色样式数据沿原始行保留 (预处理器产出 style, 颜色触发仍可用)', () => {
     const perceptor = new Perceptor()
-    perceptor.register({ id: 'green', eventType: 'p:green', fg: 2 })
+    perceptor.register({ id: 'green', eventType: 'p:green', match: { kind: 'func', test: () => true }, fg: 2 })
     const p = new AnsiStreamParser()
     const [line] = p.write('\x1b[32m绿色的字\x1b[0m\n')
     if (!line) throw new Error('missing line')
@@ -248,7 +248,7 @@ describe('与触发服务集成 (标准行入口)', () => {
 
   it('匹配纯匹配: 同一行重复匹配重复命中 (去重由 adapter 内容级处理)', () => {
     const trigger = new TriggerMatchService()
-    trigger.register({ id: 'login:done', eventType: 'p:login:done', regex: [/欢迎/] })
+    trigger.register({ id: 'login:done', eventType: 'p:login:done', match: { kind: 'regex', patterns: [/欢迎/] } })
     const rows = toRows([{ text: '欢迎来到北大侠客行！', raw: '欢迎来到北大侠客行！', style: [] }])
     expect(trigger.match(rows)).toHaveLength(1)
     // 纯匹配器不负责去重: 相同行再喂仍命中 (adapter 层内容级去重保证幂等)。
@@ -259,6 +259,7 @@ describe('与触发服务集成 (标准行入口)', () => {
     const trigger = new TriggerMatchService()
     trigger.register({
       id: 'ml:combat', eventType: 'p:combat:start', multiline: true,
+      match: { kind: 'regex', patterns: [] },
       patterns: [
         { kind: 'substring', text: '你大喝一声' },
         { kind: 'substring', text: '向你扑来' },

@@ -11,6 +11,13 @@
  *
  * v6.2 保留: 匹配功能抽离为独立服务，支持 state/event 双桶; 行号由 AnsiStreamParser
  * 分配 (MudLine.abs)。多行是 Mudlet 逐条件状态机 (每条件测单一行), 不拼窗。
+ * v6.6 增补 (匹配类型三分 + 折叠语义):
+ *   - MatchSpec: regex (锚定整行, seed 预筛) / text (字面子串, 本身即预筛) /
+ *     func (每行谓词, 无预筛全量跑); 构造校验 fail fast。
+ *   - window: 单行规则声明命中窗口, 批内切片装配 PerceptRecord.before/after。
+ *   - 折叠 (hit.foldLines): 单行 regex/text = 仅锚点行; 单行 func = 不折叠
+ *     (房间抓取类复合提取, 全部行进 agent); multiline = 全部被捕获的条件行。
+ *
  * @module @deepseek-ai/dsh-mud-core/trigger-llm/service
  */
 
@@ -24,6 +31,8 @@ import type {
   MultiMatchState,
   PerceptionRule,
   PerceptHit,
+  PerceptRecord,
+  WindowSpec,
 } from './types.ts'
 import { createMatchContext, MULTI_LINE_DELTA } from './types.ts'
 
@@ -132,16 +141,25 @@ interface NormalizedTriggerRule {
   priority: number
   multiline: boolean
   greedy: boolean
+  /** 匹配类型 (v6.6): 分派到对应匹配器。 */
+  kind: 'regex' | 'text' | 'func'
+  /** kind='regex': 锚定整行正则 (multiline 派生条件也源于此)。 */
   regex: RegExp[]
-  /** 预筛种子 (字面前缀派生; 空 = 全量)。 */
+  /** kind='text': 字面子串 (includes 本身即预筛)。 */
+  includes: string[]
+  /** kind='func': 每行谓词 (无预筛全量跑)。 */
+  test: ((line: MudLine) => boolean) | null
+  /** 预筛种子 (regex 字面前缀派生 / text 即 includes; func 空 = 全量)。 */
   seeds: Seed[]
   /** 多行: 有序条件 (multiline=true 时使用)。派生自 patterns 或 regex。 */
   multiConds: MultiCond[]
   /** 多行: 首末条件最大间隔行数。 */
   lineDelta: number
   color: ColorCond | null
-  guard: ((record: { rows: MudLine[] }) => boolean) | null
-  extract: ((record: { rows: MudLine[] }) => Record<string, unknown> | null) | null
+  guard: ((record: PerceptRecord) => boolean) | null
+  extract: ((record: PerceptRecord) => Record<string, unknown> | null) | null
+  /** 命中窗口声明 (单行规则; null = 不装配 before/after)。 */
+  window: WindowSpec | null
   /** 捕获组 → world 点分键 (命中后组装 data)。 */
   map: Record<string, string> | null
   numeric: readonly string[] | null
@@ -173,7 +191,8 @@ function buildMultiConds(rule: PerceptionRule, multiline: boolean): MultiCond[] 
     })
   }
   const out: MultiCond[] = []
-  for (const r of rule.regex ?? []) {
+  const regexes = rule.match?.kind === 'regex' ? rule.match.patterns : []
+  for (const r of regexes) {
     const re = typeof r === 'string' ? makeRegex(r, multiline) : stripG(r)
     out.push({ kind: 'regex', regex: re })
   }
@@ -191,6 +210,16 @@ export class Perceptor {
 
   register(rule: PerceptionRule, owner = ''): NormalizedTriggerRule {
     const multiline = !!rule.multiline
+    // v6.6 构造校验 (fail fast): 判据必填; multiline 仅 regex; 窗口仅单行。
+    if (rule.match === undefined) {
+      throw new Error(`[trigger] 规则 ${rule.id} 缺少 match 判据`)
+    }
+    if (multiline && rule.match.kind !== 'regex') {
+      throw new Error(`[trigger] 规则 ${rule.id}: multiline 仅支持 match.kind='regex'`)
+    }
+    if (rule.window !== undefined && multiline) {
+      throw new Error(`[trigger] 规则 ${rule.id}: window 仅支持单行规则 (multiline 的行序列即窗口)`)
+    }
     const color: ColorCond | null =
       rule.fg !== undefined || rule.bg !== undefined
       || rule.fgTrue !== undefined || rule.bgTrue !== undefined
@@ -201,22 +230,35 @@ export class Perceptor {
           ...(rule.bgTrue !== undefined ? { bgTrue: rule.bgTrue } : {}),
         }
         : null
-    const regex: RegExp[] = (rule.regex ?? []).map(r =>
-      typeof r === 'string' ? makeRegex(r, multiline) : stripG(r),
-    )
+    const kind = rule.match.kind
+    const regex: RegExp[] = kind === 'regex'
+      ? rule.match.patterns.map(r => (typeof r === 'string' ? makeRegex(r, multiline) : stripG(r)))
+      : []
+    const includes = kind === 'text' ? rule.match.includes.map(s => String(s)) : []
+    const test = kind === 'func' ? rule.match.test : null
     const norm: NormalizedTriggerRule = {
       id: rule.id,
       eventType: rule.eventType || rule.id,
       priority: rule.priority ?? 10,
       multiline,
       greedy: !!rule.greedy,
+      kind,
       regex,
-      seeds: multiline ? [] : this.deriveSeeds(regex),
+      includes,
+      test,
+      seeds: multiline
+        ? []
+        : kind === 'regex'
+          ? this.deriveSeeds(regex)
+          : kind === 'text'
+            ? includes.map(s => ({ mode: 'substring', text: s }) satisfies Seed)
+            : [],
       multiConds: buildMultiConds(rule, multiline),
       lineDelta: rule.lineDelta ?? MULTI_LINE_DELTA,
       color,
       guard: rule.guard ?? null,
       extract: rule.extract ?? null,
+      window: rule.window ?? null,
       map: rule.map ?? null,
       numeric: rule.numeric ?? null,
       action: rule.action ?? null,
@@ -264,9 +306,17 @@ export class Perceptor {
           if (r) results.push(r)
         }
       } else {
-        for (const line of lines) {
+        // 单行: 批内逐行 (index 随行传入, 窗口装配免 indexOf)。
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i] as MudLine
+          if (rule.kind === 'func') {
+            // func 谓词无预筛, 每行调用。
+            const r = this.matchLine(rule, line, lines, i)
+            if (r) results.push(r)
+            continue
+          }
           if (!seedPasses(rule.seeds, line.text)) continue
-          const r = this.matchLine(rule, line)
+          const r = this.matchLine(rule, line, lines, i)
           if (r) results.push(r)
         }
       }
@@ -279,24 +329,47 @@ export class Perceptor {
     return this.rules.slice()
   }
 
-  private ruleHit(rule: NormalizedTriggerRule, record: { rows: MudLine[] }): boolean {
+  /** 准入判定 (分派到对应匹配器): 颜色 AND match 判据 AND guard。
+   *  regex 全不中时保持旧语义: 声明了 color 或 extract 的规则仍命中
+   *  (无判据的纯颜色规则兼容形态)。 */
+  private ruleHit(rule: NormalizedTriggerRule, record: PerceptRecord): boolean {
     if (rule.color !== null && !styleMatchesColor(record.rows, rule.color)) return false
     if (rule.guard && !rule.guard(record)) return false
-    const text = record.rows.map(r => r.text).join('\n')
-    for (const re of rule.regex) {
-      re.lastIndex = 0
-      if (re.test(text)) return true
+    if (rule.kind === 'text') {
+      const text = record.rows.map(r => r.text).join('\n')
+      if (rule.includes.some(s => text.includes(s))) return true
+    } else if (rule.kind === 'func') {
+      // 谓词作用于锚点行 (单行记录 rows=[锚点行])。
+      if (record.rows.length === 1 && rule.test !== null && rule.test(record.rows[0] as MudLine)) return true
+    } else {
+      const text = record.rows.map(r => r.text).join('\n')
+      for (const re of rule.regex) {
+        re.lastIndex = 0
+        if (re.test(text)) return true
+      }
     }
     return rule.color !== null || !!rule.extract
   }
 
-  private matchLine(rule: NormalizedTriggerRule, line: MudLine): PerceptHit | null {
-    const record = { rows: [line] }
+  /** 命中窗口装配: 锚点行前后批内切片 (声明 window 时; 跨批不追)。 */
+  private buildRecord(rule: NormalizedTriggerRule, line: MudLine, batch: MudLine[], index: number): PerceptRecord {
+    if (rule.window === null) return { rows: [line], before: [], after: [] }
+    return {
+      rows: [line],
+      before: batch.slice(Math.max(0, index - rule.window.before), index),
+      after: batch.slice(index + 1, index + 1 + rule.window.after),
+    }
+  }
+
+  private matchLine(rule: NormalizedTriggerRule, line: MudLine, batch: MudLine[], index: number): PerceptHit | null {
+    const record = this.buildRecord(rule, line, batch, index)
     if (!this.ruleHit(rule, record)) return null
     const hit: PerceptHit = {
       id: rule.id,
       eventType: rule.eventType,
       lineNumber: line.abs,
+      // 折叠语义: regex/text 折叠锚点行 (窗口行不折叠); func 不折叠 (房间抓取类全行进 agent)。
+      foldLines: rule.kind === 'func' ? [] : [line.abs],
       data: rule.extract
         ? (rule.extract(record) ?? null)
         : this.collectSingleData(rule, line.text),
@@ -400,15 +473,19 @@ export class Perceptor {
     const st = completed[completed.length - 1]
     if (st === undefined) return null
     const rows = st.captures.map(c => c.row)
+    // multiline 行序列即窗口: before/after 恒空 (构造校验已禁 window)。
+    const record: PerceptRecord = { rows, before: [], after: [] }
     if (rule.color !== null && !styleMatchesColor(rows, rule.color)) return null
-    if (rule.guard && !rule.guard({ rows })) return null
+    if (rule.guard && !rule.guard(record)) return null
     const hit: PerceptHit = {
       id: rule.id,
       eventType: rule.eventType,
       lineNumber: line.abs,
+      // 折叠语义: multiline 折叠全部被捕获的条件行 (行序列即窗口)。
+      foldLines: st.captures.map(c => c.abs),
       reason: 'multiline',
       data: rule.extract
-        ? (rule.extract({ rows }) ?? null)
+        ? (rule.extract(record) ?? null)
         : this.collectMultiData(rule, st),
     }
     if (rule.action) hit.action = rule.action

@@ -92,11 +92,51 @@ export function createMatchContext(): MatchContext {
   }
 }
 
+/** 准入判据 (三种匹配类型, 由 service 分派到对应匹配器)。
+ *  - regex: 锚定整行正则 (作者书写 `^…$`); multiline 时派生为逐条件状态机。
+ *    预筛 seed 由字面前缀自动推导。
+ *  - text:  字面子串 (includes 任一命中); includes 本身即预筛。适合高特异性
+ *    短语 —— MUD 聊天/帮助文本嵌词误触发风险由规则作者保证 (v6.5 教训)。
+ *  - func:  函数谓词 (每行调用, 返回 true 即命中); 无预筛全量跑 (规则总量小,
+ *    代价可忽略)。承载正则表达不了的结构判定。 */
+export type MatchSpec =
+  | { kind: 'regex'; patterns: readonly (string | RegExp)[] }
+  | { kind: 'text'; includes: readonly string[] }
+  | { kind: 'func'; test: (line: import('../preprocess/ansi.ts').MudLine) => boolean }
+
+/** 命中窗口声明 (单行规则; multiline 状态机的行序列本身就是窗口, 不支持)。
+ *  单行命中时装配锚点行前后的**批内**上下文供 extract 复合提取 (房间抓取等):
+ *  before/after 均为批内尽力 (跨批不追, 丢弃); 折叠移除只针对锚点行,
+ *  窗口行照常进 agent (结构化提取与 agent 自理解两份信息并存)。 */
+export interface WindowSpec {
+  /** 锚点行之前最多回看的行数 (本批内)。 */
+  before: number
+  /** 锚点行之后最多前看的行数 (本批内, 批尾即止)。 */
+  after: number
+}
+
+/** 命中记录 (guard/extract 的入参)。
+ *  单行命中 rows=[锚点行]; multiline 命中 rows=条件命中行序列;
+ *  声明 window 的单行规则额外装配 before/after (批内切片, 升序, 不含锚点行;
+ *  未声明或切片为空时为空数组)。 */
+export interface PerceptRecord {
+  rows: import('../preprocess/ansi.ts').MudLine[]
+  before: import('../preprocess/ansi.ts').MudLine[]
+  after: import('../preprocess/ansi.ts').MudLine[]
+}
+
 /** 感知规则命中结果。 */
 export interface PerceptHit {
   id: string
   eventType: string
+  /** 锚点行 (单行 = 命中行; multiline = 完成行)。排序/留痕用。 */
   lineNumber: number
+  /** 需折叠移除的行 (abs)。v6.6 折叠语义:
+   *  - multiline: 全部被捕获的条件行 (行序列即窗口, 整段折叠);
+   *  - 单行 regex/text: 仅锚点行 (声明 window 的窗口行不折叠, 照常进 agent);
+   *  - 单行 func: 不折叠 (空数组) — 房间抓取类复合提取, 全部行进 agent。
+   *  装配方按此集过滤, 未声明的命中 (event 桶) 不使用。 */
+  foldLines: number[]
   data: Record<string, unknown> | null
   reason?: string
   /** 命中规则携带的动作 (v6; 无 action 时缺省)。装配方据此渲染确定性动作。 */
@@ -110,19 +150,20 @@ export interface TriggerAction {
 }
 
 /** 感知规则 (配置来源, config/trigger-rules.ts)。
- *  准入语义 (v6.5): 匹配判据唯一收敛于 `regex` (锚定整行 `^…$`, 由作者书写);
- *  `contains` 已废弃 (宽松 includes 在 MUD 聊天/帮助文本中易误触发)。 */
+ *  准入语义 (v6.6): 判据 = MatchSpec 三种匹配类型 (regex 锚定整行 / text 字面
+ *  子串 / func 函数谓词), 分派到对应匹配器; 旧 `regex` 平铺与 `contains` 已废。 */
 export interface PerceptionRule {
   id: string
   eventType?: string
   priority?: number
+  /** 多行逐条件状态机 (仅 match.kind='regex' 合法)。 */
   multiline?: boolean
   greedy?: boolean
-  /** 准入唯一判据: 正则数组, 命中任一即触发 (作者自写首尾锚定 `^…$`)。
-   *  multiline=true 时逐行测试并派生为有序条件。 */
-  regex?: readonly (string | RegExp)[]
-  /** 捕获组 → world 点分键: 命中后由首个匹配正则的命名捕获组组装 hit.data。
-   *  extract 逃生舱优先级更高 (存在即覆盖); map 缺失则 data 为 null。 */
+  /** 准入判据 (三种匹配类型之一, 必填)。 */
+  match: MatchSpec
+  /** 捕获组 → world 点分键: 命中后由首个匹配正则的命名捕获组组装 hit.data
+   *  (仅 kind='regex' 有捕获组)。extract 逃生舱优先级更高 (存在即覆盖);
+   *  map 缺失则 data 为 null。 */
   map?: Record<string, string>
   /** 需数值化的捕获组名 (去千分位逗号 [,，] → Number; 无法解析则保留原串)。 */
   numeric?: readonly string[]
@@ -132,15 +173,17 @@ export interface PerceptionRule {
   /** 多行: 首条件到末条件之间允许的最大间隔行数 (Mudlet mConditionLineDelta)。
    *  默认 MULTI_LINE_DELTA。 */
   lineDelta?: number
-  /** 颜色触发: 指定后要求行内任一段 run 命中全部已指定通道。与 regex 为 AND。 */
+  /** 颜色触发: 指定后要求行内任一段 run 命中全部已指定通道。与 match 为 AND。 */
   fg?: number | null
   bg?: number | null
   fgTrue?: [number, number, number] | null
   bgTrue?: [number, number, number] | null
-  guard?: (record: { rows: import('../preprocess/ansi.ts').MudLine[] }) => boolean
-  /** 逃生舱提取 (v6.5): 仅二次颜色等必须跑代码的复杂提取使用; 命中后调用,
-   *  返回非 null 时覆盖捕获组组装结果。常规规则禁用。 */
-  extract?: (record: { rows: import('../preprocess/ansi.ts').MudLine[] }) => Record<string, unknown> | null
+  guard?: (record: PerceptRecord) => boolean
+  /** 逃生舱提取 (v6.5): 复合/跨行提取 (房间抓取等必须跑代码的提取) 使用;
+   *  命中后调用, 返回非 null 时覆盖捕获组组装结果。常规规则禁用。 */
+  extract?: (record: PerceptRecord) => Record<string, unknown> | null
+  /** 命中窗口声明 (仅单行规则; multiline 不支持 — 构造时报错)。 */
+  window?: WindowSpec
   /** 命中动作 (v6: 规则携带的确定性动作; 无 action 的命中视同未命中)。 */
   action?: ActionSpec
   /** 规则通道 (v6.1): 'state' = 预处理层预匹配折叠入库; 'event' = agent 内 T1 渲染 (缺省)。 */

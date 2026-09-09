@@ -91,6 +91,16 @@ describe('mud_send 兜底', () => {
     expect(bare.mud_send!.execute({ cmd: '{pass}' }).ok).toBe(true)
     expect(sent.at(-1)).toBe('{pass}')
   })
+  it('mud_recall: 取最近 count 行; 空缓冲显式反馈 (不静默空串)', () => {
+    const buffer = ['房间描述', '这里明显的出口是 north。', '> ']
+    const tools = buildMudTools({ recall: (n) => buffer.slice(-n) })
+    expect(tools.mud_recall!.execute({ count: 2 }).note)
+      .toBe('这里明显的出口是 north。\n> ')
+    const empty = buildMudTools() // 缺省 recall = () => []
+    const r = empty.mud_recall!.execute({})
+    expect(r.ok).toBe(true)
+    expect(r.note).toContain('缓冲暂无游戏输出')
+  })
 })
 
 describe('工具常量完备', () => {

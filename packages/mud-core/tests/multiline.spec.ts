@@ -44,6 +44,7 @@ describe('多行匹配状态机 (Mudlet 逐条件模型)', () => {
     const ctx = createMatchContext()
     perceptor.register({
       id: 'ml', eventType: 'p:ml', multiline: true,
+      match: { kind: 'regex', patterns: [] }, // 逐行条件全部来自 patterns (MultiCond)
       patterns: [
         { kind: 'substring', text: 'BEGIN' },
         { kind: 'regex', regex: 'END' },
@@ -66,6 +67,7 @@ describe('多行匹配状态机 (Mudlet 逐条件模型)', () => {
     const ctx = createMatchContext()
     perceptor.register({
       id: 'ml2', eventType: 'p:ml2', multiline: true,
+      match: { kind: 'regex', patterns: [] },
       patterns: [
         { kind: 'substring', text: 'A' },
         { kind: 'substring', text: 'B' },
@@ -88,6 +90,7 @@ describe('多行匹配状态机 (Mudlet 逐条件模型)', () => {
     const ctx = createMatchContext()
     perceptor.register({
       id: 'ml3', eventType: 'p:ml3', multiline: true,
+      match: { kind: 'regex', patterns: [] },
       patterns: [
         { kind: 'substring', text: 'A' },
         { kind: 'spacer', lines: 1 },
@@ -109,6 +112,7 @@ describe('多行匹配状态机 (Mudlet 逐条件模型)', () => {
     const ctx = createMatchContext()
     perceptor.register({
       id: 'ml4', eventType: 'p:ml4', multiline: true, lineDelta: 2,
+      match: { kind: 'regex', patterns: [] },
       patterns: [
         { kind: 'substring', text: 'A' },
         { kind: 'substring', text: 'B' },
@@ -130,7 +134,7 @@ describe('多行匹配状态机 (Mudlet 逐条件模型)', () => {
     const ctx = createMatchContext()
     perceptor.register({
       id: 'ml5', eventType: 'p:ml5', multiline: true,
-      regex: ['出发', '到达'],
+      match: { kind: 'regex', patterns: ['出发', '到达'] },
     })
     const feed = makeFeed()
     const all: PerceptHit[] = []
@@ -149,7 +153,7 @@ describe('正则去 g 标志', () => {
 
   it('全局正则跨窗口重复匹配不因 lastIndex 错位', () => {
     const perceptor = new Perceptor()
-    perceptor.register({ id: 'g1', eventType: 'p:g1', regex: [/foo/g] })
+    perceptor.register({ id: 'g1', eventType: 'p:g1', match: { kind: 'regex', patterns: [/foo/g] } })
     expect(perceptor.match(buffered([parsed('foo')]), createMatchContext()).map(h => h.id)).toEqual(['g1'])
     // 同一行再喂一次 — 仍应命中, 不被 lastIndex 卡住。
     expect(perceptor.match(buffered([parsed('foo')]), createMatchContext()).map(h => h.id)).toEqual(['g1'])
@@ -157,7 +161,7 @@ describe('正则去 g 标志', () => {
 
   it('regex 列表混合: 快路径仍生效', () => {
     const perceptor = new Perceptor()
-    perceptor.register({ id: 'g2', eventType: 'p:g2', regex: [/hello/, /world/g] })
+    perceptor.register({ id: 'g2', eventType: 'p:g2', match: { kind: 'regex', patterns: [/hello/, /world/g] } })
     expect(perceptor.match(buffered([parsed('hello world')]), createMatchContext()).map(h => h.id)).toEqual(['g2'])
   })
 })
@@ -169,14 +173,14 @@ describe('bold→亮色耦合 (Mudlet 对齐)', () => {
 
   it('bold 的暗色前景按亮色变体命中', () => {
     const perceptor = new Perceptor()
-    perceptor.register({ id: 'b1', eventType: 'p:b1', fg: 15 }) // 亮白
+    perceptor.register({ id: 'b1', eventType: 'p:b1', match: { kind: 'func', test: () => true }, fg: 15 }) // 亮白
     const boldDark = parsed('亮白字', [{ start: 0, end: 3, fg: 7, bg: null, fgTrue: null, bgTrue: null, flags: StyleFlag.Bold }])
     expect(perceptor.match(buffered([boldDark]), createMatchContext()).map(h => h.id)).toEqual(['b1'])
   })
 
   it('非 bold 的暗色前景不命中亮色条件', () => {
     const perceptor = new Perceptor()
-    perceptor.register({ id: 'b2', eventType: 'p:b2', fg: 15 })
+    perceptor.register({ id: 'b2', eventType: 'p:b2', match: { kind: 'func', test: () => true }, fg: 15 })
     const dark = parsed('暗白字', [{ start: 0, end: 3, fg: 7, bg: null, fgTrue: null, bgTrue: null, flags: 0 }])
     expect(perceptor.match(buffered([dark]), createMatchContext()).length).toBe(0)
   })

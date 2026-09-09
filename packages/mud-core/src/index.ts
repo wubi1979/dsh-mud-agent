@@ -176,6 +176,11 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
    *  client 当普通输出显示 — 位置天然正确, 无时序竞态)。 */
   const gameBuffer: { seq: number; text: string; time: number }[] = []
   let connectCount = 0 // telnet 连接次数 (首次 connect / 后续 reconnect)
+  // ── mud_recall 行缓冲 (agent 回看游戏输出) ─────────────
+  // 完整逻辑行纯文本 (feedParsed 在 state 折叠前登记 — 终端视角含全部行,
+  // 含状态行); FIFO, 上限与 mud_recall 的 count 上限对齐。
+  const RECALL_MAX = 200
+  const recallLines: string[] = []
   // ── UI 流缓冲 (WS 通道; 日志/决策/验证码) ─────────────
   // 日志/决策: 进程级环形缓冲经 /mud/ws 推送 (webui)。
   const UI_BUFFER_MAX = 2000
@@ -273,6 +278,7 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   const mudTools: MudTools = buildMudTools({
     send: (cmd: string) => queue.send(cmd),
     log: (t: string) => tuiLog(t),
+    recall: (count: number) => recallLines.slice(-count),
     world,
     resolveCredentials: () => getSessionCredentials(activeSessionId ?? config.sessionId),
   })
@@ -311,12 +317,18 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   // 用最新 skills 文本注入 mud-skills 区段。
   const skillService = new SkillService({
     onChange: () => {
-      if (agent && typeof agent.dispose === 'function') {
-        try { void agent.dispose() } catch { /* ignore */ }
-      }
-      agent = null
-      activeSessionId = null
-      tuiLog('[技能] 技能目录已更新, agent 将在下次交互时加载')
+      // 延迟到当前同步栈结束后释放: 目录变更可能由 agent 自身触发 (工具执行 /
+      // turn 进行中), 同步 dispose 等于从调用栈内拆掉正在跑的 loop → in-flight
+      // 请求悬挂、会话事件流不一致 (agent 永久失败)。setImmediate 让当前工具
+      // 执行/事件处理安全落地后再释放; turn 中途拆由 dispose+resume 语义兜底。
+      setImmediate(() => {
+        if (agent && typeof agent.dispose === 'function') {
+          try { void agent.dispose() } catch { /* ignore */ }
+        }
+        agent = null
+        activeSessionId = null
+        tuiLog('[技能] 技能目录已更新, agent 将在下次交互时重建 (resume 恢复上下文)')
+      })
     },
   })
 
@@ -332,6 +344,11 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   function feedParsed(lines: MudLine[]): void {
     if (lines.length === 0) return
     resetDeadAir() // 文本到达 = 连接存活
+    // mud_recall 行缓冲 (state 折叠前登记 — 终端视角含全部行)。
+    for (const l of lines) {
+      recallLines.push(l.text)
+      if (recallLines.length > RECALL_MAX) recallLines.shift()
+    }
 
     // state 预匹配折叠: 命中 → extract 产物 applyPatch 落库。
     if (stateMatchService) {
@@ -339,10 +356,11 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       for (const hit of stateHits) {
         if (hit.data) applyPatch(world, hit.data)
       }
-      // 移除已命中行 (折叠: 命中行不进 agent)。
+      // 移除折叠行 (hit.foldLines: multiline=全部捕获行; 单行 regex/text=锚点行;
+      // 单行 func 不折叠 — 折叠集可能为空)。
       if (stateHits.length > 0) {
-        const hitLineNums = new Set(stateHits.map(h => h.lineNumber))
-        lines = lines.filter(l => !hitLineNums.has(l.abs))
+        const foldNums = new Set(stateHits.flatMap(h => h.foldLines))
+        if (foldNums.size > 0) lines = lines.filter(l => !foldNums.has(l.abs))
         if (lines.length === 0) return
       }
     }
@@ -416,7 +434,12 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     cwd?: string,
   ): void {
     void cwd // 会话已由创建用户时建立; cwd 仅在创建时用于 workspace 归属
-    if (connections.get(SID)?.state === 'connected') return // 幂等
+    // 幂等 (防重入泄漏): 已连接 / 连接进行中均拒绝再次发起 — 否则每次
+    // connect 都 new 新 client 并覆盖条目, 旧 client 的 socket/flushTimer
+    // 无引用泄漏, 其迟到 connect 事件还会把新条目误标 connected (双连接)。
+    const existing = connections.get(SID)
+    if (existing?.state === 'connected' || existing?.state === 'connecting') return
+    if (existing) existing.client.close() // idle 残留兜底 (close 已销毁 socket → no-op)
     if (account !== undefined) activeAccount = account
     const sid = sessionId ?? config.sessionId ?? 'mud-player'
     // 目标会话必须已 live (client 激活), 否则事件无处可送 — 由 client 先打开用户会话。

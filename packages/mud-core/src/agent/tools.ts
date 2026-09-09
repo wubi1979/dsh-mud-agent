@@ -285,6 +285,10 @@ export function buildMudTools({
         const count = Number.isFinite(raw) ? Math.max(1, Math.min(200, Math.floor(raw))) : 20
         const lines = recall(count)
         log(`[工具] mud_recall → 最近 ${lines.length} 行`)
+        // 空结果显式反馈 (静默空串会让 agent 误判工具异常/反复重试)。
+        if (lines.length === 0) {
+          return { ok: true, note: '（缓冲暂无游戏输出 — 本会话尚未收到任何游戏行, 或刚重连清空）', cmd: '' }
+        }
         return { ok: true, note: lines.map(l => l.replace(/\x1b\[[0-9;]*m/g, '')).join('\n'), cmd: '' }
       },
     },

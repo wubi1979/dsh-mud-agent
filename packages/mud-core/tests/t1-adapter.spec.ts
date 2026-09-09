@@ -55,7 +55,7 @@ function makeService(): TriggerMatchService {
   return new TriggerMatchService([
     {
       id: 'login:name', eventType: 'p:login:name',
-      regex: [/^您的英文名字（要注册新人物请输入new。）：$/],
+      match: { kind: 'regex', patterns: [/^您的英文名字（要注册新人物请输入new。）：$/] },
       action: { output: '登录提示: 输入英文名字', tool: { name: 'mud_send', args: { cmd: '{name}' } } },
     },
   ])
@@ -174,7 +174,7 @@ describe('TriggerLlmAdapter — T1 本地模拟 (mud-t1)', () => {
     const service = new TriggerMatchService([
       {
         id: 'login:name', eventType: 'p:login:name',
-        regex: [/^您的英文名字（要注册新人物请输入new。）：$/],
+        match: { kind: 'regex', patterns: [/^您的英文名字（要注册新人物请输入new。）：$/] },
         action: { output: '登录', tool: { name: 'mud_send', args: { cmd: '{name}', note: '{pass}' } } },
       },
     ])
