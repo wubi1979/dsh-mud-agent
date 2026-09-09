@@ -68,6 +68,29 @@ describe('mud_send 兜底', () => {
       .toEqual({ ok: true, note: '命令序列', cmd: '' })
     expect(sent).toEqual(['', 'look'])
   })
+  it('凭据: {name}/{pass} 仅发送瞬间插值 — log/返回值只见占位符 (明文不落转录)', () => {
+    const sent: string[] = []
+    const logs: string[] = []
+    const tools = buildMudTools({
+      send: c => sent.push(c),
+      log: t => logs.push(t),
+      resolveCredentials: () => ({ name: 'hero', pass: 's3cret' }),
+    })
+    const r = tools.mud_send!.execute({ cmd: '{name}' })
+    // 发送: 明文 (socket 瞬间); 返回值/日志: 占位符原文 (转录/日志不落明文)。
+    expect(sent).toEqual(['hero'])
+    expect(r).toEqual({ ok: true, note: '{name}', cmd: '{name}' })
+    expect(logs.join('\n')).toBe('[工具] mud_send → {name}')
+    expect(logs.join('\n')).not.toContain('s3cret')
+    // 序列同样逐条插值。
+    const r2 = tools.mud_send!.execute({ cmds: ['{name}', '{pass}'] })
+    expect(sent).toEqual(['hero', 'hero', 's3cret'])
+    expect(r2).toEqual({ ok: true, note: '命令序列', cmd: '' })
+    // 无凭据 (缺省): 占位符原样发送。
+    const bare = buildMudTools({ send: c => sent.push(c) })
+    expect(bare.mud_send!.execute({ cmd: '{pass}' }).ok).toBe(true)
+    expect(sent.at(-1)).toBe('{pass}')
+  })
 })
 
 describe('工具常量完备', () => {

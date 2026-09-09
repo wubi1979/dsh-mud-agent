@@ -47,41 +47,6 @@ let t1Registration: (() => void) | null = null
 export let stateMatchService: TriggerMatchService | null = null
 export let eventMatchService: TriggerMatchService | null = null
 
-/** 会话登录凭据 (与会话绑定: 用户即会话, 按 sessionId 存取; 登录规则 T1 插值用)。 */
-export interface SessionCredentials {
-  name: string
-  pass: string
-}
-
-/** sessionId → 登录凭据 (连接时由装配方 setSessionCredentials 写入)。 */
-const sessionCredentials = new Map<string, SessionCredentials>()
-
-/** 写入某会话的登录凭据 (connect({name, pass}) 时调用; 切换用户互不泄漏)。 */
-export function setSessionCredentials(sessionId: string, creds: SessionCredentials): void {
-  if (sessionId === '' || creds === null || typeof creds !== 'object') return
-  sessionCredentials.set(sessionId, { name: creds.name ?? '', pass: creds.pass ?? '' })
-}
-
-/** 读取某会话的登录凭据 (无凭据返回 undefined)。 */
-export function getSessionCredentials(sessionId: string | undefined): SessionCredentials | undefined {
-  return sessionId ? sessionCredentials.get(sessionId) : undefined
-}
-
-/** 工具参数插值: 用会话凭据替换 {name}/{pass} 占位符 (逐字符串值替换)。 */
-export function interpolateCredentials<T extends Record<string, unknown>>(
-  args: T,
-  creds: SessionCredentials | undefined,
-): Record<string, unknown> {
-  if (!creds) return args
-  const out: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(args)) {
-    out[key] = typeof value === 'string'
-      ? value.replace(/\{name\}/g, creds.name).replace(/\{pass\}/g, creds.pass)
-      : value
-  }
-  return out
-}
-
 // ── 行注册表 (内容寻址; T1 匹配输入的唯一来源) ──────────────
 // key = agent 会话里 user 消息的精确文本 (feedParsed 的 textOfLines 产物);
 // value = 同一批 MudLine[] (parser abs 单调, 多行状态机跨批连续)。
@@ -128,8 +93,8 @@ export function registerTriggerProvider(ctx: Context, opts: {
     onRender: (entry) => {
       opts.log?.(`[t1] 命中 ${entry.hit.id}: ${entry.action.output.slice(0, 60)}`)
     },
-    // 登录规则 args 的 {name}/{pass} → 会话凭据 (与会话绑定; 无凭据原样下发)。
-    resolveToolArgs: (args, sessionId) => interpolateCredentials(args, getSessionCredentials(sessionId)),
+    // 凭据: tool args 保留 {name}/{pass} 占位符原样渲染 (不落明文),
+    // 插值由 mud_send.execute 在发送瞬间完成 (见 tools.ts)。
   })
   const disposeAdapter = ctx.llm.registerAdapter([T1_PROVIDER], adapter)
 

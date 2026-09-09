@@ -31,11 +31,11 @@ import {
   createWorld, applyPatch, worldSnapshot, type WorldModel,
 } from './world/world.ts'
 import { CommandQueue } from './agent/execution.ts'
-import { buildMudTools, type MudTools } from './agent/tools.ts'
+import { buildMudTools, setSessionCredentials, getSessionCredentials, type MudTools } from './agent/tools.ts'
 import defaultPerceptionRules from './config/trigger-rules.ts'
 import { SkillService } from './agent/skills.ts'
 import { commandsTextForAgent } from './config/commands.ts'
-import { createMudAgent, sendGameOutput, registerTriggerProvider, disposeTriggerProvider, registerGameLines, setSessionCredentials, stateMatchService, eventMatchService, type CreateMudAgentOptions } from './agent/agent-bridge.ts'
+import { createMudAgent, sendGameOutput, registerTriggerProvider, disposeTriggerProvider, registerGameLines, stateMatchService, eventMatchService, type CreateMudAgentOptions } from './agent/agent-bridge.ts'
 import { CONTROL_PREFIX } from './trigger-llm/types.ts'
 import type { AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
@@ -268,11 +268,13 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   })
   tuiLog(`[执行] 命令队列就绪 (最小间隔 ${config.commandIntervalMs ?? 400}ms)`)
 
-  /** 工具集: 语义工具 (move/look/status) + mud_send 兜底。校验在工具层。 */
+  /** 工具集: 语义工具 (move/look/status) + mud_send 兜底。校验在工具层。
+   *  凭据: mud_send 发送瞬间按当前会话插值 {name}/{pass} (转录/日志只见占位符)。 */
   const mudTools: MudTools = buildMudTools({
     send: (cmd: string) => queue.send(cmd),
     log: (t: string) => tuiLog(t),
     world,
+    resolveCredentials: () => getSessionCredentials(activeSessionId ?? config.sessionId),
   })
   tuiLog(`[执行] 工具集就绪: ${Object.keys(mudTools).join(', ')}`)
 
@@ -423,7 +425,8 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       return
     }
     activeSessionId = sid
-    // 凭据与会话绑定: 登录规则 (T1) 按本会话插值渲染 {name}/{pass}。
+    // 凭据与会话绑定: {name}/{pass} 占位符的插值只在 mud_send 发送瞬间发生
+    // (tools.ts), 转录/日志/工具结果全程只见占位符, 明文不落任何通道。
     if (account !== undefined) setSessionCredentials(sid, account)
     const client = new TelnetClient({ host, port })
     connections.set(SID, { client, state: 'connecting', host, port })

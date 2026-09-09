@@ -43,9 +43,6 @@ export interface TriggerLlmAdapterHooks {
   onLog?: (text: string) => void
   /** 命中通知 (每次渲染前; 装配方在此写留痕)。 */
   onRender?: (entry: { action: ActionSpec; hit: PerceptHit; rule: PerceptionRule | null }) => void
-  /** 工具参数解析 (渲染前): 规则 args 可携带 {name}/{pass} 等会话凭据占位符;
-   *  装配方按 sessionId 解析为实际值 (缺省不解析, 原样下发)。 */
-  resolveToolArgs?: (args: Record<string, unknown>, sessionId: string | undefined) => Record<string, unknown>
 }
 
 /** 尾部输入判定结果。 */
@@ -93,7 +90,6 @@ export class TriggerLlmAdapter extends LlmAdapter {
 
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     if (options?.signal?.aborted) return
-    const sessionId = options.sessionId
     const tail = tailInput(options?.messages)
 
     // T1-owned 回合的续步 (本回合 T1 的 tool-calls 已执行): 安静收束回合。
@@ -126,12 +122,13 @@ export class TriggerLlmAdapter extends LlmAdapter {
       return
     }
 
-    yield* this.renderActions(actions, sessionId)
+    yield* this.renderActions(actions)
   }
 
   /** 渲染全部动作 (顺行序): 每条 action 先 output 文本块, 后 tool-call 块。
-   *  tool.args 经 hooks.resolveToolArgs 解析 (会话凭据插值), 缺省原样下发。 */
-  private async *renderActions(actions: readonly TriggerAction[], sessionId: string | undefined): AsyncIterable<StreamChunk> {
+   *  tool args 原样渲染 (含 {name}/{pass} 等占位符) — 占位符的插值责任
+   *  在工具执行层 (mud_send), 渲染层绝不落明文。 */
+  private async *renderActions(actions: readonly TriggerAction[]): AsyncIterable<StreamChunk> {
     let index = 0
     let hasTool = false
     for (const entry of actions) {
@@ -152,10 +149,7 @@ export class TriggerLlmAdapter extends LlmAdapter {
         hasTool = true
         const i = index++
         const id = renderActionId(entry.hit, i)
-        const args = this.hooks.resolveToolArgs
-          ? this.hooks.resolveToolArgs(tool.args ?? {}, sessionId)
-          : (tool.args ?? {})
-        const argumentsJson = toolArgsJson(args)
+        const argumentsJson = toolArgsJson(tool.args)
         yield { type: 'block-start', index: i, blockType: 'tool-call' }
         yield { type: 'tool-call-delta', index: i, id, name: tool.name, argumentsDelta: argumentsJson }
         yield {

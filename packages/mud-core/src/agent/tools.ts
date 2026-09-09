@@ -29,6 +29,37 @@ export interface MudToolResult {
   cmd: string
 }
 
+// ── 会话登录凭据 (明文最小暴露面) ──────────────
+// 凭据只存在内存 (connect 时写入); 引用一律以 {name}/{pass} 占位符流转
+// (转录/日志/工具结果均只见占位符), 明文仅在 mud_send 发送瞬间插值。
+export interface SessionCredentials {
+  name: string
+  pass: string
+}
+
+/** sessionId → 登录凭据 (连接时由装配方写入; 切换用户互不泄漏)。 */
+const sessionCredentials = new Map<string, SessionCredentials>()
+
+/** 写入某会话的登录凭据 (connect({name, pass}) 时调用)。 */
+export function setSessionCredentials(sessionId: string, creds: SessionCredentials): void {
+  if (sessionId === '' || creds === null || typeof creds !== 'object') return
+  sessionCredentials.set(sessionId, { name: creds.name ?? '', pass: creds.pass ?? '' })
+}
+
+/** 读取某会话的登录凭据 (无凭据返回 undefined)。 */
+export function getSessionCredentials(sessionId: string | undefined): SessionCredentials | undefined {
+  return sessionId ? sessionCredentials.get(sessionId) : undefined
+}
+
+/** 凭据占位符插值: 字符串值中的 {name}/{pass} → 会话实际值 (逐值替换)。 */
+export function interpolateCredentials(
+  text: string,
+  creds: SessionCredentials | undefined,
+): string {
+  if (!creds) return text
+  return text.replace(/\{name\}/g, creds.name).replace(/\{pass\}/g, creds.pass)
+}
+
 /** 合法移动方向 (pkuxkx)。 */
 export const MOVE_DIRS: readonly string[] = [
   'north', 'south', 'east', 'west', 'up', 'down',
@@ -108,6 +139,7 @@ export function buildMudTools({
   recall = () => [],
   flowControl,
   world,
+  resolveCredentials,
 }: {
   send?: (cmd: string) => void
   log?: (text: string) => void
@@ -118,6 +150,8 @@ export function buildMudTools({
     status: () => Record<string, 'enabled' | 'disabled' | 'unknown'>
   }
   world?: WorldModel
+  /** 会话凭据读取器 (mud_send 发送瞬间插值 {name}/{pass}; 缺省不插值)。 */
+  resolveCredentials?: () => SessionCredentials | undefined
 } = {}): MudTools {
   return {
     /** 移动: 只接受合法方向 (全名或别名), 非法方向拒绝。 */
@@ -191,7 +225,9 @@ export function buildMudTools({
 
     /** 兜底: 发送任意原始命令 (无专用工具时用; 规则确定性动作也走这里)。
      *  `cmds` 数组 = 命令序列 (允许含空命令, 如"空行退 MXP 检测 + look");
-     *  单体 `cmd` 依旧拒绝空命令。 */
+     *  单体 `cmd` 依旧拒绝空命令。
+     *  凭据: {name}/{pass} 占位符仅在 send 瞬间插值 — log/返回值/转录
+     *  (tool-call args + tool-result) 全程只见占位符, 明文不落任何通道。 */
     mud_send: {
       name: 'mud_send',
       description: '向 MUD 游戏发送一条原始命令 (或一组命令序列)。优先使用 mud_move / mud_look / mud_status 等专用工具; 仅在无专用工具时 (如 ask/使用特殊物品) 使用本工具。',
@@ -208,6 +244,7 @@ export function buildMudTools({
       },
       output: { schema: OUT_SCHEMA, render: OUT_RENDER },
       execute: (args) => {
+        const wire = (c: string): string => interpolateCredentials(c, resolveCredentials?.())
         // 命令序列: 允许空命令成员; 整体至少有一条合法命令才成功。
         const series = Array.isArray(args.cmds) ? args.cmds.map((c) => String(c)) : null
         if (series && series.length > 0) {
@@ -216,7 +253,7 @@ export function buildMudTools({
               return { ok: false, note: `安全禁用命令, 拒绝发送: ${String(c).trim()}`, cmd: '' }
             }
           }
-          for (const c of series) send(c)
+          for (const c of series) send(wire(c))
           log(`[工具] mud_send 序列 → ${series.length} 条命令`)
           return { ok: true, note: '命令序列', cmd: '' }
         }
@@ -226,7 +263,7 @@ export function buildMudTools({
         if (isForbidden(cmd)) {
           return { ok: false, note: `安全禁用命令, 拒绝发送: ${cmd}`, cmd: '' }
         }
-        send(cmd)
+        send(wire(cmd))
         log(`[工具] mud_send → ${cmd}`)
         return { ok: true, note: cmd, cmd }
       },

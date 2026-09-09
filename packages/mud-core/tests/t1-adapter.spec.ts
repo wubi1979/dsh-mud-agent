@@ -63,7 +63,6 @@ function makeService(): TriggerMatchService {
 
 /** 测试脚手架: registry (text → lines) + hooks 包装, 返回 adapter 与登记函数。 */
 function makeAdapter(service: TriggerMatchService, o: {
-  resolveToolArgs?: TriggerLlmAdapterHooks['resolveToolArgs']
   logs?: string[]
 } = {}): { adapter: TriggerLlmAdapter; register: (text: string) => void } {
   const registry = new Map<string, MudLine[]>()
@@ -71,7 +70,6 @@ function makeAdapter(service: TriggerMatchService, o: {
     resolveLines: (text) => registry.get(text) ?? null,
     matchLines: (lines): readonly TriggerAction[] =>
       service.match(lines).filter(h => h.action).map(h => ({ hit: h, action: h.action! })),
-    resolveToolArgs: o.resolveToolArgs,
     onLog: (t) => o.logs?.push(t),
   }
   return {
@@ -172,7 +170,7 @@ describe('TriggerLlmAdapter — T1 本地模拟 (mud-t1)', () => {
     expect(chunks).toHaveLength(0)
   })
 
-  it('resolveToolArgs: {name}/{pass} 占位符按会话凭据插值 (不落明文)', async () => {
+  it('tool args 占位符原样下发 (凭据插值责任在工具执行层, 渲染层不落明文)', async () => {
     const service = new TriggerMatchService([
       {
         id: 'login:name', eventType: 'p:login:name',
@@ -180,16 +178,13 @@ describe('TriggerLlmAdapter — T1 本地模拟 (mud-t1)', () => {
         action: { output: '登录', tool: { name: 'mud_send', args: { cmd: '{name}', note: '{pass}' } } },
       },
     ])
-    const { adapter, register } = makeAdapter(service, {
-      resolveToolArgs: (args, sessionId) => sessionId === 's1'
-        ? { cmd: args.cmd.replaceAll('{name}', 'hero'), note: args.note.replaceAll('{pass}', 'secret') }
-        : args,
-    })
+    const { adapter, register } = makeAdapter(service)
     register(LOGIN_PROMPT)
 
     const chunks = await collect(adapter, opts([userMsg(LOGIN_PROMPT)], 's1'))
     const toolEnd = chunks.filter(c => c.type === 'block-end').at(-1) as { block: { arguments: string } }
-    expect(toolEnd.block.arguments).toBe('{"cmd":"hero","note":"secret"}')
+    // 转录 (assistant tool-call) 只见占位符 — 无任何明文凭据。
+    expect(toolEnd.block.arguments).toBe('{"cmd":"{name}","note":"{pass}"}')
   })
 
   it('同一文本重复请求 (重试) → 幂等渲染 (tool-call id 时间戳除外; 依赖路由状态防重)', async () => {
