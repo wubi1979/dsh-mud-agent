@@ -27,7 +27,10 @@
  *   - boundaryReceived: 帧边界 (GA/EOR); armed 且未声明 until → 即刻结算;
  *     声明 until → 仅作帧切分继续累积 (跨帧匹配); 无主边界 → 丢弃 (转发
  *     onBoundary 供观察窗作为自然结算点);
- *   - close: 断线 → 在途/排队请求全部 reject (回合 error 语义)。
+ *   - close: 断线 → 在途/排队请求全部 reject (回合 error 语义); `close()` 为**终止**语义,
+ *     重连后宿主须调 `reset()` 重开控制器;
+ *   - sendFailed: 宿主真实写 socket 失败/异常时回执 → 在途 sending 请求 settle error
+ *     (工具 throw → 回合 error); pump 另设发送守卫: 超窗未 confirmSent 武装 → 同样 error;
  *
  * 结算分层的优先级 (机制 A): until (声明边界) > GA/EOR (主边界) >
  * 静默窗 (主边界兜底) > 超时 (最兜底)。
@@ -104,6 +107,10 @@ export const SILENT_MARKER = '\n[静默结算（边界未命中）]'
 /** 中止文本。 */
 export const ABORT_TEXT = '（已中止）'
 
+/** 帧行数上限 (P3-5: 抓包 dz 56 批/57 行; 声明 until 帧同量级累积,
+ *  无上限会导致文本无限膨胀)。超限强制 timeout 结算。 */
+const MAX_FRAME_LINES = 256
+
 /** 应答行集表上限 (有界 FIFO; 与旧行注册表同量级)。 */
 const LINE_STORE_MAX = 64
 
@@ -158,6 +165,9 @@ export class CommandResponseController {
   private live: PendingReply | null = null
   /** 连续超时计数 (成功结算即复位; 达上限 → reject)。 */
   private consecutiveTimeouts = 0
+  /** P3-2: 迟到 GA 计数 — 非 GA 路径结算 (silent/timeout/abort/until) 后,
+   *  遗留的 GA 不应提前结算下一帧 (abort 路径实证问题)。 */
+  private orphanBoundaries = 0
   private replySeq = 0
   private disposed = false
 
@@ -243,6 +253,18 @@ export class CommandResponseController {
   }
 
   /**
+   * 发送失败回执 (P0-2): 宿主在真实写 socket 失败 / 抛异常 / 超时未确认武装时调用,
+   * 在途 `sending` 请求 settle 成 error → 工具 reject → 回合 error 终态; pump 恢复。
+   * 幂等: 仅匹配 live 且 state==='sending' 的同 id 请求。
+   */
+  sendFailed(replyId: string | undefined, reason: string): void {
+    const reply = this.live
+    if (!reply || reply.state !== 'sending' || reply.id !== replyId) return
+    this.opts.onLog?.(`[应答] ${reason}`)
+    this.settle(reply, 'error', reason)
+  }
+
+  /**
    * 喂入一批完整逻辑行 (宿主 telnet 'parsed' 批次粒度)。
    * 折叠分界 (REFACTOR-V7 六): `lines` = 原始行 (折叠过滤之前的全量) —
    *   边界匹配 (until 目标行可能是 state 折叠行, 如 hp 的 气血 行) 与
@@ -259,8 +281,14 @@ export class CommandResponseController {
       reply.text = textOfLines(reply.lines)
       this.record(lines)
       this.resetSilence(reply)
-      // 声明边界: 文本命中即结算 (跨帧累积)。
-      if (reply.opts.until && this.testUntil(reply.opts.until.regex, reply.text)) {
+      // P3-5: 帧行数超限强制 timeout 结算 (防 dz 渐进推送等无 GA/prompt 场景无限累积)。
+      if (reply.lines.length >= MAX_FRAME_LINES) {
+        this.opts.onLog?.(`[应答] 帧行数超限 (${reply.lines.length} >= ${MAX_FRAME_LINES}), 强制 timeout 结算`)
+        this.settle(reply, 'timeout')
+        return
+      }
+      // 声明边界: 任一既有行命中即结算 (跨帧累积; 逐行语义, 锚定整行正则)。
+      if (reply.opts.until && this.testUntil(reply.opts.until.regex, reply.lines)) {
         this.settle(reply, 'until')
       }
       return
@@ -279,8 +307,14 @@ export class CommandResponseController {
     const reply = this.live
     if (reply && reply.state === 'armed') {
       if (reply.opts.until) {
-        // 声明边界为主: 至此帧尾测试一次 (便于"整行尾"语义), 未命中继续累积。
-        if (this.testUntil(reply.opts.until.regex, reply.text)) this.settle(reply, 'until')
+        // 声明边界为主: 至此帧尾测一次既有行 (便于"整行尾"语义), 未命中继续累积。
+        if (this.testUntil(reply.opts.until.regex, reply.lines)) this.settle(reply, 'until')
+        return
+      }
+      // P3-2: 非 GA 结算 (silent/timeout/abort/until) 后迟到 GA 丢弃 — 不提前结算下一帧。
+      if (this.orphanBoundaries > 0) {
+        this.orphanBoundaries -= 1
+        this.opts.onLog?.(`[应答] 迟到 GA 丢弃 (P3-2 orphan, 剩余 ${this.orphanBoundaries})`)
         return
       }
       this.settle(reply, kind)
@@ -289,7 +323,7 @@ export class CommandResponseController {
     this.opts.onBoundary?.(kind)
   }
 
-  /** 断线: 在途/排队请求全部 reject (error), 停止接受新请求。 */
+  /** 断线: 在途/排队请求全部 reject (error), 停止接受新请求 (终止语义)。 */
   close(): void {
     this.disposed = true
     const live = this.live
@@ -301,9 +335,27 @@ export class CommandResponseController {
     }
     this.pending = []
     this.live = null
+    this.orphanBoundaries = 0
   }
 
-  /** 重连清理: 旧连接行对象 abs 已随 parser 实例归零, 行集表作废。 */
+  /** 重连复位 (P0-1): `close()` 为终止语义 (disposed 永真), 宿主每次 `connect` 事件
+   *  须调 `reset()` 重开控制器: 清 disposed/live/pending/连续超时 + 行集表。
+   *  断线遗留请求本已在 close 期 reject; 此处双保险 (防御非 close 路径的残留)。 */
+  reset(): void {
+    this.disposed = true
+    const live = this.live
+    if (live && live.state !== 'settled') this.settle(live, 'error')
+    for (const next of this.pending) this.settle(next, 'error')
+    this.pending = []
+    this.live = null
+    this.consecutiveTimeouts = 0
+    this.orphanBoundaries = 0
+    this.store.clear()
+    this.disposed = false
+  }
+
+  /** 轻量清理: 仅清行集表 (旧连接行对象 abs 已随 parser 实例归零)。重连复用请用
+   *  `reset()` (同时清 disposed)。 */
   clear(): void {
     this.store.clear()
   }
@@ -335,6 +387,12 @@ export class CommandResponseController {
       }
     }
     return best ? best.lines : null
+  }
+
+  /** 登记一批行到行集表 (P1-3a): 观察窗合并注入前由宿主**整批**登记, 使合并文本
+   *  能被 resolveLines 精确还原 — 逐批登记会让长批合并后只还原到第一批。 */
+  cacheLines(lines: MudLine[]): void {
+    this.record(lines)
   }
 
   /** 免等待发送 (手动 WebUI 命令; 不入应答机制, 直入队列)。 */
@@ -371,8 +429,18 @@ export class CommandResponseController {
       this.sendCommands(next)
     } catch (err) {
       this.opts.onLog?.(`[应答] 发送失败: ${err instanceof Error ? err.message : String(err)}`)
-      this.settle(next, 'error')
+      this.settle(next, 'error', `命令发送异常: ${err instanceof Error ? err.message : String(err)}`)
+      return
     }
+    // 发送守卫 (P0-2): 宿主 confirmSent 后才武装计时。若真实写 socket 失败/异常而不
+    // 回执 confirmSent/sendFailed, sending 永不结算 → 整桥死锁 (inFlight 恒 true、
+    // pending 永不 pump)。按请求超时窗兜底 settle error → 工具 throw → 回合 error。
+    next.timeoutTimer = setTimeout(() => {
+      if (next.state === 'sending') {
+        this.opts.onLog?.(`[应答] 发送后 ${next.opts.timeout ?? this.opts.defaultTimeoutMs}ms 未确认武装, 视为发送失败: ${next.cmd}`)
+        this.settle(next, 'error', `命令已入队但发送后未确认武装 (${next.cmd})`)
+      }
+    }, next.opts.timeout ?? this.opts.defaultTimeoutMs)
   }
 
   /** 发送该请求的全部命令 (单体一条; 序列逐条同 replyId 穿透到队列)。 */
@@ -394,8 +462,9 @@ export class CommandResponseController {
     }
   }
 
-  /** 结算 (唯一出口: resolve/reject 恰一次; 之后的 feed/boundary 归无主)。 */
-  private settle(reply: PendingReply, kind: ReplySettle): void {
+  /** 结算 (唯一出口: resolve/reject 恰一次; 之后的 feed/boundary 归无主)。
+   *  kind='error' 时 errorMessage 覆盖缺省文案 (发送失败/未确认武装等非断线场景)。 */
+  private settle(reply: PendingReply, kind: ReplySettle, errorMessage?: string): void {
     if (reply.state === 'settled') return
     reply.state = 'settled'
     this.clearTimers(reply)
@@ -411,7 +480,7 @@ export class CommandResponseController {
     if (reply.lines.length > 0) this.record(reply.lines)
 
     if (kind === 'error') {
-      reply.reject(new Error(`应答未结算 (连接已断开): ${reply.cmd}`))
+      reply.reject(new Error(errorMessage ?? `应答未结算 (连接已断开): ${reply.cmd}`))
       this.pump()
       return
     }
@@ -426,6 +495,8 @@ export class CommandResponseController {
       }
       const text = reply.text + TIMEOUT_MARKER
       reply.resolve({ ok: false, cmd: reply.cmd, text, lines: reply.lines, settled: kind })
+      // P3-2: timeout 为非 GA 路径 — 遗留 GA 不结算下一帧。
+      this.orphanBoundaries += 1
       this.pump()
       return
     }
@@ -446,6 +517,11 @@ export class CommandResponseController {
         text = reply.text
         ok = true
         break
+    }
+    // P3-2: 非 GA 路径 (silent/abort/timeout/until) 遗留 GA 不结算下一帧;
+    // timeout 已提前返回; error 为断线 (无后续 GA); ga/eor 为正常路径, 不计。
+    if (kind !== 'ga' && kind !== 'eor') {
+      this.orphanBoundaries += 1
     }
     reply.resolve({ ok, cmd: reply.cmd, text, lines: reply.lines, settled: kind })
     this.pump()
@@ -482,11 +558,17 @@ export class CommandResponseController {
     if (reply.silenceTimer) { clearTimeout(reply.silenceTimer); reply.silenceTimer = null }
   }
 
-  /** 声明边界正则测试 (字符串编译为 RegExp; 非法正则视为永不命中)。 */
-  private testUntil(pattern: string | RegExp, text: string): boolean {
+  /** 声明边界正则测试 (P1-2: 锚定整行正则须**逐行测** — 多行累积文本上对整串无
+   *  /m 的 test 使 ^…$ 恒 false, 声明边界只能挂到声明超时)。字符串编译为
+   *  RegExp; 非法正则视为永不命中。 */
+  private testUntil(pattern: string | RegExp, lines: readonly MudLine[]): boolean {
     try {
       const re = typeof pattern === 'string' ? new RegExp(pattern) : pattern
-      return re.test(text)
+      for (const line of lines) {
+        re.lastIndex = 0
+        if (re.test(line.text)) return true
+      }
+      return false
     } catch {
       this.opts.onLog?.(`[应答] until 正则非法, 忽略: ${String(pattern)}`)
       return false

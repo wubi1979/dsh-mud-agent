@@ -159,6 +159,8 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   // 当前 agent 的会话 id (用户即会话: 切换用户 → 重建 agent, 各自历史恢复)。
   let activeSessionId: string | null = null
   let deadAirTimer: ReturnType<typeof setTimeout> | null = null // 断流 30s → 唤醒 agent
+  // P3-5: 观察窗行数上限 (与 response.ts MAX_FRAME_LINES 同量级; 超限立即 flush)。
+  const MAX_OBSERVE_LINES = 256
   // 登录看门狗: 登录期 (logged_in=false) 断流计时被抑制 (登录由 p:login:* 触发器推进),
   // 规则漏配/密码错误/网络半死会让登录停在某步且**无人唤醒**。整体预算 loginTimeoutMs
   // (缺省 90s) 无推进 → 升级 T2 决策; 阶段超时 (trigger-rules until 30~45s) < 预算,
@@ -267,10 +269,19 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   /**
    * 已发送命令回显 (亮蓝 ANSI; actor 区分 agent/user)。
    * 即刻直写终端缓冲 — 与游戏输出同一条"事件当拍同步落盘"的时间轴。
+   * P3-1: 凭据命令 (仅密码) 在回显中掩码为 ***; agent/转录工具结果不受影响
+   * (tools.ts log 在 wire() 前, 返回值全程占位符, 明文仅瞬时在 socket 层)。
    */
   function appendCommandEcho(cmd: string, actor: 'agent' | 'user'): void {
     const name = activeAccount?.name ?? config.account?.name ?? 'user'
-    pushGameEntry(`\x1b[94m${name}@${actor}>${cmd}\x1b[0m`)
+    pushGameEntry(`\x1b[94m${name}@${actor}>${redactCredential(cmd)}\x1b[0m`)
+  }
+
+  /** 凭据掩码: 仅密码 (高敏感); 用户名不掩 (日志可读性)。 */
+  function redactCredential(cmd: string): string {
+    const pass = activeAccount?.pass
+    if (pass && cmd === pass) return '***'
+    return cmd
   }
 
   /** 发送命令到游戏连接。actor = 命令来源 (agent/工具队列 → 'agent')。 */
@@ -283,7 +294,8 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     const sent = c.client.send(String(cmd))
     if (sent) {
       appendCommandEcho(String(cmd), actor)
-      tuiLog(`[发送] ${cmd === '' ? '<空行>' : cmd}`)
+      // P3-1: 日志中密码掩码 (与 echo 同策略)。
+      tuiLog(`[发送] ${cmd === '' ? '<空行>' : redactCredential(cmd)}`)
     }
     return sent
   }
@@ -327,12 +339,20 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     if (observeBuf.length === 0) return
     const batch = observeBuf
     observeBuf.length = 0
+    // P1-3a: 合并批整批登记 — 工具结果 resolveLines 才能精确还原 (逐批登记
+    // 在长批合并后只还原到第一批, 后续批规则静默丢失)。
+    controller.cacheLines(batch)
     judgeAndInject(batch)
   }
 
   /** 观察窗静默兜底 (无 GA 时按静默窗结算, 与应答桥同语义)。 */
   function scheduleObserveFlush(): void {
     if (observeTimer) clearTimeout(observeTimer)
+    // P3-5: 观察窗超限立即 flush, 不等静默窗 (防 dz 渐进推送等无限累积)。
+    if (observeBuf.length >= MAX_OBSERVE_LINES) {
+      flushObserve()
+      return
+    }
     observeTimer = setTimeout(flushObserve, config.bridgeSilenceMs ?? 2_000)
   }
 
@@ -347,7 +367,9 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     if (clean === '') return
     let hasHit = false
     if (eventMatchService) {
-      hasHit = eventMatchService.match(lines).some(h => h.action !== undefined)
+      // P1-3b: 判类走镜像 matchDry (不推进多行状态机) — 判类与 adapter 真渲染
+      // 共用实例会双跑: 判类先推进 multiLastAbs, 渲染时同批被单调保护跳过。
+      hasHit = eventMatchService.matchDry(lines).some(h => h.action !== undefined)
     }
     const lane: OwnedLane = hasHit ? 't1' : 't2'
     sendOwnedOutput(agent, clean, lane)
@@ -364,10 +386,19 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     minInterval: config.commandIntervalMs ?? 400,
     onSend: (cmd: string, meta) => {
       // 真实写 socket 后武装: 无主行 (帧首集) 并入帧首, 保持帧连续。
-      const sent = sendCommand(cmd)
+      let sent = false
+      try {
+        sent = sendCommand(cmd)
+      } catch (err) {
+        tuiLog(`[发送] 写 socket 异常: ${err instanceof Error ? err.message : String(err)}`)
+      }
       if (sent && meta?.replyId) {
         const head = headBuf.length > 0 ? headBuf.splice(0) : undefined
         controller.confirmSent(meta.replyId, head)
+      } else if (meta?.replyId) {
+        // P0-2: 发送失败/异常 → settle error → 工具 throw (回合 error), 防 sending 永久
+        // 死锁 (inFlight 恒 true, pending 永不 pump)。pump 另有超窗未武装的兜底守卫。
+        controller.sendFailed(meta.replyId, `写 socket 失败: ${cmd === '' ? '<空行>' : cmd}`)
       }
     },
   })
@@ -618,11 +649,12 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       loginStallCount = 0
       resetLoginWatchdog()
       // 传输断裂 = 触发器上下文作废: 清多行半匹配 (跨连接的多行匹配不成立,
-      // 防旧半匹配 + 新行拼假命中) + 清命令-应答桥行集表 (旧连接的行对象
+      // 防旧半匹配 + 新行拼假命中) + 重连复位命令-应答桥 (P0-1: close 为终止语义
+      // 置 disposed, 重连必须 reset() 才重开; 顺带清行集表 — 旧连接的行对象
       // abs 已随 parser 实例归零, 残留条目会以旧 abs 污染新状态机)。
       stateMatchService?.resetContext()
       eventMatchService?.resetContext()
-      controller.clear()
+      controller.reset()
       headBuf.length = 0
       observeBuf.length = 0
       // 登录激活: 原经 mud/system → login flow 驱动; login 重建为"触发器 →
@@ -689,6 +721,9 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       throw err
     })
     tuiLog(`[SYS] MUD 玩家 agent 就绪 (${sessionId})`)
+    // P3-6b: agent 晚建场景 (connect 先于 ensureAgent 完成) — 登录看门狗在 connect 期
+    // 因 `!agent` 提前返回未布防; 此处 agent 就绪后补布防, 防止登录零文本时无兜底。
+    if (!world.flags.logged_in) armLoginWatchdog()
     return agent
   }
 
@@ -803,10 +838,12 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
         })(),
       }
     },
+    /** 手动命令 (WebUI/用户): 走队列节流 + 正确归属观察窗 (不绕过应答桥计数)。 */
     sendCommand(cmd: string): boolean {
       const trimmed = cmd.trim()
       if (trimmed === '') return false
-      return sendCommand(trimmed)
+      queue.send(trimmed)
+      return true
     },
     readGame(sinceSeq: number): MudGameRead {
       const since = Number.isFinite(sinceSeq) ? sinceSeq : 0

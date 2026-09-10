@@ -552,6 +552,24 @@ export class TriggerMatchService {
     return this.perceptor.match(lines, this.ctx)
   }
 
+  /**
+   * 镜像匹配 (P1-3b): **不推进**实例运行态。判类先行与 T1 渲染共用同一实例时会
+   * 双跑: 判类先推进 multiLastAbs/adapter 再 match 同一批被单调保护整体跳过 →
+   * 命中丢失。这里用 ctx 的深克隆返回同结果, 实例 ctx 只由真渲染 (adapter) 推进。
+   */
+  matchDry(lines: MudLine[]): PerceptHit[] {
+    const clone: MatchContext = {
+      multiStates: new Map(
+        [...this.ctx.multiStates].map(([id, states]) => [
+          id,
+          states.map(s => ({ ...s, captures: s.captures.map(c => ({ ...c })) })),
+        ]),
+      ),
+      multiLastAbs: new Map(this.ctx.multiLastAbs),
+    }
+    return this.perceptor.match(lines, clone)
+  }
+
   /** 重置匹配上下文 (多行状态机清空; 连接重建/测试隔离)。 */
   resetContext(): void {
     this.ctx.multiStates.clear()

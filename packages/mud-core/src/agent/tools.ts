@@ -20,14 +20,17 @@
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ParameterSchemaSpec, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
 import { FORBIDDEN_COMMANDS } from '../config/commands.ts'
-import type { MudReply, ReplyOptions } from '../network/response.ts'
+import type { MudReply, ReplyOptions, ReplySettle } from '../network/response.ts'
 import { applyPatch, type WorldModel } from '../world/world.ts'
 
-/** 工具统一返回。 */
+/** 工具统一返回。*/
 export interface MudToolResult {
   ok: boolean
   note: string
   cmd: string
+  /** 桥结算方式 (命令-应答桥返回结果的工具设置; 见 OUT_RENDER — 桥超时/中止
+   *  是"成功结果携带错误文本", 与工具层校验拒绝区分, 不加 "工具拒绝:" 前缀)。 */
+  settled?: ReplySettle
 }
 
 // ── 会话登录凭据 (明文最小暴露面) ──────────────
@@ -87,6 +90,13 @@ export const STATUS_CMDS: Record<string, string> = {
   busy: 'busy',      // 忙碌状态
 }
 
+/** P1-4: 慢命令完成句锚定正则 (受理 GA 后渐进推送无 GA, 首批声明 until 使桥
+ *  等完成句到达再结算; 抓包实证: dz/sleep 均无 GA 无 prompt, 直到完成句出现)。 */
+const COMPLETION_UNTIL: Record<string, { regex: string }> = {
+  dz: { regex: '^你将运转于全身经脉间的内息收回丹田，深深吸了口气，站了起来。$' },
+  sleep: { regex: '^你一觉醒来，精神抖擞地活动了几下手脚。$' },
+}
+
 /** 输出 schema (所有工具一致)。 */
 export const OUT_SCHEMA = {
   type: 'object',
@@ -103,7 +113,10 @@ export type MudOutputSchema = typeof OUT_SCHEMA
 
 const OUT_RENDER = (_args: unknown, value: MudToolResult): ContentBlock[] => [{
   type: 'text',
-  text: value.ok ? value.note : `工具拒绝: ${value.note}`,
+  // P1-1: 桥结算结果 (timeout/abort) note 即应答帧文本 — 前缀 "工具拒绝:" 会破坏
+  // resolveLines 精确还原 (T1 续步判 null 收束) 且污染 LLM 可见文本。仅工具层
+  // 校验拒绝 (settled 未定义) 加前缀。
+  text: value.ok || value.settled ? value.note : `工具拒绝: ${value.note}`,
 }]
 
 /** 命中任一安全禁用命令前缀 (硬边界, 原始命令层拦截)。 */
@@ -179,7 +192,7 @@ export function buildMudTools({
         if (!dir) return { ok: false, note: `非法方向: ${raw}`, cmd: '' }
         log(`[工具] mud_move → ${dir}`)
         if (sendAndAwait) {
-          return sendAndAwait(dir).then(reply => ({ ok: reply.ok, note: reply.text, cmd: dir }))
+          return sendAndAwait(dir).then(reply => ({ ok: reply.ok, note: reply.text, cmd: dir, settled: reply.settled }))
         }
         send(dir)
         return { ok: true, note: `向 ${dir} 移动`, cmd: dir }
@@ -205,7 +218,7 @@ export function buildMudTools({
         const cmd = target ? `look ${target}` : 'look'
         log(`[工具] mud_look → ${cmd}`)
         if (sendAndAwait) {
-          return sendAndAwait(cmd).then(reply => ({ ok: reply.ok, note: reply.text, cmd }))
+          return sendAndAwait(cmd).then(reply => ({ ok: reply.ok, note: reply.text, cmd, settled: reply.settled }))
         }
         send(cmd)
         return { ok: true, note: cmd, cmd }
@@ -232,7 +245,7 @@ export function buildMudTools({
         }
         log(`[工具] mud_status → ${cmd}`)
         if (sendAndAwait) {
-          return sendAndAwait(cmd).then(reply => ({ ok: reply.ok, note: reply.text, cmd }))
+          return sendAndAwait(cmd).then(reply => ({ ok: reply.ok, note: reply.text, cmd, settled: reply.settled }))
         }
         send(cmd)
         return { ok: true, note: cmd, cmd }
@@ -264,17 +277,18 @@ export function buildMudTools({
         },
       },
       output: { schema: OUT_SCHEMA, render: OUT_RENDER },
-      execute: (args) => {
+      execute: async (args) => {
         const wire = (c: string): string => interpolateCredentials(c, resolveCredentials?.())
         // 声明边界 (规则动作可传): args.until = { regex, timeout? }。
         const untilRaw = args.until as { regex?: unknown; timeout?: unknown } | undefined
-        const replyOpts: ReplyOptions | undefined =
+        let replyOpts: ReplyOptions | undefined =
           untilRaw && typeof untilRaw.regex === 'string'
             ? (typeof untilRaw.timeout === 'number'
               ? { until: { regex: untilRaw.regex, timeout: untilRaw.timeout } }
               : { until: { regex: untilRaw.regex } })
             : undefined
-        // 命令序列: 允许空命令成员; 整体至少有一条合法命令才成功。
+        // 命令序列 (P2-2): 每条命令独立等待自己的 GA (各自独立应答帧), 逐条串行
+        // 结算 — 旧实现同 replyId 逐条穿透, 第一个 GA 即结算全序列, 后续 GA 落观察窗。
         const series = Array.isArray(args.cmds) ? args.cmds.map((c) => String(c)) : null
         if (series && series.length > 0) {
           for (const c of series) {
@@ -282,12 +296,20 @@ export function buildMudTools({
               return { ok: false, note: `安全禁用命令, 拒绝发送: ${String(c).trim()}`, cmd: '' }
             }
           }
-          const wired = series.map(wire)
           log(`[工具] mud_send 序列 → ${series.length} 条命令`)
           if (sendAndAwait) {
-            return sendAndAwait(wired, replyOpts).then(reply => ({ ok: reply.ok, note: reply.text, cmd: '' }))
+            let lastText = ''
+            let lastOk = true
+            for (const c of series) {
+              const wiredC = wire(c)
+              const reply = await sendAndAwait(wiredC, replyOpts)
+              lastText = reply.text
+              lastOk = lastOk && reply.ok
+            }
+            return { ok: lastOk, note: lastText, cmd: '命令序列', settled: 'ga' }
           }
-          for (const c of wired) send(c)
+          // 无 sendAndAwait: 直发 (fire-and-forget)。
+          for (const c of series) send(wire(c))
           return { ok: true, note: '命令序列', cmd: '' }
         }
         // 单体命令: 空命令拒绝 (与既有行为一致)。
@@ -297,9 +319,15 @@ export function buildMudTools({
           return { ok: false, note: `安全禁用命令, 拒绝发送: ${cmd}`, cmd: '' }
         }
         const wiredCmd = wire(cmd)
+        // P1-4: 慢命令 (dz/sleep): 未显式声明 until 时自动附带完成句锚定正则 —
+        // 使桥等待完成句到达再结算, 不再依赖观察窗静默兜底或仅靠初始 GA 即结算。
+        const completionKey = cmd.trim().toLowerCase().split(/\s+/)[0]
+        if (completionKey && COMPLETION_UNTIL[completionKey] && !replyOpts) {
+          replyOpts = { until: COMPLETION_UNTIL[completionKey] }
+        }
         log(`[工具] mud_send → ${cmd}`)
         if (sendAndAwait) {
-          return sendAndAwait(wiredCmd, replyOpts).then(reply => ({ ok: reply.ok, note: reply.text, cmd }))
+          return sendAndAwait(wiredCmd, replyOpts).then(reply => ({ ok: reply.ok, note: reply.text, cmd, settled: reply.settled }))
         }
         send(wiredCmd)
         return { ok: true, note: cmd, cmd }

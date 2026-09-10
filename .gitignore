@@ -3,4 +3,5 @@ lib/
 dist/
 *.tsbuildinfo
 *.log
+*.bin
 .DS_Store

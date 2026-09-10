@@ -116,7 +116,7 @@ export function registerTriggerProvider(ctx: Context, opts: {
     const surface = session?.surface
     if (!session || !surface) return null
     let scanned = 0
-    for (let i = surface.nodes.length - 1; i >= 0 && scanned < 24; i -= 1) {
+    for (let i = surface.nodes.length - 1; i >= 0 && scanned < 64; i -= 1) {
       scanned += 1
       const event = session.eventAt(surface.nodes[i])
       const message = event ? deriveEventMessage(event as never) : null

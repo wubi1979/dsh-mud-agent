@@ -2,7 +2,7 @@
  * dsh-mud-core 登录规则链单测 — 登录流程重建 (2026-09-10)。
  *
  * 覆盖抓包实证驱动的修正 + GA 主边界决策:
- *   - login:pass 双形态: "请输入密码：" 与 "ID已存在，请输入密码：" (8081 老号复登前缀);
+ *   - login:pass 双形态: "请输入密码：" 与 "此ID档案已存在，请输入密码：" (8081 老号复登前缀);
  *   - login:done 真实完成信号 "目前权限：(player)", 且**不**误判登录前横幅
  *     "欢迎使用北大侠客行游戏。" (横幅是连接横幅, 非完成判定);
  *   - 登录命令**不声明 until** — 一律按应答桥 GA 主边界结算 (见 LOGIN_BOUNDARIES 决策);
@@ -72,10 +72,16 @@ describe('登录规则链 (触发器驱动登录, GA 主边界)', () => {
     expect(short).toHaveLength(1)
   })
 
-  it('login:pass: 前缀 "ID已存在" 与裸 "请输入密码" 双形态均命中 (修复漏匹配卡死)', () => {
-    const withPrefix = matchEvent('p:login:pass', ['ID已存在，请输入密码：'])
+  it('login:pass: 真实前缀 "此ID档案已存在" 与裸 "请输入密码" 均命中 (修复漏匹配卡死)', () => {
+    // 抓包字节实证 (probe-2026-09-10T03-44-46): 老号复登密码提示行 = "此ID档案已存在，请输入密码："。
+    const real = ['此ID档案已存在，请输入密码：']
+    const withPrefix = matchEvent('p:login:pass', real)
     expect(withPrefix).toHaveLength(1)
     expect(toolArgs(withPrefix[0]!)?.cmd).toBe('{pass}')
+
+    // 旧估计前缀形态回归。
+    const legacy = matchEvent('p:login:pass', ['ID已存在，请输入密码：'])
+    expect(legacy).toHaveLength(1)
 
     const bare = matchEvent('p:login:pass', ['请输入密码：'])
     expect(bare).toHaveLength(1)

@@ -98,6 +98,28 @@ describe('CommandResponseController', () => {
     expect(reply.text).toContain('8456')
   })
 
+  it('P1-2: until 锚定整行正则跨帧命中 (多行累积文本上逐行测试)', async () => {
+    const h = harness()
+    const p = h.controller.sendAndAwait('dz', {
+      until: { regex: '^你将运转于全身经脉间的内息收回丹田，深深吸了口气，站了起来。$', timeout: 60 },
+    })
+    h.controller.confirmSent(replyIdOf(h.sent, 'dz'))
+    // 第一帧: 受理行 (锚定正则不命中, GA 不结算)。
+    h.controller.feedLines([ml('你盘膝坐下，默运太极神功，一股内息自丹田引出……')])
+    h.controller.boundaryReceived('ga')
+    let settled = false
+    p.then(() => { settled = true })
+    expect(settled).toBe(false)
+    // 渐进推送行: 仍不命中。
+    h.controller.feedLines([ml('你只觉内息在带脉内回荡……')])
+    expect(settled).toBe(false)
+    // 完成句到达 (无 GA) → 逐行测试命中 → 立即 until 结算。
+    h.controller.feedLines([ml('你将运转于全身经脉间的内息收回丹田，深深吸了口气，站了起来。')])
+    const reply = await p
+    expect(reply.settled).toBe('until')
+    expect(reply.ok).toBe(true)
+  })
+
   it('静默窗: 最后一行到达后静默 silence 毫秒结算 (无标记剥离问题: 标记追加)', async () => {
     const h = harness()
     const p = h.controller.sendAndAwait('look', { silence: 20 })
@@ -172,14 +194,45 @@ describe('CommandResponseController', () => {
     }
     const p1 = timeoutRun('a')
     await vi.advanceTimersByTimeAsync(50)
-    expect((await p1).settled).toBe('timeout')   // 计数 1
+    expect((await p1).settled).toBe('timeout')   // 计数 1; orphanBoundaries = 1
     const okRun = h.controller.sendAndAwait('ok')
     h.controller.confirmSent(replyIdOf(h.sent, 'ok'))
-    h.controller.boundaryReceived('ga')          // 成功 → 复位
+    // P3-2: timeout 后迟到 GA 先被孤儿计数消费 (丢弃), 第二个 GA 才结算新帧。
+    h.controller.boundaryReceived('ga')          // 孤儿 GA → 丢弃 (orphanBoundaries: 1→0)
+    h.controller.boundaryReceived('ga')          // 真实 GA → 复位
     expect((await okRun).settled).toBe('ga')
     const p2 = timeoutRun('b')                   // 计数从 1 重新计
     await vi.advanceTimersByTimeAsync(50)
     expect((await p2).settled).toBe('timeout')   // 未达上限, 正常 resolve
+  })
+
+  it('P3-2: abort 后迟到 GA 不结算下一帧', async () => {
+    const h = harness()
+    const ac = new AbortController()
+    const pa = h.controller.sendAndAwait('busy', { signal: ac.signal })
+    h.controller.confirmSent(replyIdOf(h.sent, 'busy'))
+    h.controller.feedLines([ml('忙碌中...')])
+    ac.abort() // 中止 → settle abort; orphanBoundaries = 1
+    expect((await pa).settled).toBe('abort')
+    // 下一个命令
+    const pb = h.controller.sendAndAwait('look')
+    h.controller.confirmSent(replyIdOf(h.sent, 'look'))
+    h.controller.feedLines([ml('北大街')])
+    // 迟到 GA (从 'busy' 残留) → 应被孤儿计数消费, 不结算 'look'
+    h.controller.boundaryReceived('ga')
+    // 第二个 GA → 才结算 'look'
+    h.controller.boundaryReceived('ga')
+    expect((await pb).settled).toBe('ga')
+  })
+
+  it('P3-5: 帧行数超限强制 timeout', async () => {
+    const h = harness()
+    const p = h.controller.sendAndAwait('big')
+    h.controller.confirmSent(replyIdOf(h.sent, 'big'))
+    // 喂入 256 行 → 超限强制 timeout
+    const bigBatch = Array.from({ length: 256 }, (_, i) => ml(`line ${i}`))
+    h.controller.feedLines(bigBatch)
+    expect((await p).settled).toBe('timeout')
   })
 
   it('无主: 观察行转发 onObservation, 无主边界转发 onBoundary', () => {
@@ -255,6 +308,70 @@ describe('CommandResponseController', () => {
     await expect(p).rejects.toThrow(/连接已断开/)
     // 关闭后新请求直接 reject。
     await expect(h.controller.sendAndAwait('hp')).rejects.toThrow(/已关闭/)
+  })
+
+  it('P0-1: close (断线) 后 reset() 重开 → 新请求可正常结算 (重连复用)', async () => {
+    const h = harness()
+    const p1 = h.controller.sendAndAwait('look')
+    h.controller.confirmSent(replyIdOf(h.sent, 'look'))
+    h.controller.close()
+    await expect(p1).rejects.toThrow(/连接已断开/)
+    await expect(h.controller.sendAndAwait('hp')).rejects.toThrow(/已关闭/)
+
+    h.controller.reset()  // connect 事件重开控制器 (close 为终止语义, 必须 reset)。
+    const p2 = h.controller.sendAndAwait('north')
+    h.controller.confirmSent(replyIdOf(h.sent, 'north'))
+    h.controller.feedLines([ml('北大街')])
+    h.controller.boundaryReceived('ga')
+    const reply = await p2
+    expect(reply.ok).toBe(true)
+    expect(reply.settled).toBe('ga')
+  })
+
+  it('P0-2: sendFailed 回执 → 在途 sending 请求 reject (发送失败), 桥恢复可用', async () => {
+    const h = harness()
+    const p = h.controller.sendAndAwait('look')
+    const id = replyIdOf(h.sent, 'look')
+    expect(id).toBeTruthy()
+    // 宿主写 socket 失败: 回执 settle error → 工具 throw (回合 error)。
+    const rejection = p.then(() => null, (e: Error) => e)  // 提前挂 catch: 防 unhandled
+    h.controller.sendFailed(id, '写 socket 失败: look')
+    const err = await rejection
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toMatch(/写 socket 失败/)
+    // 桥恢复: 后续请求正常结算 (pump 已续跑)。
+    const p2 = h.controller.sendAndAwait('hp')
+    h.controller.confirmSent(replyIdOf(h.sent, 'hp'))
+    h.controller.feedLines([ml('气血 100/100')])
+    h.controller.boundaryReceived('eor')
+    expect((await p2).settled).toBe('eor')
+  })
+
+  it('P0-2: pump 发送守卫 — 超窗未 confirmSent 武装 → settle error (防 sending 死锁)', async () => {
+    const h = harness()
+    const p = h.controller.sendAndAwait('look', { timeout: 50 })
+    expect(replyIdOf(h.sent, 'look')).toBeTruthy()
+    // 宿主不 confirmSent: 守卫兜底 settle error。
+    const rejection = p.then(() => 'resolved', (e: Error) => e)
+    await vi.advanceTimersByTimeAsync(60)
+    const err = await rejection
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toMatch(/发送后未确认武装/)
+    // pump 恢复: 后续请求照常结算。
+    const p2 = h.controller.sendAndAwait('hp')
+    h.controller.confirmSent(replyIdOf(h.sent, 'hp'))
+    h.controller.boundaryReceived('ga')
+    expect((await p2).settled).toBe('ga')
+  })
+
+  it('P1-3a: cacheLines 整批登记 → 合并文本 resolveLines 精确还原', async () => {
+    const h = harness()
+    // 观察窗合并注入路径: 整批登记后, 合并文本 (多批拼接) 可精确还原全部行。
+    h.controller.cacheLines([ml('批一'), ml('批二'), ml('批三')])
+    const merged = '批一\n批二\n批三'
+    const lines = h.controller.resolveLines(merged)
+    expect(lines).not.toBeNull()
+    expect(lines!.map(l => l.text)).toEqual(['批一', '批二', '批三'])
   })
 
   it('resolveLines: 标记剥离还原纯行 (工具结果 → T1 续步判定)', async () => {
