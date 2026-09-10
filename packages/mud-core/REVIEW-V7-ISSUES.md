@@ -224,16 +224,164 @@ user 消息；因此 t2 控制消息不可能出现在一个正在运行的 T1 �
 
 ## 五、REFACTOR-V7.md 需同步修订的条目
 
-1. §二"until 复用 v6.5 锚定整行匹配引擎"与实现不符（P1-2）→ 修实现后重评 §九"登录 until
+> 编号已按合并后的 `REFACTOR-V7.md` 章节体系对齐（v6/V7/协议三份文档已合并，旧编号
+> "§二/C.7/§八-3/§九"对应 §3.1 / §3.3-C.7 / §3.7-3 / §3.8）。
+
+1. §3.1"until 复用 v6.5 锚定整行匹配引擎"与实现不符（P1-2）→ 修实现后重评 §3.8"登录 until
    不可用"的结论；
-2. C.7"判类与 T1 渲染不双跑"需补**状态隔离**（不仅是"结果丢弃"）（P1-3b）；
-3. §二 帧规则 3"序列 = 同一次应答的一个帧"按 P2-2 改写；
-4. §八-3"帧内提示符行保证 tool result 恒非空"对空输出命令与分页帧（无 prompt）均不成立
+2. §3.3 C.7"判类与 T1 渲染不双跑"需补**状态隔离**（不仅是"结果丢弃"）（P1-3b）；
+3. §3.1 帧规则 3"序列 = 同一次应答的一个帧"按 P2-2 改写；
+4. §3.7-3"帧内提示符行保证 tool result 恒非空"对空输出命令与分页帧（无 prompt）均不成立
    （P2-4），措辞收紧；
 5. 新增"桥的生命周期与失败语义"一节：重连复用（P0-1）、发送失败（P0-2）；
-6. §九 登录段：`login:pass` 实证文本改正（P0-3）；`login:until` 撤除结论重评（P1-2）；
-7. 机制五-2 的"迟到 GA 丢弃"推广到 silent/timeout/abort/until（P3-2）；
+6. §3.8 登录段：`login:pass` 实证文本改正（P0-3）；`login:until` 撤除结论重评（P1-2）；
+7. 机制五-2 的"迟到 GA 丢弃"推广到 silent/timeout/abort/until（P3-2 / R2-11）；
 8. 机制 A 抓包依据补充 **dz/sleep 结构**（受理 GA + 渐进推送无 GA + 完成无 GA）（P1-4）。
+
+## 六、第二轮复审（修复后全面复审，2026-09-10）
+
+> 对象：修复提交 `67af242`（REVIEW-V7 全批次修复）。基线：`tsc -p tsconfig.json --noEmit` 退出 0；
+> `vitest run tests` **12 文件 / 160 用例全绿**（较第一轮 +12）。本轮为只读复审（未改源码）。
+>
+> **编号约定**：第一轮已占用 `N1–N5`（§二 抓包新发现），故本轮新发现统一以 **`R2-*`** 编号；
+> 与第一轮"同因不同面"的项在条目内注明对应关系。
+
+### 6.1 修复验证（逐条）
+
+| 项 | 实现位置 | 回归用例 | 结论 |
+|---|---|---|---|
+| P0-1 重连后桥失效 | `response.ts:344` `reset()` + `index.ts:657` connect 调用 | `response.spec.ts:313` | ✅ 已修 |
+| P0-2 发送死锁 | `response.ts:260` `sendFailed()` + `:418-443` 守卫超时；`index.ts:389-396` 失败回执 | `response.spec.ts:331` | ✅ 已修（残留 R2-4） |
+| P0-3 登录密码提示 | `trigger-rules.ts:78` 三形态（含 `此ID档案已存在，`） | `login-rules.spec.ts:75`（真实文本） | ✅ 已修 |
+| P1-1 工具拒绝前缀 | `tools.ts:119` `ok \|\| settled`；`MudToolResult.settled` 透传 | `tools.spec.ts:147` | ✅ 已修 |
+| P1-2 until 锚定正则 | `response.ts:564` 改逐行 test | 缺锚定正则用例（见 6.3） | ✅ 实现正确 |
+| P1-3a 多批还原 | `response.ts:394` `cacheLines()` + `index.ts:341` flush 前整批登记 | `response.spec.ts:367` | ✅ 已修 |
+| P1-3b 多行状态双跑 | `service.ts:558` `matchDry()` + `index.ts:370` | `multiline.spec.ts:189` | ✅ 已修 |
+| P2-2 序列一帧 | `tools.ts:294-306` 逐条 await 串行 | 有 | ✅ 已修 |
+| P2-4 分页语义 | 规则注释改"一页一 step，不用序列" | — | ✅ 已改 |
+| P3-2 孤儿 GA | `response.ts:170/315/499/524` | `response.spec.ts:197` | ✅ 已修（残留 R2-11） |
+| P3-5 帧/观察窗上限 | `response.ts:112/285`、`index.ts:163/352` | — | ✅ 已加（细节 R2-5 / R2-8） |
+| P3-6b 看门狗布防 | `index.ts:724` agent 就绪后补布防 | — | ✅ 已修 |
+| P1-4 dz/sleep 完成句 | `tools.ts:95` `COMPLETION_UNTIL`（过渡实现） | `tools.spec.ts` 部分 | ⚠️ 见 R2-3 |
+
+**部分修复**：P2-1（`agent-bridge.ts:119` 仅 24→64，见 R2-13）；P2-3（`service.sendCommand` 已走
+队列，但 **HTTP 路由未走它**，见 R2-2）；P3-1（掩码只覆盖 `activeAccount`，见 R2-6）；
+P3-3 / P3-4（exec 通道 / 模块单例）未动。
+
+### 6.2 本轮新发现问题
+
+#### R2-1（P1 · 安全）`/mud/*` HTTP 路由没有信任围栏 → DNS rebinding 可读、跨站可写
+- **位置**：路由注册 `index.ts:890-1111`（connect/prepare/disconnect/status/diag/command/
+  captcha-refresh 全部无 Host/Origin/sec-fetch-site 校验）；围栏只实现在 WS：`ws.ts:84-98`
+  （`isTrustedSocketRequest`，`index.ts:876` 注入 trustedHosts）。
+- **对照**：DSH webserver 只做路由注册、无请求校验（已确认）；`/api` 围栏在
+  `packages/client/connection/src/api-request-trust.ts`（`isTrustedApiRequest`）——WS 正是其
+  本地精简复刻，HTTP 漏了。
+- **影响**：（a）**DNS rebinding** 下 `GET /mud/status`（含 `accountName`）、`/mud/diag`
+  （lastError、liveSessions）同源可读；（b）`readJsonBody` 不校验 content-type，用
+  `text/plain` + JSON body 发**简单请求**（无预检）即可触发 `POST /mud/connect`（连到攻击者
+  指定服务器）、`POST /mud/command`（发送任意游戏命令）、`POST /mud/captcha/refresh`。
+- **修法**：导出 ws 的围栏函数，在 `createRoute` 包装层统一校验；所有 POST 强制
+  `content-type: application/json`（强制预检）；可选每会话 token。
+
+#### R2-2（P2）`/mud/command` 仍绕过节流与应答桥 → P2-3 实际未修
+- **位置**：`index.ts:1052-1053`、`:1063` 调的是内部 `sendCommand`（直写 socket、actor 固定
+  `'agent'`）；修复改的是 `service.sendCommand`（`index.ts:845` `queue.send`）。
+- **证据**：WebUI 走的正是 HTTP 路由（`packages/mud-webui/src/client/index.ts:198`）。
+- **影响**：（a）手动命令不过 `commandIntervalMs` 节流；（b）不纳入 controller 的 pending/GA
+  计数——在途期间其 GA 仍会结算 agent 的帧（P2-3 原始问题照旧）；（c）回显归因错误
+  （人打的命令显示为 `name@agent>`）。
+- **修法**：路由改调 `service.sendCommand`（即 `queue.send`），或在 fire-and-forget 路径纳入
+  controller 计数；`actor` 按调用方区分。
+
+#### R2-3（P2）`COMPLETION_UNTIL` 键覆盖不全 + 形态漂移挂满声明超时（修复提交新增代码）
+- **位置**：`tools.ts:95-97`（键仅 `dz` / `sleep`）、`:324-326`（按首词匹配）。
+- **问题**：① 抓包实际发的是 **`dazuo 10`**（首词 `dazuo`）→ 不附 until，同一动作两种结算语义；
+  ② 完成句变体（被打断 / 惊醒 / 区域差异）不命中 → 挂到声明默认 **120s**；③ 完成句正则
+  **硬编码在工具层**，与"规则表驱动"分层不一致。
+- **修法**：短期补 `dazuo` 键 + 备用完成正则 + 为长程命令配更短的声明超时；长期由
+  REFACTOR-V7 §3.9 机制 D（活动表）取代。
+
+#### R2-4（P3）发送守卫定时器泄漏（功能无害、资源不洁）
+- **位置**：`response.ts:418-443`（`pump` 里 `next.timeoutTimer = setTimeout(…)` 作发送守卫）；
+  `:531` `armTimers()` **直接覆盖** `reply.timeoutTimer` 而未先 `clearTimers`。
+- **影响**：`confirmSent` 后旧守卫定时器仍存活（最长 120s），闭包持 reply；`settle` 的
+  `clearTimers` 只清最新引用 → teardown / 测试退出被拖住。
+- **修法**：`armTimers` 先 `clearTimers(reply)`；或守卫独立成 `guardTimer` 字段并在 settle 一并清。
+
+#### R2-5（P3）`MAX_FRAME_LINES` 判定顺序会让"完成句在 257 行之后"的命令误判超时
+- **位置**：`response.ts:285-292`：先判 `lines.length >= 256` → 强制 timeout，**再**测 `until`。
+- **影响**：长列表类命令若完成句排在 256 行之后，永远等不到判定，被标记"边界未命中"。
+- **修法**：先测 `until` 再判上限；或上限可配且"命中优先"。
+
+#### R2-6（P3）凭据掩码覆盖不全
+- **位置**：`index.ts:281-284` `redactCredential` 只读 `activeAccount?.pass`。
+- **影响**：（a）账号来自 `config.account`（未走 connect 选项）时 `activeAccount` 为 null →
+  密码仍明文回显/日志；（b）只做 `cmd === pass` 全等匹配，`{pass}` 嵌在序列/带前后缀命令里不掩码。
+- **修法**：`activeAccount?.pass ?? config.account?.pass`；或按"包含即掩码"/在 `CommandMeta`
+  上带 `redact` 标记。
+
+#### R2-7（P3）ANSI 样式游标在每次 `flush()` 复位 → 跨 GA/静默的延续颜色丢失
+- **位置**：`ansi.ts:249-262`（`flush()` 复位 fg/bg/flags，注释仍写"flush 是一次全新会话的
+  边界"）；调用点 `telnet.ts:177`（断线）、`:285`（GA）、`:356`（300ms 静默刷出）。
+- **影响**：flush 已被复用为"常规行尾刷出"，因此每个 prompt/空闲边界都会丢弃上一行样式。
+  ANSI/Mudlet 语义下样式应跨行延续 → 依赖延续色、未显式重设 SGR 的后续行被记为默认色 →
+  **颜色触发规则（fg/bg）可能漏命中**（raw 视图不受影响，肉眼颜色正常）。
+- **修法**：拆分 `flushLine()`（只 commit 行、保留样式游标）与 `resetStyles()`（仅断线/重连）。
+
+#### R2-8（P3）观察窗 256 行只控时机、不裁内容（对应第一轮 N5"观察窗规模"）
+- **位置**：`index.ts:163/352`。
+- **影响**：修好 P1-3 后，一次 flush 会把最多 256 行（约 10KB+）作为**一条** user 消息注入 →
+  T1 单次匹配 256 行、T2 上下文暴涨、成本与噪声不可控。
+- **修法**：REFACTOR-V7 §3.9 的 `deliver.tail`（摘要头 + 末 N 行）；并对 T2 注入设字符上限。
+
+#### R2-9（P3）验证码抓取是无白名单/无超时的出站请求
+- **位置**：`captcha.ts:29-41`（`fetch(robotUrl)`）+ 路由 `index.ts:1073-1111`。
+- **影响**：URL 来自游戏文本（`robotUrlMap`），无 scheme/host 白名单、无超时、无大小上限 →
+  异常/恶意服务器可让 host 请求内网地址或悬挂请求。
+- **修法**：限定 `http(s)` + `*.pkuxkx.net`；加 5s 超时与 256KB 上限。
+
+#### R2-10（P3）WS 无背压控制
+- **位置**：`ws.ts:145-157`（`ws.send` 直发，未看 `bufferedAmount`）。
+- **影响**：慢客户端 + 持续推送（dz 类 1 条/秒 × 多 tab）会在 ws 内部无界缓冲。
+- **修法**：`bufferedAmount` 超阈值（如 1MB）时丢弃该帧或断开。
+
+#### R2-11（P3）孤儿 GA 计数器无过期 → 可能吞掉后续真实 GA（第一轮 P3-2 的残留）
+- **位置**：`response.ts:170/315/499/524`（只增、只在 boundary 到达时减）。
+- **风险**：若某次 silent/timeout 结算的命令**本就没有 GA**（或 GA 跨多帧才到），计数器会保留并在
+  未来吞掉一条**真实** GA，使该帧只能靠静默/超时结算——可能链式放大。抓包 GA 延迟 1–602ms
+  （≪2s 静默窗），当前概率低。
+- **修法**：给计数器加限时/限一次过期（或按 REFACTOR-V7 §3.7-11 的模式分离，改为"收束后
+  有界一次性回收"）。
+
+#### R2-12（P3）文档与仓库卫生
+- 工作区删除了 `PROTOCOL-REVIEW.md`、`REFACTOR-V6.md`，而本文件 §五/§二 仍引用
+  `REFACTOR-V6.md 二点七` / `PROTOCOL-REVIEW.md §1b`；`REFACTOR-V7.md` 文件头已说明"三份文档
+  合并、原文件删除"，本文件 §五 已同步为合并后的章节号（§3.1 / §3.3-C.7 / §3.7-3 / §3.8）。
+- `.gitignore` 新增 `*.bin`，旧抓包（`probe-…03-44-46.bin`）随之移出跟踪 → 证据链只剩本文件
+  附录片段；建议保留一份"抓包证据文本档"（关键字节段落 + 时间戳）或在追踪中保留 .bin。
+
+#### R2-13（P3）所有权回扫 24 → 64 只是缓解
+- **位置**：`agent-bridge.ts:119`。长回合（>64 surface 节点，约 30+ 步）仍会翻回 T1；根因未除。
+- **修法**：以最近一条 `turn/start` 事件为下界回扫。
+
+### 6.3 测试覆盖缺口（与本轮问题相关）
+
+- P1-2 锚定 until 无用例（现有用无锚定 `[0-9]{4}`，掩盖了首轮缺陷）；
+- `COMPLETION_UNTIL` 无 `dazuo 10` / 完成句变体用例（R2-3）；
+- HTTP 路由围栏、`/mud/command` 归属无宿主级用例（R2-1 / R2-2）；
+- 凭据掩码无 `config.account` 路径用例（R2-6）；
+- ANSI 跨 GA/静默样式延续无用例（R2-7）；
+- 发送守卫定时器（R2-4）与 WS 背压（R2-10）无用例。
+
+### 6.4 建议下一步（按优先级）
+
+1. **R2-1（HTTP 围栏）**——唯一安全面问题，改动集中在路由包装层，可复用 `ws.ts` 现成函数；
+2. **R2-2（/mud/command 走 service）**——一行改动让 P2-3 真正生效并修正归因；
+3. **R2-3（`dazuo` 键 + 短声明超时 + 备用正则）**——否则慢命令自动化偶发挂 120s；
+4. **R2-4 / R2-5 / R2-6 / R2-7**——小改动、高确定性；
+5. **R2-8 / R2-9 / R2-10 / R2-11** 与 R2-12 文档补齐、R2-13 根因；
+6. 长程命令按 REFACTOR-V7 **§3.9 机制 D**（提议）整体替换 `COMPLETION_UNTIL` 过渡实现。
 
 ## 附录：关键抓包片段（主样本）
 
