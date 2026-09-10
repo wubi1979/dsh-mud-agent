@@ -17,6 +17,9 @@ export const QUEUE_PRIORITY = { halt: 0, high: 10, normal: 20, low: 30 } as cons
 export interface CommandMeta {
   priority?: keyof typeof QUEUE_PRIORITY
   source?: string
+  /** 命令-应答桥 (REFACTOR-V7 机制 A): 应答请求 id。队列只透传不消费;
+   *  onSend 时宿主据其实调 controller.confirmSent (真实写 socket 后武装)。 */
+  replyId?: string
 }
 
 /** 一条排队命令。 */

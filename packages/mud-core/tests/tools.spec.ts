@@ -6,6 +6,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { buildMudTools, MOVE_ALIASES, MOVE_DIRS, STATUS_CMDS, type MudTools } from '../src/agent/tools.ts'
+import type { ReplyOptions } from '../src/network/response.ts'
 
 function makeTools(): { tools: MudTools; sent: string[]; logs: string[] } {
   const sent: string[] = []
@@ -111,5 +112,34 @@ describe('工具常量完备', () => {
     for (const what of Object.keys(STATUS_CMDS)) {
       expect(STATUS_CMDS[what]).toBeTruthy()
     }
+  })
+})
+
+describe('命令-应答桥装配 (sendAndAwait)', () => {
+  it('mud_move 异步: note = 应答文本 (GA 结算), ok = true', async () => {
+    const sent: string[] = []
+    const tools = buildMudTools({
+      sendAndAwait: async (cmd) => {
+        sent.push(String(cmd))
+        return { ok: true, cmd: String(cmd), text: '北大街 - 北大侠客行\n  这里明显的出口是 south。', lines: [], settled: 'ga' }
+      },
+    })
+    const r = await tools.mud_move!.execute({ direction: 'north' })
+    expect(r).toEqual({ ok: true, note: '北大街 - 北大侠客行\n  这里明显的出口是 south。', cmd: 'north' })
+    expect(sent).toEqual(['north'])
+  })
+  it('mud_send until 声明传递 + 超时结算 (ok=false, note 含超时标记)', async () => {
+    const seen: ReplyOptions[] = []
+    const tools = buildMudTools({
+      sendAndAwait: async (cmd, opts) => {
+        expect(String(cmd)).toBe('dz')
+        seen.push(opts ?? {})
+        return { ok: false, cmd: 'dz', text: '你开始打坐\n[应答超时，边界未命中，请决策]', lines: [], settled: 'timeout' }
+      },
+    })
+    const r = await tools.mud_send!.execute({ cmd: 'dz', until: { regex: '^你开始打坐', timeout: 120 } })
+    expect(r.ok).toBe(false)
+    expect(r.note).toContain('应答超时')
+    expect(seen[0]!.until).toEqual({ regex: '^你开始打坐', timeout: 120 })
   })
 })

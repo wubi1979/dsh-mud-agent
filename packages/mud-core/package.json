@@ -43,7 +43,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
-    "test": "pnpm exec vitest run tests"
+    "test": "pnpm exec vitest run tests",
+    "probe": "node tests/probe-client.mjs"
   },
   "dependencies": {
     "@deepseek-ai/dsh-agent": "^0.1.2-alpha.5",

@@ -21,6 +21,10 @@ export interface ActionSpec {
   output: string
   /** 可选工具调用: 渲染为一个 tool-call 块, 由 loop 官方工具管道执行。 */
   tool?: { name: string; args: Record<string, unknown> }
+  /** 声明应答边界 (命令-应答桥, 机制 A): 应答文本命中该正则才结算。
+   *  用于慢命令/多帧应答 (打坐 dz、验证码 fullme 等), 否则动作保持
+   *  GA/EOR 主边界 + 静默兜底。缺省: 未声明。 */
+  until?: { regex: string | RegExp; timeout?: number }
 }
 
 /** 规则通道 (v6.1): 预匹配折叠与 agent 内 T1 渲染的分流属性。
@@ -30,7 +34,8 @@ export interface ActionSpec {
 export type TriggerLane = 'state' | 'event'
 
 /** 控制消息前缀: host 主动唤醒 (断流/诊断等) 的 user 消息以此开头。
- *  T1 视其为非游戏输出 (NO_ANSWER 交 T2); T2 借此前缀区分系统提示与游戏文本。 */
+ *  T1 视其为非游戏输出 (渲染收束, 不误反射); 所有权注入 (lane=t2) 让
+ *  T2 借此前缀区分系统提示与游戏文本。 */
 export const CONTROL_PREFIX = '[系统] '
 
 /** 颜色触发条件 (Mudlet 颜色触发对齐): 与 style run 逐段匹配。 */

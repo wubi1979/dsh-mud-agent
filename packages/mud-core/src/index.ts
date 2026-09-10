@@ -1,20 +1,28 @@
 /**
  * dsh-mud-agent — MUD 玩家 agent 核心 (DSH agent 原生架构), host face.
  *
- * 心智模型 (对齐 agent 规范):
- *   - 游戏内容就是提问内容: 游戏输出本该全部注入 agent, agent 用工具/skill 回答。
- *   - 工具/skill 属于 agent: 正常流程是 agent 思考 → 决定用哪个 skill → 调用工具。
- *   - 瀑布路由 (T1 → T2): 游戏输出统一以 user/message 提交 agent; agent 默认
- *     路由到 T1 本地模拟模型 (trigger-llm: 规则命中 → 确定性动作, 无需模型);
- *     T1 无应答经官方 agent/request-error 重试自然切换 T2 真实 LLM。
- *     GMCP 直连保持权威状态同步 (world); 文本语义经 agent 的 world_patch
+ * 心智模型 (REFACTOR-V7 机制 A — 命令-应答桥):
+ *   - 游戏内容就是提问内容: 游戏输出全部注入 agent, agent 用工具/skill 回答。
+ *   - 工具调用 = 挂起等待真实应答 (CommandResponseController): mud 工具执行
+ *     经 sendAndAwait 挂起, 应答 (GA/EOR 主边界 / 声明 until / 静默 / 超时) 结算
+ *     后作为 tool result 在单回合 step 链内推进 — loop 本体零改动。
+ *   - 所有权路由 (取代瀑布): 注入消息携带 source.kind='mud-owned' + lane
+ *     (t1 反射 / t2 推理)。feed 判类: state 折叠后, event 规则命中 → lane=t1
+ *     (确定性反射, 轻量), 其余 → lane=t2 (真实 LLM 推理); 控制唤醒 →
+ *     lane=t2。agent/request 回扫会话 surface 选 provider (bridge)。
+ *   - 观察窗与应答帧互斥 (防双重消费): controller.inFlight() 期间的到达行归
+ *     应答帧 (武装前并入帧首 head, 保持帧连续), 不判类注入; 无主行经观察窗
+ *     (boundary/静默 结算点) 缓冲后判类注入。
+ *   - GMCP 直连保持权威状态同步 (world); 文本语义经 agent 的 world_patch
  *     工具落库 (置信度 0.7; GMCP 权威 1.0 优先, 裁决在 world.ts)。
  *
  * 消息流:
  *   游戏输出 (telnet) → AnsiStreamParser 切完整逻辑行
- *     → 处理器: 断流计时复位 + 整批文本 (textOfLines) 提交 agent
- *     → agent → T1 本地模拟 (规则命中 → 确定性动作; 无应答 → T2 真实 LLM)
- *     → 工具调用 (mud_move/mud_look/mud_status/mud_send/world_patch) → 游戏
+ *     → feedParsed: 断流计时复位 + recall 行缓冲 + state 预匹配折叠
+ *     → controller.feedLines (应答帧归在途请求; 无主行进观察窗)
+ *     → 观察窗结算点 → judgeAndInject: owned(lane) 注入 agent
+ *     → agent 路由 (bridge) → T1 反射 (规则→工具) 或 T2 推理 (真实 LLM)
+ *     → 工具调用 (mud_*) 经 sendAndAwait 挂起 → 应答结算 → tool result 续步
  *
  * 单面 (web face) 架构: 本包是统一 host 引擎, 唯一外壳为浏览器 WebUI
  *   (mud-webui)。游戏文本是一次性状态流 (不落会话, 避免会话无限增长), 走
@@ -31,11 +39,12 @@ import {
   createWorld, applyPatch, worldSnapshot, type WorldModel,
 } from './world/world.ts'
 import { CommandQueue } from './agent/execution.ts'
+import { CommandResponseController } from './network/response.ts'
 import { buildMudTools, setSessionCredentials, getSessionCredentials, type MudTools } from './agent/tools.ts'
 import defaultPerceptionRules from './config/trigger-rules.ts'
 import { SkillService } from './agent/skills.ts'
 import { commandsTextForAgent } from './config/commands.ts'
-import { createMudAgent, sendGameOutput, registerTriggerProvider, disposeTriggerProvider, registerGameLines, clearGameLines, stateMatchService, eventMatchService, type CreateMudAgentOptions } from './agent/agent-bridge.ts'
+import { createMudAgent, sendOwnedOutput, registerTriggerProvider, disposeTriggerProvider, stateMatchService, eventMatchService, type CreateMudAgentOptions, type OwnedLane } from './agent/agent-bridge.ts'
 import { CONTROL_PREFIX } from './trigger-llm/types.ts'
 import type { AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
@@ -86,6 +95,12 @@ export interface MudAgentConfig {
   agentEnabled?: boolean
   persona?: string
   commandIntervalMs?: number
+  /** 命令-应答桥: 未声明请求超时 (缺省 10s)。 */
+  bridgeTimeoutMs?: number
+  /** 命令-应答桥: 声明 (until) 请求超时 (缺省 120s)。 */
+  bridgeDeclaredTimeoutMs?: number
+  /** 命令-应答桥/观察窗静默窗毫秒 (缺省 2s)。 */
+  bridgeSilenceMs?: number
   /** 触发器 lite 动作去重窗口 (B 路径反射; 触发机制重构后使用)。 */
   ruleDedupMs?: number
   /** 登录超时 (login 重建为触发器 → lite 假 LLM 后使用)。 */
@@ -144,6 +159,13 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   // 当前 agent 的会话 id (用户即会话: 切换用户 → 重建 agent, 各自历史恢复)。
   let activeSessionId: string | null = null
   let deadAirTimer: ReturnType<typeof setTimeout> | null = null // 断流 30s → 唤醒 agent
+  // 登录看门狗: 登录期 (logged_in=false) 断流计时被抑制 (登录由 p:login:* 触发器推进),
+  // 规则漏配/密码错误/网络半死会让登录停在某步且**无人唤醒**。整体预算 loginTimeoutMs
+  // (缺省 90s) 无推进 → 升级 T2 决策; 阶段超时 (trigger-rules until 30~45s) < 预算,
+  // 先让本步超时报错 (ok:false) 收束, 再由看门狗兜底升级。
+  const LOGIN_TIMEOUT_MS = config.loginTimeoutMs ?? 90_000
+  let loginWatchdog: ReturnType<typeof setTimeout> | null = null
+  let loginStallCount = 0 // 连续升级次数 (封顶 3, 防 T2 无解时无限刷决策消息)
   let worldTimer: ReturnType<typeof setTimeout> | null = null // world 快照推送节流
   let disposed = false // teardown 已开始, 停止新的注入/泵出
   // 诊断: 最近一次 connect/ensureAgent 失败 (不依赖 agent 会话, 供 diag() 读取)。
@@ -267,16 +289,96 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   }
 
   // ── 执行层: 工具是唯一执行路径 (agent 与路径 B 共用) ────────
+  // 命令-应答桥 (REFACTOR-V7 机制 A): mud 工具调用经 sendAndAwait 挂起,
+  // 真实应答结算后作为 tool result 返回; GA/EOR 主边界 / 声明 until /
+  // 静默兜底 / 超时最兜底, 收尾规则见 response.ts。
+  const controller = new CommandResponseController({
+    // 实际发送: 入队 (队列 onSend = 真实写 socket 后 confirmSent 武装)。
+    send: (cmd, meta) => { queue.send(cmd, { ...meta }) },
+    onObservation: (lines) => {
+      if (lines.length === 0) return
+      // 无主观察行: inFlight (武装前/排队) → 并入帧首集 (confirmSent 时合并
+      // 保持帧连续, 不判类注入 — 防双重消费); 否则进观察窗缓冲等结算点。
+      if (controller.inFlight()) {
+        headBuf.push(...lines)
+        return
+      }
+      observeBuf.push(...lines)
+      scheduleObserveFlush()
+    },
+    onBoundary: () => {
+      // 无主边界 = 观察窗自然结算点 (帧切分): 缓冲行判类注入。
+      if (controller.inFlight()) return // 武装前边界: 行仍归帧首
+      flushObserve()
+    },
+    onLog: (t: string) => tuiLog(t),
+    defaultTimeoutMs: config.bridgeTimeoutMs ?? 10_000,
+    declaredTimeoutMs: config.bridgeDeclaredTimeoutMs ?? 120_000,
+  })
+  // 观察窗缓冲 (无主帧行; 边界/静默结算点 flush 判类注入)。
+  const observeBuf: MudLine[] = []
+  // 帧首集 (武装前到达的无主行; confirmSent 时并入帧首 — 帧连续语义)。
+  const headBuf: MudLine[] = []
+  let observeTimer: ReturnType<typeof setTimeout> | null = null
+
+  /** 观察窗缓冲 flush: 清缓冲 + 判类注入 (仅无在途请求时调用)。 */
+  function flushObserve(): void {
+    if (observeTimer) { clearTimeout(observeTimer); observeTimer = null }
+    if (observeBuf.length === 0) return
+    const batch = observeBuf
+    observeBuf.length = 0
+    judgeAndInject(batch)
+  }
+
+  /** 观察窗静默兜底 (无 GA 时按静默窗结算, 与应答桥同语义)。 */
+  function scheduleObserveFlush(): void {
+    if (observeTimer) clearTimeout(observeTimer)
+    observeTimer = setTimeout(flushObserve, config.bridgeSilenceMs ?? 2_000)
+  }
+
+  /** 判类注入: state 已折叠; event 规则命中 → T1 反射 (轻量确定性),
+   *  其余 → T2 推理 (真实 LLM)。所有权随消息走 (bridge 回扫选 provider)。 */
+  function judgeAndInject(lines: MudLine[]): void {
+    if (lines.length === 0) return
+    if (!(config.agentEnabled ?? false)) return
+    if (!agent) return
+    const text = textOfLines(lines)
+    const clean = text.trim()
+    if (clean === '') return
+    let hasHit = false
+    if (eventMatchService) {
+      hasHit = eventMatchService.match(lines).some(h => h.action !== undefined)
+    }
+    const lane: OwnedLane = hasHit ? 't1' : 't2'
+    sendOwnedOutput(agent, clean, lane)
+    tuiDecision({
+      actor: 'router',
+      eventType: 'feed-classify',
+      action: lane === 't1' ? 'T1 反射注入' : 'T2 推理注入',
+      result: `${clean.length} 字符`,
+      text: `[路由] ${lane === 't1' ? 'T1 规则命中 → 反射' : 'T2 推理 → 真实 LLM'}`,
+    })
+  }
+
   const queue = new CommandQueue({
     minInterval: config.commandIntervalMs ?? 400,
-    onSend: (cmd: string) => { sendCommand(cmd) },
+    onSend: (cmd: string, meta) => {
+      // 真实写 socket 后武装: 无主行 (帧首集) 并入帧首, 保持帧连续。
+      const sent = sendCommand(cmd)
+      if (sent && meta?.replyId) {
+        const head = headBuf.length > 0 ? headBuf.splice(0) : undefined
+        controller.confirmSent(meta.replyId, head)
+      }
+    },
   })
   tuiLog(`[执行] 命令队列就绪 (最小间隔 ${config.commandIntervalMs ?? 400}ms)`)
 
   /** 工具集: 语义工具 (move/look/status) + mud_send 兜底。校验在工具层。
-   *  凭据: mud_send 发送瞬间按当前会话插值 {name}/{pass} (转录/日志只见占位符)。 */
+   *  凭据: mud_send 发送瞬间按当前会话插值 {name}/{pass} (转录/日志只见占位符)。
+   *  桥 (sendAndAwait): 工具执行挂起等真实应答, 结算后 text 回注为 tool result。 */
   const mudTools: MudTools = buildMudTools({
     send: (cmd: string) => queue.send(cmd),
+    sendAndAwait: (cmd, opts) => controller.sendAndAwait(cmd, opts),
     log: (t: string) => tuiLog(t),
     recall: (count: number) => recallLines.slice(-count),
     world,
@@ -296,6 +398,8 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       stateRules,
       eventRules,
       world,
+      // 行恢复 = 命令-应答桥统一行集表 (应答/观察行按纯文本登记, 保真还原)。
+      resolveLines: (text: string) => controller.resolveLines(text),
       log: (t: string) => tuiLog(t),
     })
     tuiLog(`[触发] T1 provider (mud-t1) 装配就绪 (state ${stateRules.length} / event ${eventRules.length})`)
@@ -338,21 +442,34 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     pushGameEntry(text)
   }
 
-  /** 感知通道: 每批完整逻辑行 → state 预匹配折叠 + 剩余行进 agent。
-   *  行号由 AnsiStreamParser 分配 (MudLine.abs, 连接生命周期内单调); state
-   *  命中行折叠入库并移除; 剩余行登记行注册表 (供 T1 内容寻址) 并整批进 agent。 */
+  /** 感知通道: 每批完整逻辑行 → state 预匹配折叠 + controller.feedLines。
+   *  折叠分界 (REFACTOR-V7 六): 控制器收到**原始行** (边界匹配/帧内容可能
+   *  含 state 折叠行, 如 hp 的 气血 行) + 折叠后剩余行 (观察窗专用, 状态已进
+   *  world 不吵 agent):
+   *    在途请求 (inFlight) → 行归应答帧 (武装前入帧首); 无主 → 观察窗缓冲,
+   *    在边界/静默结算点判类注入 (T1 反射 / T2 推理), 防应答帧双重消费。 */
   function feedParsed(lines: MudLine[]): void {
     if (lines.length === 0) return
     resetDeadAir() // 文本到达 = 连接存活
+    if (world.flags.logged_in) {
+      // 已登录: 登录看门狗使命结束 (清理并复位), 断流计时 (armDeadAir) 接管监护。
+      if (loginWatchdog) { clearTimeout(loginWatchdog); loginWatchdog = null }
+      loginStallCount = 0
+    } else {
+      resetLoginWatchdog() // 登录期: 每次文本到达 = 阶段推进信号, 重置整体预算
+    }
     // mud_recall 行缓冲 (state 折叠前登记 — 终端视角含全部行)。
     for (const l of lines) {
       recallLines.push(l.text)
       if (recallLines.length > RECALL_MAX) recallLines.shift()
     }
+    const raw = lines
+    let remains = lines
 
-    // state 预匹配折叠: 命中 → extract 产物 applyPatch 落库。
+    // state 预匹配折叠: 命中 → extract 产物 applyPatch 落库 (原始行流上照常执行,
+    // 与折叠无关 — "折叠"只决定行文本是否进观察窗/agent)。
     if (stateMatchService) {
-      const stateHits = stateMatchService.match(lines)
+      const stateHits = stateMatchService.match(raw)
       for (const hit of stateHits) {
         if (hit.data) applyPatch(world, hit.data)
       }
@@ -360,25 +477,15 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       // 单行 func 不折叠 — 折叠集可能为空)。
       if (stateHits.length > 0) {
         const foldNums = new Set(stateHits.flatMap(h => h.foldLines))
-        if (foldNums.size > 0) lines = lines.filter(l => !foldNums.has(l.abs))
-        if (lines.length === 0) return
+        if (foldNums.size > 0) {
+          remains = raw.filter(l => !foldNums.has(l.abs))
+        }
       }
     }
 
-    pushToAgent(textOfLines(lines), lines)
-  }
-
-  /** 单路径文本提取: 游戏输出以 user/message 直提 agent (无注入/折叠/忙时桶)。
-   *  全部文本 (含登录期) 统一进 agent; 登录行为由 agent + T1/T2 路由决策。
-   *  行对象按内容登记注册表 (T1 从请求尾部文本找回; 行号/style 保真)。 */
-  function pushToAgent(text: string, lines: MudLine[]): void {
-    const clean = text.trim()
-    if (clean === '') return
-    if (!(config.agentEnabled ?? false)) return // 暂停接入: 不唤醒 agent
-    if (!agent) return
-    registerGameLines(clean, lines)
-    sendGameOutput(agent, clean)
-    tuiLog(`[A路径] 游戏输出 → agent (${clean.length} 字符)`)
+    // 命令-应答桥: 原始行 → armed 帧累积/声明边界匹配/注册表; 折叠后剩余行
+    // → 观察窗 (inFlight 期间 = 帧首集, 否则观察缓冲 → 判类注入)。
+    controller.feedLines(raw, remains.length < raw.length ? remains : undefined)
   }
 
   /** 写入连接/重连分隔文本到终端缓冲 (client 当普通输出写入, 位置在新内容前)。 */
@@ -404,8 +511,8 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     if (!agent || disposed) return
     if (!(config.agentEnabled ?? false)) return
     tuiDecision({ actor: 'agent', eventType: reason, action: 'agent', text: `[决策] ${reason}` })
-    // 控制消息带 [系统] 前缀: T1 视为非游戏输出 (NO_ANSWER), 由 T2 真实决策。
-    sendGameOutput(agent, `${CONTROL_PREFIX}${context}`)
+    // 控制消息带 [系统] 前缀 + 所有权 lane=t2: 非游戏输出, 路由至真实 LLM 决策。
+    sendOwnedOutput(agent, `${CONTROL_PREFIX}${context}`, 't2')
   }
 
   /** 断流计时: 30s 无感知事件 → 唤醒 agent 主动决策 (登录期/接入关停抑制)。 */
@@ -423,6 +530,42 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   function resetDeadAir(): void {
     if (deadAirTimer) { clearTimeout(deadAirTimer); deadAirTimer = null }
     armDeadAir()
+  }
+
+  /** 登录看门狗: 登录期无推进超过整体预算 → 升级 T2 决策。
+   *  登录由 p:login:* 触发器链推进 (名字→密码→完成), 每步 `until` 声明分界;
+   *  某步卡住 (规则漏配 / 密码错误 / 网络半死) 时文本不再变化 → 预算耗尽唤醒
+   *  真实 LLM (控制消息 lane=t2) 查看历史裁决 (重发/重连/报告用户), 封顶 3 次。 */
+  function armLoginWatchdog(): void {
+    if (loginWatchdog || disposed) return
+    if (!(config.agentEnabled ?? false)) return
+    if (!agent) return
+    if (world.flags.logged_in) return // 已登录: 断流计时 (armDeadAir) 接管
+    loginWatchdog = setTimeout(() => {
+      loginWatchdog = null
+      if (disposed || !agent) return
+      if (world.flags.logged_in) return
+      loginStallCount += 1
+      const elapsed = Math.round((LOGIN_TIMEOUT_MS * loginStallCount) / 1000)
+      if (loginStallCount < 3) {
+        requestAgent(
+          '登录卡住',
+          `登录已进行约 ${elapsed}s 无进展 (触发器未能推进到下一阶段)。请根据历史判断原因 ` +
+            '(规则漏配 / 密码错误 / 需验证码 / 网络半死), 决定重发指令、重建连接或告知用户。',
+        )
+        armLoginWatchdog() // 一次决策回合解决不了 → 再次观望
+      } else {
+        tuiLog(`[登录] 卡住升级已达上限 (${loginStallCount} 次, 约 ${elapsed}s), 停止自动唤醒, 待用户介入`)
+      }
+    }, LOGIN_TIMEOUT_MS)
+  }
+
+  /** 重置登录看门狗 (登录期每次文本到达/阶段推进): 清旧定时重排;
+   *  logged_in 置位后使命结束, 转交断流计时。 */
+  function resetLoginWatchdog(): void {
+    if (loginWatchdog) { clearTimeout(loginWatchdog); loginWatchdog = null }
+    if (world.flags.logged_in) return
+    armLoginWatchdog()
   }
 
   // ── 连接 (手动: WebUI 游戏页面按钮触发) ──────────────────
@@ -457,17 +600,31 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       const e = connections.get(SID)
       if (e) e.state = 'connected'
       tuiLog('[SYS] 已连接')
+      // 新连接 = 新登录会话: 直接复位登录态 (绕过置信度护栏 — applyPatch 的 extract 置信度
+      // 压不过上次登录留下的 GMCP 1.0, 不复位则 logged_in 残留 → 登录期断流计时误触发,
+      // 且 trigger-rules 的 p:login:* 阶段判定取 flags 作上下文时读到旧值)。
+      world.flags.logged_in = false
+      world.flags.awaiting = true
+      if (world._conf.flags) {
+        delete world._conf.flags.logged_in
+        delete world._conf.flags.awaiting
+      }
       applyPatch(world, { connected: true })
       pushWorld()
       connectCount += 1
       appendConnectMarker(connectCount === 1 ? 'connect' : 'reconnect')
       applyPatch(world, { sent_name: false, sent_pass: false })
+      // 登录看门狗布防: 服务器无任何文本 (半开连接/被服务器掐线) 也能兜底升级 T2。
+      loginStallCount = 0
+      resetLoginWatchdog()
       // 传输断裂 = 触发器上下文作废: 清多行半匹配 (跨连接的多行匹配不成立,
-      // 防旧半匹配 + 新行拼假命中) + 清行注册表 (旧连接的行对象 abs 已随
-      // 实例归零, 残留条目会以旧 abs 污染新状态机; 那批文本交 T2 兜底)。
+      // 防旧半匹配 + 新行拼假命中) + 清命令-应答桥行集表 (旧连接的行对象
+      // abs 已随 parser 实例归零, 残留条目会以旧 abs 污染新状态机)。
       stateMatchService?.resetContext()
       eventMatchService?.resetContext()
-      clearGameLines()
+      controller.clear()
+      headBuf.length = 0
+      observeBuf.length = 0
       // 登录激活: 原经 mud/system → login flow 驱动; login 重建为"触发器 →
       // lite 假 LLM"后由感知触发器 (p:login:* 规则) 接管, 实现待重建。
     })
@@ -489,6 +646,14 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       const e = connections.get(SID)
       if (e) e.state = 'idle'
       tuiLog('[SYS] 连接关闭')
+      // 断线: 在途/排队应答全部 reject (error 语义), 队列停发, 观察窗清空。
+      controller.close()
+      queue.clear()
+      headBuf.length = 0
+      observeBuf.length = 0
+      if (observeTimer) { clearTimeout(observeTimer); observeTimer = null }
+      if (loginWatchdog) { clearTimeout(loginWatchdog); loginWatchdog = null }
+      loginStallCount = 0 // 下次 reconnect 重新累计
       applyPatch(world, { connected: false })
       pushWorld()
     })
@@ -916,6 +1081,13 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       clearTimeout(deadAirTimer)
       deadAirTimer = null
     }
+    if (loginWatchdog) {
+      clearTimeout(loginWatchdog)
+      loginWatchdog = null
+    }
+    if (observeTimer) { clearTimeout(observeTimer); observeTimer = null }
+    controller.close()
+    queue.clear()
     if (hub) hub.dispose()
     if (disposeConnectRoute) disposeConnectRoute()
     if (disposePrepareRoute) disposePrepareRoute()

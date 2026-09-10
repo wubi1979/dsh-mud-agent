@@ -12,7 +12,7 @@
 import { describe, expect, it } from 'vitest'
 import { createUserMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
-import { TriggerLlmAdapter, T1_NO_ANSWER_CODE } from '../src/trigger-llm/index.ts'
+import { TriggerLlmAdapter } from '../src/trigger-llm/index.ts'
 import { TriggerMatchService } from '../src/trigger-llm/service.ts'
 import { CONTROL_PREFIX } from '../src/trigger-llm/types.ts'
 import type { TriggerLlmAdapterHooks } from '../src/trigger-llm/adapter.ts'
@@ -98,43 +98,34 @@ describe('TriggerLlmAdapter — T1 本地模拟 (mud-t1)', () => {
     ])
   })
 
-  it('未命中 → finish{error, MUD_T1_NO_ANSWER} (切 T2 的触发条件)', async () => {
+  it('未命中 → finish{stop} (路由所有权已在 feed 判类时决定, 本层不交棒)', async () => {
     const service = makeService()
     const { adapter, register } = makeAdapter(service)
     register('完全无关的游戏输出')
 
     const chunks = await collect(adapter, opts([userMsg('完全无关的游戏输出')]))
-    expect(chunks).toEqual([{
-      type: 'finish',
-      reason: { kind: 'error', failure: { message: expect.stringContaining('规则未命中'), code: T1_NO_ANSWER_CODE } },
-    }])
+    expect(chunks).toEqual([{ type: 'finish', reason: { kind: 'stop' } }])
   })
 
-  it('无注册行 (历史回放/未登记文本) → NO_ANSWER', async () => {
+  it('无注册行 (历史回放/未登记文本) → finish{stop}', async () => {
     const service = makeService()
     const { adapter } = makeAdapter(service)
 
     const chunks = await collect(adapter, opts([userMsg(LOGIN_PROMPT)]))
-    expect(chunks).toEqual([{
-      type: 'finish',
-      reason: { kind: 'error', failure: { message: expect.stringContaining('无注册行'), code: T1_NO_ANSWER_CODE } },
-    }])
+    expect(chunks).toEqual([{ type: 'finish', reason: { kind: 'stop' } }])
   })
 
-  it('控制消息 ([系统] 前缀) → NO_ANSWER (即使同文本曾登记)', async () => {
+  it('控制消息 ([系统] 前缀) → finish{stop} (路由交 T2, 本层不交棒)', async () => {
     const service = makeService()
     const logs: string[] = []
     const { adapter, register } = makeAdapter(service, { logs })
     register(LOGIN_PROMPT)
 
     const chunks = await collect(adapter, opts([userMsg(`${CONTROL_PREFIX}已 30 秒无游戏事件`)]))
-    expect(chunks).toEqual([{
-      type: 'finish',
-      reason: { kind: 'error', failure: { message: expect.stringContaining('控制消息'), code: T1_NO_ANSWER_CODE } },
-    }])
+    expect(chunks).toEqual([{ type: 'finish', reason: { kind: 'stop' } }])
   })
 
-  it('tool-result 续步 → 安静收束 finish{stop} (T1-owned 回合无模型收尾)', async () => {
+  it('tool-result 续步: 应答文本无命中 → 收束 finish{stop}', async () => {
     const service = makeService()
     const { adapter } = makeAdapter(service)
     const toolTail = createToolResultMessage({
@@ -147,14 +138,28 @@ describe('TriggerLlmAdapter — T1 本地模拟 (mud-t1)', () => {
     expect(chunks).toEqual([{ type: 'finish', reason: { kind: 'stop' } }])
   })
 
-  it('空消息 / 无尾部 user 文本 → NO_ANSWER', async () => {
+  it('tool-result 续步: 应答文本命中 → 渲染动作 (工具链继续推进)', async () => {
+    // 续步场景: 上一步 mud_send {name} 的应答 "您的英文名字…" 再次命中登录提示
+    // 规则 → 应继续渲染 (而非安静收束)。
+    const service = makeService()
+    const { adapter, register } = makeAdapter(service)
+    register(LOGIN_PROMPT)  // 应答纯行已登记 (命令-应答桥注册表)。
+    const toolTail = createToolResultMessage({
+      callId: 'mud-trigger-login-name-1' as never,
+      content: [{ type: 'text', text: LOGIN_PROMPT }],
+      isError: false,
+    })
+
+    const chunks = await collect(adapter, opts([userMsg(LOGIN_PROMPT), toolTail]))
+    expect(chunks.some(c => c.type === 'tool-call-delta' && c.name === 'mud_send')).toBe(true)
+    expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'tool-calls' } })
+  })
+
+  it('空消息 / 无尾部 user 文本 → finish{stop}', async () => {
     const service = makeService()
     const { adapter } = makeAdapter(service)
     const chunks = await collect(adapter, opts([]))
-    expect(chunks).toEqual([{
-      type: 'finish',
-      reason: { kind: 'error', failure: { message: expect.stringContaining('无尾部文本'), code: T1_NO_ANSWER_CODE } },
-    }])
+    expect(chunks).toEqual([{ type: 'finish', reason: { kind: 'stop' } }])
   })
 
   it('signal 已中止 → 不产出任何 chunk', async () => {

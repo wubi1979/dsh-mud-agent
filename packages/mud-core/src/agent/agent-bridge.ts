@@ -5,26 +5,26 @@
  * agent 的工具调用就是游戏命令。DSH 全套机制 (LLM 路由/重试、
  * 会话持久化/工具循环) 直接复用, 不再自造决策引擎。
  *
- * 瀑布路由 (T1 → T2, 官方机制, agent/用户无感):
- *   - T1 = 注册进 llm 注册表的本地模拟模型 (mud-t1): 规则命中的游戏输出
- *     由它确定性应答 (文本 + tool-call), tool-result 续步安静收束 —
- *     T1 独立完成整个 turn, 不需要任何模型收尾;
- *   - T2 = DSH 默认配置 (agentDefaultModel): T1 无应答 (finish{error,
- *     MUD_T1_NO_ANSWER}) 时 agent/request-error 瀑布返回 retry, 同步在
- *     agent/request 瀑布把路由改写为 T2 — 官方重试路径自然切换;
- *   - 回合归属: 本回合 T1 一旦失败即整体交 T2 (续步 sticky); 新回合
- *     (step 1) 一律重新给 T1 机会。无任何旁路缓存 — 路由只看回合内
- *     失败事实, 匹配输入只看当前请求自身的尾部消息。
+ * 所有权路由 (REFACTOR-V7 机制 A 的续步与选路, 取代旧瀑布):
+ *   - 注入消息携带**所有权元数据** (source.kind='mud-owned', lane=t1|t2):
+ *     feed 判类 (index.ts) 决定每批输出归谁; 工具结果/回放消息不带该元数据。
+ *   - agent/request 监听器回扫会话 surface 最近一条 mud-owned user 消息
+ *     (跳过 tool-result) → 选 provider: lane=t2 → T2 (agentDefaultModel),
+ *     其余/T2 未配置 → T1 (本地模拟 mud-t1)。所有权随会话 surface 走,
+ *     无回合粘性状态 — 新的带权注入天然覆盖旧 lane。
+ *   - 无 agent/request-error 瀑布 (旧 t1FailedKeys 已删): T1 不应答不再是
+ *     "失败交棒", 而是**自然收束** (回合结束, 等下一批输出重新判类注入)。
  *
- * 行注册表: feedParsed 把 (整批文本 → 行对象) 内容寻址登记; T1 从
- * options.messages 提取尾部文本后按内容找回行对象 (行号/style 保真,
- * 多行状态机跨批连续)。无命中即 NO_ANSWER, 无陈旧窗口。
+ * 行恢复: feedParade 不再登记旁路行注册表 — T1 的解析经命令-应答桥
+ * (CommandResponseController) 的统一行集表: 注入文本/工具结果 → resolveLines
+ * 按内容还原 MudLine[] (行号/style 保真, 多行状态机跨批连续)。
  * @module @deepseek-ai/dsh-mud-core/agent-bridge
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
+import { deriveEventMessage } from '@deepseek-ai/dsh-session/surface'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { type AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -47,36 +47,33 @@ let t1Registration: (() => void) | null = null
 export let stateMatchService: TriggerMatchService | null = null
 export let eventMatchService: TriggerMatchService | null = null
 
-// ── 行注册表 (内容寻址; T1 匹配输入的唯一来源) ──────────────
-// key = agent 会话里 user 消息的精确文本 (feedParsed 的 textOfLines 产物);
-// value = 同一批 MudLine[] (parser abs 单调, 多行状态机跨批连续)。
-// 有界 FIFO: 重试同文本幂等命中; 文本未登记 (系统唤醒/历史回放) → miss。
-const LINE_REGISTRY_MAX = 64
-const gameLineRegistry = new Map<string, MudLine[]>()
+// ── 所有权元数据 (REFACTOR-V7 机制 A 的选路依据) ────────────────
+// MessageSourceMap 是 merge-extensible 联合 (插件可增补 kind): 注入消息携带
+// kind='mud-owned' + lane (t1|t2); tool-result 与旧式明文消息不带该元数据,
+// 路由回扫时被跳过/归默认。所有权随会话 surface 走 — 无旁路状态。
+export type OwnedLane = 't1' | 't2'
 
-/** 登记一批游戏输出 (发送方在 agent.send 前调用; 同文本覆盖为最新行对象)。 */
-export function registerGameLines(text: string, lines: MudLine[]): void {
-  const clean = text.trim()
-  if (clean === '' || lines.length === 0) return
-  gameLineRegistry.delete(clean)
-  gameLineRegistry.set(clean, lines)
-  if (gameLineRegistry.size > LINE_REGISTRY_MAX) {
-    const oldest = gameLineRegistry.keys().next().value
-    if (oldest !== undefined) gameLineRegistry.delete(oldest)
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'mud-owned': { kind: 'mud-owned'; lane: OwnedLane }
   }
 }
 
-/** 清空行注册表 (重连时调用: 旧连接的行对象 abs 已随 parser 实例归零作废,
- *  残留条目会以旧 abs 污染新连接的多行状态机)。 */
-export function clearGameLines(): void {
-  gameLineRegistry.clear()
+/** 带所有权元数据的游戏输出 user 消息 (feed 判类后注入; 路由选 provider)。 */
+export function ownedGameMessage(text: string, lane: OwnedLane) {
+  return createUserMessage({
+    content: [{ type: 'text', text: String(text) }],
+    source: { kind: 'mud-owned', lane },
+  })
 }
 
-/** 注册 T1 本地模拟 provider + 瀑布路由监听器 (幂等)。 */
+/** 注册 T1 本地模拟 provider + 所有权路由监听器 (幂等)。 */
 export function registerTriggerProvider(ctx: Context, opts: {
   stateRules: PerceptionRule[]
   eventRules: PerceptionRule[]
   world: WorldModel
+  /** 行恢复: 按文本还原 MudLine[] (命令-应答桥统一行集表); 缺省 = 永不命中。 */
+  resolveLines?: (text: string) => MudLine[] | null
   log?: (text: string) => void
 }): void {
   if (t1Registration) return // 幂等
@@ -94,7 +91,7 @@ export function registerTriggerProvider(ctx: Context, opts: {
       }
       return actions
     },
-    resolveLines: (text: string) => gameLineRegistry.get(text) ?? null,
+    resolveLines: opts.resolveLines ?? (() => null),
     onLog: (text: string) => opts.log?.(text),
     onRender: (entry) => {
       opts.log?.(`[t1] 命中 ${entry.hit.id}: ${entry.action.output.slice(0, 60)}`)
@@ -104,58 +101,55 @@ export function registerTriggerProvider(ctx: Context, opts: {
   })
   const disposeAdapter = ctx.llm.registerAdapter([T1_PROVIDER], adapter)
 
-  // ── 瀑布路由状态 (回合内失败事实; 单 agent 串行, 无并发) ──
-  // t1FailedKeys: 本回合 T1 无答案的 "turn:step" 集合。非空 = T2 已接管本回合。
-  // 新回合 (turn 变化或 agent 重建) 即清空 — 每个新回合重新给 T1 机会。
-  let routedAgent: unknown = null
-  let routedTurn = -1
-  const t1FailedKeys = new Set<string>()
-
   /** T2 路线 (DSH 默认配置 agentDefaultModel); null = 未配置。 */
   const t2Selection = (): { provider: string; model: string } | null =>
     ctx.get('agentDefaultModel')?.currentSelection() ?? null
 
-  // agent/request 瀑布: 逐步改写路由。
-  //   - 本回合 T1 曾失败 → T2 (含同步重试的收尾);
-  //   - 其余 (新回合首步 / T1-owned 续步) → T1。
+  /** 回扫会话 surface: 最近一条 mud-owned user 消息的 lane (跳过 tool-result
+   *  与其余 kind)。工具结果续步/历史回放无元数据 → 沿用注入时的 lane —
+   *  所有权随消息留在 surface, 无需旁路粘性状态。 */
+  const ownedLaneFromSession = (sessionId: SessionId): 't1' | 't2' | null => {
+    const job = ctx.get('sessions') as
+      | { get(id: SessionId): { surface: { nodes: readonly unknown[] }; eventAt(seq: unknown): unknown } | undefined }
+      | undefined
+    const session = job?.get(sessionId)
+    const surface = session?.surface
+    if (!session || !surface) return null
+    let scanned = 0
+    for (let i = surface.nodes.length - 1; i >= 0 && scanned < 24; i -= 1) {
+      scanned += 1
+      const event = session.eventAt(surface.nodes[i])
+      const message = event ? deriveEventMessage(event as never) : null
+      if (!message || message.role !== 'user') continue
+      const source = message.source as Partial<{ kind: string; lane: string }> | null | undefined
+      if (source?.kind !== 'mud-owned') continue
+      return source.lane === 't2' ? 't2' : 't1'
+    }
+    return null
+  }
+
+  // agent/request 瀑布: 回扫所有权元数据 → 选 provider。
+  //   - lane=t2 且 T2 已配置 → T2; T2 未配置时降级 T1 (日志注明);
+  //   - 其余 (含无元数据/工具续步) → T1。
+  //   - 无 agent/request-error 交棒: T1 不应答 = 自然收束, 等新输出重新判类。
   const disposeRequest = ctx.on('agent/request', async (payload, next): Promise<LlmCallConfig> => {
     const config = await next()
-    if (payload.agent !== routedAgent || payload.turn !== routedTurn) {
-      routedAgent = payload.agent
-      routedTurn = payload.turn
-      t1FailedKeys.clear()
-    }
-    if (t1FailedKeys.size > 0) {
+    const lane = ownedLaneFromSession(payload.agent.id)
+    if (lane === 't2') {
       const t2 = t2Selection()
       if (t2) return { ...config, provider: t2.provider, model: t2.model }
-      opts.log?.('[t1] T2 未配置 (agentDefaultModel), 路由维持 T1')
-      return config
+      opts.log?.('[t1] T2-owned 输出但 T2 未配置 (agentDefaultModel) → 降级 T1')
     }
     return { ...config, provider: T1_PROVIDER, model: T1_MODEL }
-  })
-
-  // agent/request-error 瀑布: T1 任何失败 → retry 并标记回合交棒;
-  // 其他 provider 失败原样放行 (llm-retry / loop 自行处理)。
-  const disposeRequestError = ctx.on('agent/request-error', async (payload, next) => {
-    if (payload.provider !== T1_PROVIDER) return next()
-    const t2 = t2Selection()
-    if (!t2) {
-      opts.log?.('[t1] T2 未配置, T1 失败按原语义上抛')
-      return next()
-    }
-    t1FailedKeys.add(`${payload.turn}:${payload.step}`)
-    opts.log?.(`[t1] T1 失败 (${payload.failure.code}) → 重试并路由 T2 (${t2.provider}/${t2.model})`)
-    return { kind: 'retry' }
   })
 
   t1Registration = () => {
     disposeAdapter()
     disposeRequest()
-    disposeRequestError()
   }
 }
 
-/** 释放 T1 provider 注册与瀑布监听器 (llm 卸载时调用; 幂等)。 */
+/** 释放 T1 provider 注册与路由监听器 (llm 卸载时调用; 幂等)。 */
 export function disposeTriggerProvider(): void {
   if (t1Registration) {
     try { t1Registration() } catch { /* ignore */ }
@@ -163,7 +157,6 @@ export function disposeTriggerProvider(): void {
   }
   stateMatchService = null
   eventMatchService = null
-  gameLineRegistry.clear()
 }
 
 /** 游戏输出 → user 消息 (DSH 消息规范: ContentBlock[])。 */
@@ -276,4 +269,10 @@ export async function createMudAgent(
 /** 游戏输出注入 agent 会话并唤醒循环 (next-turn)。handle = { agent, dispose }。 */
 export function sendGameOutput(handle: AgentHandle, text: string): void {
   handle.agent.send(gameMessage(text), 'next-turn', true)
+}
+
+/** 带所有权元数据的会话注入 (feed 判类后; 控制唤醒 lane=t2)。路由由
+ *  agent/request 回扫 surface 决定 — 所有权随消息走, 无旁路状态。 */
+export function sendOwnedOutput(handle: AgentHandle, text: string, lane: OwnedLane): void {
+  handle.agent.send(ownedGameMessage(text, lane), 'next-turn', true)
 }

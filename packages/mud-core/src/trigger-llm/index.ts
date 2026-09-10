@@ -9,7 +9,7 @@
  * @module @deepseek-ai/dsh-mud-core/trigger-llm
  */
 
-export { TriggerLlmAdapter, T1_NO_ANSWER_CODE } from './adapter.ts'
+export { TriggerLlmAdapter } from './adapter.ts'
 export type { TriggerLlmAdapterHooks } from './adapter.ts'
 export { Perceptor, TriggerMatchService, styleMatchesColor } from './service.ts'
 export type {

@@ -20,6 +20,7 @@
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ParameterSchemaSpec, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
 import { FORBIDDEN_COMMANDS } from '../config/commands.ts'
+import type { MudReply, ReplyOptions } from '../network/response.ts'
 import { applyPatch, type WorldModel } from '../world/world.ts'
 
 /** 工具统一返回。 */
@@ -120,7 +121,8 @@ export interface MudTool {
     schema: MudOutputSchema
     render: (args: unknown, value: MudToolResult) => ContentBlock[]
   }
-  execute: (args: Record<string, unknown>) => MudToolResult
+  /** 同步或异步 (装配 sendAndAwait 走命令-应答桥时为异步)。 */
+  execute: (args: Record<string, unknown>) => MudToolResult | Promise<MudToolResult>
 }
 
 /** 工具集。 */
@@ -128,13 +130,17 @@ export type MudTools = Record<string, MudTool>
 
 /**
  * 构建工具集。
- * @param opts.send (cmd) => void 命令入队 (宿主接 CommandQueue)。
+ * @param opts.send (cmd) => void 命令入队 (宿主接 CommandQueue; 未装配
+ *   sendAndAwait 时的兜底路径)。
+ * @param opts.sendAndAwait (cmd, opts) => Promise<MudReply> 命令-应答桥
+ *   (REFACTOR-V7 机制 A): 挂起等待真实应答, note = 应答文本。
  * @param opts.log  (text) => void 活动日志 (WebUI 决策通道)。
  * @param opts.recall (n) => string[] 回看最近 n 行游戏输出 (mud_recall)。
  * @param opts.flowControl 触发器组开关/状态 (mud_flow_*; M4 落地前缺省不可用)。
  */
 export function buildMudTools({
   send = () => {},
+  sendAndAwait,
   log = () => {},
   recall = () => [],
   flowControl,
@@ -142,6 +148,7 @@ export function buildMudTools({
   resolveCredentials,
 }: {
   send?: (cmd: string) => void
+  sendAndAwait?: (cmd: string | string[], opts?: ReplyOptions) => Promise<MudReply>
   log?: (text: string) => void
   recall?: (count: number) => string[]
   flowControl?: {
@@ -170,8 +177,11 @@ export function buildMudTools({
         const raw = String(args.direction ?? '').trim().toLowerCase()
         const dir = MOVE_ALIASES[raw] ?? (MOVE_DIRS.includes(raw) ? raw : null)
         if (!dir) return { ok: false, note: `非法方向: ${raw}`, cmd: '' }
-        send(dir)
         log(`[工具] mud_move → ${dir}`)
+        if (sendAndAwait) {
+          return sendAndAwait(dir).then(reply => ({ ok: reply.ok, note: reply.text, cmd: dir }))
+        }
+        send(dir)
         return { ok: true, note: `向 ${dir} 移动`, cmd: dir }
       },
     },
@@ -193,8 +203,11 @@ export function buildMudTools({
           return { ok: false, note: `非法目标: ${target} (不能含分号/控制字符)`, cmd: '' }
         }
         const cmd = target ? `look ${target}` : 'look'
-        send(cmd)
         log(`[工具] mud_look → ${cmd}`)
+        if (sendAndAwait) {
+          return sendAndAwait(cmd).then(reply => ({ ok: reply.ok, note: reply.text, cmd }))
+        }
+        send(cmd)
         return { ok: true, note: cmd, cmd }
       },
     },
@@ -217,8 +230,11 @@ export function buildMudTools({
         if (!cmd) {
           return { ok: false, note: `未知状态: ${what} (可选 hp/score/inventory/skills/busy)`, cmd: '' }
         }
-        send(cmd)
         log(`[工具] mud_status → ${cmd}`)
+        if (sendAndAwait) {
+          return sendAndAwait(cmd).then(reply => ({ ok: reply.ok, note: reply.text, cmd }))
+        }
+        send(cmd)
         return { ok: true, note: cmd, cmd }
       },
     },
@@ -241,10 +257,23 @@ export function buildMudTools({
           items: { type: 'string' },
           description: '命令序列, 依次发出 (允许含空命令, 用于退出检测模式)。与 cmd 二选一',
         },
+        until: {
+          type: 'object',
+          additionalProperties: true,
+          description: '可选: 声明应答结算边界 (规则动作使用)。当声明的正则命中应答文本时结算 (跨帧累积; 慢命令如 dz/fullme), 缺省 GA/EOR 主边界 + 静默兜底',
+        },
       },
       output: { schema: OUT_SCHEMA, render: OUT_RENDER },
       execute: (args) => {
         const wire = (c: string): string => interpolateCredentials(c, resolveCredentials?.())
+        // 声明边界 (规则动作可传): args.until = { regex, timeout? }。
+        const untilRaw = args.until as { regex?: unknown; timeout?: unknown } | undefined
+        const replyOpts: ReplyOptions | undefined =
+          untilRaw && typeof untilRaw.regex === 'string'
+            ? (typeof untilRaw.timeout === 'number'
+              ? { until: { regex: untilRaw.regex, timeout: untilRaw.timeout } }
+              : { until: { regex: untilRaw.regex } })
+            : undefined
         // 命令序列: 允许空命令成员; 整体至少有一条合法命令才成功。
         const series = Array.isArray(args.cmds) ? args.cmds.map((c) => String(c)) : null
         if (series && series.length > 0) {
@@ -253,8 +282,12 @@ export function buildMudTools({
               return { ok: false, note: `安全禁用命令, 拒绝发送: ${String(c).trim()}`, cmd: '' }
             }
           }
-          for (const c of series) send(wire(c))
+          const wired = series.map(wire)
           log(`[工具] mud_send 序列 → ${series.length} 条命令`)
+          if (sendAndAwait) {
+            return sendAndAwait(wired, replyOpts).then(reply => ({ ok: reply.ok, note: reply.text, cmd: '' }))
+          }
+          for (const c of wired) send(c)
           return { ok: true, note: '命令序列', cmd: '' }
         }
         // 单体命令: 空命令拒绝 (与既有行为一致)。
@@ -263,8 +296,12 @@ export function buildMudTools({
         if (isForbidden(cmd)) {
           return { ok: false, note: `安全禁用命令, 拒绝发送: ${cmd}`, cmd: '' }
         }
-        send(wire(cmd))
+        const wiredCmd = wire(cmd)
         log(`[工具] mud_send → ${cmd}`)
+        if (sendAndAwait) {
+          return sendAndAwait(wiredCmd, replyOpts).then(reply => ({ ok: reply.ok, note: reply.text, cmd }))
+        }
+        send(wiredCmd)
         return { ok: true, note: cmd, cmd }
       },
     },

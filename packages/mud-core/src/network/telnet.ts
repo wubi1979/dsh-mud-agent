@@ -14,10 +14,22 @@
  *   - 一旦见到该标记即启动解压器, 此后的每个字节先送解压器, 其输出再交还
  *     原始解码器;
  *   - 优先按 zlib 解压, 首个数据块失败时自动回退为裸 deflate (pkuxkx);
- *   - 解压出错则丢弃该数据流并记录日志。
+ *   - 解压段损坏 (R3, 对齐 Mudlet ctelnet.cpp:5245-5263): 关闭压缩、
+ *     发 `IAC DONT COMPRESS2`、把未消费尾部按明文重放 — 最多显示乱码,
+ *     连接继续可用, 不再自损坏点起静默黑屏。
+ *
+ * 边界事件 (R4, 命令-应答桥层依赖): GA(249) / EOR(239) 是协议级"一段文字
+ * 发送完毕"标志 (pkuxkx 每条命令回复末尾 1 个 GA, 紧随提示符之后)。telnet
+ * 层把它们作为显式 boundary 事件抛出 (专供 CommandResponseController 结算
+ * 应答帧); 同时保留 GA 刷出逻辑 (无换行尾行立即刷成完整行)。
+ *
+ * 协议加固 (R2, 对齐 Mudlet MAX_TELNET_SUBNEGOTIATION_LENGTH): 子协商
+ * 载荷超过上限时进入丢弃模式 — 内存有界、丢弃到下一个 IAC SE 后自愈,
+ * 杜绝无 IAC SE 洪水导致的缓冲区无界膨胀与文本永久吞没。
  *
  * 事件: 'connect' | 'close' | 'error' | 'log' ({level,text}) |
- *        'text' (原始文本) | 'parsed' (MudLine[]) | 'gmcp' ({package, payload}) |
+ *        'text' (原始文本) | 'parsed' (MudLine[]) |
+ *        'boundary' ({kind: 'ga' | 'eor'}) | 'gmcp' ({package, payload}) |
  *        'mssp' (pairs)
  * @module @deepseek-ai/dsh-mud-core/telnet
  */
@@ -34,6 +46,7 @@ const WONT = 252
 const WILL = 251
 const SB = 250
 const GA = 249
+const EOR = 239 // RFC 885 End of Record 命令字节 (R4: 视同 GA 的提交边界)
 const SE = 240
 
 const OPT = {
@@ -41,6 +54,8 @@ const OPT = {
   ECHO: 1,
   SGA: 3,
   TTYPE: 24,
+  /** RFC 885 End of Record 选项 (协商出 EOR 提交标志)。 */
+  EOR: 25,
   NAWS: 31,
   CHARSET: 42,
   MSSP: 70,
@@ -53,7 +68,11 @@ const OPT = {
 const ACCEPT = new Set<number>([
   OPT.BINARY, OPT.ECHO, OPT.SGA, OPT.NAWS, OPT.TTYPE,
   OPT.CHARSET, OPT.MSSP, OPT.COMPRESS2, OPT.MSP, OPT.GMCP,
+  OPT.EOR, // R4: 服务器 WILL EOR → DO (低成本, pkuxkx 未用, 通用 MUD 兼容)
 ])
+
+/** 子协商载荷长度上限 (R2, 对齐 Mudlet MAX_TELNET_SUBNEGOTIATION_LENGTH)。 */
+const MAX_SUB_NEG_LENGTH = 64 * 1024
 
 function escapeIac(bytes: Buffer): Buffer {
   if (!bytes.includes(IAC)) return bytes
@@ -98,6 +117,10 @@ export class TelnetClient extends EventEmitter {
   private inflate: zlib.Inflate | zlib.InflateRaw | null = null
   private inflateReady = false // format decided (raw fallback trigger)
   private inflateBuffered: Buffer | null = null
+  /** 子协商超限丢弃模式 (R2): 丢弃到下一个 IAC SE 后恢复, 内存有界。 */
+  private discardingSubneg = false
+  /** 已写入解压器但尚未产生输出的字节 (R3 错误恢复时明文重放; 有界 4KB)。 */
+  private mccp2Tail: Buffer | null = null
   /**
    * 流式行/ANSI 解析器: 只产出完整逻辑行, 跨块的行尾与半截转义序列缓存在
    * 内部 —— 保证感知层绝对行号稳定、规则匹配不被 TCP 块边界切碎。见 ansi.ts。
@@ -139,6 +162,9 @@ export class TelnetClient extends EventEmitter {
     socket.on('connect', () => {
       this.log('info', `已连接 ${this.host}:${this.port}`)
       this.sendSb(OPT.NAWS, [this.cols >> 8, this.cols & 0xff, this.rows >> 8, this.rows & 0xff])
+      // R4: 主动请求 EOR 提交标志 (对齐 Mudlet DO EOR 协商) — 服务器 WILL EOR
+      // 已由 ACCEPT 集合应答; 主动 DO 覆盖"服务器不先 WILL"的通配终端。
+      this.writeCommand(DO, OPT.EOR)
       this.emit('connect')
     })
     socket.on('data', (chunk: Buffer) => this.onSocketData(chunk))
@@ -197,6 +223,11 @@ export class TelnetClient extends EventEmitter {
 
   private processBuffer(): void {
     while (this.buffer.length > 0) {
+      // R2 丢弃模式: 只找下一个 IAC SE, 找到即恢复; 期间字节全部丢弃。
+      if (this.discardingSubneg) {
+        this.consumeDiscarding()
+        continue
+      }
       const idx = this.buffer.indexOf(IAC)
       if (idx === -1) {
         this.appendText(this.buffer)
@@ -222,6 +253,15 @@ export class TelnetClient extends EventEmitter {
       }
       if (cmd === SB) {
         const end = this.findSubnegEnd(2)
+        if (end === -2) {
+          // 子协商超限 (R2): 对齐 Mudlet — 置丢弃模式, 丢弃至下一个 IAC SE
+          // 后恢复。期间文本不可见但内存有界、可自愈, 不无界吞后续文本。
+          this.discardingSubneg = true
+          this.log('info', '子协商超限, 丢弃至下一个 IAC SE')
+          this.buffer = this.buffer.subarray(2) // 丢弃 SB + 选项字节
+          this.consumeDiscarding()
+          continue
+        }
         if (end === -1) break
         const payload = this.buffer.subarray(2, end)
         this.buffer = this.buffer.subarray(end + 2)
@@ -236,20 +276,24 @@ export class TelnetClient extends EventEmitter {
         }
         continue
       }
-      if (cmd === GA) {
-        // pkuxkx 的提交标志: GA 表示"一段完整文字已发送完毕" (登录期不发送,
-        // 一定是欢迎进入+上线地点房间描述+系统信息都显示完了才发一个)。作为
-        // 提交边界: 立即把滞留的"无换行行尾"刷成完整行, 不必等 300ms 静默。
+      if (cmd === GA || cmd === EOR) {
+        // R4 边界标志: GA(249) / EOR(239) = "一段完整文字已发送完毕"。pkuxkx
+        // 每条命令回复末尾 1 个 GA、登录提示后亦有 (2026-09-10 探针抓包);
+        // EOR 为 RFC 885 等价标志 (Mudlet 同当提交边界)。作为显式 boundary
+        // 事件抛出 (CommandResponseController 据此结算应答帧); 并把滞留的
+        // 无换行尾行立即刷成完整行 (提示符行属于帧内容, 不丢行)。
         const tail = this.ansi.flush()
         if (tail !== null) this.emit('parsed', [tail])
-        this.emit('ga')
+        this.emit('boundary', { kind: cmd === GA ? 'ga' : 'eor' })
+        if (cmd === GA) this.emit('ga') // 兼容旧监听器
       }
-      // NOP / GA / EOR / stray SE — skip two bytes.
+      // NOP / stray SE — skip two bytes.
       this.buffer = this.buffer.subarray(2)
     }
   }
 
-  /** Locate IAC SE from `start`, honoring escaped IAC (IAC IAC) inside. */
+  /** Locate IAC SE from `start`, honoring escaped IAC (IAC IAC) inside.
+   *  - 正常返回 SE 位置; -1 = 未找到 (等待更多数据); -2 = 子协商超限 (R2)。 */
   private findSubnegEnd(start: number): number {
     let i = start
     while (i < this.buffer.length - 1) {
@@ -259,8 +303,24 @@ export class TelnetClient extends EventEmitter {
       } else {
         i += 1
       }
+      if (i - start >= MAX_SUB_NEG_LENGTH) return -2
     }
     return -1
+  }
+
+  /** 子协商超限丢弃 (R2): 消费到下一个 IAC SE (honor IAC IAC); 本块无 SE 则
+   *  整块丢弃, 待下一块继续 — 内存有界。 */
+  private consumeDiscarding(): void {
+    for (let i = 0; i < this.buffer.length - 1; i += 1) {
+      if (this.buffer[i] !== IAC) continue
+      if (this.buffer[i + 1] === SE) {
+        this.buffer = this.buffer.subarray(i + 2)
+        this.discardingSubneg = false
+        return
+      }
+      i += 1 // IAC IAC 转义: 吃掉第二个
+    }
+    this.buffer = Buffer.alloc(0)
   }
 
   private appendText(buf: Buffer): void {
@@ -423,14 +483,16 @@ export class TelnetClient extends EventEmitter {
    * One decompressor PER block (restarted at each marker). The MCCP2 spec says
    * zlib, but pkuxkx/FluffOS sends RAW deflate (RFC 1951): if the zlib attempt
    * fails before any output, replay the buffered bytes into a raw inflater.
-   * On a block error the block's tail is dropped; the NEXT marker restarts a
-   * fresh block, so the stream recovers on its own.
+   * On a block error AFTER the format is decided (R3, 对齐 Mudlet): 关闭压缩
+   * (mccp2=false, inflate=null)、发 `IAC DONT COMPRESS2`、把未消费尾部按明文
+   * 重放 — 最多显示乱码, 连接继续可用, 不再自损坏点起永久静默。
    */
   private makeInflate(raw: boolean): zlib.Inflate | zlib.InflateRaw {
     const inf = raw ? zlib.createInflateRaw() : zlib.createInflate()
     inf.on('data', (out: Buffer) => {
       this.inflateReady = true
       this.inflateBuffered = null
+      this.mccp2Tail = null // 已产出输出 → 尾部已消费
       this.parseFeed(out)
     })
     inf.on('error', (err: Error) => {
@@ -442,7 +504,16 @@ export class TelnetClient extends EventEmitter {
         if (replay) this.inflate.write(replay)
         return
       }
-      this.log('error', `MCCP2 段解压失败（${err.message}），本块尾部已丢弃`)
+      // R3: 段损坏 (格式已定 / raw 也失败) → 关压 + DONT + 明文重放尾部。
+      const tail = this.mccp2Tail
+      this.log('error', `MCCP2 段解压失败（${err.message}）→ 关闭压缩, 明文重放尾部`)
+      this.mccp2 = false
+      this.inflate = null
+      this.inflateReady = false
+      this.inflateBuffered = null
+      this.mccp2Tail = null
+      this.writeCommand(DONT, OPT.COMPRESS2)
+      if (tail && tail.length > 0) this.parseFeed(tail)
     })
     return inf
   }
@@ -454,6 +525,10 @@ export class TelnetClient extends EventEmitter {
         ? Buffer.concat([this.inflateBuffered, chunk])
         : chunk
     }
+    // 记录"已写入但尚未产生输出"的尾部 (R3 恢复时明文重放; 有界 4KB)。
+    this.mccp2Tail = this.mccp2Tail
+      ? Buffer.concat([this.mccp2Tail, chunk]).subarray(-4096)
+      : chunk.length > 4096 ? chunk.subarray(-4096) : chunk
     this.inflate?.write(chunk)
   }
 
@@ -488,6 +563,8 @@ export class TelnetClient extends EventEmitter {
     this.inflate = null
     this.buffer = Buffer.alloc(0)
     this.inflateBuffered = null
+    this.mccp2Tail = null
+    this.discardingSubneg = false
     this.ansi.reset()
   }
 }

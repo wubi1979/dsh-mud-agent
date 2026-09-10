@@ -4,17 +4,17 @@
  * T1 是注册进官方 llm 注册表的一个"本地模拟模型" (provider = T1_PROVIDER):
  * 只回答有限问题 (规则命中的游戏输出)。判定输入 = **当前请求自身**的尾部
  * user 文本 (从 options.messages 提取, 不依赖任何旁路行缓存):
- *   - 尾部是 tool-result (T1-owned 回合的续步) → 安静收束 (finish stop),
- *     不产生模型调用也不交棒 — T1 独立完成整个 turn;
+ *   - 尾部是 tool-result (T1-owned 回合的续步) → 经 resolveLines 还原应答
+ *     纯行 (命令-应答桥注册表) → matchLines 续步判定: 命中 → 渲染 action
+ *     (工具链推进); 未命中 → finish stop (自然收束回合);
  *   - 尾部是游戏输出文本 → 经 resolveLines 找回该批行对象 (行号/style 保真,
- *     多行状态机跨批连续) → matchLines 匹配 → 渲染 action (output 文本 +
- *     tool-call 块, 与真实 LLM 响应同构);
- *   - 其余 (未命中 / 控制消息 / 无注册行) → finish{error, NO_ANSWER}:
- *     由装配方在 agent/request-error 瀑布返回 retry 并把路由改写为 T2 —
- *     官方机制自然切换, 本层不做任何级联编排。
+ *     多行状态机跨批连续) → matchLines 匹配 → 渲染 action;
+ *   - 其余 (未命中 / 控制消息 / 无注册行) → finish stop — **不再 NO_ANSWER
+ *     交棒**: 谁接该批输出由装配方在 feed 判类时以所有权元数据决定 (T1 主
+ *     反射 / T2 推理), 本层无级联编排。
  *
- * 控制消息 (CONTROL_PREFIX 前缀, 如 "[系统] 断流唤醒") 不属于游戏输出,
- * 一律 NO_ANSWER 交 T2。
+ * 控制消息 (CONTROL_PREFIX 前缀, 如 "[系统] 断流唤醒") 由装配方路由到 T2
+ * (所有权 lane=t2); T1 即便偶遇也仅收束, 不产生任何模型调用。
  * @module @deepseek-ai/dsh-mud-core/trigger-llm/adapter
  */
 
@@ -29,9 +29,6 @@ import type {
 import type { MudLine } from '../preprocess/ansi.ts'
 import type { ActionSpec, PerceptHit, PerceptionRule, TriggerAction } from './types.ts'
 import { CONTROL_PREFIX } from './types.ts'
-
-/** T1 无答案失败码: agent/request-error 装配方据此识别 "T1 不应答 → 切 T2"。 */
-export const T1_NO_ANSWER_CODE = 'MUD_T1_NO_ANSWER'
 
 /** 装配方注入的 T1 钩子。 */
 export interface TriggerLlmAdapterHooks {
@@ -48,22 +45,33 @@ export interface TriggerLlmAdapterHooks {
 /** 尾部输入判定结果。 */
 type TailInput =
   | { kind: 'text'; text: string }
-  | { kind: 'tool-tail' }
+  | { kind: 'tool-tail'; text: string }
   | { kind: 'none' }
 
+/** 提取一条消息的渲染文本 (含 tool-result 嵌套块)。 */
+function messageText(m: Message): string {
+  const chunks: string[] = []
+  for (const block of m.content) {
+    if (block.type === 'text') chunks.push(block.text)
+    else if (block.type === 'tool-result') {
+      for (const inner of block.content) {
+        if (inner.type === 'text') chunks.push(inner.text)
+      }
+    }
+  }
+  return chunks.join('\n')
+}
+
 /** 从尾部扫描: 首个 (自尾向前) role=user 消息决定形态 —
- *  source.kind 'tool' → tool-result 续步; 'user' → 文本输入。 */
+ *  source.kind 'tool' → tool-result 续步 (带应答文本); 'user' → 文本输入。 */
 function tailInput(messages: readonly Message[] | undefined): TailInput {
   const list = messages
   if (!list || list.length === 0) return { kind: 'none' }
   for (let i = list.length - 1; i >= 0; i -= 1) {
     const m = list[i]
     if (!m || m.role !== 'user') continue
-    if (m.source.kind === 'tool') return { kind: 'tool-tail' }
-    const text = m.content
-      .filter((b): b is Extract<ContentBlock, { type: 'text' }> => b.type === 'text')
-      .map(b => b.text)
-      .join('\n')
+    const text = messageText(m)
+    if (m.source.kind === 'tool') return { kind: 'tool-tail', text }
     return text === '' ? { kind: 'none' } : { kind: 'text', text }
   }
   return { kind: 'none' }
@@ -92,15 +100,22 @@ export class TriggerLlmAdapter extends LlmAdapter {
     if (options?.signal?.aborted) return
     const tail = tailInput(options?.messages)
 
-    // T1-owned 回合的续步 (本回合 T1 的 tool-calls 已执行): 安静收束回合。
-    // 游戏对命令的响应会作为新回合再次进入 T1 — 无需任何模型介入。
+    // T1-owned 回合的续步 (工具已执行): 经命令-应答桥注册表还原应答纯行,
+    // 续步判定 — 命中 = 工具链继续推进; 未命中 = 回合自然收束。
     if (tail.kind === 'tool-tail') {
-      this.hooks.onLog?.('[t1] tool-result 续步 → 安静收束回合')
-      yield { type: 'finish', reason: { kind: 'stop' } }
+      const lines = tail.text !== '' ? this.hooks.resolveLines(tail.text) : null
+      const actions = lines ? this.hooks.matchLines(lines) : []
+      if (lines === null || actions.length === 0) {
+        this.hooks.onLog?.(`[t1] tool-result 续步无命中 → 收束回合 (${tail.text.length} 字符)`)
+        yield { type: 'finish', reason: { kind: 'stop' } }
+        return
+      }
+      this.hooks.onLog?.(`[t1] tool-result 续步命中 ${actions.length} 条 → 渲染动作`)
+      yield* this.renderActions(actions)
       return
     }
 
-    // 控制消息 / 无注册行 / 未命中 → NO_ANSWER (装配方据此切 T2)。
+    // 游戏输出文本 (T1 主 / 观察窗注入): 还原行对象 → 匹配。
     const lines = tail.kind === 'text' && !tail.text.startsWith(CONTROL_PREFIX)
       ? this.hooks.resolveLines(tail.text)
       : null
@@ -111,14 +126,9 @@ export class TriggerLlmAdapter extends LlmAdapter {
         : tail.text.startsWith(CONTROL_PREFIX)
           ? '控制消息'
           : lines === null ? '无注册行' : '规则未命中'
-      this.hooks.onLog?.(`[t1] 无应答 (${why}, ${tail.kind === 'text' ? `${tail.text.length} 字符` : '0 字符'}) → NO_ANSWER`)
-      yield {
-        type: 'finish',
-        reason: {
-          kind: 'error',
-          failure: { message: `T1 无应答 (${why})`, code: T1_NO_ANSWER_CODE },
-        },
-      }
+      // 路由所有权已由装配方在 feed 判类时决定 — 本层不再交棒, 仅收束回合。
+      this.hooks.onLog?.(`[t1] 无应答 (${why}) → 收束回合 (所有权已定, 不再交棒)`)
+      yield { type: 'finish', reason: { kind: 'stop' } }
       return
     }
 
