@@ -369,10 +369,23 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   const headBuf: MudLine[] = []
   let observeTimer: ReturnType<typeof setTimeout> | null = null
 
-  /** 观察窗缓冲 flush: 清缓冲 + 判类注入 (仅无在途请求时调用)。 */
+  /** 观察窗缓冲 flush: 清缓冲 + 判类注入 (仅无在途请求时调用)。
+   *  P3 fix: 门 (agentEnabled / !agent) 必须前置于 splice — 原先 splice 在前、
+   *  门在后, 门失败时批次已出 observeBuf 永久丢失 (卡死根因: 会话 live →
+   *  prepareAgent 跳过 ensureAgent → agent null → 35 行批次静默吞掉, 且无人
+   *  重发 prompt)。门阻时批次留观察窗, 显式 debug + 静默窗后重试。 */
   function flushObserve(): void {
     if (observeTimer) { clearTimeout(observeTimer); observeTimer = null }
     if (observeBuf.length === 0) return
+    if (!(config.agentEnabled ?? false) || !agent) {
+      logService.debug('perception',
+        `[感知] 判类注入暂缓 (${config.agentEnabled === false ? 'agent 未接入' : 'agent 未创建'}), ` +
+        `${observeBuf.length} 行留观察窗, 静默窗后重试`)
+      // 直挂静默定时器 — 不走 scheduleObserveFlush (其超限立即 flush 分支会在
+      // 门持续失败时同步自递归)。
+      observeTimer = setTimeout(flushObserve, config.bridgeSilenceMs ?? 2_000)
+      return
+    }
     // splice(0) 取出并清空: batch 持真实行 (曾用 `batch = observeBuf; observeBuf.length = 0`
     // 就地截断 — batch 与 observeBuf 同引用被一起清空, 判类注入恒 0 行, T1 永不触发)。
     const batch = observeBuf.splice(0)
@@ -683,7 +696,6 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     sessionId?: string,
     cwd?: string,
   ): void {
-    void cwd // 会话已由创建用户时建立; cwd 仅在创建时用于 workspace 归属
     // 幂等 (防重入泄漏): 已连接 / 连接进行中均拒绝再次发起 — 否则每次
     // connect 都 new 新 client 并覆盖条目, 旧 client 的 socket/flushTimer
     // 无引用泄漏, 其迟到 connect 事件还会把新条目误标 connected (双连接)。
@@ -698,6 +710,12 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       return
     }
     activeSessionId = sid
+    // P3 fix: 会话 live ≠ agent 存在 (插件重启 / host 已 materialize 会话时,
+    // prepareAgent 旧门跳过后 agent 仍为 null) — 连接时即解耦创建, 失败仅日志
+    // 不阻断连接; ensureAgent 幂等, 成功处自带 flushObserve + 看门狗补布防。
+    void ensureAgent(sid, cwd).catch((err: unknown) => {
+      tuiLog(`[SYS] agent 创建失败: ${err instanceof Error ? err.message : String(err)}`)
+    })
     // 日志文件按会话绑定: 新会话 = 新文件 (`mud-YYYYMMDD-<sessionId>.log`)。
     logService.initLogFile(sid)
     // 凭据与会话绑定: {name}/{pass} 占位符的插值只在 mud_send 发送瞬间发生
@@ -793,12 +811,19 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
           text: `[agent] 调用 ${name} ${argsJson}`,
         })
       },
+      // 挂起定位: createMudAgent 内部分步活动日志 (start → resume/create → 就绪)。
+      onActivity: (t) => tuiLog(`[SYS] ${t}`),
     }
+    // 挂起定位锚点: 进入 createMudAgent 前 (其后活动日志断在哪一步即挂在哪一步)。
+    tuiLog(`[SYS] agent 创建开始 (${sessionId})`)
     agent = await createMudAgent(ctx, options).catch((err: unknown) => {
       lastError = err instanceof Error ? err.message : String(err)
       throw err
     })
     tuiLog(`[SYS] MUD 玩家 agent 就绪 (${sessionId})`)
+    // P3 fix: 门阻期滞留批次的冲刷点 — flushObserve 门失败时批次留观察窗,
+    // agent 就绪后不等下一个边界/静默兜底, 立即判类注入。
+    flushObserve()
     // P3-6b: agent 晚建场景 (connect 先于 ensureAgent 完成) — 登录看门狗在 connect 期
     // 因 `!agent` 提前返回未布防; 此处 agent 就绪后补布防, 防止登录零文本时无兜底。
     if (!world.flags.logged_in) armLoginWatchdog()
@@ -849,11 +874,12 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   /**
    * 创建用户时激活会话: 确保该用户的会话存在 (host 已 materialize 则复用,
    * 否则创建) — 不建立 telnet 连接, 连接由游戏页面的按钮触发。
+   * P3 fix: 去掉 !isSessionLive 前置门 — 会话 live ≠ agent 存在 (插件重启 /
+   * host 已 materialize / 技能目录变化 dispose 后 agent 仍为 null), 门跳过后
+   * agent 永为 null 且无补建路径。ensureAgent 内部幂等, 直接无条件调用。
    */
   async function prepareAgent(sessionId: string, cwd?: string): Promise<void> {
-    if (!isSessionLive(sessionId)) {
-      await ensureAgent(sessionId, cwd)
-    }
+    await ensureAgent(sessionId, cwd)
   }
 
   // ── 启动: 等待手动连接 (用户即会话 — agent 在连接时按 sessionId 创建/恢复) ──
@@ -953,6 +979,8 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
         action: enabled ? 'agent 接入开启' : 'agent 接入关闭',
         text: `[模式] ${enabled ? '开启' : '关闭'} agent 接入`,
       })
+      // P3 fix: 开启后冲刷门阻期滞留的观察窗批次 (不等下一个边界/静默兜底)。
+      if (enabled) flushObserve()
     },
   }
   ctx.provide('mud', service)

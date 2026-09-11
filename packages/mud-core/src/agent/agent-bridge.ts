@@ -199,7 +199,7 @@ export async function createMudAgent(
   ctx: Context,
   { sessionId, cwd, persona, skills = '', commands = '', tools = {}, onActivity = () => {}, onAgentTool }: CreateMudAgentOptions,
 ): Promise<AgentHandle> {
-  void onActivity
+  const activity = onActivity
   const commonOptions = {
     agentOptions: { provider: T1_PROVIDER, model: T1_MODEL },
     setup: async (agentCtx: Context) => {
@@ -245,8 +245,11 @@ export async function createMudAgent(
   const persistence = ctx.get('sessionPersistence')
   if (persistence !== undefined) {
     try {
+      // 挂起定位: list 未 resolve 时最后一条活动日志 = 'start' (挂起在 sessionPersistence.list)。
+      activity?.('agent create: start')
       const headers = (await persistence.list()) as readonly { id: string }[]
       if (headers.some(h => h.id === sessionId)) {
+        activity?.(`agent create: resume (${sessionId})`)
         return ctx.agents.resume({
           resumeSessionId: sessionId as SessionId,
           ...commonOptions,
@@ -256,6 +259,7 @@ export async function createMudAgent(
       // list 失败视为无持久化会话, 走 create
     }
   }
+  activity?.(`agent create: create (${sessionId})`)
   return ctx.agents.create({
     sessionId: sessionId as SessionId,
     meta: { cwd: cwd ?? process.cwd() },
