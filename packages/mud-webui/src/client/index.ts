@@ -70,6 +70,32 @@ function ensureXtermCss(): void {
 }
 
 /**
+ * 打开右栏 mud rail, 且不抢占列的首次展开。
+ *
+ * 列第一次展开时, 若 pane 仍为空, harness 的 settle 规则会按默认页 seed
+ * 它 ("fresh surface shows only what it opened"); 而 openTab 总是先把列
+ * 展开、再把目标页放进 pane —— 若 mud 是被放进 pane 的第一个 tab, 默认页
+ * 就永远不会 seed (对右栏首个使用的会话, 用户会看到只有 mud 决策/状态而
+ * 缺少默认的 files 页)。因此这里先决定 harness 的默认页 (与 defaultSeed
+ * 同规则: 恰一个 guide 条目 → 该 kind; 否则 guide 本体), 先把默认页一并
+ * 放入 pane, 再打开 mud —— 两者在同一 pane 并存 (页面唯一性按 kind 区分,
+ * 互不合并), mud 为激活 tab。任何一步失败都不阻塞 mud rail 本身。
+ * @param ctx - client root context。
+ * @returns 是否成功打开 mud rail。
+ */
+function openMudRail(ctx: ClientContext): boolean {
+  try {
+    const guide = ctx.sidebarRightTabs.guide()
+    const first = guide.length === 1 ? guide[0]!.kind : 'guide'
+    try { ctx.sidebarRight.openTab(first) } catch { /* 默认页侧失败不阻塞 mud rail */ }
+    ctx.sidebarRight.openTab('mud')
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * Client 插件入口: 遮蔽 sidebar, 注册一个 right-Sidebar 页面 tab 类型 (mud:
  * 决策/状态 rail, additive, 不遮蔽原右栏 tabs), 向原生 conversation 槽
  * 注册 游戏/日志 两个 view 条目 (会话头 tab 由槽条目自动生成)。服务器/用户
@@ -97,8 +123,9 @@ export function apply(ctx: ClientContext): void {
     const user = server?.users.find(candidate => candidate.id === userId)
     if (server === undefined || user === undefined) return
     // 打开右栏 mud tab (页面类型按 kind 打开, 面板随同展开): 幂等, 会话
-    // 激活路径上每次请求都重开, 换会话时跟随。注册就绪前/当前面板不可用时忽略。
-    try { ctx.sidebarRight.openTab('mud') } catch { /* registry 未就绪或当前无面板 */ }
+    // 激活路径上每次请求都重开, 换会话时跟随; 先并入默认页, 避免抢占列的
+    // 首次展开导致默认 files 页永不 seed。注册就绪前/当前面板不可用时忽略。
+    try { openMudRail(ctx) } catch { /* registry 未就绪或当前无面板 */ }
     const sessions = ctx.get('sessions') as ISessions | undefined
     if (sessions === undefined) return
     const sid = user.sessionId as SessionId
@@ -294,16 +321,16 @@ export function apply(ctx: ClientContext): void {
     let timer: ReturnType<typeof setTimeout> | undefined
     let attempts = 0
     const openMud = (): void => {
-      // 同步快路径: 面板就绪则立即打开; 失败进入退避重试链。
-      try { ctx.sidebarRight.openTab('mud'); timer = undefined; return } catch { /* 下面退避重试 */ }
+      // 同步快路径: 面板就绪则立即打开 (先并入默认页, 再开 mud rail);
+      // 失败进入退避重试链。
+      if (openMudRail(ctx)) { timer = undefined; return }
       if (timer !== undefined) return
       attempts = 0
       const tryOpen = (): void => {
         attempts += 1
-        try { ctx.sidebarRight.openTab('mud'); timer = undefined } catch {
-          if (attempts < 20) timer = setTimeout(tryOpen, 800)
-          else timer = undefined
-        }
+        if (openMudRail(ctx)) { timer = undefined; return }
+        if (attempts < 20) timer = setTimeout(tryOpen, 800)
+        else timer = undefined
       }
       tryOpen()
     }
