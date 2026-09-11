@@ -18,9 +18,11 @@
         host: mud.pkuxkx.net
         port: 8081
         sessionId: mud-player
-        # 暂停接入: 游戏输出直推终端/日志, agent (LLM) 不介入不思考。
-        # 接入 agent 时改为 true (注入游戏输出 → agent 自主决策)。
-        agentEnabled: false
+        # 日志落盘目录 (JSONL, 按天轮转): 不设则默认 <host 进程 cwd>/mud-logs。
+        logDir: 'D:/Code/dsh-mud-agent/logs'
+        # 接入 agent: 注入游戏输出 → 判类注入 (规则命中 = T1 不耗 LLM;
+        # 未命中 = T2 推理走 LLM provider)。关闭则连 T1 也不派发 (仅感知与终端)。
+        agentEnabled: true
         commandIntervalMs: 400
         ruleDedupMs: 1500
         loginTimeoutMs: 20000

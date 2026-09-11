@@ -45,10 +45,12 @@ import defaultPerceptionRules from './config/trigger-rules.ts'
 import { SkillService } from './agent/skills.ts'
 import { commandsTextForAgent } from './config/commands.ts'
 import { createMudAgent, sendOwnedOutput, registerTriggerProvider, disposeTriggerProvider, stateMatchService, eventMatchService, type CreateMudAgentOptions, type OwnedLane } from './agent/agent-bridge.ts'
-import { CONTROL_PREFIX } from './trigger-llm/types.ts'
+import { CONTROL_PREFIX, type PerceptHit } from './trigger-llm/types.ts'
 import type { AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { join } from 'node:path'
+import { MudLogService, resolveLogDir } from './logging/log-service.ts'
 import { MudWebSocketHub, isTrustedRequest, type MudUiItem } from './network/ws.ts'
 import { resolveCaptchaImage } from './network/captcha.ts'
 import type { MudWorldSnapshot } from './client/wire.ts'
@@ -91,6 +93,8 @@ export interface MudAgentConfig {
   sessionId?: string
   /** 会话工作目录 (决定会话在 WebUI 列表归属的 workspace; 缺省启动目录)。 */
   cwd?: string
+  /** 运行日志落盘目录 (JSONL; 缺省 `<cwd>/mud-logs`)。 */
+  logDir?: string
   /** 是否把游戏输出注入 agent 思考 (false = 暂停接入: 输出直推终端, agent 不介入)。 */
   agentEnabled?: boolean
   persona?: string
@@ -184,23 +188,36 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   let disposed = false // teardown 已开始, 停止新的注入/泵出
   // 诊断: 最近一次 connect/ensureAgent 失败 (不依赖 agent 会话, 供 diag() 读取)。
   let lastError: string | null = null
-  // ── 系统日志通道 (提前声明供全 apply 内 tuiLog/tuiDecision 引用, 避免 TDZ) ──
-  // mud: 普通运行流水 → 日志窗 (exporter 转发); mud-decision: 决策留档, 只落盘。
+  // ── 日志系统 (统一漏斗: 文件落盘 + WS 转发 forward + harness ctx.logger) ──
+  // mud: 普通运行流水 (harness 审计); mud-decision: 决策留档 (harness 审计)。
+  // LogService: 确定性 JSONL 落盘 (用户可查文件) + onEntry → /mud/ws 日志 tab。
   const mudLogger = ctx.logger('mud')
   const decisionLogger = ctx.logger('mud-decision')
-  // mud 命名空间日志 → 转发到 webui/tui 日志窗 (纯传输, 不改内容)。
-  // 提前注册: 让 apply 装配早期的启动日志也能投递到日志窗。
-  ctx.logger.exporter({
-    export: (message) => {
-      if (message.name !== 'mud') return
-      pushUiItem({ kind: 'log', text: `[${message.type.toUpperCase()}] ${renderLogArgs(message.args)}`, time: message.ts })
-    },
+  // 落盘目录: config.logDir 优先, 缺省 <cwd>/mud-logs。
+  // resolveLogDir 显式处理 undefined — `config.logDir?.trim() !== ''` 在未配置时
+  // 为 true 会把 logDir 置成 undefined (落盘静默关闭, 曾因此无 mud-logs 文件)。
+  const logDir = resolveLogDir(config.logDir, join(config.cwd ?? process.cwd(), 'mud-logs'))
+  const logService = new MudLogService({
+    logDir,
+    sessionId: config.sessionId ?? 'mud-player',
+    // WS 转发: 每条日志 → pushUiItem (kind 'log', 带级别/通道字段)。
+    onEntry: (e) => pushUiItem({
+      kind: 'log',
+      level: e.level,
+      channel: e.channel,
+      text: e.text,
+      time: e.time,
+      logSeq: e.seq,
+      ...(e.actor !== undefined ? { actor: e.actor } : {}),
+      ...(e.ruleId !== undefined ? { ruleId: e.ruleId } : {}),
+      ...(e.eventType !== undefined ? { eventType: e.eventType } : {}),
+      ...(e.flow !== undefined ? { flow: e.flow } : {}),
+      ...(e.action !== undefined ? { action: e.action } : {}),
+      ...(e.result !== undefined ? { result: e.result } : {}),
+    }),
   })
-  /** 把日志 args (printf 格式串 + 参数) 渲染为纯文本 (转发用, 不改内容)。 */
-  function renderLogArgs(args: readonly unknown[]): string {
-    if (args.length === 0) return ''
-    return args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')
-  }
+  // 注: "日志系统就绪"落一条推迟到 hub 声明后 (见 hub 创建处) — 此处同步
+  // 调 logService 会触发 onEntry → pushUiItem → 引用未初始化的 hub (TDZ)。
   // ── 游戏输出缓冲 (终端独立通道) ─────────────────────────
   // host 进程级内存环形缓冲: 游戏输出只进这里 (不进 session 事件流, 避免
   // 会话膨胀)。生命周期 = host 进程 — 重启即空 (终端随之清空); 断开重连
@@ -356,11 +373,15 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   function flushObserve(): void {
     if (observeTimer) { clearTimeout(observeTimer); observeTimer = null }
     if (observeBuf.length === 0) return
-    const batch = observeBuf
-    observeBuf.length = 0
+    // splice(0) 取出并清空: batch 持真实行 (曾用 `batch = observeBuf; observeBuf.length = 0`
+    // 就地截断 — batch 与 observeBuf 同引用被一起清空, 判类注入恒 0 行, T1 永不触发)。
+    const batch = observeBuf.splice(0)
     // P1-3a: 合并批整批登记 — 工具结果 resolveLines 才能精确还原 (逐批登记
     // 在长批合并后只还原到第一批, 后续批规则静默丢失)。
     controller.cacheLines(batch)
+    // 观察窗 debug: 批次规模 + 判定临界 — 无主行是否真的到达判类注入。
+    logService.debug('perception',
+      `[感知] 观察窗结算 ${batch.length} 行 → 判类注入${controller.inFlight() ? ' (在途, 跳过)' : ''}`)
     judgeAndInject(batch)
   }
 
@@ -403,11 +424,20 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     if (!(config.agentEnabled ?? false)) return
     if (!agent) return
     // 判类用全量行 (裁剪注入不丢事件命中)。
+    const hits: PerceptHit[] = []
     let hasHit = false
     if (eventMatchService) {
       // P1-3b: 判类走镜像 matchDry (不推进多行状态机) — 判类与 adapter 真渲染
       // 共用实例会双跑: 判类先推进 multiLastAbs, 渲染时同批被单调保护跳过。
-      hasHit = eventMatchService.matchDry(lines).some(h => h.action !== undefined)
+      const dry = eventMatchService.matchDry(lines)
+      hits.push(...dry)
+      hasHit = dry.some(h => h.action !== undefined)
+    }
+    if (hits.length > 0) {
+      logService.debug('perception',
+        `[判类] matchDry 命中 ${hits.length} 条规则: ${hits.map(h => `${h.id}${h.action !== undefined ? '(T1)' : ''}`).join(', ')}`)
+    } else {
+      logService.debug('perception', `[判类] matchDry 无命中 → T2 (真实 LLM)`)
     }
     // R2-8: 注入侧裁剪 — 全量 256 行一条注入使 T1 匹配巨批、T2 上下文暴涨。
     const inject = trimObservation(lines)
@@ -420,7 +450,7 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       actor: 'router',
       eventType: 'feed-classify',
       action: lane === 't1' ? 'T1 反射注入' : 'T2 推理注入',
-      result: `${clean.length} 字符`,
+      result: `${clean.length} 字符, 命中 ${hits.length} 条规则`,
       text: `[路由] ${lane === 't1' ? 'T1 规则命中 → 反射' : 'T2 推理 → 真实 LLM'}`,
     })
   }
@@ -560,6 +590,9 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     // 命令-应答桥: 原始行 → armed 帧累积/声明边界匹配/注册表; 折叠后剩余行
     // → 观察窗 (inFlight 期间 = 帧首集, 否则观察缓冲 → 判类注入)。
     controller.feedLines(raw, remains.length < raw.length ? remains : undefined)
+    // 感知 debug: 批次规模 + 折叠情况 — 排查"文本到了但没触发"的第一落点。
+    logService.debug('perception',
+      `[感知] feedParsed ${lines.length} 行 (折叠 ${raw.length - remains.length}, 余 ${remains.length})`)
   }
 
   /** 写入连接/重连分隔文本到终端缓冲 (client 当普通输出写入, 位置在新内容前)。 */
@@ -665,6 +698,8 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       return
     }
     activeSessionId = sid
+    // 日志文件按会话绑定: 新会话 = 新文件 (`mud-YYYYMMDD-<sessionId>.log`)。
+    logService.initLogFile(sid)
     // 凭据与会话绑定: {name}/{pass} 占位符的插值只在 mud_send 发送瞬间发生
     // (tools.ts), 转录/日志/工具结果全程只见占位符, 明文不落任何通道。
     if (account !== undefined) setSessionCredentials(sid, account)
@@ -770,15 +805,16 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     return agent
   }
 
-  // ── 日志通道 (走系统 ctx.logger; WS 转发 webui + session 事件 tui) ──
-  // 日志内容统一由系统 logger 产生 (harness 落盘/控制台); WebUI 日志 tab 与
-  // TUI 只是消费该日志流的转发。不再自行拼装日志内容。
-  // (mudLogger / decisionLogger / exporter / renderLogArgs 已在 apply 顶部定义。)
+  // ── 日志通道 (统一漏斗: harness ctx.logger 审计 + LogService 文件/WS) ──
+  // LogService 在 apply 顶部创建 (logService); 此处只是便捷封装 — 日志内容
+  // 统一由各调用点提供, 不在此拼装 (WebUI 日志 tab 消费 LogService 转发流)。
   function tuiLog(text: string): void {
     mudLogger.info(String(text))
+    logService.info('runtime', String(text))
   }
 
-  /** 决策事件 (感知路由/agent 动作): WebUI 决策栏 + TUI 决策轨迹。 */
+  /** 决策事件 (感知路由/agent 动作): WebUI 决策栏 (pushUiItem) + 日志 tab
+   *  (LogService decision 通道) + harness 审计 (decisionLogger)。 */
   function tuiDecision(d: {
     actor: 'rule' | 'router' | 'agent' | 'flow'
     ruleId?: string
@@ -788,9 +824,18 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     result?: string
     text: string
   }): void {
-    pushUiItem({ kind: 'decision', ...d, time: Date.now() })
-    // 决策同步落盘留档 (系统日志通道, 独立命名空间 mud-decision):
-    // 结构化字段随 args 保存, 便于审计回溯; 不进前台日志窗 (exporter 只转发 mud)。
+    // 统一身份键: pushUiItem(decision) 与 日志文件(decision 通道) 共用
+    // logService seq — 前端"当日恢复 + 实时流"按 logSeq 去重, 决策只出现一次。
+    const entry = logService.info('decision', `${d.text}${d.result ? ` — ${d.result}` : ''}`, {
+      actor: d.actor,
+      ...(d.ruleId !== undefined ? { ruleId: d.ruleId } : {}),
+      ...(d.eventType !== undefined ? { eventType: d.eventType } : {}),
+      ...(d.flow !== undefined ? { flow: d.flow } : {}),
+      action: d.action,
+      ...(d.result !== undefined ? { result: d.result } : {}),
+    })
+    pushUiItem({ kind: 'decision', ...d, time: entry.time, logSeq: entry.seq })
+    // 决策同步落盘留档 (harness 审计, 独立命名空间; 明文不落 — 占位符)。
     decisionLogger.info(`${d.text}${d.result ? ` — ${d.result}` : ''}`, {
       actor: d.actor,
       ruleId: d.ruleId ?? null,
@@ -920,14 +965,19 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       registerUpgrade: route => webServer.registerUpgrade(route),
       trustedHosts,
       backfill: (lastGameSeq, lastUiSeq) => ({
-        game: gameBuffer.filter(item => item.seq > lastGameSeq),
-        ui: uiBuffer.filter(item => item.seq > lastUiSeq),
+        // seq 失效保护: host 重启后 seq 归零, 客户端仍持旧大游标 → 按
+        // `seq > last` 过滤会整批落空 (日志/终端全空白且追不上)。游标大于
+        // 当前尾号视为失效, 回绕到全量回放。
+        game: gameBuffer.filter(item => item.seq > (lastGameSeq > gameSeq ? 0 : lastGameSeq)),
+        ui: uiBuffer.filter(item => item.seq > (lastUiSeq > uiTailSeq ? 0 : lastUiSeq)),
       }),
       onError: (err) => {
         try { ctx.logger.warn(err instanceof Error ? err : new Error(String(err))) } catch { /* ignore */ }
       },
     })
   }
+  // 启动落一条: 文件路径可见 (日志 tab 首条 + 排查文件), hub 已就绪无 TDZ。
+  logService.info('runtime', `[LOG] 日志系统就绪${logService.fileTarget !== null ? `, 落盘: ${logService.fileTarget}` : ''}`)
   const sendJson = (res: ServerResponse, status: number, body: Record<string, unknown>): void => {
     res.writeHead(status, { 'content-type': 'application/json' })
     res.end(JSON.stringify(body))
@@ -1173,6 +1223,31 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     })
     : undefined
 
+  // ── 当日日志恢复路由 (POST /mud/logs): 读取当日该会话 JSONL 文件 →
+  // 前端挂载时拉历史, 与 ws 实时流按 logSeq 去重合并 (当日恢复, 隔天不恢复)。
+  const disposeLogsRoute = createRoute !== null
+    ? createRoute({
+      kind: 'exact',
+      path: '/mud/logs',
+      handler: (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'POST') {
+          sendJson(res, 405, { ok: false, error: 'method not allowed' })
+          return
+        }
+        readJsonBody(req).then((body) => {
+          const sessionId = typeof body.sessionId === 'string' && body.sessionId.trim() !== ''
+            ? body.sessionId.trim()
+            : (activeSessionId ?? config.sessionId ?? 'mud-player')
+          const entries = logService.readDayEntries(sessionId)
+          sendJson(res, 200, { ok: true, sessionId, entries })
+        }).catch((err: unknown) => {
+          tuiLog(`[SYS] 日志恢复请求解析失败: ${err instanceof Error ? err.message : String(err)}`)
+          sendJson(res, 400, { ok: false, error: 'invalid body' })
+        })
+      },
+    })
+    : undefined
+
   // teardown
   ctx.effect(() => () => {
     disposed = true
@@ -1196,6 +1271,7 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     if (disposeDiagRoute) disposeDiagRoute()
     if (disposeCommandRoute) disposeCommandRoute()
     if (disposeCaptchaRefreshRoute) disposeCaptchaRefreshRoute()
+    if (disposeLogsRoute) disposeLogsRoute()
     if (agent && typeof agent.dispose === 'function') {
       try { void agent.dispose() } catch { /* ignore */ }
     }

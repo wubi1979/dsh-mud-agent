@@ -34,6 +34,15 @@ export interface MudUiItem {
   kind: 'log' | 'decision' | 'captcha'
   text: string
   time: number
+  /**
+   * 日志身份键 (= LogService.seq, 会话日志文件与 WS 实时帧共用): 前端按此
+   * 去重/排序 — 会话恢复 (读当日文件) 与实时推送的同一事件只显示一次。
+   */
+  logSeq?: number
+  /** log 专用: 级别 (debug/info/warn/error; 前端着色)。 */
+  level?: 'debug' | 'info' | 'warn' | 'error'
+  /** log 专用: 来源通道 (runtime/network/perception/send/decision; 前端分组)。 */
+  channel?: 'runtime' | 'network' | 'perception' | 'send' | 'decision'
   /** decision 专用: 决策来源。 */
   actor?: 'rule' | 'router' | 'agent' | 'flow'
   /** decision 专用: 所属流程名 (actor 'flow' 时, 如 'login' / 'fullme')。 */
