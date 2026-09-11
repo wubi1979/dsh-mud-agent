@@ -90,11 +90,25 @@ export const STATUS_CMDS: Record<string, string> = {
   busy: 'busy',      // 忙碌状态
 }
 
-/** P1-4: 慢命令完成句锚定正则 (受理 GA 后渐进推送无 GA, 首批声明 until 使桥
- *  等完成句到达再结算; 抓包实证: dz/sleep 均无 GA 无 prompt, 直到完成句出现)。 */
-const COMPLETION_UNTIL: Record<string, { regex: string }> = {
-  dz: { regex: '^你将运转于全身经脉间的内息收回丹田，深深吸了口气，站了起来。$' },
-  sleep: { regex: '^你一觉醒来，精神抖擞地活动了几下手脚。$' },
+/** P1-4 / R2-3: 慢命令完成句锚定正则 (受理 GA 后渐进推送无 GA, 首批声明 until
+ *  使桥等完成句到达再结算; 抓包实证: dz/sleep 均无 GA 无 prompt, 直到完成句)。
+ *  键同时支持抓包实发首词 `dazuo` 与别名 `dz` (此前仅 dz, 实发 dazuo 10 不命中);
+ *  主形态为抓包原文; 回退分支放宽句尾锚定 (完成句与末条推送同块到达,
+ *  提前结算风险低, 主要防止主形态因文本小变/异体字漂移而挂满声明超时);
+ *  声明超时压至 90s — dz 实测受理→完成约 57s (留余量), 默认 120s 挂满代价更高。 */
+const COMPLETION_UNTIL: Record<string, { regex: string; timeout?: number }> = {
+  dz: {
+    regex: '^(?:你将运转于全身经脉间的内息收回丹田，深深吸了口气，站了起来。|.*站了起来。)$',
+    timeout: 90_000,
+  },
+  dazuo: {
+    regex: '^(?:你将运转于全身经脉间的内息收回丹田，深深吸了口气，站了起来。|.*站了起来。)$',
+    timeout: 90_000,
+  },
+  sleep: {
+    regex: '^(?:你一觉醒来，精神抖擞地活动了几下手脚。|.*活动了几下手脚。)$',
+    timeout: 90_000,
+  },
 }
 
 /** 输出 schema (所有工具一致)。 */

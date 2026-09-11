@@ -282,7 +282,9 @@ export class TelnetClient extends EventEmitter {
         // EOR 为 RFC 885 等价标志 (Mudlet 同当提交边界)。作为显式 boundary
         // 事件抛出 (CommandResponseController 据此结算应答帧); 并把滞留的
         // 无换行尾行立即刷成完整行 (提示符行属于帧内容, 不丢行)。
-        const tail = this.ansi.flush()
+        // R2-7: 用 flushLine 而非 flush — 跨 GA/静默的延续颜色不丢
+        // (样式游标只在断线等会话边界复位)。
+        const tail = this.ansi.flushLine()
         if (tail !== null) this.emit('parsed', [tail])
         this.emit('boundary', { kind: cmd === GA ? 'ga' : 'eor' })
         if (cmd === GA) this.emit('ga') // 兼容旧监听器
@@ -353,7 +355,8 @@ export class TelnetClient extends EventEmitter {
     if (this.flushTimer !== null) clearTimeout(this.flushTimer)
     this.flushTimer = setTimeout(() => {
       this.flushTimer = null
-      const tail = this.ansi.flush()
+      // R2-7: flushLine 保留样式游标 (静默刷出是常规行边界, 颜色延续)。
+      const tail = this.ansi.flushLine()
       if (tail !== null) this.emit('parsed', [tail])
     }, TelnetClient.FLUSH_IDLE_MS)
   }

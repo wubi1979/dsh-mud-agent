@@ -245,19 +245,32 @@ export class AnsiStreamParser {
     return out
   }
 
-  /** 流结束: 强制把未换行的行尾刷出 (返回 null = 无可显示内容)。 */
+  /** 行尾刷出 (R2-7): 只 commit 当前行, **保留样式游标** — GA/静默刷出是
+   *  常规行边界, 不是新会话, 颜色应跨行延续 (ANSI 语义; 依赖延续色、未显式
+   *  重设 SGR 的后续行不得被记回默认色)。返回 null = 无可显示内容。 */
+  flushLine(): MudLine | null {
+    if (this.textLen === 0 && this.runs.length === 0) return null
+    return this.commitLine()
+  }
+
+  /** 复位样式游标 (fg/bg/truecolor/flags) — 仅断线/重连等真正会话边界调用。 */
+  resetStyles(): void {
+    this.fg = null
+    this.bg = null
+    this.fgTrue = null
+    this.bgTrue = null
+    this.flags = 0
+  }
+
+  /** (兼容语义) 流结束: 强制把未换行的行尾刷出并复位样式。
+   *  保留原名供会话边界 (断线 close) 使用; 常规行边界请用 flushLine()。 */
   flush(): MudLine | null {
     if (this.textLen === 0 && this.runs.length === 0) {
       this.reset()
       return null
     }
     const line = this.commitLine()
-    // flush 是一次全新会话的边界: 样式游标一并复位
-    this.fg = null
-    this.bg = null
-    this.fgTrue = null
-    this.bgTrue = null
-    this.flags = 0
+    this.resetStyles()
     return line
   }
 

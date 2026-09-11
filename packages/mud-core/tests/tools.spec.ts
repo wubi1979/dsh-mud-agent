@@ -162,7 +162,7 @@ describe('命令-应答桥装配 (sendAndAwait)', () => {
     const rej = tools.mud_move!.execute({ direction: 'xyz' })
     expect(rej.ok).toBe(false)
   })
-  it('P1-4: dz/sleep 自动附带完成句 until (无显式 until 时)', async () => {
+  it('P1-4/R2-3: dz/dazuo/sleep 自动附带完成句 until (无显式 until 时)', async () => {
     const seen: { cmd: string; opts?: ReplyOptions }[] = []
     const tools = buildMudTools({
       sendAndAwait: async (cmd, opts) => {
@@ -170,17 +170,24 @@ describe('命令-应答桥装配 (sendAndAwait)', () => {
         return { ok: true, cmd: String(cmd), text: '完成', lines: [], settled: 'ga' }
       },
     })
-    // dz: 自动 until。
+    // dz: 自动 until (主形态 + 回退分支 + 90s 声明超时)。
     await tools.mud_send!.execute({ cmd: 'dz' })
     expect(seen[0]!.cmd).toBe('dz')
-    expect(seen[0]!.opts?.until?.regex).toBe('^你将运转于全身经脉间的内息收回丹田，深深吸了口气，站了起来。$')
+    expect(seen[0]!.opts?.until?.regex).toContain('你将运转于全身经脉间的内息收回丹田')
+    expect(seen[0]!.opts?.until?.timeout).toBe(90_000)
+    // R2-3: 抓包实发首词 `dazuo 10` 同样附带 until。
+    await tools.mud_send!.execute({ cmd: 'dazuo 10' })
+    expect(seen[1]!.cmd).toBe('dazuo 10')
+    expect(seen[1]!.opts?.until?.regex).toContain('你将运转于全身经脉间的内息收回丹田')
+    expect(seen[1]!.opts?.until?.timeout).toBe(90_000)
     // sleep: 自动 until。
     await tools.mud_send!.execute({ cmd: 'sleep' })
-    expect(seen[1]!.opts?.until?.regex).toBe('^你一觉醒来，精神抖擞地活动了几下手脚。$')
+    expect(seen[2]!.opts?.until?.regex).toContain('你一觉醒来，精神抖擞地活动了几下手脚')
+    expect(seen[2]!.opts?.until?.timeout).toBe(90_000)
     // 显式 until 不覆盖。
     await tools.mud_send!.execute({ cmd: 'dz', until: { regex: '^自定义$', timeout: 120 } })
-    expect(seen[2]!.opts?.until?.regex).toBe('^自定义$')
-    expect(seen[2]!.opts?.until?.timeout).toBe(120)
+    expect(seen[3]!.opts?.until?.regex).toBe('^自定义$')
+    expect(seen[3]!.opts?.until?.timeout).toBe(120)
   })
   it('P2-2: 命令序列逐条串行结算 (每条命令独立 GA)', async () => {
     const seenCmds: string[] = []

@@ -114,6 +114,11 @@ const MAX_FRAME_LINES = 256
 /** 应答行集表上限 (有界 FIFO; 与旧行注册表同量级)。 */
 const LINE_STORE_MAX = 64
 
+/** R2-11: 孤儿 GA 计数过期窗口 — 非 GA 结算 (silent/timeout/abort/until) 后
+ *  遗留 GA 只应吞"紧随其后"的一帧边界; 超过该窗 (GA 实测延迟 1–602ms,
+ *  静默窗 2s) 仍累积的孤儿视为已无后续, 强制过期, 防止吞掉未来真实 GA。 */
+const ORPHAN_EXPIRE_MS = 3_000
+
 /** 单次应答的运行时状态。 */
 interface PendingReply {
   id: string
@@ -165,9 +170,11 @@ export class CommandResponseController {
   private live: PendingReply | null = null
   /** 连续超时计数 (成功结算即复位; 达上限 → reject)。 */
   private consecutiveTimeouts = 0
-  /** P3-2: 迟到 GA 计数 — 非 GA 路径结算 (silent/timeout/abort/until) 后,
-   *  遗留的 GA 不应提前结算下一帧 (abort 路径实证问题)。 */
+  /** P3-2/R2-11: 迟到 GA 计数 — 非 GA 路径结算 (silent/timeout/abort/until) 后,
+   *  遗留的 GA 不应提前结算下一帧 (abort 路径实证问题); orphanBoundaryAt 记录
+   *  最近一次递增时间, 消费时超窗 (ORPHAN_EXPIRE_MS) 即过期清零。 */
   private orphanBoundaries = 0
+  private orphanBoundaryAt = 0
   private replySeq = 0
   private disposed = false
 
@@ -281,15 +288,17 @@ export class CommandResponseController {
       reply.text = textOfLines(reply.lines)
       this.record(lines)
       this.resetSilence(reply)
+      // 声明边界: 任一既有行命中即结算 (跨帧累积; 逐行语义, 锚定整行正则)。
+      // R2-5: until 判定必须先于行数上限 — 长列表命令完成句排在 256 行之后时,
+      // 若先判上限会把"完成句即将到达"误判为边界未命中 (强制 timeout)。
+      if (reply.opts.until && this.testUntil(reply.opts.until.regex, reply.lines)) {
+        this.settle(reply, 'until')
+        return
+      }
       // P3-5: 帧行数超限强制 timeout 结算 (防 dz 渐进推送等无 GA/prompt 场景无限累积)。
       if (reply.lines.length >= MAX_FRAME_LINES) {
         this.opts.onLog?.(`[应答] 帧行数超限 (${reply.lines.length} >= ${MAX_FRAME_LINES}), 强制 timeout 结算`)
         this.settle(reply, 'timeout')
-        return
-      }
-      // 声明边界: 任一既有行命中即结算 (跨帧累积; 逐行语义, 锚定整行正则)。
-      if (reply.opts.until && this.testUntil(reply.opts.until.regex, reply.lines)) {
-        this.settle(reply, 'until')
       }
       return
     }
@@ -311,11 +320,17 @@ export class CommandResponseController {
         if (this.testUntil(reply.opts.until.regex, reply.lines)) this.settle(reply, 'until')
         return
       }
-      // P3-2: 非 GA 结算 (silent/timeout/abort/until) 后迟到 GA 丢弃 — 不提前结算下一帧。
+      // P3-2/R2-11: 非 GA 结算 (silent/timeout/abort/until) 后迟到 GA 丢弃 —
+      // 不提前结算下一帧; 计数带过期窗 (只增、只在边界到达时减会吞掉未来真实 GA,
+      // 且可能链式放大 — 本命令若本就没有 GA, 计数器会永久驻留)。
       if (this.orphanBoundaries > 0) {
-        this.orphanBoundaries -= 1
-        this.opts.onLog?.(`[应答] 迟到 GA 丢弃 (P3-2 orphan, 剩余 ${this.orphanBoundaries})`)
-        return
+        if (Date.now() - this.orphanBoundaryAt > ORPHAN_EXPIRE_MS) {
+          this.orphanBoundaries = 0
+        } else {
+          this.orphanBoundaries -= 1
+          this.opts.onLog?.(`[应答] 迟到 GA 丢弃 (P3-2 orphan, 剩余 ${this.orphanBoundaries})`)
+          return
+        }
       }
       this.settle(reply, kind)
       return
@@ -495,8 +510,9 @@ export class CommandResponseController {
       }
       const text = reply.text + TIMEOUT_MARKER
       reply.resolve({ ok: false, cmd: reply.cmd, text, lines: reply.lines, settled: kind })
-      // P3-2: timeout 为非 GA 路径 — 遗留 GA 不结算下一帧。
+      // P3-2: timeout 为非 GA 路径 — 遗留 GA 不结算下一帧 (R2-11: 带过期窗)。
       this.orphanBoundaries += 1
+      this.orphanBoundaryAt = Date.now()
       this.pump()
       return
     }
@@ -518,10 +534,11 @@ export class CommandResponseController {
         ok = true
         break
     }
-    // P3-2: 非 GA 路径 (silent/abort/timeout/until) 遗留 GA 不结算下一帧;
+    // P3-2/R2-11: 非 GA 路径 (silent/abort/timeout/until) 遗留 GA 不结算下一帧;
     // timeout 已提前返回; error 为断线 (无后续 GA); ga/eor 为正常路径, 不计。
     if (kind !== 'ga' && kind !== 'eor') {
       this.orphanBoundaries += 1
+      this.orphanBoundaryAt = Date.now()
     }
     reply.resolve({ ok, cmd: reply.cmd, text, lines: reply.lines, settled: kind })
     this.pump()
@@ -529,6 +546,10 @@ export class CommandResponseController {
 
   /** 武装后的计时: 超时必启; 静默窗仅在未声明 until 时启用。 */
   private armTimers(reply: PendingReply): void {
+    // R2-4: 先清掉 pump 阶段设置的**发送守卫**定时器 (sending 兜底; 最长存活
+    // 120s, 闭包持 reply)。此前直接覆盖 timeoutTimer 引用使旧守卫泄漏 —
+    // settle 的 clearTimers 只清最新引用, teardown/测试退出被拖住。
+    this.clearTimers(reply)
     // 超时定时器 (绝对): 未声明 10s / 声明 120s, 请求级 opts.timeout 覆盖。
     const declared = reply.opts.until !== undefined
     const timeoutMs = reply.opts.timeout ?? (

@@ -8,10 +8,15 @@
  * 所有权路由 (REFACTOR-V7 机制 A 的续步与选路, 取代旧瀑布):
  *   - 注入消息携带**所有权元数据** (source.kind='mud-owned', lane=t1|t2):
  *     feed 判类 (index.ts) 决定每批输出归谁; 工具结果/回放消息不带该元数据。
- *   - agent/request 监听器回扫会话 surface 最近一条 mud-owned user 消息
- *     (跳过 tool-result) → 选 provider: lane=t2 → T2 (agentDefaultModel),
- *     其余/T2 未配置 → T1 (本地模拟 mud-t1)。所有权随会话 surface 走,
- *     无回合粘性状态 — 新的带权注入天然覆盖旧 lane。
+ *   - agent/request 监听器读取**内存投影** (ownedLaneBySession, 由
+ *     sendOwnedOutput 在注入瞬间写入) → 选 provider: lane=t2 → T2
+ *     (agentDefaultModel), 其余/T2 未配置 → T1 (本地模拟 mud-t1)。
+ *     投影取代旧的 surface 回扫 (Session#eventAt 自 0.1.5 起 @deprecated,
+ *     见 harness Agent Note 2026-09-09-deprecate-synchronous-session-event-
+ *     reads): lane 在写入瞬间已知, 无需回读历史事件; 非 owned 注入
+ *     (sendGameOutput/工具续步) 不更新投影 → 保持最近一次 owned lane。
+ *     重启后投影为空 → 首次请求回退 T1, 直到新的带权注入重建投影
+ *     (feed 判类随输出即时发生, 实际仅影响无判类直注入的边角)。
  *   - 无 agent/request-error 瀑布 (旧 t1FailedKeys 已删): T1 不应答不再是
  *     "失败交棒", 而是**自然收束** (回合结束, 等下一批输出重新判类注入)。
  *
@@ -24,7 +29,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
-import { deriveEventMessage } from '@deepseek-ai/dsh-session/surface'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { type AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -52,6 +56,15 @@ export let eventMatchService: TriggerMatchService | null = null
 // kind='mud-owned' + lane (t1|t2); tool-result 与旧式明文消息不带该元数据,
 // 路由回扫时被跳过/归默认。所有权随会话 surface 走 — 无旁路状态。
 export type OwnedLane = 't1' | 't2'
+
+/**
+ * 每会话"最近一条 mud-owned user 消息的 lane"投影 (选路依据)。
+ * 由 sendOwnedOutput 在注入瞬间写入 (此时 lane 已知), agent/request 时
+ * 同步读取 — 取代旧版对 Session#eventAt 的历史回扫 (0.1.5 起 @deprecated)。
+ * 非 owned 注入不更新 → 保持最近一次 owned lane (与旧回扫语义一致);
+ * 重启后为空 → 回退 T1 (feed 判类随新输出即时重建, 无持久化负担)。
+ */
+export const ownedLaneBySession = new Map<SessionId, OwnedLane>()
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -105,30 +118,13 @@ export function registerTriggerProvider(ctx: Context, opts: {
   const t2Selection = (): { provider: string; model: string } | null =>
     ctx.get('agentDefaultModel')?.currentSelection() ?? null
 
-  /** 回扫会话 surface: 最近一条 mud-owned user 消息的 lane (跳过 tool-result
-   *  与其余 kind)。工具结果续步/历史回放无元数据 → 沿用注入时的 lane —
-   *  所有权随消息留在 surface, 无需旁路粘性状态。 */
-  const ownedLaneFromSession = (sessionId: SessionId): 't1' | 't2' | null => {
-    const job = ctx.get('sessions') as
-      | { get(id: SessionId): { surface: { nodes: readonly unknown[] }; eventAt(seq: unknown): unknown } | undefined }
-      | undefined
-    const session = job?.get(sessionId)
-    const surface = session?.surface
-    if (!session || !surface) return null
-    let scanned = 0
-    for (let i = surface.nodes.length - 1; i >= 0 && scanned < 64; i -= 1) {
-      scanned += 1
-      const event = session.eventAt(surface.nodes[i])
-      const message = event ? deriveEventMessage(event as never) : null
-      if (!message || message.role !== 'user') continue
-      const source = message.source as Partial<{ kind: string; lane: string }> | null | undefined
-      if (source?.kind !== 'mud-owned') continue
-      return source.lane === 't2' ? 't2' : 't1'
-    }
-    return null
-  }
+  /** 读取 lane 投影: 最近一条 mud-owned user 消息的 lane (写入点
+   *  sendOwnedOutput, 见文件头注释)。缺失 = 无带权注入 → T1 (与旧回扫
+   *  无匹配一致)。不访问会话 surface/历史事件 (0.1.5 deprecated 路径)。 */
+  const ownedLaneFromSession = (sessionId: SessionId): 't1' | 't2' | null =>
+    ownedLaneBySession.get(sessionId) ?? null
 
-  // agent/request 瀑布: 回扫所有权元数据 → 选 provider。
+  // agent/request 瀑布: 读 lane 投影 → 选 provider。
   //   - lane=t2 且 T2 已配置 → T2; T2 未配置时降级 T1 (日志注明);
   //   - 其余 (含无元数据/工具续步) → T1。
   //   - 无 agent/request-error 交棒: T1 不应答 = 自然收束, 等新输出重新判类。
@@ -155,6 +151,7 @@ export function disposeTriggerProvider(): void {
     try { t1Registration() } catch { /* ignore */ }
     t1Registration = null
   }
+  ownedLaneBySession.clear()
   stateMatchService = null
   eventMatchService = null
 }
@@ -272,7 +269,9 @@ export function sendGameOutput(handle: AgentHandle, text: string): void {
 }
 
 /** 带所有权元数据的会话注入 (feed 判类后; 控制唤醒 lane=t2)。路由由
- *  agent/request 回扫 surface 决定 — 所有权随消息走, 无旁路状态。 */
+ *  agent/request 读取 ownedLaneBySession 投影决定 — lane 在注入瞬间
+ *  (此处) 写入, 所有权随消息走, 无旁路状态。 */
 export function sendOwnedOutput(handle: AgentHandle, text: string, lane: OwnedLane): void {
+  ownedLaneBySession.set(handle.agent.id, lane)
   handle.agent.send(ownedGameMessage(text, lane), 'next-turn', true)
 }

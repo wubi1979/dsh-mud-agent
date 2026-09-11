@@ -43,6 +43,10 @@ export interface MudWebSocketHubOptions {
 /** 心跳间隔: 超时无 pong 判定死连接。 */
 const HEARTBEAT_MS = 30_000
 
+/** R2-10: 背压阈值 — 慢客户端 + 持续推送会在 ws 内部无界缓冲; 超阈即断开
+ *  (前端重连走 backfill 回填, 比无限缓冲积存更干净)。 */
+const MAX_BUFFERED_AMOUNT = 1 * 1024 * 1024
+
 // ── 信任围栏 (语义对齐 client/connection 的 api-request-trust) ──
 
 function parseAuthority(authority: string): URL | undefined {
@@ -78,10 +82,12 @@ function matchesTrustedAuthority(hostUrl: URL, trustedHosts: readonly string[]):
 }
 
 /**
- * Whether one WebSocket upgrade request may pass. Host fence first (the one
- * header DNS rebinding cannot forge), then cross-site/origin markers.
+ * Whether one inbound request may pass (upgrade 与普通 HTTP 共用)。
+ * Host fence first (the one header DNS rebinding cannot forge), then
+ * cross-site/origin markers。WS upgrade handler 与 /mud/* HTTP 路由
+ * (index.ts 包装层) 均使用本判定。
  */
-function isTrustedSocketRequest(req: IncomingMessage, trustedHosts: readonly string[]): boolean {
+export function isTrustedRequest(req: IncomingMessage, trustedHosts: readonly string[]): boolean {
   const host = header(req.headers, 'host')
   if (host === undefined) return false
   const hostUrl = parseAuthority(host)
@@ -117,7 +123,7 @@ export class MudWebSocketHub {
     this.disposeRoute = options.registerUpgrade({
       path: '/mud/ws',
       handler: (req, socket, head) => {
-        if (!isTrustedSocketRequest(req, options.trustedHosts ?? [])) {
+        if (!isTrustedRequest(req, options.trustedHosts ?? [])) {
           socket.destroy()
           return
         }
@@ -152,6 +158,12 @@ export class MudWebSocketHub {
     }
     for (const ws of this.clients) {
       if (ws.readyState !== WebSocket.OPEN) continue
+      // R2-10: 背压控制 — 缓冲超阈的慢客户端直接断开, 不再向其累积积存数据。
+      if (ws.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+        this.options.onError?.(new Error(`[ws] 客户端缓冲超限 (${ws.bufferedAmount}B), 断开`))
+        try { ws.terminate() } catch { /* already gone */ }
+        continue
+      }
       try { ws.send(data) } catch { /* socket loss wins over delivery */ }
     }
   }

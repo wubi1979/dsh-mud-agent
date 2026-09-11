@@ -20,6 +20,31 @@
 /** HTML <img> 标签中 src 为图片 (jpg/jpeg/png/gif) 的匹配; 兼容单/双引号。 */
 const IMG_SRC_RE = /<img[^>]*src=["']([^"']+\.(?:jpe?g|png|gif))["']/i
 
+// R2-9: 出站围栏 — robotUrl 来自游戏文本, 不可信 (异常/恶意服务器可诱导 host
+// 请求内网地址或悬挂请求)。仅允许 http(s) + pkuxkx.net 域, 5s 超时, 256KB 上限,
+// 拒绝重定向 (避免 redirect 逃逸到非白名单主机)。
+const CAPTCHA_HOST_RE = /(?:^|\.)pkuxkx\.net$/i
+const CAPTCHA_FETCH_TIMEOUT_MS = 5_000
+const CAPTCHA_MAX_BYTES = 256 * 1024
+
+/** 校验验证码地址在白名单内, 返回归一化 URL; 非法即抛错。 */
+function assertCaptchaUrl(urlText: string): URL {
+  let url: URL
+  try {
+    url = new URL(urlText)
+  } catch {
+    throw new Error('验证码地址非法')
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('验证码地址仅允许 http(s)')
+  }
+  const host = url.hostname.toLowerCase()
+  if (!CAPTCHA_HOST_RE.test(host)) {
+    throw new Error(`验证码地址不在白名单: ${host}`)
+  }
+  return url
+}
+
 /**
  * 请求 robot.php 验证码页面, 解析出真实图片的绝对地址。
  * @param robotUrl 游戏回显的 robot.php 地址。
@@ -27,15 +52,23 @@ const IMG_SRC_RE = /<img[^>]*src=["']([^"']+\.(?:jpe?g|png|gif))["']/i
  * @throws 网络异常或页面中未匹配到图片时抛出 (交由调用方兜底)。
  */
 export async function resolveCaptchaImage(robotUrl: string): Promise<string> {
-  const res = await fetch(robotUrl)
+  const url = assertCaptchaUrl(robotUrl)
+  const res = await fetch(url, {
+    redirect: 'error',
+    signal: AbortSignal.timeout(CAPTCHA_FETCH_TIMEOUT_MS),
+  })
   if (!res.ok) {
     throw new Error(`验证码页面请求失败 (HTTP ${res.status})`)
   }
-  const html = await res.text()
+  const buf = await res.arrayBuffer()
+  if (buf.byteLength > CAPTCHA_MAX_BYTES) {
+    throw new Error('验证码页面超过大小上限')
+  }
+  const html = new TextDecoder('utf-8').decode(buf)
   const m = html.match(IMG_SRC_RE)
   if (m === null || m[1] === undefined) {
     throw new Error('验证码页面中未找到图片地址')
   }
   // new URL 原生处理相对路径 (含 "./")、"/" 开头与绝对 URL 三种形态。
-  return new URL(m[1], robotUrl).href
+  return new URL(m[1], url.href).href
 }

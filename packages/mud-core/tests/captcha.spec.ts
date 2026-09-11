@@ -18,6 +18,7 @@ function stubFetch(html: string, ok = true, status = 200): void {
     ok,
     status,
     text: async () => html,
+    arrayBuffer: async () => new TextEncoder().encode(html).buffer,
   })))
 }
 
@@ -55,21 +56,42 @@ describe('resolveCaptchaImage', () => {
 
   it('多图 → 取第一个图片 src', async () => {
     stubFetch('<img src="a.gif"><img src="b.jpg">')
-    expect(await resolveCaptchaImage('http://host/robot.php')).toBe('http://host/a.gif')
+    expect(await resolveCaptchaImage('http://fullme.pkuxkx.net/robot.php')).toBe('http://fullme.pkuxkx.net/a.gif')
   })
 
   it('页面无图片 → 抛错', async () => {
     stubFetch('<html><body>no image here</body></html>')
-    await expect(resolveCaptchaImage('http://host/robot.php')).rejects.toThrow()
+    await expect(resolveCaptchaImage('http://fullme.pkuxkx.net/robot.php')).rejects.toThrow()
   })
 
   it('fetch 网络异常 → 抛错', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network down') }))
-    await expect(resolveCaptchaImage('http://host/robot.php')).rejects.toThrow()
+    await expect(resolveCaptchaImage('http://fullme.pkuxkx.net/robot.php')).rejects.toThrow()
   })
 
   it('HTTP 非 2xx → 抛错', async () => {
     stubFetch('forbidden', false, 403)
-    await expect(resolveCaptchaImage('http://host/robot.php')).rejects.toThrow()
+    await expect(resolveCaptchaImage('http://fullme.pkuxkx.net/robot.php')).rejects.toThrow()
+  })
+
+  it('R2-9: 非白名单域 → 抛错 (不发起请求)', async () => {
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+    await expect(resolveCaptchaImage('http://evil.example.com/robot.php')).rejects.toThrow('白名单')
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('R2-9: 非 http(s) 协议 → 抛错', async () => {
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+    await expect(resolveCaptchaImage('file:///etc/passwd')).rejects.toThrow('http(s)')
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('R2-9: 子域名 pkuxkx.net 放行', async () => {
+    stubFetch('<img src="a.jpg">')
+    await expect(resolveCaptchaImage('http://fullme.pkuxkx.net/robot.php')).resolves.toBe(
+      'http://fullme.pkuxkx.net/a.jpg',
+    )
   })
 })

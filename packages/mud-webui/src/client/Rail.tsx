@@ -1,13 +1,15 @@
 /**
- * dsh-mud-webui — 右栏 (details rail), client half.
+ * dsh-mud-webui — 右栏 (rail), client half.
  *
- * details 单槽 (priority -100 遮蔽默认 DetailsPanel): 决策摘要 (上) +
- * 状态面板 (下)。决策与 world 状态来自 /mud/ws 推送通道的视图快照
+ * 以 right-Sidebar 页面 tab 类型的 body 挂载 (keyed 座
+ * `sidebar.right.pane.tab`, key = '@deepseek-ai/dsh-mud-webui'):
+ * 决策摘要 (上) + 状态面板 (下)。additive —— 不遮蔽右栏原生 tabs,
+ * mud tab 激活时才渲染。决策与 world 状态来自 /mud/ws 推送通道的视图快照
  * (谁 + 为什么 + 做了什么), 与日志 tab 的流水分离。
  * @module @deepseek-ai/dsh-mud-webui/client/Rail
  */
 
-import { useEffect, useSyncExternalStore } from 'react'
+import { useSyncExternalStore } from 'react'
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { MudClientInjected } from './MudSidebar.tsx'
 import type { MudUiItem } from '@deepseek-ai/dsh-mud-core/src/client/wire.ts'
@@ -102,10 +104,9 @@ function statusLinesOf(world: {
   return lines
 }
 
-/** 右栏: 决策摘要 (上) + 状态 (下)。挂载时 (会话打开) 确保 details 面板打开。
- *  同时承载 fullme 验证码对话框 (全局唯一, 由 /mud/ws captcha 帧驱动)。 */
-export function Rail({ mudSocket, sendCommand, refreshCaptcha, onRailMounted }: PropsRuntime<'details'> & InjectFace<MudClientInjected> & { onRailMounted?: () => void }) {
-  useEffect(() => { onRailMounted?.() }, [onRailMounted])
+/** 右栏: 决策摘要 (上) + 状态 (下)。由右栏 mud tab 激活时渲染, 同时承载
+ *  fullme 验证码对话框 (全局唯一, 由 /mud/ws captcha 帧驱动)。 */
+export function Rail({ mudSocket, sendCommand, refreshCaptcha }: PropsRuntime<'sidebar.right.pane.tab'> & InjectFace<MudClientInjected>) {
   const view = useSyncExternalStore(
     listener => mudSocket.subscribeView(listener),
     () => mudSocket.getView(),

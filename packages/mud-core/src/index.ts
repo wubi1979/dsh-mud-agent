@@ -49,7 +49,7 @@ import { CONTROL_PREFIX } from './trigger-llm/types.ts'
 import type { AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { MudWebSocketHub, type MudUiItem } from './network/ws.ts'
+import { MudWebSocketHub, isTrustedRequest, type MudUiItem } from './network/ws.ts'
 import { resolveCaptchaImage } from './network/captcha.ts'
 import type { MudWorldSnapshot } from './client/wire.ts'
 import type {
@@ -118,9 +118,16 @@ function buildPersona(): string {
   ].join('\n')
 }
 
-/** 读取并解析请求 JSON body (上限 64KB; 空 body 视为空对象)。 */
+/** 读取并解析请求 JSON body (上限 64KB; 空 body 视为空对象)。
+ *  强制 `content-type: application/json` (R2-1): 让 `/mud/*` POST 对浏览器
+ *  成为"非简单请求"(触发 CORS 预检), 拒绝 text/plain 伪装的简单请求。 */
 function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
+    const contentType = req.headers['content-type']
+    if (typeof contentType !== 'string' || !/^application\/json(?:;|$)/i.test(contentType.trim())) {
+      reject(new Error('content-type must be application/json'))
+      return
+    }
     let data = ''
     req.setEncoding('utf8')
     req.on('data', (chunk: string) => {
@@ -161,6 +168,11 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   let deadAirTimer: ReturnType<typeof setTimeout> | null = null // 断流 30s → 唤醒 agent
   // P3-5: 观察窗行数上限 (与 response.ts MAX_FRAME_LINES 同量级; 超限立即 flush)。
   const MAX_OBSERVE_LINES = 256
+  // R2-8: 观察窗**注入**裁剪 (机制 D deliver.tail 的过渡实现): 判类仍用全量行
+  // (不丢事件命中), 但注入文本只保留"摘要头 + 末 N 行" — 全量 256 行 (约 10KB+)
+  // 作为一条 user 消息会让 T1 单次匹配巨批、T2 上下文暴涨 (成本与噪声不可控)。
+  const MAX_INJECT_TAIL_LINES = 64
+  const MAX_INJECT_TAIL_CHARS = 8_000
   // 登录看门狗: 登录期 (logged_in=false) 断流计时被抑制 (登录由 p:login:* 触发器推进),
   // 规则漏配/密码错误/网络半死会让登录停在某步且**无人唤醒**。整体预算 loginTimeoutMs
   // (缺省 90s) 无推进 → 升级 T2 决策; 阶段超时 (trigger-rules until 30~45s) < 预算,
@@ -277,10 +289,17 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     pushGameEntry(`\x1b[94m${name}@${actor}>${redactCredential(cmd)}\x1b[0m`)
   }
 
-  /** 凭据掩码: 仅密码 (高敏感); 用户名不掩 (日志可读性)。 */
+  /** 凭据掩码: 仅密码 (高敏感); 用户名不掩 (日志可读性)。
+   *  R2-6: 密码来源补 `config.account.pass` (未走 connect 选项时 activeAccount
+   *  为 null 曾漏掩); 支持 `{pass}` 插值/带前后缀的**嵌入子串**掩码 — 短密码
+   *  (长度 <4) 子串匹配误伤面过大, 仅全等掩码。 */
   function redactCredential(cmd: string): string {
-    const pass = activeAccount?.pass
-    if (pass && cmd === pass) return '***'
+    const pass = activeAccount?.pass ?? config.account?.pass
+    if (!pass) return cmd
+    if (cmd === pass) return '***'
+    if (pass.length >= 4 && cmd.includes(pass)) {
+      return cmd.split(pass).join('***')
+    }
     return cmd
   }
 
@@ -356,21 +375,45 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     observeTimer = setTimeout(flushObserve, config.bridgeSilenceMs ?? 2_000)
   }
 
+  /** R2-8: 注入文本裁剪 (deliver.tail 过渡实现) — 超限时返回"摘要头 + 末 N 行"。
+   *  摘要头为普通文本行 (无样式), 明确说明截断, 避免 LLM 误以为缺行是断流。 */
+  function trimObservation(lines: readonly MudLine[]): MudLine[] {
+    if (
+      lines.length <= MAX_INJECT_TAIL_LINES
+      && lines.reduce((acc, l) => acc + l.text.length, 0) <= MAX_INJECT_TAIL_CHARS
+    ) {
+      return lines as MudLine[]
+    }
+    const tail = lines.slice(-MAX_INJECT_TAIL_LINES)
+    const header: MudLine = {
+      text: `[观察窗截断] 共 ${lines.length} 行, 保留末 ${tail.length} 行`,
+      raw: `[观察窗截断] 共 ${lines.length} 行`,
+      style: [],
+      abs: -1,
+      time: Date.now(),
+      isPrompt: false,
+    }
+    return [header, ...tail]
+  }
+
   /** 判类注入: state 已折叠; event 规则命中 → T1 反射 (轻量确定性),
-   *  其余 → T2 推理 (真实 LLM)。所有权随消息走 (bridge 回扫选 provider)。 */
+   *  其余 → T2 推理 (真实 LLM)。所有权随消息走 (bridge 投影选 provider)。 */
   function judgeAndInject(lines: MudLine[]): void {
     if (lines.length === 0) return
     if (!(config.agentEnabled ?? false)) return
     if (!agent) return
-    const text = textOfLines(lines)
-    const clean = text.trim()
-    if (clean === '') return
+    // 判类用全量行 (裁剪注入不丢事件命中)。
     let hasHit = false
     if (eventMatchService) {
       // P1-3b: 判类走镜像 matchDry (不推进多行状态机) — 判类与 adapter 真渲染
       // 共用实例会双跑: 判类先推进 multiLastAbs, 渲染时同批被单调保护跳过。
       hasHit = eventMatchService.matchDry(lines).some(h => h.action !== undefined)
     }
+    // R2-8: 注入侧裁剪 — 全量 256 行一条注入使 T1 匹配巨批、T2 上下文暴涨。
+    const inject = trimObservation(lines)
+    const text = textOfLines(inject)
+    const clean = text.trim()
+    if (clean === '') return
     const lane: OwnedLane = hasHit ? 't1' : 't2'
     sendOwnedOutput(agent, clean, lane)
     tuiDecision({
@@ -388,7 +431,7 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
       // 真实写 socket 后武装: 无主行 (帧首集) 并入帧首, 保持帧连续。
       let sent = false
       try {
-        sent = sendCommand(cmd)
+        sent = sendCommand(cmd, meta?.actor ?? 'agent')
       } catch (err) {
         tuiLog(`[发送] 写 socket 异常: ${err instanceof Error ? err.message : String(err)}`)
       }
@@ -838,11 +881,12 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
         })(),
       }
     },
-    /** 手动命令 (WebUI/用户): 走队列节流 + 正确归属观察窗 (不绕过应答桥计数)。 */
+    /** 手动命令 (WebUI/用户): 走队列节流 + 正确归属观察窗 (不绕过应答桥计数)。
+     *  R2-2: 回显归属 'user' (规则/agent 工具路径维持默认 'agent')。 */
     sendCommand(cmd: string): boolean {
       const trimmed = cmd.trim()
       if (trimmed === '') return false
-      queue.send(trimmed)
+      queue.send(trimmed, { actor: 'user' })
       return true
     },
     readGame(sinceSeq: number): MudGameRead {
@@ -870,10 +914,11 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
 
   // ── 网络面: /mud/* HTTP 路由 + /mud/ws 通道 (webui 浏览器外壳) ──
   const webServer = ctx.get('webServer', false)
+  const trustedHosts = (ctx.get('webRuntime' as never, false) as { trustedHosts?: readonly string[] } | undefined)?.trustedHosts ?? []
   if (webServer !== undefined) {
     hub = new MudWebSocketHub({
       registerUpgrade: route => webServer.registerUpgrade(route),
-      trustedHosts: (ctx.get('webRuntime' as never, false) as { trustedHosts?: readonly string[] } | undefined)?.trustedHosts ?? [],
+      trustedHosts,
       backfill: (lastGameSeq, lastUiSeq) => ({
         game: gameBuffer.filter(item => item.seq > lastGameSeq),
         ui: uiBuffer.filter(item => item.seq > lastUiSeq),
@@ -887,8 +932,24 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     res.writeHead(status, { 'content-type': 'application/json' })
     res.end(JSON.stringify(body))
   }
+  // 统一信任围栏 (R2-1): 复用 ws 的 loopback/trustedHosts/Origin 判定包裹每个
+  // /mud/* 路由 — 失败即 403, 不进入业务 handler。配合 readJsonBody 的
+  // content-type 强制 (POST 简单请求被拒 → 浏览器预检生效)。
   const createRoute = (webServer !== undefined)
-    ? webServer.register.bind(webServer)
+    ? (route: {
+      kind: string
+      path: string
+      handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>
+    }) => webServer.register({
+      ...route,
+      handler: (req: IncomingMessage, res: ServerResponse) => {
+        if (!isTrustedRequest(req, trustedHosts)) {
+          sendJson(res, 403, { ok: false, error: 'forbidden' })
+          return
+        }
+        return route.handler(req, res)
+      },
+    })
     : null
   const disposeConnectRoute = createRoute !== null
     ? createRoute({
@@ -1048,9 +1109,11 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
               sendJson(res, 400, { ok: false, error: 'empty command' })
               return
             }
+            // R2-2: 路由改走 service.sendCommand (队列节流 + 'user' 归属),
+            // 不再直写 socket 绕过控制器计数/节流 (WebUI 正是经此路由发令)。
             let ok = true
             for (const c of cmds) {
-              ok = sendCommand(c) && ok
+              ok = service.sendCommand(c) && ok
             }
             sendJson(res, 200, { ok })
             return
@@ -1060,7 +1123,7 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
             sendJson(res, 400, { ok: false, error: 'empty command' })
             return
           }
-          const sent = sendCommand(cmd)
+          const sent = service.sendCommand(cmd)
           sendJson(res, 200, { ok: sent })
         }).catch((err: unknown) => {
           tuiLog(`[SYS] 命令请求解析失败: ${err instanceof Error ? err.message : String(err)}`)
