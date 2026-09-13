@@ -139,8 +139,6 @@ export interface MudAgentConfig {
   loginExitCommands?: readonly string[]
   /** 活动表 (§8 慢命令完成句; 缺省 `DEFAULT_ACTIVITY_TABLE`; 整体替换)。 */
   activityTable?: readonly ActivityEntry[]
-  /** fullme 验证码地址的探测正则源串 (缺省 `DEFAULT_CAPTCHA_PATTERNS`; 整体替换)。 */
-  captchaPatterns?: readonly string[]
   /**
    * 官方 agent preset id (`doc/ARCHITECTURE.md` §9)。非空 = **preset 装配路径**:
    * MUD 会话在首个回合前由 `ctx.agentPresets.select(agent, '<id>')` 切到该 preset
@@ -331,8 +329,7 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     defaultPort: Number(config.port ?? 8081),
     ...(config.dangerousCommands === undefined ? {} : { dangerous: config.dangerousCommands }),
     ...(config.activityTable === undefined ? {} : { activityTable: config.activityTable }),
-    ...(config.captchaPatterns === undefined ? {} : { captchaPatterns: config.captchaPatterns }),
-    // 流程表 (v0.4.0 §19)：登录等确定性流程的步骤图；只读声明。
+    // 流程表 (v0.4.0 §19)：登录 + fullme 等确定性流程的步骤图；只读声明。
     flows: defaultFlows,
   }
 
@@ -407,19 +404,12 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   // ── 权限档位 (每会话持久事实; §10) ───────────────────────
   const dangerousCommands: readonly DangerousRule[] = config.dangerousCommands ?? DEFAULT_DANGEROUS_COMMANDS
   /**
-   * 系统流程命令集 (权限判据; §10/§19): **流程表声明的命令** + `fullme:*` 规则声明的命令。
-   * 这些是登录/人工验证流程发出的命令, 不受档位可见性约束 (危险命令硬边界照旧)。
+   * 系统流程命令集 (权限判据; §10/§19): **流程表声明的命令**（登录 + fullme 的
+   * `fullme`/`halt`/`fullme {captcha}`/`fullme 1`/`hpbrief`…）。
+   * 这些是系统流程发出的命令, 不受档位可见性约束 (危险命令硬边界照旧)。
    */
   const loginCommands: ReadonlySet<string> = new Set([
     ...flowCommands(defaultFlows),
-    ...defaultPerceptionRules
-      .filter(rule => rule.id.startsWith('fullme:') && rule.action?.tool?.name === 'mud_send')
-      .flatMap((rule) => {
-        const args = rule.action?.tool?.args as { cmd?: unknown; cmds?: unknown } | undefined
-        const single = typeof args?.cmd === 'string' ? [args.cmd] : []
-        const series = Array.isArray(args?.cmds) ? args.cmds.filter((c): c is string => typeof c === 'string') : []
-        return [...single, ...series]
-      }),
   ])
   const capability: MudCapabilityApi = registerMudCapability(ctx, {
     defaultTier: resolveMudTier(config.defaultTier, 'operate'),
@@ -462,22 +452,18 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
     // 旧组装上并让会话永久锁定。就绪判定看 `capabilityReady` 标志 —— preset 挂载成功
     // 与"回落宿主侧装配"都会置位 (见其声明处的说明)。
     agentReady: (sessionId) => mudPresetId === '' || capabilityReady.has(sessionId),
-    // 人工验证码 (fullme): 运行时只报告"检测到提示 + 地址", 取图与推送到页面由宿主做
-    // (出站围栏在 resolveCaptchaImage 里; 页面用它已有的验证码对话框收人工输入)。
-    captcha: (sessionId, robotUrl) => {
-      void resolveCaptchaImage(robotUrl).then((imageUrl) => {
-        robotUrlMap.set(imageUrl, robotUrl)
-        tuiLog(sessionId, `[验证码] 已取到图片: ${imageUrl} (等人工输入)`)
-        pushUi(sessionId, {
-          kind: 'captcha',
-          text: 'fullme 验证码',
-          url: imageUrl,
-          cmd: 'fullme',
-          time: Date.now(),
-        })
-      }).catch((err: unknown) => {
-        tuiLog(sessionId,
-          `[验证码] 取图失败: ${err instanceof Error ? err.message : String(err)} — 请人工在游戏页查看验证码`)
+    // 人工验证码 (fullme): 解析（出站围栏 + 取图）在 `mud_captcha` 工具里（流程 `prompt` 步），
+    // 运行时只把**解析好的图片**转给宿主推前台弹窗；`robotUrl` 供"刷新图片"路由用。
+    captcha: (sessionId, push) => {
+      robotUrlMap.set(push.imageUrl, push.robotUrl)
+      tuiLog(sessionId, `[验证码] 已取到图片: ${push.imageUrl} (等人工输入)`)
+      pushUi(sessionId, {
+        kind: 'captcha',
+        text: 'fullme 验证码',
+        url: push.imageUrl,
+        cmd: 'fullme',
+        ...(push.note === undefined ? {} : { note: push.note }),
+        time: Date.now(),
       })
     },
     pushGame: (sessionId, text) => { pushGame(sessionId, text) },

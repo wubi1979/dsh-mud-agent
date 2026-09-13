@@ -60,17 +60,6 @@ export type CommandActor = 'agent' | 'user' | 'system'
 export const DEFAULT_LOGIN_EXIT_COMMANDS: readonly string[] = []
 
 /**
- * fullme 验证码提示的缺省探测正则 (源串; `Config.captchaPatterns` 可覆盖/追加)。
- *
- * 探测依据是**游戏回显的 robot.php 地址**, 而不是中文提示语: 服务端回显的不是图片
- * 而是 `http://fullme.pkuxkx.net/robot.php?filename=<ts>` 页面地址, 该串稳定且唯一,
- * 比匹配提示文案可靠 (文案会变、会有全角/半角差异)。
- */
-export const DEFAULT_CAPTCHA_PATTERNS: readonly string[] = [
-  'https?://[^\\s]*robot\\.php\\?filename=[^\\s]+',
-]
-
-/**
  * 引擎命中 → 待投递的动作请求 (`doc/ARCHITECTURE.md` §7)。
  * @param ruleId 来源规则 id。
  * @param action 规则声明的动作。
@@ -82,6 +71,33 @@ function actionOf(ruleId: string, action: { output: string; tool?: { name: strin
     output: action.output,
     tool: { name: action.tool?.name ?? '', args: action.tool?.args ?? {} },
   }
+}
+
+/**
+ * 用流程实例槽替换动作参数里的 `{槽名}`（`{captcha}` 等外部值仍留到发送瞬间插值）。
+ *
+ * `names` 是**声明的**槽名集合：未填的槽替换成空串（否则首次投递会把 `{lastFail}`
+ * 字面发给工具）；不在集合里的占位符原样保留（外部值/凭据）。
+ */
+function fillSlots(
+  action: ActionRequest,
+  slots: Readonly<Record<string, string>>,
+  names: readonly string[],
+): ActionRequest {
+  if (names.length === 0) return action
+  const fill = (value: unknown): unknown => {
+    if (typeof value === 'string') {
+      let out = value
+      for (const key of names) out = out.split(`{${key}}`).join(slots[key] ?? '')
+      return out
+    }
+    if (Array.isArray(value)) return value.map(fill)
+    if (typeof value === 'object' && value !== null) {
+      return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, fill(v)]))
+    }
+    return value
+  }
+  return { ...action, tool: { name: action.tool.name, args: fill(action.tool.args) as Record<string, unknown> } }
 }
 
 /** 空的系统流程命令集 (直接执行动作不走登录流程判据; `loginFlow: false` 下不会被读)。 */
@@ -138,14 +154,19 @@ export interface MudRuntimeSink {
    */
   agentReady?(sessionId: string): boolean
   /**
-   * 可选: 检测到 **fullme 验证码提示**时回调 (参数 = 游戏回显的 `robot.php` 地址)。
+   * 可选: 把**已解析好的验证码图片**推给宿主（`mud_captcha` 工具调用它）。
    *
-   * 宿主负责把它变成人工可读的验证码图片 (取图 + 推 captcha UI); 运行时负责**暂停
-   * 看门狗并停投递**等人工输入 (fullme 是人工环节, 不能让 agent 自主决策)。
+   * 边界：解析（出站围栏 + 抓 `robot.php` + 取 `<img src>` + 归一绝对地址）在工具里做
+   * （`network/captcha.ts`），宿主只负责"变成页面上的验证码对话框"。宿主需要
+   * `robotUrl` 才能实现"刷新图片"（同一个 `robot.php` 页面每次抓都是新图）。
    * @param sessionId 来源会话。
-   * @param robotUrl 游戏回显的 robot.php 地址 (未校验, 宿主侧还要过出站围栏)。
+   * @param push 图片地址 + 触发它的页面地址 + 可选的失败反馈文案（上一轮答错原文）。
    */
-  captcha?(sessionId: string, robotUrl: string): void
+  captcha?(sessionId: string, push: {
+    imageUrl: string
+    robotUrl: string
+    note?: string
+  }): void
   /** 终端输出 (原始文本, 含 ANSI)。 */
   pushGame(sessionId: string, text: string): void
   /** UI 流条目 (日志/决策/验证码)。 */
@@ -199,8 +220,6 @@ export interface MudRuntimeConfig {
    * 合并成一个大批次。**只压 T2 批次**：T1 动作投递、帧内动作投递、控制消息都不受它影响。
    */
   t2DeliverIntervalMs?: number
-  /** fullme 验证码提示的探测正则源串 (缺省 `DEFAULT_CAPTCHA_PATTERNS`)。 */
-  captchaPatterns?: readonly string[]
   /**
    * 流程表 (`doc/ARCHITECTURE.md` §19; 缺省 `defaultFlows`)。
    * 只读声明 —— 每会话的流程实例状态在 `FlowRuntime` 里 (arming/挂起/打断/排队)。
@@ -281,6 +300,12 @@ export class MudSessionRuntime {
   private readonly deferSlot: ReturnType<typeof ownedGameMessage>[] = []
   /** 每条投递的动作数（判据 B：`mud-<delivery>-<index>` 的 index 是否等于 count-1）。 */
   private readonly deliverySizes = new Map<string, number>()
+  /**
+   * 每条投递的**动作来源**（`ruleId`，按 index 对齐）：工具结果回来时据此解析"这条结果
+   * 属于哪个流程步骤"（`flow:<flowId>/<stepId>` → `FlowRuntime.noteToolResult`；§19.1 的
+   * `tool` 判据）。
+   */
+  private readonly deliveryRules = new Map<string, readonly string[]>()
   private worldTimer: ReturnType<typeof setTimeout> | null = null
   /**
    * 唤醒类看门狗 (断流) —— 起停条件声明在构造器里, 运行时只在固定的状态变化点调用
@@ -291,17 +316,16 @@ export class MudSessionRuntime {
   private readonly flow: FlowRuntime
   /**
    * 是否正在等**人工**处理验证码 (fullme)。等待期间: 看门狗全部停表 + **投递全部
-   * 暂停** (行留待决, 模型看不到验证码提示) + `requestAgent` 拒绝唤醒; 人工回填后把
-   * 挂起的动作交给 T1 渲染发送。无超时 (人工环节可以无限等); 人工回填或断线重连时退出
-   * (`doc/ARCHITECTURE.md` §11)。
+   * 暂停** (行留待决, 模型看不到验证码提示) + `requestAgent` 拒绝唤醒; 人工回填后
+   * `flow.resumeHuman()` 并投出挂起的动作。**计时不停**：用该步自己的 `timeoutMs`
+   * （fullme 的 `answer` = 3 分钟 = 图片有效期）；人工回填或断线重连时退出
+   * (`doc/ARCHITECTURE.md` §11/§19.3)。
    */
   private awaitingHuman = false
   /** 待人工回填的动作 (动作声明了 `awaitExternal` 占位符; 回填后交 T1 渲染)。 */
-  private pendingExternal: { request: ActionRequest; framed: boolean }[] = []
+  private pendingExternal: ActionRequest[] = []
   /** 外部占位符值 (`{captcha}` → 人工输入的验证码; 发送瞬间插值)。 */
   private externalValues: Record<string, string> = {}
-  /** 验证码地址提取正则 (规则表负责**触发**, 这里只负责从命中行里取 URL 给页面取图)。 */
-  private readonly captchaUrlPatterns: readonly RegExp[]
   private connectionId: string | null = null
   private account: SessionCredentials | null = null
   private connectCount = 0
@@ -412,17 +436,17 @@ export class MudSessionRuntime {
       },
       // 流程日志里的命令文本一律脱敏（密码/验证码不落日志；实测踩过一次明文泄漏）。
       mask: (text) => { return this.redactSecrets(text) },
-      // 流程实例状态变化 → 重评估看门狗（dead-air 的启动条件含"无活跃流程"；§11）。
-      onTransition: () => { this.noteWorldChange() },
+      // 流程实例状态变化 → 重评估看门狗（dead-air 的启动条件含"无活跃流程"；§11），
+      // 并兜住"流程自己结束了但人工环节还挂着"（人工预算超时 / 打断 / 断线都会走这里）。
+      onTransition: () => {
+        this.syncHumanWait()
+        this.noteWorldChange()
+      },
+      // 重试时清空本步 `awaitExternal` 的槽值（旧验证码作废，必须重新人工输入）。
+      clearExternal: (keys) => {
+        for (const key of keys) delete this.externalValues[key]
+      },
     })
-    this.captchaUrlPatterns = (config.captchaPatterns ?? DEFAULT_CAPTCHA_PATTERNS).map((source) => {
-      try {
-        return new RegExp(source)
-      } catch (err) {
-        this.log(`[验证码] 忽略非法探测正则 ${JSON.stringify(source)}: ${err instanceof Error ? err.message : String(err)}`)
-        return null
-      }
-    }).filter((re): re is RegExp => re !== null)
   }
 
   // ── 对外状态 ───────────────────────────────────────────
@@ -508,6 +532,17 @@ export class MudSessionRuntime {
       // 重评估看门狗 —— 登录完成不是感知事件, 不重评估就永远不会布防断流计时。
       onWorldChange: () => { this.noteWorldChange() },
       resolveExternalValues: () => this.externalValues,
+      // fullme 流程的解析步（`prompt`）调 `mud_captcha`：工具负责解析（出站围栏 + 取图），
+      // 这里只把结果交给宿主推前台弹窗（`note` = 上一轮答错原文，供人工参考）。
+      captcha: {
+        push: (imageUrl, robotUrl, note) => {
+          this.sink.captcha?.(this.sessionId, {
+            imageUrl,
+            robotUrl,
+            ...(note === undefined ? {} : { note }),
+          })
+        },
+      },
       ...(this.config.dangerous === undefined ? {} : { dangerous: this.config.dangerous }),
       ...(this.config.activityTable === undefined ? {} : { activity: this.config.activityTable }),
     })
@@ -931,19 +966,17 @@ export class MudSessionRuntime {
 
   /**
    * 检出"待人工"命中并挂起: 动作声明了 `awaitExternal` 且占位符尚无值 → 挂起该命中并进入
-   * 人工环节 (暂停投递 + 停看门狗), 同时把命中的锚点行按验证码正则取出 URL 交给宿主
-   * 取图推送 (`doc/ARCHITECTURE.md` §11)。
+   * 人工环节 (暂停投递 + 停看门狗)。
    *
-   * **不负责投递其余命中**: 返回值交给调用方决定去向 —— 帧内分支的命中已经归了回合记录
-   * (或已入待渲染队列), 这里再入队就会把同一条命中渲染两次。
+   * 取图与弹窗不在这里做：fullme 流程的 `prompt` 步用 `mud_captcha` 工具完成
+   * (`doc/ARCHITECTURE.md` §11 清单 6)；这里只负责"挂起 + 计时 + 收人工值"。
+   *
+   * **不负责投递其余命中**: 返回值交给调用方决定去向 —— 帧内分支的命中已入待渲染队列,
+   * 这里再入队就会把同一条命中渲染两次。
    * @param hits 本块带动作的命中。
-   * @param lines 本块的行 (用于从锚点行提取验证码地址)。
-   * @param framed 本块是否属于**命令应答帧**: 帧行不进待决缓冲, 所以回填后结算投不出
-   *   这些命中, 必须记下来由 `exitHumanWait` 自触发渲染 (实测: 我们主动发 `fullme`,
-   *   robot.php 地址正是它应答帧里的一行)。
    * @returns 不需要外部值、可直接渲染的命中 (调用方负责入队)。
    */
-  private parkExternalHits(hits: readonly EngineHit[], lines: readonly MudLine[], framed: boolean): EngineHit[] {
+  private parkExternalHits(hits: readonly EngineHit[]): EngineHit[] {
     const ready: EngineHit[] = []
     for (const hit of hits) {
       const needed = hit.action.awaitExternal
@@ -955,22 +988,11 @@ export class MudSessionRuntime {
         continue
       }
       // 同类动作只保留最新一条 (重复提示不堆叠)。
-      this.pendingExternal = this.pendingExternal.filter(queued => queued.request.ruleId !== hit.ruleId)
-      this.pendingExternal.push({ request: actionOf(hit.ruleId, hit.action), framed })
-      const anchor = lines.find(line => line.abs === hit.anchorAbs)
-      const robotUrl = anchor === undefined ? null : this.extractCaptchaUrl(anchor.text)
-      this.enterHumanWait(robotUrl, hit.ruleId, unresolved)
+      this.pendingExternal = this.pendingExternal.filter(queued => queued.ruleId !== hit.ruleId)
+      this.pendingExternal.push(actionOf(hit.ruleId, hit.action))
+      this.enterHumanWait(hit.ruleId, unresolved)
     }
     return ready
-  }
-
-  /** 从锚点行里抽取验证码地址 (规则负责触发, 这里只取 URL; 无匹配 → null)。 */
-  private extractCaptchaUrl(text: string): string | null {
-    for (const re of this.captchaUrlPatterns) {
-      const match = re.exec(text)
-      if (match !== null) return match[0]
-    }
-    return null
   }
 
   // ── 打断与排队 (I14 / §19.4) ───────────────────────────
@@ -1040,11 +1062,11 @@ export class MudSessionRuntime {
    * @param ruleId 触发规则 id (留痕)。
    * @param missing 缺失的占位符名 (留痕)。
    */
-  private enterHumanWait(robotUrl: string | null, ruleId: string, missing: readonly string[]): void {
+  private enterHumanWait(ruleId: string, missing: readonly string[]): void {
     if (this.awaitingHuman) return
     this.awaitingHuman = true
     this.log(`[验证码] 检测到 ${ruleId}, 等人工输入 (缺 ${missing.map(k => `{${k}}`).join('/')}; ` +
-      '看门狗暂停, 投递暂停, 无超时)')
+      '看门狗暂停, 投递暂停; 计时用本步预算)')
     this.decision({
       actor: 'flow',
       flow: 'fullme',
@@ -1053,20 +1075,19 @@ export class MudSessionRuntime {
       action: '等人工验证码',
       text: '[流程] fullme: 等人工输入验证码',
     })
-    if (robotUrl !== null) this.sink.captcha?.(this.sessionId, robotUrl)
-    else this.log('[验证码] 提示行里没有 robot.php 地址 — 请人工在游戏页查看验证码')
     this.noteWorldChange()   // 看门狗据 awaitingHuman 停表
   }
 
   /**
-   * 人工回填验证码后退出人工环节: 记下外部值 → 恢复看门狗 → 把挂起的动作交给 T1 渲染
-   * (T1 会渲染 `fullme {captcha}`, 占位符在发送瞬间插值)。
+   * 人工回填验证码后退出人工环节: 记下外部值 → 恢复看门狗 → 流程回到"等结果" →
+   * 把挂起的动作交给 T1 渲染 (T1 会渲染 `fullme {captcha}`, 占位符在发送瞬间插值)。
    *
-   * 两条投出路径 (按锚点行位置分):
-   *   - **待决路径** (锚点行还压在待决缓冲里): 补进动作队列后 `settle()` —— 一次动作投递
-   *     带出"提示行原文 + 动作";
-   *   - **帧路径** (锚点行是命令应答帧的一行, 已作为 tool result 进过模型): 无行可带 →
-   *     **动作投递**（`deliverStandalone`）。
+   * 顺序很关键: **先 `flow.resumeHuman()` 再投**（桥闸门只放行 `awaiting-result` 阶段
+   * 声明的命令）；计时器**不重布防**（等人与重试共用本步那一份预算）。
+   *
+   * 投递形态 = **动作投递**（无原文可带）：触发这次动作的行要么是命令应答帧（已作为
+   * tool result 进过模型），要么在人工环节期间留待决不投 —— 与"帧内命中/结算驱动"
+   * 同一类（§5）。行本身留在待决缓冲，等人工环节结束后按 T2 批次投出。
    * @param values 外部占位符值 (如 `{ captcha: '1234' }`)。
    */
   private exitHumanWait(values: Record<string, string>): void {
@@ -1075,8 +1096,6 @@ export class MudSessionRuntime {
     this.externalValues = { ...this.externalValues, ...values }
     const parked = this.pendingExternal
     this.pendingExternal = []
-    const lined = parked.filter(entry => !entry.framed)
-    const framed = parked.filter(entry => entry.framed)
     this.log(`[验证码] 人工已提交: ${Object.keys(values).map(k => `{${k}}`).join('/')} → 交 T1 发送, 投递与看门狗恢复`)
     this.decision({
       actor: 'flow',
@@ -1085,15 +1104,17 @@ export class MudSessionRuntime {
       action: 'T1 发送 fullme',
       text: '[流程] fullme: 人工已提交, T1 发送',
     })
-    this.pendingActions.push(...lined.map(entry => entry.request))
+    this.flow.resumeHuman()
+    const slots = this.flow.slots()
+    const names = this.flow.slotNames()
     this.noteWorldChange()   // 看门狗恢复
-    if (framed.length > 0) {
+    if (parked.length > 0) {
       this.deliverStandalone(
-        `[系统] 人工已提交验证码 (${framed.map(entry => entry.request.ruleId).join('/')})`,
-        framed.map(entry => entry.request),
+        `[系统] 人工已提交验证码 (${parked.map(entry => entry.ruleId).join('/')})`,
+        parked.map(entry => fillSlots(entry, slots, names)),
       )
     }
-    this.settle()            // 待决路径: 立即把挂起的动作投出去
+    this.settle()            // 立即把暂存的动作投出去（standalone 不被 T2 限流压住）
   }
 
   /** 写入连接/重连分隔文本到终端缓冲。 */
@@ -1154,7 +1175,7 @@ export class MudSessionRuntime {
     // 流程判定 (v0.4.0 §19): 与静态规则同一批行; 命中即产出流程步动作 (或唤醒/打断/排队)。
     const flowHits = this.flow.offer(lines, inFrame)
     // 规则命中 → 动作请求 (待人工的先挂起)。
-    const parkedRuleHits = this.parkExternalHits(result.hits, lines, inFrame)
+    const parkedRuleHits = this.parkExternalHits(result.hits)
     // 打断准入 (I14/§19.4): 有流程挂起时, 声明了 `interrupts` 的规则可能打断或排队。
     const readyRuleHits = this.admitRuleHits(parkedRuleHits, lines, inFrame)
     if (flowHits.length > 0) this.queueFlowActions(flowHits)
@@ -1285,6 +1306,9 @@ export class MudSessionRuntime {
     const t2Gap = this.config.t2DeliverIntervalMs ?? 0
     const sinceT2 = Date.now() - this.lastT2DeliverAt
     if (t2Gap > 0 && this.lastT2DeliverAt > 0 && sinceT2 < t2Gap) {
+      // 动作投递（standalone）不受 T2 限流：它与 T1 同口径，被压住会让"重试重新取图"
+      // 这类动作等不到人工环节开始就挂住（而且人工环节会暂停投递）。
+      if (standalone !== null) this.flushStandalone()
       this.debug('perception',
         `[感知] T2 投递限流: 距上次 ${sinceT2}ms < ${t2Gap}ms → ${this.pending.length} 行留待决, 延后 ${t2Gap - sinceT2}ms`)
       this.scheduleSettle(t2Gap - sinceT2)
@@ -1321,7 +1345,7 @@ export class MudSessionRuntime {
     reason: string,
   ): void {
     const delivery = `d${++this.deliverySeq}`
-    this.rememberDeliverySize(delivery, actions.length)
+    this.rememberDelivery(delivery, actions)
     this.sendDelivery(agent, ownedGameMessage(text, 't1', this.sessionId, { actions, delivery }))
     this.decision({
       actor: 'router',
@@ -1334,14 +1358,16 @@ export class MudSessionRuntime {
 
   // ── 投递通道：官方 `deferContext` / `followup`（§19.6.2） ──────────
 
-  /** 记下一条投递的动作数（判据 B：call-id 的 index 是否等于 count-1）。 */
-  private rememberDeliverySize(delivery: string, count: number): void {
-    this.deliverySizes.set(delivery, count)
+  /** 记下一条投递的动作（动作数 = 判据 B；来源 = 工具结果 → 流程步骤的解析依据）。 */
+  private rememberDelivery(delivery: string, actions: readonly ActionRequest[]): void {
+    this.deliverySizes.set(delivery, actions.length)
+    this.deliveryRules.set(delivery, actions.map(action => action.ruleId))
     // 只留最近几条（在途工具调用的 call-id 只可能来自最近的投递）。
     while (this.deliverySizes.size > 4) {
       const oldest = this.deliverySizes.keys().next().value
       if (oldest === undefined) break
       this.deliverySizes.delete(oldest)
+      this.deliveryRules.delete(oldest)
     }
   }
 
@@ -1405,6 +1431,27 @@ export class MudSessionRuntime {
   }
 
   /**
+   * **工具结果 → 流程机**（官方工具结果喂回流程；§19.1 的 `tool` 判据）。
+   *
+   * 只有本插件确定性 call-id（`mud-<delivery>-<index>`）能定位到投递与动作，
+   * 进而定位到流程步骤（动作 `ruleId` = `flow:<flowId>/<stepId>`）；T2 自己发起的调用
+   * 解析失败 ⇒ 什么都不做。
+   * @param callId 本次工具调用 id。
+   * @param ok 工具结果是否成功。
+   */
+  noteToolResult(callId: string, ok: boolean): void {
+    const parsed = parseDeliveryCallId(callId)
+    if (parsed === null) return
+    const ruleId = this.deliveryRules.get(parsed.delivery)?.[parsed.index]
+    if (ruleId === undefined || !ruleId.startsWith('flow:')) return
+    const stepId = ruleId.slice('flow:'.length).split('/')[1]
+    if (stepId === undefined || stepId === '') return
+    const hits = this.flow.noteToolResult(stepId, ok)
+    if (hits.length > 0) this.queueFlowActions(hits)
+    this.drainFlowQueue()
+  }
+
+  /**
    * 动作投递 (无原文可带 —— 帧行已作为工具结果投过, 或压根没有行): 帧内命中 / 人工回填后的答案。
    * 暂存到下一次结算点统一投出（保证同一时刻只有一条投递在飞, I6）。
    */
@@ -1431,38 +1478,71 @@ export class MudSessionRuntime {
     this.deliver(agent, text, pending.actions, 'T1 动作投递')
   }
 
-  /** 流程步动作 → 投递 (帧内走动作投递; 无主块随原文走原文投递)。 */
+  /**
+   * 流程步动作 → 投递（帧内走动作投递；无主块随原文走原文投递）。
+   *
+   * **待人工的动作先挂起**（`doc/ARCHITECTURE.md` §19.3）：`awaitExternal` 的动作（占位符尚无
+   * 值）**不投递**，存进人工槽、等人工回填后由 `exitHumanWait` 投出 —— 顺序是"先人工值、
+   * 后投递"，与绑定 GA 的"先投递后唤醒"相反。挂起一律排在**本轮投递之后**：重试时"先投
+   * 重新取图动作、再挂起答案动作"，投递不能被人工环节的暂停吃掉。
+   *
+   * 动作参数先按**流程实例槽**插值（`{captchaUrl}` / `{lastFail}`）；`{captcha}` 等外部值
+   * 留到发送瞬间。
+   */
   private queueFlowActions(hits: readonly FlowActionHit[]): void {
+    if (hits.length === 0) return
+    const slots = this.flow.slots()
+    const names = this.flow.slotNames()
+    const parks: { request: ActionRequest; framed: boolean; keys: readonly string[] }[] = []
     const framed = hits.filter(hit => hit.framed)
     const lined = hits.filter(hit => !hit.framed)
     if (lined.length > 0) {
       for (const hit of lined) {
-        this.pendingActions.push({
-          ruleId: hit.ruleId,
-          output: hit.output,
-          tool: { name: hit.tool.name, args: hit.tool.args },
-        })
+        const request = fillSlots(actionOf(hit.ruleId, { output: hit.output, tool: hit.tool }), slots, names)
+        if (this.needsHuman(hit.awaitExternal)) {
+          parks.push({ request, framed: false, keys: hit.awaitExternal ?? [] })
+          continue
+        }
+        this.pendingActions.push(request)
         if (hit.anchorAbs > this.consumeTo) this.consumeTo = hit.anchorAbs
       }
       // 流程动作也要走结算 (无主块已在 onTextBlock 里进 pending)。
       this.scheduleSettle()
     }
     for (const hit of framed) {
-      this.deliverStandalone(hit.text, [{
-        ruleId: hit.ruleId,
-        output: hit.output,
-        tool: { name: hit.tool.name, args: hit.tool.args },
-      }])
-      if (hit.awaitExternal !== undefined && hit.awaitExternal.length > 0) {
-        // 人工环节: 该动作等外部值 (由 parkExternalHits 之外的流程路径触发)。
-        this.enterHumanWait(null, hit.ruleId, hit.awaitExternal)
+      const request = fillSlots(actionOf(hit.ruleId, { output: hit.output, tool: hit.tool }), slots, names)
+      if (this.needsHuman(hit.awaitExternal)) {
+        parks.push({ request, framed: true, keys: hit.awaitExternal ?? [] })
+        continue
       }
+      this.deliverStandalone(hit.text, [request])
     }
-    for (const hit of lined) {
-      if (hit.awaitExternal !== undefined && hit.awaitExternal.length > 0) {
-        this.enterHumanWait(null, hit.ruleId, hit.awaitExternal)
-      }
+    // 投递已 staged（此时还没进人工环节，避免"人工暂停"把刚 staged 的动作一起压住）。
+    for (const park of parks) {
+      // 同类动作只保留最新一条（重复重试不堆叠）。
+      this.pendingExternal = this.pendingExternal.filter(queued => queued.ruleId !== park.request.ruleId)
+      this.pendingExternal.push(park.request)
+      this.enterHumanWait(park.request.ruleId, park.keys)
     }
+  }
+
+  /** 该动作是否需要人工补值（`awaitExternal` 声明且占位符尚无值）。 */
+  private needsHuman(keys: readonly string[] | undefined): boolean {
+    return keys !== undefined && keys.some(key => this.externalValues[key] === undefined)
+  }
+
+  /**
+   * 流程已结束（收束/失败/复位/打断）而人工环节还挂着时，退出人工环节。
+   *
+   * 覆盖"人工预算耗尽"这条主路径（`answer` 步的计时器到点 → 流程失败收束）以及打断/断线：
+   * 流程都没了，投递与看门狗必须恢复，挂起的动作作废。
+   */
+  private syncHumanWait(): void {
+    if (!this.awaitingHuman) return
+    if (this.flow.state() !== null) return
+    this.awaitingHuman = false
+    this.pendingExternal = []
+    this.log('[验证码] 流程已结束 → 退出人工环节 (挂起的动作作废, 投递与看门狗恢复)')
   }
 
   /** holdDelivery 兜底: 捕获长期不完成 → 释放结算 (按无动作投出批次)。 */
@@ -1516,6 +1596,9 @@ export class MudSessionRuntime {
    * 一次布防" —— 实测连踩两次 (登录完成不布防断流 / 断线后仍空转)。
    */
   private noteWorldChange(): void {
+    // 流程入口的 `when` 读 world（login: !logged_in；fullme: logged_in）→ 世界一变就重算
+    // 入口布防，否则"登录完成后 fullme 入口永远不 arm"（流程机只在收束/复位时自己重算）。
+    this.flow.refreshEntries()
     this.watchdogs.reevaluate()
   }
 

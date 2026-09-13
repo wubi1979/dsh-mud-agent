@@ -22,6 +22,7 @@ import type { ParameterSchemaSpec, ValueSchemaSpec } from '@deepseek-ai/dsh-tool
 import {
   DEFAULT_DANGEROUS_COMMANDS, commandHead, commandHelpText, deniedCommands, type DangerousRule,
 } from '../config/commands.ts'
+import { resolveCaptchaImage } from '../network/captcha.ts'
 import type { MudReply, ReplyOptions, ReplySettle } from '../network/response.ts'
 import { applyPatch, worldSnapshot, type WorldModel } from '../world/world.ts'
 
@@ -287,6 +288,7 @@ export function buildMudTools({
   resolveCredentials,
   resolveExternalValues,
   isConnected,
+  captcha,
   dangerous = DEFAULT_DANGEROUS_COMMANDS,
   onWorldChange,
   activity = DEFAULT_ACTIVITY_TABLE,
@@ -307,6 +309,15 @@ export function buildMudTools({
   resolveExternalValues?: () => Readonly<Record<string, string>> | undefined
   /** 连接状态读取器: 缺省视为已连接。未连接时发命令类工具快速拒绝 (不入桥)。 */
   isConnected?: () => boolean
+  /**
+   * 验证码图片推送（`mud_captcha` 用；缺省 = 只解析不推 UI）。
+   *
+   * 取图与出站围栏在工具里做（`network/captcha.ts` 的 `resolveCaptchaImage`），宿主只把
+   * 解析好的图片地址变成页面上的对话框；`robotUrl` 供宿主实现"刷新图片"。
+   */
+  captcha?: {
+    push: (imageUrl: string, robotUrl: string, note?: string) => void
+  }
   /** 危险命令策略表 (缺省 `DEFAULT_DANGEROUS_COMMANDS`; 部署可覆盖)。 */
   dangerous?: readonly DangerousRule[]
   /** 世界模型被工具改写后的回调 (装配方据此重评估看门狗; 缺省无操作)。 */
@@ -532,6 +543,46 @@ export function buildMudTools({
           return { ok: true, note: '（没有尚未投递的游戏输出 — 新输出到达时会自动投递给你）', cmd: '' }
         }
         return { ok: true, note: lines.map(l => l.replace(/\x1b\[[0-9;]*m/g, '')).join('\n'), cmd: '' }
+      },
+    },
+
+    /**
+     * mud_captcha: **解析 fullme 验证码页面并推前台弹窗**（系统流程工具，不发游戏命令）。
+     *
+     * 由 fullme 流程的 `prompt` 步渲染（`mud_captcha { url:'{captchaUrl}', note:'{lastFail}' }`），
+     * 判据是**工具结果**（`ok`/`error`）而不是 GA：它不经过命令-应答桥（`doc/ARCHITECTURE.md` §11）。
+     * 取图失败返回 `ok:false`（流程据此失败收束，不让人对着坏图干等）；地址围栏在
+     * `resolveCaptchaImage` 里（只允许 pkuxkx.net）。
+     */
+    mud_captcha: {
+      name: 'mud_captcha',
+      description: '解析 fullme 验证码页面并推送到前端对话框（取图 + 校验出站围栏）。url 必须是游戏回显的 robot.php 地址；note 是展示给人工的提示（如上一轮答错原文）。失败返回 ok:false。',
+      parameters: {
+        url: {
+          type: 'string',
+          required: true,
+          description: '验证码页面地址（游戏回显的 http(s)://…/robot.php?filename=…）',
+        },
+        note: {
+          type: 'string',
+          description: '展示给人工的提示（可选；例如上一轮的失败原文）',
+        },
+      },
+      output: { schema: OUT_SCHEMA, render: OUT_RENDER },
+      execute: async (args) => {
+        const url = String(args.url ?? '').trim()
+        if (url === '') return { ok: false, note: '缺少验证码地址 (url)', cmd: '' }
+        const rawNote = typeof args.note === 'string' ? args.note.trim() : ''
+        try {
+          const imageUrl = await resolveCaptchaImage(url)
+          captcha?.push(imageUrl, url, rawNote === '' ? undefined : rawNote)
+          log(`[验证码] 已解析并推送图片: ${imageUrl}`)
+          return { ok: true, note: `验证码图片已推送: ${imageUrl}`, cmd: '' }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          log(`[验证码] 取图失败: ${message}`)
+          return { ok: false, note: `取图失败: ${message}`, cmd: '' }
+        }
       },
     },
 

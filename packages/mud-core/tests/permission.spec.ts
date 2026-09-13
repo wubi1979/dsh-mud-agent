@@ -98,6 +98,10 @@ describe('强制判定矩阵 (evaluateToolCall)', () => {
     expect(verdict({ name: 'mud_recall', tier: 'observe' })).toBe('allow')
     // world_patch 是 T1 置位通道 (登录完成/失败), 非发送 → 放行。
     expect(verdict({ name: 'world_patch', args: { patch: { logged_in: true } }, tier: 'observe' })).toBe('allow')
+    // mud_captcha 是 fullme 流程的解析工具 (不发游戏命令) → 所有档位都放行。
+    expect(verdict({ name: 'mud_captcha', args: { url: 'x' }, tier: 'observe' })).toBe('allow')
+    expect(verdict({ name: 'mud_captcha', args: { url: 'x' }, tier: 'operate' })).toBe('allow')
+    expect(verdict({ name: 'mud_captcha', args: { url: 'x' }, tier: 'full' })).toBe('allow')
     expect(verdict({ name: 'mud_send', args: { cmd: 'look' }, tier: 'observe' })).toBe('deny')
     expect(verdict({ name: 'mud_move', args: { direction: 'north' }, tier: 'observe' })).toBe('deny')
   })

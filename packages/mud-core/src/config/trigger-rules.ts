@@ -214,40 +214,10 @@ const defaultPerceptionRules: readonly PerceptionRule[] = [
       tool: { name: 'world_patch', args: { patch: { dead: true, in_combat: false } } },
     },
   },
-  // ── fullme 防机器人验证 (规则形态; 流程化见 §19, 迁移前保持现行为) ──
-  { // 入口: 服务端提醒 → **直接发** `fullme` (无状态、无需返回; 不受档位限制)
-    // 实录提醒原文 (用户 2026-09-12): 判据就是这一串本身。
-    id: 'fullme:request',
-    eventType: 'p:fullme:request',
-    priority: 35,
-    match: { kind: 'text', includes: ['5M后长时间不使用fullme，会被系统判定为机器人。'] },
-    action: {
-      output: 'fullme: 服务端提醒, 发送 fullme 命令',
-      tool: { name: 'mud_send', args: { cmd: 'fullme' } },
-      direct: true,
-    },
-  },
-  { // 验证码地址 (应答帧内) → 挂起等人工; 人工回填后由 T1 发答案
-    id: 'fullme:prompt',
-    eventType: 'p:fullme',
-    priority: 40,
-    match: { kind: 'regex', patterns: [/^https?:\/\/[^\s]*robot\.php\?filename=[^\s]+/] },
-    action: {
-      output: '验证码: 等人工输入后发送 halt + fullme <码>',
-      tool: { name: 'mud_send', args: { cmds: ['halt', 'fullme {captcha}'] } },
-      awaitExternal: ['captcha'],
-    },
-  },
-  { // 成功句 (关键文本, 实证): 置位 + 留痕
-    id: 'fullme:done',
-    eventType: 'p:fullme:done',
-    priority: 30,
-    match: { kind: 'regex', patterns: [/^你突然感到精神一振，浑身似乎又充满了力量！\s*$/] },
-    action: {
-      output: 'fullme 验证通过',
-      tool: { name: 'world_patch', args: { patch: { fullme_ok: true } } },
-    },
-  },
+  // ── fullme 防机器人验证: **已流程化**（`config/flows.ts` 的 `FULLME_FLOW`, §11）──
+  // 原 `fullme:request` / `fullme:prompt` / `fullme:done` 三条规则退役：
+  // 入口提醒、验证码地址、成功句、答错句、上一轮未完成提示全部成为流程步的 driver/ok/fail
+  // （驱动句/动作/判据只在流程表写一份；§16 删除清单）。
   // ── save 档案保存提醒 (常驻): 文本到 → **直接执行** save (不投给 agent) ──
   {
     id: 'save:prompt',

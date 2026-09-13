@@ -15,9 +15,15 @@ import type { WorldModel } from '../world/world.ts'
 
 /** 结果/进入判据。`ga` = "该命令的应答被 GA 结算"（与行匹配并列的一种判据）。 */
 export type FlowMatch =
-  | { kind: 'regex'; patterns: readonly (string | RegExp)[] }
-  | { kind: 'text'; includes: readonly string[] }
-  | { kind: 'ga' }
+  | { kind: 'regex'; patterns: readonly (string | RegExp)[]; why?: string }
+  | { kind: 'text'; includes: readonly string[]; why?: string }
+  | { kind: 'ga'; why?: string }
+  /**
+   * **工具结果判据**：本步动作（含重试动作）的**官方工具结果**是成功还是失败。
+   * 供"只调工具、不发游戏命令"的步骤判定（如 fullme 的解析步）——
+   * 这类步骤没有 GA 可判，靠它收尾。
+   */
+  | { kind: 'tool'; outcome: 'ok' | 'error'; why?: string }
 
 /** 一步发出的工具调用声明（占位符 `{name}`/`{pass}`/`{captcha}` 在发送瞬间插值）。 */
 export interface FlowAction {
@@ -46,6 +52,12 @@ export interface FlowStep {
   action?: FlowAction
   /** 需要外部/人工补值的占位符名（如 `['captcha']`）→ 该步先挂起等人工。 */
   awaitExternal?: readonly string[]
+  /**
+   * **命中行的抽取（槽）**：`{ 槽名: 正则 }` —— 进入本步时按第一条命中的**捕获组 1**
+   * （无捕获组则取整段匹配）存进**流程实例槽**，供动作参数里的 `{槽名}` 在**投递前**插值。
+   * 答错重试**不重新抽取**（沿用首次抽到的值，如验证码地址）。
+   */
+  capture?: Readonly<Record<string, string | RegExp>>
   /** 进入本步即执行的副作用。 */
   onEnter?: FlowEnter
   /** 本步成功判据（命中即成功）。 */
@@ -60,8 +72,16 @@ export interface FlowStep {
    * 空 = 终态（进入即流程成功结束）。
    */
   next?: readonly string[]
-  /** 命中"本步 driver"时重发本步命令（给"需要重输"的流程用；登录不使用）。 */
-  retry?: { limit: number }
+  /**
+   * **重试**：命中 `on`（缺省 `['driver']`）里的判据时，**在原步内重来**（不换步）。
+   *
+   *   - `attempts` = **总尝试次数（含首次）**，用尽才算失败；
+   *   - `action` = 重试前先投的动作（缺省 = 重发本步动作）；重试时清空本步 `awaitExternal`
+   *     的槽值、把命中行原文写进 `{lastFail}`、随后**重新挂起本步动作**等人工；
+   *   - **不重置本步计时器**：时间预算是"一步总计"（fullme 的 `answer` = 3 分钟，
+   *     等人工与答错重来共用同一份预算）。
+   */
+  retry?: { attempts: number; on?: readonly ('driver' | 'fail')[]; action?: FlowAction }
   /** 本步超时毫秒（缺省取 `FlowSpec.timeoutMs`）。 */
   timeoutMs?: number
   /** 被打断时要先发的直发命令（如练功的 halt）。 */
@@ -185,14 +205,115 @@ export const LOGIN_FLOW: FlowSpec = {
   ],
 }
 
-/** 默认流程表（装配期注册进运行时；只读声明）。 */
-export const defaultFlows: readonly FlowSpec[] = [LOGIN_FLOW]
+// ── fullme (防机器人验证; `doc/ARCHITECTURE.md` §11) ─────────────────────
 
-/** 一条判据的可读标识（日志/冲突留痕用）。 */
+/** fullme 入口提醒句（作者实录 2026-09-12；原文作者上线前核对）。 */
+export const FULLME_REMINDER_TEXT = '5M后长时间不使用fullme，会被系统判定为机器人。'
+/** 上一轮未完成提示（作者实录 2026-09-13；原文作者上线前核对）。 */
+export const FULLME_STALE_TEXT = '你之前请求的fullme还没有完成。'
+/** fullme 成功句（作者实录 2026-09-13）。 */
+export const FULLME_OK_TEXT = '你突然感到精神一振，浑身似乎又充满了力量！'
+/** fullme 答错句（作者实录 2026-09-13）。 */
+export const FULLME_WRONG_TEXT = '好像什么都没有发生，但是又好像有什么事情做错了。再来一次试试！'
+/** "刚刚用过"句（时长动态：`还有 3 分 20 秒` / `还有 45 秒`，总计 15 分钟 → 通配符）。 */
+export const FULLME_COOLDOWN_PATTERN = /^你刚刚用过这个命令不久，还要[^。]*才能再用。/
+/** 验证码页面地址（应答帧内回显）。 */
+export const FULLME_URL_PATTERN = /^https?:\/\/[^\s]*robot\.php\?filename=[^\s]+/
+/** 验证码地址抽取（`capture` 槽用；捕获组 1 = 地址）。 */
+export const FULLME_URL_CAPTURE = /(https?:\/\/[^\s]*robot\.php\?filename=[^\s]+)/
+
+/**
+ * fullme 流程（五步；作者 2026-09-13 逐条审定）。
+ *
+ * 结构要点：
+ *   - `request` **无 ok**：本步结果 = 下一步的新文本（`stale` / `prompt` 的 driver 就是它的两种结果），
+ *     成功句只属于 `answer` —— **必须正确回码才算通过**；"刚刚用过"句直接中止（无兜底）；
+ *   - `stale`（上一轮未完成）**三连发 `fullme 1`** 才能真放弃，以 GA 判定、按**失败收束**收场；
+ *   - `prompt` 用 `mud_captcha` 工具取图 + 推前台弹窗，以**工具结果**判定（没有 GA 可判）；
+ *   - `answer` 三次答错重来（`retry`；错码与 `fullme 1` 等价，三次错码即"三连放弃"），
+ *     `timeoutMs = 180_000` = 图片有效期 = **本步总预算**（等人工 + 重来 + 收结果都算在内）；
+ *   - `success` 发 `hpbrief` 补状态，`ok:[GA]`、`next` 空 = 终态。
+ *
+ * 三种收场（取图失败 / 答错 3 次 / 预算耗尽）都让服务端停在当前轮次 → 下一轮先撞 `stale`，
+ * 运行时不另记状态。
+ */
+export const FULLME_FLOW: FlowSpec = {
+  id: 'fullme',
+  // 可被打断: 战斗/生存类事件（interrupts > 100）优先（§19.4）。
+  priority: PRIORITY_NORMAL,
+  when: world => world.flags.logged_in === true,
+  entry: 'request',
+  timeoutMs: 30_000,
+  // 失败只留痕: 人工/系统问题（冷却、答错、超时），T2 补不了（作者定案 2026-09-13）。
+  failPolicy: { notify: 'none' },
+  steps: [
+    {
+      id: 'request',
+      driver: { kind: 'text', includes: [FULLME_REMINDER_TEXT] },
+      action: { tool: 'mud_send', args: { cmd: 'fullme' } },
+      // 无 ok：本步结果 = 下一步的新文本（stale 提示 / 验证码地址行）。
+      fail: [{ kind: 'regex', patterns: [FULLME_COOLDOWN_PATTERN] }],
+      next: ['stale', 'prompt'],
+      timeoutMs: 30_000,
+    },
+    {
+      id: 'stale',
+      driver: { kind: 'text', includes: [FULLME_STALE_TEXT] },
+      // 必须三连发才能真的放弃上一轮（作者实测）。
+      action: { tool: 'mud_send', args: { cmds: ['fullme 1', 'fullme 1', 'fullme 1'] } },
+      // 命令被接受即"本轮作废"（复位、等下一轮）；冷却期由下一轮的 request.fail 自然吸收。
+      fail: [{ kind: 'ga', why: '放弃上一轮（三连 fullme 1）→ 本轮作废' }],
+      timeoutMs: 5_000,
+    },
+    {
+      id: 'prompt',
+      driver: { kind: 'regex', patterns: [FULLME_URL_PATTERN] },
+      capture: { captchaUrl: FULLME_URL_CAPTURE },
+      action: { tool: 'mud_captcha', args: { url: '{captchaUrl}', note: '{lastFail}' } },
+      ok: [{ kind: 'tool', outcome: 'ok' }],
+      fail: [{ kind: 'tool', outcome: 'error' }],
+      next: ['answer'],
+      timeoutMs: 15_000,
+    },
+    {
+      id: 'answer',
+      action: { tool: 'mud_send', args: { cmds: ['halt', 'fullme {captcha}'] } },
+      // 进入即**挂起动作**、进人工环节；`timeoutMs` 同时是人工等待与整步预算。
+      awaitExternal: ['captcha'],
+      ok: [{ kind: 'text', includes: [FULLME_OK_TEXT] }],
+      fail: [
+        { kind: 'text', includes: [FULLME_WRONG_TEXT] },
+        // 工具结果失败（重试取图 / 发送写失败）同样算本步失败，不必等到预算耗尽。
+        { kind: 'tool', outcome: 'error' },
+      ],
+      retry: {
+        attempts: 3,
+        on: ['fail'],
+        action: { tool: 'mud_captcha', args: { url: '{captchaUrl}', note: '{lastFail}' } },
+      },
+      next: ['success'],
+      timeoutMs: 180_000,
+    },
+    {
+      id: 'success',
+      action: { tool: 'mud_send', args: { cmd: 'hpbrief' } },
+      // 命令被接受即成功；next 空 = 终态（fullme 不只防挂机，还补各项状态）。
+      ok: [{ kind: 'ga' }],
+      timeoutMs: 5_000,
+    },
+  ],
+}
+
+/** 默认流程表（装配期注册进运行时；只读声明）。 */
+export const defaultFlows: readonly FlowSpec[] = [LOGIN_FLOW, FULLME_FLOW]
+
+/** 一条判据的可读标识（日志/冲突留痕用；不含 `why`）。 */
 export function matchLabel(match: FlowMatch): string {
   switch (match.kind) {
     case 'ga':
       return 'GA'
+    case 'tool':
+      return `tool(${match.outcome})`
     case 'text':
       return `text(${match.includes.join('|')})`
     case 'regex':
@@ -200,9 +321,14 @@ export function matchLabel(match: FlowMatch): string {
   }
 }
 
-/** 判据是否参与"行匹配"（`ga` 不参与：它只针对本节点自己发出的命令）。 */
-export function isLineMatch(match: FlowMatch): boolean {
-  return match.kind !== 'ga'
+/** 判据的声明文案（`why`；只影响日志/决策文案，不参与匹配与互斥判定）。 */
+export function matchWhy(match: FlowMatch): string | undefined {
+  return match.why
+}
+
+/** 判据是否参与"行匹配"（`ga`/`tool` 不参与：它们针对本步自己的命令/工具结果）。 */
+export function isLineMatch(match: FlowMatch): match is Extract<FlowMatch, { kind: 'regex' | 'text' }> {
+  return match.kind === 'regex' || match.kind === 'text'
 }
 
 /** 判据键（互斥校验 / 去重用：把同一判据归一成可比字符串）。 */
@@ -217,7 +343,11 @@ function matchKey(match: FlowMatch): string {
  *   - 流程 id / 步骤 id 唯一；
  *   - `entry`（缺省 `steps[0]`）存在；`next` 引用的步骤存在；
  *   - 同一步的 `ok` 与 `fail` 判据集**互斥**（同一判据不得两边都写；`GA` 不得两边都写）；
- *   - `awaitExternal` 的占位符必须出现在 `action.args` 的命令里。
+ *   - `awaitExternal` 的占位符必须出现在 `action.args` 的命令里；
+ *   - `tool` 判据只能出现在有动作的步骤上；`retry` 声明合法（`attempts`/`on`/有动作）；
+ *   - 动作参数里的每个 `{…}` 都必须是已知占位符（凭据 / `{lastFail}` / 本流程 `capture` 槽 /
+ *     `awaitExternal` 声明的外部值）；
+ *   - `capture` 槽名在流程内唯一。
  * @param flows 待校验的流程表。
  * @returns 错误清单（空 = 全部合法）。
  */
@@ -234,6 +364,17 @@ export function validateFlows(flows: readonly FlowSpec[]): string[] {
     if (entry === undefined || !ids.has(entry)) {
       errors.push(`${flow.id}: entry 不存在 (${String(flow.entry)})`)
     }
+    // 已知占位符: 凭据 + 内建槽 + 本流程 capture 槽 + awaitExternal 声明的外部值。
+    const slots = new Set<string>()
+    const externalKeys = new Set<string>()
+    for (const step of flow.steps) {
+      for (const name of Object.keys(step.capture ?? {})) {
+        if (slots.has(name)) errors.push(`${flow.id}: capture 槽名重复 (${name})`)
+        slots.add(name)
+      }
+      for (const key of step.awaitExternal ?? []) externalKeys.add(key)
+    }
+    const knownSlots = new Set<string>(['name', 'pass', 'lastFail', ...slots, ...externalKeys])
     for (const step of flow.steps) {
       const where = `${flow.id}/${step.id}`
       for (const next of step.next ?? []) {
@@ -254,6 +395,36 @@ export function validateFlows(flows: readonly FlowSpec[]): string[] {
           errors.push(`${where}: awaitExternal 声明了 {${key}}，但 action.args 里没有该占位符`)
         }
       }
+      // 工具结果判据要有动作可判（本步动作或重试动作）。
+      if ([...(step.ok ?? []), ...(step.fail ?? [])].some(match => match.kind === 'tool')
+        && step.action === undefined && step.retry?.action === undefined) {
+        errors.push(`${where}: tool 判据需要本步有 action 或 retry.action`)
+      }
+      // 重试声明。
+      if (step.retry !== undefined) {
+        const retry = step.retry
+        if (!Number.isInteger(retry.attempts) || retry.attempts < 1) {
+          errors.push(`${where}: retry.attempts 必须是 >= 1 的整数 (总尝试次数, 含首次)`)
+        }
+        for (const on of retry.on ?? []) {
+          if (on !== 'driver' && on !== 'fail') errors.push(`${where}: retry.on 只能是 'driver'/'fail' (${String(on)})`)
+        }
+        if ((retry.on ?? ['driver']).includes('driver') && step.driver === undefined) {
+          errors.push(`${where}: retry.on 含 'driver'，但本步没有 driver`)
+        }
+        if (retry.action === undefined && step.action === undefined) {
+          errors.push(`${where}: retry 需要本步有 action 或声明 retry.action`)
+        }
+      }
+      // 动作参数的占位符必须在已知集合里（拼错占位符会在发送时才炸 → 注册期就拦下）。
+      for (const raw of actionStrings(step.action)) {
+        for (const match of raw.matchAll(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g)) {
+          const key = match[1] as string
+          if (!knownSlots.has(key)) {
+            errors.push(`${where}: 未知占位符 {${key}} — 只能引用 {name}/{pass}/{lastFail}/capture 槽/awaitExternal 声明的值`)
+          }
+        }
+      }
       if (step.action === undefined && step.driver === undefined && step.ok === undefined && step.fail === undefined) {
         // 纯终态节点合法（进入即成功）；什么都不做的中间节点是笔误。
         if ((step.next ?? []).length > 0) errors.push(`${where}: 空节点却声明了 next（无判据可触发转移）`)
@@ -270,6 +441,20 @@ function commandText(action: FlowAction | undefined): string {
   const single = typeof args.cmd === 'string' ? [args.cmd] : []
   const series = Array.isArray(args.cmds) ? args.cmds.filter((c): c is string => typeof c === 'string') : []
   return [...single, ...series].join('\n')
+}
+
+/** 动作参数里的全部字符串（占位符校验；含 `cmds` 序列与其它字符串参数，如 `url`/`note`）。 */
+function actionStrings(action: FlowAction | undefined): string[] {
+  const out: string[] = []
+  const walk = (value: unknown): void => {
+    if (typeof value === 'string') { out.push(value); return }
+    if (Array.isArray(value)) { for (const one of value) walk(one); return }
+    if (typeof value === 'object' && value !== null) {
+      for (const one of Object.values(value as Record<string, unknown>)) walk(one)
+    }
+  }
+  if (action !== undefined) walk(action.args)
+  return out
 }
 
 /**

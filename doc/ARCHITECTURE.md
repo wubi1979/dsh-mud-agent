@@ -26,9 +26,9 @@
 
 **当前状态**：**v0.4.0 的 W5 已落地大半**（T1 = 无状态动作渲染器 + `login` 流程表 + 桥挂起/唤醒/归属 +
 分支计时器 + 打断/排队接线），并且已用**官方 loop 模拟器**量清现行投递的形状（§19.6.1）。
-`tests/` 全绿（29 个文件 / **316 例**，`tsc --noEmit` 干净）。
-未落地：**投递通道切换**（流程步改用 `deferContext`±`concludeTurn`，§19.6.1 提议 + §19.7 待定 1，待作者审定）、
-**fullme 流程化**（提议的 `FlowSpec` 见 §11，仍为规则形态）、**`pendingEntry` 端到端用例**。
+`tests/` 全绿（30 个文件 / **327 例**，`tsc --noEmit` 干净）。
+未落地：**`pendingEntry` 端到端用例**、**`hpbrief` 应答折叠进 world**（§19.7 待定）。
+`fullme` 流程已落地（`config/flows.ts` 的 `FULLME_FLOW` + `mud_captcha` 工具，见 §11）。
 
 - v0.3.5 及以前：L1 行级感知 + hit 渲染 + 单流切分 + preset 化 + 权限档位（W1–W4 已落地）。
 - **v0.4.0：流程化重构** —— 流程表（step 驱动）+ 触发器 arming + 桥挂起/唤醒 + 打断；
@@ -381,13 +381,13 @@ segment = 遗留段 ++ 本文本块的行
 | 强制执行点 | `agent/tool-gate.ts`：`installMudToolGate` 装官方 `tools/pre-execute`（不 `next()` 即短路）；带 agent 身份判据与 `[权限] …` 留痕 |
 | 可见性层 | `agent-bridge.ts` 的 `attachMudTools(..., visible)` 按档注册；档位切换时 `capability.onChange` → 先释放再重挂（模型看到的工具列表 = 该档能力） |
 | 状态与查询 | `permission/capability.ts`：会话事件 `mud/capability`（log-only）+ 官方会话投影 `mudCapabilities`（host-only，`stateVersion: 1`）；API `ctx.mud.capability.{names,defaultTier,current,resolve,optionOf,options,capabilities,set,ensure,onChange}`（形状对齐 `permissionPresets`）；HTTP `GET/POST /mud/capability`；`/mud/status` 每行带 `tier` |
-| 零发送通路 | 新工具 `mud_state`（world 快照 + 最近输出 + 连接态，不碰 socket）、`mud_recall`（尚未投递的输出）、`mud_help`（命令语法按需查询：不带 topic = 分类 + id 索引, topic = 分类/命令 id 给出完整语法）；只读档工具集 = 这三个 + 反射通道（`mud_send`/`world_patch`，强制层约束）。**命令目录注入策略**：系统提示只放 `commandsIndexForAgent()` 的索引（分类 + 命令 id，约 10 行），70+ 条完整语法由 `mud_help` 按需取 |
+| 零发送通路 | 新工具 `mud_state`（world 快照 + 最近输出 + 连接态，不碰 socket）、`mud_recall`（尚未投递的输出）、`mud_help`（命令语法按需查询：不带 topic = 分类 + id 索引, topic = 分类/命令 id 给出完整语法）、`mud_captcha`（fullme 取图 + 推前台弹窗；出站围栏）；只读档工具集 = 这几个 + T1 动作通道（`mud_send`/`world_patch`，强制层约束）。**命令目录注入策略**：系统提示只放 `commandsIndexForAgent()` 的索引（分类 + 命令 id，约 10 行），70+ 条完整语法由 `mud_help` 按需取 |
 | 模型可见的档位说明 | `permission/tiers.ts` 的 `mudTierNote(tier)` → 系统提示区段 `mud-tier`（动态提供者，档位切换即时生效；补偿偏差 1） |
 | 页面入口 | 用户行 ⋯ 菜单三档选择（当前档带 `●`），右栏状态区显示 `权限: …` |
 
 **两处与本文档原设计的偏差（已记入 §18）**：
 
-1. **`mud_send` / `world_patch` 在所有档位都注册**。它们是 T1 通道本身（登录流程发名字/密码、登录完成/失败置位），只读档若把它们摘掉，登录反射会在官方 `tools/pre-execute` **之前**就被判 `UNKNOWN_TOOL`，强制层根本看不到该调用。因此只读档对 `mud_send` 的约束落在强制层（登录命令放行、其余 deny）。
+1. **`mud_send` / `world_patch` / `mud_captcha` 在所有档位都注册**。前两者是 T1 通道本身（登录流程发名字/密码、登录完成/失败置位），只读档若把它们摘掉，登录动作会在官方 `tools/pre-execute` **之前**就被判 `UNKNOWN_TOOL`，强制层根本看不到该调用；`mud_captcha` 是 fullme 流程的解析工具（不发游戏命令，零发送）。因此只读档对 `mud_send` 的约束落在强制层（登录命令放行、其余 deny）。
 2. **客户端读档位走 `/mud/status`（HTTP 每会话状态通道），不新增投影 wire 视图**。投影保持 host-only（`mudCapabilities` 状态表），因为当前唯一消费方是页面档位选择器，而它已经每 2.5s 轮询 `/mud/status`；加一个没有消费方的 wire 视图违反"每个抽象都要有当前消费方"。
 
 **与官方正交**：不复用 `sandbox`（管 fs/shell）、不塞 `permissionPresets`（只有 sandbox+approval 两个 knob）。
@@ -459,21 +459,47 @@ segment = 遗留段 ++ 本文本块的行
     when        logged_in
     request  driver  5M后长时间不使用fullme，会被系统判定为机器人。
              action  mud_send { cmd:'fullme' }
-             ok      ['你感觉浑身一震，全身精力都已经充满'(估计，待实录)]
-             next    ['answer','success']      （answer = 条件分支（有验证码）；success = 顺序兜底/终态）
-    answer   driver  ^https?://[^\s]*robot\.php\?filename=[^\s]+
+             fail    /^你刚刚用过这个命令不久，还要[^。]*才能再用。/
+                     （时长动态：`还有 3 分 20 秒` / `还有 45 秒`，总计 15 分钟 → 通配符吃下两种形态）
+             next    ['stale','prompt']       （两条条件分支，互斥）
+             ※ **无 ok**：本步结果 = 下一步的新文本；fail 命中即中止（无兜底、无"直接成功"路径）
+    stale    driver  （实录）你之前请求的fullme还没有完成。如果图片已过期，可以打三次"fullme 1"放弃本次fullme。
+             action  mud_send { cmds:['fullme 1','fullme 1','fullme 1'] }   ← **必须三连发**才能放弃
+             fail    [{ kind:'ga', why:'放弃上一轮（三连 fullme 1）→ 本轮作废' }]
+             （无 next：以**失败收束**收场 → 复位到空闲、只留入口）
+    prompt   driver  /^https?:\/\/[^\s]*robot\.php\?filename=[^\s]+/
+             capture { captchaUrl: /(https?:\/\/[^\s]*robot\.php\?filename=[^\s]+)/ }
+             action  mud_captcha { url:'{captchaUrl}', note:'{lastFail}' }
+             ok      [{ kind:'tool', outcome:'ok' }]        ← 取图成功（判据 = 工具结果）
+             fail    [{ kind:'tool', outcome:'error' }]     ← 取图失败 → 本轮失败收束
+             next    ['answer']                             ← 顺序兜底
+    answer   driver  （无：由 prompt 顺序兜底进入；**答错重试不换步**）
              action  mud_send { cmds:['halt','fullme {captcha}'] }
-             awaitExternal  ['captcha']        ← 命中即进入人工环节（下面三条同旧设计）
-             ok      ['你感觉浑身一震，全身精力都已经充满'(估计，待实录)]
+             awaitExternal  ['captcha']
+             timeoutMs 180_000                 ← **本步总预算**：等人工 + 答错重来 + 收结果都算在内
+                                                 = 图片有效期 3 分钟（到点 = 本步超时 → 本轮失败）
+             ok      ['你突然感到精神一振，浑身似乎又充满了力量！']   ← 行含该串即成功（实录句）
+             fail    ['好像什么都没有发生，但是又好像有什么事情做错了。再来一次试试！']
+                     [{ kind:'tool', outcome:'error' }]   ← 工具结果失败（取图/发送）同样算本步失败
+             retry   { attempts:3, on:['fail'],            ← 重试**不出本步**、**不重置上面的预算**
+                       action: mud_captcha { url:'{captchaUrl}', note:'{lastFail}' } }
+                     （重试动作 = 重新取图 + 弹窗反馈失败原文；随后本步动作重新挂起等人工）
              next    ['success']
-    success  （终态节点：无 driver / 无 action / next 为空）
-             onEnter patch { fullme_ok:true }
+    success  action  mud_send { cmd:'hpbrief' }    ← 补状态（fullme 不只防挂机）
+             ok      [GA]
+             （next 空 = 终态：hpbrief 被接受即流程成功结束）
+    failPolicy { notify:'none' }                   ← 只留痕，不叫 T2
   ```
 
-  - 成功字符是**明确判据**（`ok`），不是 GA：`request` 可能直接成功（无验证码）、`answer` 必须命中成功句才算通过。
-  - `success` 是**终态节点**：进入即流程成功结束。
+  - **`request` 的判据只有一份**：`stale` 与 `prompt` 的 driver 就是它的两种结果（§19.2）—— 成功句不在这里声明：**必须正确回码才能通过**。
+  - **三种收场都让服务端停在当前轮次**（作者实测）：取图失败 / 3 次答错 / 3 分钟预算耗尽（人工没填或没填完）→ 下一轮 `fullme` 必然先撞 `stale`（先三连 `fullme 1` 放弃上一轮）。**答错 3 次是例外**：错码与 `fullme 1` 等价，三次错码本身就把上一轮放弃了 ⇒ 下一轮**不进** `stale`（`attempts:3` 正好等于"三连放弃"）。
+  - **冷却期不自己计时**：`fullme 1` 放弃后有冷却期；冷却未完时下一轮 `request.fail` 会把剩余时间原样报出来（再一次失败收束），冷却结束自然跑通 —— 不需要额外的"等 N 分钟"机制。
+  - **`answer` 的时间预算是"一步总计"**（作者 2026-09-13 定案，取代初稿的 `humanTimeoutMs`）：`timeoutMs: 180_000` 从**首次进入本步**起算，覆盖"等人工 + 发答案 + 答错重来 ×3 + 收结果"全部动作；**重试不重置**（这是它与"每步各自计时"的唯一差别）。3 分钟正好等于图片有效期 —— 到点即本步超时 → 本轮失败收束；等人工期间计时器照常在跑，不需要单独的"人工超时"字段，也不需要 `Config.humanWaitMs`。
+  - **答错重试在步内自环**（不换步）：`{lastFail}` ← 答错句原文 → 清空 `{captcha}` 槽 → 投 `retry.action`（`mud_captcha` 再抓同一个 `robot.php`，页面自动刷新出新图，弹窗带失败原文）→ 本步动作**重新挂起**等人工 → 计时器继续跑。`attempts:3` = 总尝试次数（含首次）；用尽 → 本轮失败收束。工具结果失败（取图失败/发送失败）命中 `fail` 里的 `tool` 判据 → 立即失败，不必等到预算耗尽。
+  - **重试动作的结果同样按本步 `fail` 判据结算**：所以"重试时图片也解析不出来"会当场失败收束，而不是让人对着坏图等到 3 分钟。
+  - **`hpbrief`**：终态步发 `hpbrief`，以 GA 判定"命令被接受"即收束；把它的应答**折叠进 world 的 state 规则后续一起加**（现行先只发命令）。
 
-  **提议的 `FlowSpec`（2026-09-13 供作者审定；**尚未实现**，fullme 现仍为规则形态）**：
+  **定稿的 `FlowSpec`（2026-09-13 作者逐条审定；实现清单见下）**：
 
   ```ts
   export const FULLME_FLOW: FlowSpec = {
@@ -482,39 +508,77 @@ segment = 遗留段 ++ 本文本块的行
     when: world => world.flags.logged_in === true,
     entry: 'request',
     timeoutMs: 30_000,
+    failPolicy: { notify: 'none' },               // 只留痕：人工/系统问题，T2 补不了
     steps: [
       {
         id: 'request',
         driver: { kind: 'text', includes: ['5M后长时间不使用fullme，会被系统判定为机器人。'] },
         action: { tool: 'mud_send', args: { cmd: 'fullme' } },
-        ok: [{ kind: 'text', includes: [FULLME_OK_TEXT] }],   // 不需要验证码时直接通过
-        fail: [{ kind: 'text', includes: ['不小心把你当成机器人'] }],  // (待实录) 判定为机器人 = 失败收束
-        next: ['answer', 'success'],              // answer = 条件分支；success = 顺序兜底
+        // 无 ok：本步结果 = 下一步的新文本（stale 提示 / 验证码地址行）。
+        fail: [{ kind: 'regex', patterns: [/^你刚刚用过这个命令不久，还要[^。]*才能再用。/] }],
+        next: ['stale', 'prompt'],                // 两条条件分支；fail 命中即中止
+        timeoutMs: 30_000,
+      },
+      {
+        id: 'stale',
+        driver: { kind: 'text', includes: ['你之前请求的fullme还没有完成。'] },
+        // 必须三连发才能真的放弃上一轮（作者实测）。
+        action: { tool: 'mud_send', args: { cmds: ['fullme 1', 'fullme 1', 'fullme 1'] } },
+        fail: [{ kind: 'ga', why: '放弃上一轮（三连 fullme 1）→ 本轮作废' }],
+        timeoutMs: 5_000,
+      },
+      {
+        id: 'prompt',
+        driver: { kind: 'regex', patterns: [/^https?:\/\/[^\s]*robot\.php\?filename=[^\s]+/] },
+        capture: { captchaUrl: /(https?:\/\/[^\s]*robot\.php\?filename=[^\s]+)/ },
+        action: { tool: 'mud_captcha', args: { url: '{captchaUrl}', note: '{lastFail}' } },
+        ok: [{ kind: 'tool', outcome: 'ok' }],    // 取图成功（新判据：工具结果）
+        fail: [{ kind: 'tool', outcome: 'error' }],
+        next: ['answer'],                         // 顺序兜底
+        timeoutMs: 15_000,
       },
       {
         id: 'answer',
-        driver: { kind: 'regex', patterns: [/^https?:\/\/[^\s]*robot\.php\?filename=[^\s]+/] },
         action: { tool: 'mud_send', args: { cmds: ['halt', 'fullme {captcha}'] } },
-        awaitExternal: ['captcha'],               // 进入本步即进人工环节（不投递、停看门狗、无超时）
+        awaitExternal: ['captcha'],               // 进入即挂起动作 + 进人工环节
         ok: [{ kind: 'text', includes: [FULLME_OK_TEXT] }],
+        fail: [
+          { kind: 'text', includes: [FULLME_WRONG_TEXT] },
+          { kind: 'tool', outcome: 'error' },     // 工具结果失败（取图/发送）同样算本步失败
+        ],
+        // 重试**不出本步**、**不重置本步预算**；重试动作 = 重新取图 + 弹窗反馈失败原文。
+        retry: {
+          attempts: 3,                             // 总尝试次数（含首次）
+          on: ['fail'],
+          action: { tool: 'mud_captcha', args: { url: '{captchaUrl}', note: '{lastFail}' } },
+        },
         next: ['success'],
+        timeoutMs: 180_000,                        // 本步总预算 = 图片有效期（等人工 + 重来都算在内）
       },
       {
         id: 'success',
-        // 终态判定节点：无 driver / 无 action / next 为空 → 进入即流程成功结束。
-        onEnter: { patch: { fullme_ok: true } },
+        action: { tool: 'mud_send', args: { cmd: 'hpbrief' } },
+        ok: [{ kind: 'ga' }],                     // next 空 = 终态：hpbrief 被接受即成功收束
+        timeoutMs: 5_000,
       },
     ],
   }
   ```
 
-  **实现这个流程前还缺的两块（同一件事，登记为 §19.7 待定 2 的实施清单）**：
-  1. **流程路径的人工环节没有"先挂起动作"**：`enterStep` 现在会立刻把 `awaitExternal` 的动作放进投递（T1 会渲染出带未插值 `{captcha}` 的命令）；规则路径是靠 `parkExternalHits` 挂起 + `exitHumanWait` 补投，流程路径还没有对应实现。需要：`queueFlowActions` 见到 `hit.awaitExternal` → **不投递**、存入待人工槽、`enterHumanWait`；人工回填后 `flow.resumeHuman()` + 投出该动作（顺序是"先人工值、后投递"，与绑定 GA 的"先投递后唤醒"相反）。
-  2. **流程与规则两条全链的衔接**：fullme 流程化之后，`fullme:request`/`fullme:prompt`/`fullme:done` 三条规则要删（§16 已列 `deliverSelfHits` 的替代），成功句与"被判机器人"句都要成为流程步的 `ok`/`fail` 判据 —— 逐字原文作者上线前核对（我不代管原文）。
+  **实现面（8 项，✅ 已落地 2026-09-13；注册期校验与端到端测试见 §13.6）**：
+  1. **工具结果判据** `{ kind:'tool', outcome:'ok'|'error' }`（§19.1）：官方工具结果经现有包装器（`runWithDeliveryChannel` → `endToolCall`）喂回流程机 —— call-id `mud-<delivery>-<index>` → 该动作的 `ruleId`（`flow:fullme/prompt`）→ 步骤 id，**只认当前步**。
+  2. **流程实例槽 + 槽占位符**：`capture` 声明把命中行抽进槽（`{captchaUrl}`；**答错重试不重新抽取，沿用首次的值**）；内建 `{lastFail}` = 本流程最近一次 `fail` 命中行原文。运行时**投递前**按槽插值；`{captcha}` 仍留到**发送瞬间**插值（人工值不进转录）。
+  3. **人工环节沿用本步 `timeoutMs`**（**不再单列 `humanTimeoutMs`**，作者 2026-09-13 修正）：`enterStep` 在 `awaitExternal` 步**照常布防计时器**（现在是"不布防"）；等人工期间计时器照跑，到点 = 该步超时 → 流程失败收束。`answer.timeoutMs = 180_000` = 图片有效期，等人工与答错重来共用这一份预算；**不需要 `Config.humanWaitMs`**。
+  4. **`retry` 定稿** `{ attempts, on?, action? }`：`attempts` = **总尝试次数（含首次）**；`on` 缺省 `['driver']`（旧行为一字不变，全仓没有流程用过它，无迁移负担）；命中 `on` 里的判据时**在原步内重试** —— 投 `action`（缺省 = 重发本步动作）、清空本步 `awaitExternal` 的槽值、把命中行原文写进 `{lastFail}`、重新挂起等人工，**不重置本步计时器**；`attempts` 用尽才算失败。
+  5. **流程路径的人工环节三处**（§19.3）：① `awaitExternal` 的动作**先挂起不投递**（现在帧内路径会先把字面 `fullme {captcha}` 发出去）；② `exitHumanWait` 调 `flow.resumeHuman()`（现在是死代码 → 永久挂死）：回到 `awaiting-result`，**计时器继续跑、不重布防**；③ 等人工期间**行判据不结算**本步。
+  6. **`mud_captcha` 工具**（新注册，所有档位可见）：地址围栏（只允许 pkuxkx.net）→ 抓 `robot.php` → 取 `<img src>` → 归一为绝对地址 → 推前台弹窗（payload 带 `note` = 失败原文）→ 返回 `{ok,image}`（无新依赖，复用 `network/captcha.ts`）。
+  7. **退役**：`fullme:request`/`fullme:prompt`/`fullme:done` 三条规则（§16）；取图职责从运行时 `sink.captcha` 迁到 `mud_captcha`；随之 `Config.captchaPatterns` / `extractCaptchaUrl` 若无其它使用者一并退役；`runtime-captcha.spec.ts` 整篇改写为流程用例、`rule-coverage.spec.ts` 三条 fullme 样本移走、`runtime-direct-action.spec.ts` 的样本替换；`index.ts` 系统命令集里那截 `fullme:*` 过滤删除（`flowCommands(defaultFlows)` 已覆盖 `fullme`/`halt`/`fullme {captcha}`/`fullme 1`）。
+  8. **判据文案 `why?`**（小项）：`FlowMatch` 可带 `why`，只影响日志/决策文案 —— 让 `stale` 的收束写成"放弃上一轮 → 本轮作废"而不是"命中失败判据 GA"。
 
-  人工环节（`awaitExternal`）保留：① 把地址交宿主取图（`resolveCaptchaImage`：抓 `robot.php` → 取 `<img src>` → 归一为绝对地址，出站围栏只允许 pkuxkx.net）并推 captcha UI；② **暂停全部投递**（行留待决，模型看不到提示、不会自己去答）；③ **停掉看门狗**（`awaitingHuman` 进 `active()` 条件）+ `requestAgent` 拒绝唤醒；**无超时**（人工环节可无限等）。人工在页面输入 `fullme <码>`（actor `user`）**不直接发出** —— 值存进 `{captcha}`，进入 `answer` 步发命令（`{captcha}` 在**发送瞬间**插值，人工值不进转录）。断线重连作废人工环节。不做 OCR（pkuxkx 明确要求人工）。
+  人工环节（`awaitExternal`）：进入该步即**挂起动作**（不投递）+ **暂停全部投递**（行留待决，模型看不到提示、不会自己去答）+ **停掉看门狗**（`awaitingHuman` 进 `active()` 条件）+ `requestAgent` 拒绝唤醒；**等人工期间行判据不结算本步**（人工环节只有一个出口）。人工在页面输入 `fullme <码>`（actor `user`）**不直接发出** —— 值存进 `{captcha}`，`exitHumanWait` 调 `flow.resumeHuman()`（回到 `awaiting-result`；**计时器继续跑、不重布防**）后按**动作投递**投出该动作（`{captcha}` 在**发送瞬间**插值，人工值不进转录）。**超时 = 本步 `timeoutMs`**（fullme `answer` 步 180000 = 图片有效期；等人工与答错重来共用同一份预算）；到点即该步超时 → 流程失败收束 + 退出人工环节（`syncHumanWait`）。断线重连作废人工环节。不做 OCR（pkuxkx 明确要求人工）。
+  **取图职责分界**：**工具** `mud_captcha` 负责"出站围栏 + 抓 `robot.php` + 取 `<img src>` + 归一为绝对地址"（`network/captcha.ts` 的 `resolveCaptchaImage`）并返回 `{ok,image}`/`{ok:false}`；**宿主**负责把解析结果推成页面上的验证码对话框（payload 带 `note` = 上一轮答错原文）并登记 `robotUrl → imageUrl`（供 `/mud/captcha/refresh` 刷新）。运行时只管"挂起 + 计时 + 收人工值"。
 - **流程与运行时的关系**（v0.4.0）：流程表在装配期注册为运行时的只读声明面；**每会话的流程实例是运行时状态**（`diag()` 可见、每次迁移写决策/日志）：`{ flowId, stepId, armed[], phase: awaiting-result | awaiting-human, deadline, pendingActions[], pendingEntry[] }`。细节见 §19。
-- **Config 全集**（部署值一律可配，I8）：`host`/`port`/`sessionId`/`cwd`/`logDir`/`account`/`agentEnabled`/`persona`/`commandIntervalMs`/`bridgeTimeoutMs`/`bridgeDeclaredTimeoutMs`/`bridgeSilenceMs`/`loginTimeoutMs`/`deadAirMs`/`holdTimeoutMs`/`defaultTier`/`dangerousCommands`/`agentPreset`/`activityTable`/`toolCallIntervalMs`/`t2DeliverIntervalMs`/`captchaPatterns`。（v0.4.0：`loginExitCommands` 退役 —— 登录收尾由流程步骤承担：`mxp` 步发 `look` 跳过 MXP 检测，终态 `look` 收束。）
+- **Config 全集**（部署值一律可配，I8）：`host`/`port`/`sessionId`/`cwd`/`logDir`/`account`/`agentEnabled`/`persona`/`commandIntervalMs`/`bridgeTimeoutMs`/`bridgeDeclaredTimeoutMs`/`bridgeSilenceMs`/`loginTimeoutMs`/`deadAirMs`/`holdTimeoutMs`/`defaultTier`/`dangerousCommands`/`agentPreset`/`activityTable`/`toolCallIntervalMs`/`t2DeliverIntervalMs`/`captchaPatterns`。（v0.4.0：`loginExitCommands` 退役 —— 登录收尾由流程步骤承担；**不引入 `humanWaitMs`/`humanTimeoutMs`** —— 人工环节沿用本步 `timeoutMs`；fullme 流程化后 `captchaPatterns` 随取图职责迁入 `mud_captcha` 工具，见 §16。）
 
 ---
 
@@ -522,11 +586,11 @@ segment = 遗留段 ++ 本文本块的行
 
 | 通道 | 内容 |
 |---|---|
-| 会话日志 tab | `[路由] step 认领 …` / `[路由] 请求 … next=… → 拦截为 T1\|不介入\|还原真实模型 (…)\|` / `[路由] 会话模型被上次 T1 拦截污染 … → 本回合还原为 …` / `[路由] lane=t1 动作投递 (rule=…, action=…)` / `[流程] <flowId> 激活 (入口: …)` / `[流程] <flowId>/<step> 挂起 (next: …, timeout …)` / `[流程] 命中 <step> 驱动句 → 唤醒 <step> = 成功 (分支 …)` \| `超时` \| `连接断开` / `[流程] <flowId> 被 <rule> 打断 (interrupts=N > priority=M)：结算挂起 / 复位 / onInterrupt / 投递事件动作` / `[流程] 无打断权 → 排队 (pending action N)` / `[流程] 判据冲突: A 与 B → 取 A` / `[流程] <flow>/<step> 结算 ga（不是本步命令的结算: "<cmd>", 忽略）` / `[感知] 原文投递 N 行 + M 动作 (lane=…, agent 状态, 队列 N)` / `[感知] 动作投递 N 动作 (无原文: 帧内命中 / 人工回填 / 结算驱动)` / `[感知] 批次投递 N 行` / `[感知] 投递改为 defer (工具在途 N): 随本结果进下一步` / `[t1] 渲染 …` / `[看门狗] <id> 布防 Nms` \| `停表 (原因)` / `[缺陷] 流程挂起期间收到第二条应答请求 → 已拒绝` / `[权限] <工具> → 拒绝\|待批准 (档位 …): 理由` / `[权限] 档位 A → B` / `[规则] <规则 id> → 直接执行 <工具> <args>` / `[流程] login 进入步骤 success` / `[流程] login/pass = 成功（进入 success）` / `[流程] login 完成（终态）` / `[验证码] 检测到验证码地址, 等人工输入 …` / `[验证码] 人工已提交 …` / `[装配] 官方 preset 已装配 (mud-player)` / `[发送] …` |
+| 会话日志 tab | `[路由] step 认领 …` / `[路由] 请求 … next=… → 拦截为 T1\|不介入\|还原真实模型 (…)\|` / `[路由] 会话模型被上次 T1 拦截污染 … → 本回合还原为 …` / `[路由] lane=t1 动作投递 (rule=…, action=…)` / `[流程] <flowId> 激活 (入口: …)` / `[流程] <flowId>/<step> 挂起 (next: …, timeout …)` / `[流程] 命中 <step> 驱动句 → 唤醒 <step> = 成功 (分支 …)` \| `超时` \| `连接断开` / `[流程] <flowId> 被 <rule> 打断 (interrupts=N > priority=M)：结算挂起 / 复位 / onInterrupt / 投递事件动作` / `[流程] 无打断权 → 排队 (pending action N)` / `[流程] 判据冲突: A 与 B → 取 A` / `[流程] <flow>/<step> 结算 ga（不是本步命令的结算: "<cmd>", 忽略）` / `[感知] 原文投递 N 行 + M 动作 (lane=…, agent 状态, 队列 N)` / `[感知] 动作投递 N 动作 (无原文: 帧内命中 / 人工回填 / 结算驱动)` / `[感知] 批次投递 N 行` / `[感知] 投递改为 defer (工具在途 N): 随本结果进下一步` / `[t1] 渲染 …` / `[看门狗] <id> 布防 Nms` \| `停表 (原因)` / `[缺陷] 流程挂起期间收到第二条应答请求 → 已拒绝` / `[权限] <工具> → 拒绝\|待批准 (档位 …): 理由` / `[权限] 档位 A → B` / `[规则] <规则 id> → 直接执行 <工具> <args>` / `[流程] <flowId> 进入步骤 <step>` / `[流程] <flowId>/<step> = 成功（…）` / `[流程] <flowId>/<step> 重试 N/attempts` / `[流程] <flowId>/<step> 等人工输入 ({captcha}; 预算 180000ms)` / `[流程] <flowId>/<step> 重试 N/attempts` / `[流程] <flowId>/<step> 槽 {captchaUrl} = …` / `[流程] <flowId>/<step> 工具结果 ok\|error → 判定` / `[验证码] 检测到 … 等人工输入 (缺 {captcha}; 看门狗暂停, 投递暂停; 计时用本步预算)` / `[验证码] 流程已结束 → 退出人工环节` / `[验证码] 已解析并推送图片: …` / `[流程] <flowId> 完成（终态）` / `[流程] <flowId>/<step> 失败：… → 复位（只留入口）` / `[验证码] 检测到验证码地址, 等人工输入 …` / `[验证码] 人工已提交 …` / `[装配] 官方 preset 已装配 (mud-player)` / `[发送] …` |
 | 决策栏 | `feed-classify`（lane 决策）、`holdDelivery` 暂缓/释放、权限 deny/ask、agent 工具调用、**流程迁移**（激活/挂起/唤醒/打断/排队/失败收束）、`direct-exec`（直接执行） |
 | 档位读写 | `GET /mud/capability?sessionId=…`（当前档 + 选项 + 外围能力）、`POST /mud/capability {sessionId,tier}`；`GET /mud/status` 每行带 `tier` |
 | agent 侧 | `agent/error`（回合错误）、`agent/inbox/discarded`（待处理投递被取消丢弃） |
-| `/mud/diag` | 每会话：`connectionId`、`connected`、观察窗/回看缓冲规模/`awaitingHuman`（人工环节）、`agent` 是否 live、`lastError`、**`flow`（v0.4.0：`{flowId, stepId, armed[], phase, deadline}`）**、`pendingActions`/`pendingEntry` 条数；**计数**：遗留段丢弃行数、holdDelivery 释放次数、流程失败/超时次数、挂起期第二条请求拒绝次数（I4/I9） |
+| `/mud/diag` | 每会话：`connectionId`、`connected`、观察窗/回看缓冲规模/`awaitingHuman`（人工环节）、`agent` 是否 live、`lastError`、**`flow`（v0.4.0：`{flowId, stepId, armed[], phase: awaiting-result \| awaiting-human \| awaiting-branch, deadline, slots}`）**、`pendingActions`/`pendingEntry` 条数；**计数**：遗留段丢弃行数、holdDelivery 释放次数、流程失败/超时次数、挂起期第二条请求拒绝次数（I4/I9） |
 
 <!-- 待补：diag 字段的精确 schema 与阈值告警口径 -->
 
@@ -601,6 +665,8 @@ segment = 遗留段 ++ 本文本块的行
 | v0.4.0（看门狗时机） | 2026-09-13 | **作者定案：`dead-air` 布防判据从"`logged_in` 置真"改为"`logged_in` ∧ 无活跃流程"** —— 一条条件同时实现两个目的：① 布防推迟到 **login 流程收尾之后**（`logged_in` 可能被 **GMCP** 提前置真：`GMCP.System {site}` 是 pkuxkx 的登录成功通知，`world.ts:130-147`，早于 `success` 步的 `onEnter.patch`；实测日志里 dead-air 正是在登录尚未收尾时就开始计时的）；② **活跃流程期间看门狗停表**（流程可能等很久才有结果，期间的唤醒归流程自己的计时器）。实现：`dead-air.active()` 增加 `this.flow.state() === null`；新增 `FlowRuntimeOptions.onTransition`（进入某步/收束/失败/复位时通知运行时 `noteWorldChange()`），否则流程起停不会触发重评估。`success` 步的 `logged_in` 置真**保留**（作者要求：防 GMCP 变化，作为权威兜底）。测试：`runtime-watchdog.spec.ts` 新增"活跃流程期间不布防断流；流程收束后才布防"（探针流程 + 假连接捕获 sink 喂行）—— 全包 **310 例全绿** |
 | v0.4.0（归属加固） | 2026-09-13 | **桥结算归属：布尔标记 → 按命令比对**（作者批准的"GA 结算携带命令"小改）。① `network/response.ts`：`onSettle(kind, text, cmds)` —— `notifySettle` 透传 `reply.cmds`（**被这次结算关掉的命令**），error/timeout/abort/interrupted/ga 各条路径都带上。② `runtime/flow-runtime.ts`：删掉 `ownCommandLive` 布尔标记，改为 `ownCommands: Set<string>` —— `allowBridgeRequest`/`noteOwnCommandWritten` 放行命令时记入（插值 + trim），`noteSettle(kind, text, cmds)` 用"有交集"判定归属、通过后**消费**（同命令的重复/迟到 GA 不二次结算），`enterStep`/收束/复位/释放时清空；`cmds` 缺省时退化为旧语义（兼容）。③ 日志升级为**点名命令**并加 `mask` 脱敏（`redactSecrets`：密码 + 人工外部值 ≥3 字符）——实测发现点名日志曾把密码打成明文，已修并有测试钉住。④ 新增 `tests/flow-ownership.spec.ts`（本步命令生效 / 别命令点名拒绝且不消费 / 序列任一条命中即算本步 / 缺省 cmds 兼容 / mask 脱敏）。**意义**：一个步骤发多条命令（fullme 的 `['halt','fullme {captcha}']`）时，别的命令的 GA 不会再串结算本步 |
 | v0.4.0（投递形态定名） | 2026-09-13 | **作者定名：投递形态 =「原文投递 / 动作投递」**（纯命名，机制与判据一字未动）。① 定义：**原文投递** = 消息体带触发段原文 + 动作请求（T1 规则命中 / 流程步动作）；**动作投递** = 无原文可带、只有动作请求（帧内命中 / 人工回填 / 结算驱动 / 排队出队）；形态只决定"消息里有没有原文"，与投递通道（`followup` / `defer`）**正交** —— 旧称"反射消息 / 帧内独立投递 / 规则反射"全部废止，映射写入 §2 与 §5。② 代码侧只改字面：`session-runtime.ts` 日志 `[感知] 原文投递 N 行 + M 动作` / `[感知] 动作投递 N 动作 (无原文: 帧内命中 / 人工回填 / 结算驱动)`、决策栏理由 `T1 原文投递` / `T1 动作投递`，`flow-runtime.ts`/`index.ts`/`perception/split.ts` 的注释同名化。③ 文档：§2 新增"投递形态"术语行、§5 增两条（形态定义 + 形态与通道正交）、§12 日志表列全四条投递日志（含 `投递改为 defer`）。测试 **316 例全绿**，`tsc --noEmit` 干净 |
+| v0.4.0（fullme 流程定稿） | 2026-09-13 | **作者逐条审定 fullme 流程（五步）**：① 流程表 `request → [stale \| prompt] → answer → success`（§11）；`request` **无 ok**（本步结果 = 下一步的新文本），fail = 实录"刚刚用过"句（时长动态，`[^。]*` 通吃"几分几秒 / 几秒"，总计 15 分钟），后继两条条件分支；② `stale`（实录：上一轮未完成提示）**三连发 `fullme 1`** 才真放弃，以 GA 判定并以**失败收束**收场（复位、不叫 T2）；③ `prompt` 用**新工具 `mud_captcha`** 取图 + 弹窗，判据是新的 **`{ kind:'tool' }` 工具结果判据**；地址经流程槽 `{captchaUrl}`（步上 `capture` 声明）交给工具；④ `answer` 三次答错重来（`retry { attempts:3, on:['fail'], action: mud_captcha{…} }`：**在原步内自环** —— 清空 `{captcha}`、重解析图片并弹窗带 `{lastFail}` 失败原文、重新挂起等人工，**不重置本步计时器**；`answer.timeoutMs = 180000` 是**本步总预算**（等人工 + 重来 + 收结果）＝图片有效期，到点即本轮失败）；⑤ **三种收场（取图失败 / 答错 3 次 / 人工超时）都由下一轮的 `stale` 兜住**（答错 3 次与"三连放弃"等价 ⇒ 下一轮不进 `stale`），运行时不另记状态；⑥ `success` 发 `hpbrief`（`ok:[GA]`）补状态，`failPolicy: { notify:'none' }`；⑦ 声明面扩展：`MatchSpec` 增 `tool` kind 与可选 `why` 文案、`FlowStep` 增 `capture`、`retry` 定稿为 `{ attempts, on?, action? }`（`attempts` = **总尝试次数含首次**）、占位符分三类（运行时值 / 内建 `{lastFail}` / `capture` 槽）并新增注册期校验（§19.1）；**不引入 `humanTimeoutMs`/`humanWaitMs`**（作者同日修正：人工环节沿用本步 `timeoutMs`）；⑧ 推进规则：`retry.on:['fail']` = **原步内**答错重来且**不重置计时器**、人工环节**不判行且计时不停**、`resumeHuman()` 回到 awaiting-result 不重布防（§19.2/§19.3）。文档：§11 定稿流程表 + `FlowSpec` + **8 项实现清单**（含流程路径人工环节三处修复）；§19.7 把"投递通道"（已落地）与 fullme 转为已定案；§16 增四条删除项（三条 fullme 规则 / 运行时取图职责 / `fullme_ok`）。**代码待实施** |
+| v0.4.0（fullme 流程落地） | 2026-09-13 | **按 §11 定稿实现 fullme 流程（代码 + 测试）**：① `config/flows.ts`：`FULLME_FLOW` 五步 + 常量（`FULLME_REMINDER_TEXT`/`FULLME_STALE_TEXT`/`FULLME_OK_TEXT`/`FULLME_WRONG_TEXT`/`FULLME_COOLDOWN_PATTERN`/`FULLME_URL_PATTERN`/`FULLME_URL_CAPTURE`）+ `defaultFlows = [LOGIN_FLOW, FULLME_FLOW]`；`FlowMatch` 增 `{ kind:'tool', outcome }` 与可选 `why`，`FlowStep` 增 `capture`，`retry` 定稿 `{ attempts, on?, action? }`；`validateFlows` 增四类校验（tool 判据需动作、占位符三类、retry 声明、capture 槽名唯一）。② `runtime/flow-runtime.ts`：流程实例槽（`capture` 抽取 + 内建 `{lastFail}`）+ `slotNames()`、`noteToolResult(stepId, ok)`（工具结果判据，失败优先、失败**不走重试**）、`tryRetry`（**原步内重试**：投 `retry.action` → 清 `awaitExternal` 槽 → 写 `{lastFail}` → 重新挂起；**不重置计时器**）、`awaitExternal` 步**照常布防计时器**（人工等待并入本步预算）、**人工环节不判行**、`refreshEntries()`（`when` 随 world 翻转）。③ `runtime/session-runtime.ts`：投递记录 `deliveryRules`（call-id → 动作 `ruleId` → 步骤 id）→ `noteToolResult`；`fillSlots` 投递前插值；`queueFlowActions` 改为**先投递后挂起**；`exitHumanWait` → `flow.resumeHuman()` + **动作投递**；`syncHumanWait`（流程收束/超时后退出人工环节）；取图职责迁出（`sink.captcha` 改为"推已解析图片 + note"）；退役 `Config.captchaPatterns`/`extractCaptchaUrl`。④ `agent/tools.ts`：新工具 **`mud_captcha`**（围栏 + 抓 `robot.php` + 取 `<img src>` + 推送宿主 + `{ok,image}`），三档都注册（`permission/tiers.ts`）。⑤ `agent/agent-bridge.ts`：`MudDeliveryChannel.noteToolResult`，在 `endToolCall()` **之前**喂回结果（判定产出的投递仍随本结果 defer）。⑥ 退役 `fullme:request`/`fullme:prompt`/`fullme:done` 三条规则与 `index.ts` 里的 `fullme:*` 过滤。⑦ 测试：新增 `tests/flow-fullme.spec.ts`（11 例）+ 重写 `tests/runtime-captcha.spec.ts`（7 例，走**真工具包装器**：defer/工具结果/人工回填/重试/预算）；`rule-coverage`/`runtime-direct-action`/`permission`/`tools` 跟随调整 —— 全包 **327 例 / 30 文件全绿**，`tsc --noEmit` 干净。⑧ 与定稿的两处措辞差异（实现为准）：success/答错句用 `text includes`（比整行正则宽容，服务器尾随空白不影响）；取图**解析在工具**、**UI 推送在宿主**（页面在宿主侧，工具只回结果） |
 | v0.4.0（实现） | 2026-09-13 | **W5 落地（login 流程跑通）**：① `config/flows.ts`（新）—— `FlowMatch`（`regex`/`text`/`ga`）/`FlowStep`/`FlowSpec` + `LOGIN_FLOW`（`priority:1000`、`when: !logged_in`）+ `validateFlows`（ok/fail 互斥含 GA、`next` 引用、id 唯一、`awaitExternal` 占位符）+ `flowCommands()`；② `runtime/flow-runtime.ts`（新）—— arming（本步 driver + ok/fail + **条件分支后继 driver**，**同批行优先**）、判定顺序（失败 → 介入判据分支 → ok → 顺序兜底 → 终态）、`enterStep`/`succeedStep`/`retryStep`/`finishFlow`/`failStep`、`interrupt`/排队/pending entry、`diag` 状态；③ **桥归属**（§19.3；v0.4.0 归属加固中升级为按命令比对）—— GA/until/超时/abort 只在本步声明并放行过的命令带来时才被接受，否则上一条命令的 GA 会误结算下一步（实测症状）；④ T1 重写为**无状态动作渲染器**（读 `source.actions` + `delivery`，call-id = `mud-<delivery>-<index>`，已有同 id `tool-result` ⇒ 不重复渲染）；⑤ `MessageSourceMap['mud-owned']` 去掉 `turnRef`、增 `actions`/`delivery`；`ownedGameMessage(text, lane, sid, {actions, delivery})`；⑥ 运行时：`pendingActions`/`deliverySeq`/`standalone`（帧内命中与人工回填 = **独立投递**，不再"等下一次搭车"）、`settle()` 单流切分带动作、`exitHumanWait` 分"待决路径/帧路径"；⑦ 删除 `turns`/`takeHits`/`activeTurnRef`/`deliverSelfHits`/`noteLoginExit`/`Config.loginExitCommands`/`login-stall`/五条 `login:*` 规则（§16）；⑧ 测试：`tests/flow-login.spec.ts`、`tests/t1-adapter.spec.ts` 重写（8 例）、`tests/runtime-captcha.spec.ts` 改写（8 例）、`tests/rule-coverage.spec.ts` 去 login 样本；⑨ 作者三条定案（2026-09-13）：**MXP 发任何命令都能跳过**、**GA 与其它判据同权**、**`succeedStep` 只是里程碑**（流程收束在终态步）→ 顺序兜底增加"结算之后补跑"执行点 |
 
 ---
@@ -617,7 +683,10 @@ segment = 遗留段 ++ 本文本块的行
 | 帧归属：`activeTurnRef` + "帧内命中追加到当前回合" | 结果判定改由 arming 判据 + 桥挂起给出，不再猜帧归属 | ✅ 已删 |
 | 命中待渲染队列的"搭车" + `MAX_QUEUED_HITS` + `MAX_TURNS` | 没有"等下一次投递搭车"这件事：流程步有挂起、一次性动作直达 T1 | ✅ 已删（帧内命中改**动作投递**）|
 | `login-stall` 看门狗 | 流程每步 `timeoutMs` 给出明确的"超时"结局（I4） | 🟡 看门狗已删；`timeoutMs` 已实现 |
-| `deliverSelfHits`（自触发命中） | 人工回填后的答案成为流程 `answer` 步的正常投递 | 🟡 已删；fullme 仍是规则形态（§19.7.2）|
+| `deliverSelfHits`（自触发命中） | 人工回填后的答案成为流程 `answer` 步的正常投递 | ✅ 已删（fullme 流程已定稿，§19.7.8）|
+| `fullme:request`/`fullme:prompt`/`fullme:done` 三条 event 规则 | 升级为流程 `fullme` 的五个步骤（`request`/`stale`/`prompt`/`answer`/`success`）—— 驱动句/动作/判据只在流程表写一份 | ✅ 已删 |
+| 运行时取图职责：`sink.captcha(robotUrl)` 取图 + `Config.captchaPatterns` + `extractCaptchaUrl` | 解析（围栏 + 抓页 + 取图）改由 **`mud_captcha` 工具**承担（地址由流程步 `capture` 槽给出）；宿主只把解析结果推成对话框 | ✅ 已删 |
+| 世界标志 `fullme_ok`（`fullme:done` 的 `world_patch`） | 全仓无人读；终态步改为发 `hpbrief` 补状态 | ✅ 已删（应答折进 world 见 §19.7 待定 2）|
 | `login:name`/`login:pass`/`login:replace`/`login:done`/`login:error` 五条 event 规则 | 升级为流程 `login` 的步骤（驱动句/动作/判据只在流程表写一份） | ✅ 已删（`LOGIN_BOUNDARIES`/`LOGIN_FLOW_COMMANDS` 同批删除）|
 | `Config.loginExitCommands` + `noteLoginExit()`（登录收尾"空行 + look"） | 收尾变成流程终态步 `success`：发**空命令**（顶开服务端 + 跳过 MXP 检测），不再发 `look` | ✅ 已删 |
 | `LOGIN_FLOW_COMMANDS`（由规则反推的系统命令集） | 流程命令直接声明在流程表里；权限口径改为"流程步命令属系统流程"（§19.1） | ✅ 已删（改为 `flowCommands(defaultFlows)`）|
@@ -637,7 +706,7 @@ segment = 遗留段 ++ 本文本块的行
 | **W2 hit 渲染 + 单流切分** | §5 §7；删除 `resolveLines`/行集表/`matchDry` | 不变量用例（拼接==完整流）+ 表驱动"命中必渲染" | ✅ 已实现 |
 | **W3 preset 化 + 权限档位** | §9 + §10 | preset 门控用例；三档 × 动作矩阵（含 T1 动作 deny） | ✅ 已实现：§10 = `tests/permission.spec.ts`（26 例，三档 × 动作 × actor 矩阵 + 闸门短路 + 投影折叠）；§9 = `tests/preset-agent.spec.ts`（8 例：组装期注册 / 执行期按 agent 解析 / 未绑定拒绝 / 提示按 agent 求值 / 组合文件） |
 | **W4 桥与观测收尾** | §8（exec.signal ✅ / 活动表 ✅ / concludeTurn **已定不接** §18.11 / 分页 ✅ `pager:continue` 直发）+ §12/§13（runtime 脚手架 ✅：`watchdogs.spec.ts`、`runtime-watchdog.spec.ts`、`runtime-delivery.spec.ts`、`runtime-captcha.spec.ts`、`runtime-direct-action.spec.ts`、`mud-persona.spec.ts`、`commands.spec.ts`；`runtime-login-flow.spec.ts`/`login-rules.spec.ts` 已随 v0.4.0 删除 → 由 `flow-login.spec.ts` 接管） | 端到端：登录 ✅（v0.4.0 流程表，见 `flow-login.spec.ts`）、fullme ✅（提醒行 → 直发 → 人工，见 §11）、`dazuo`（活动表已数据化，待实测）、分页 ✅（直发，待实测） | ✅ 基本完成 |
-| **W5 流程化重构（v0.4.0）** | §19 流程表 + arming/挂起/唤醒/打断/排队；§7 T1 退化为无状态动作渲染器；§8 桥承担挂起/唤醒；§1 新增 I10–I15；§16 删除回合记录/帧归属/搭车/`login-stall` | 验收（§13.6）：流程机单测全绿（arming/文本优先/冲突取首/超时/打断/排队/单流程互斥/挂起闸门/pending entry）+ T1 契约测试（含 **T2 可用性**）+ login 全链（正常/用户名不存在/密码错/断开）+ fullme 全链（含被打断） | 🟡 **已落地大半**（2026-09-13）：`config/flows.ts` + `runtime/flow-runtime.ts` + `LOGIN_FLOW`（含 MXP 分支全链）+ 桥归属 `ownCommandLive` + T1 无状态动作渲染器 + 帧内独立投递 + **结算后补跑顺序兜底** + **分支阶段计时器** + **打断/排队接线**（`ActionSpec.interrupts` / `interruptInFlight` / `drainFlowQueue`）+ **官方 loop 模拟器**（`loop-sim.ts` / `loop-sim-login.spec.ts`，量出"一步一回合 + 空续步"并给出 defer 提议的账目）；`flow-login.spec.ts`（9）/`flow-ownership.spec.ts`（5）/`t1-adapter.spec.ts`（8）/`flow-interrupt.spec.ts`（8）/`loop-sim-login.spec.ts`（1，真行为账目）/`runtime-defer.spec.ts`（4，投递通道 + 收束判据）/`preset-agent.spec.ts`（15，**两条装配路径都接通道**）/`runtime-watchdog.spec.ts`（5）全绿，全包 316 例。**未落地**：投递通道切换（§19.6.1/§19.7 待定 1，待审定）、`fullme` 流程化（提议稿见 §11）、`pendingEntry` 端到端用例 |
+| **W5 流程化重构（v0.4.0）** | §19 流程表 + arming/挂起/唤醒/打断/排队；§7 T1 退化为无状态动作渲染器；§8 桥承担挂起/唤醒；§1 新增 I10–I15；§16 删除回合记录/帧归属/搭车/`login-stall` | 验收（§13.6）：流程机单测全绿（arming/文本优先/冲突取首/超时/打断/排队/单流程互斥/挂起闸门/pending entry）+ T1 契约测试（含 **T2 可用性**）+ login 全链（正常/用户名不存在/密码错/断开）+ fullme 全链（含被打断） | 🟡 **已落地大半**（2026-09-13）：`config/flows.ts` + `runtime/flow-runtime.ts` + `LOGIN_FLOW`（含 MXP 分支全链）+ 桥归属 `ownCommandLive` + T1 无状态动作渲染器 + 帧内独立投递 + **结算后补跑顺序兜底** + **分支阶段计时器** + **打断/排队接线**（`ActionSpec.interrupts` / `interruptInFlight` / `drainFlowQueue`）+ **官方 loop 模拟器**（`loop-sim.ts` / `loop-sim-login.spec.ts`，量出"一步一回合 + 空续步"并给出 defer 提议的账目）；`flow-login.spec.ts`（9）/`flow-ownership.spec.ts`（5）/`t1-adapter.spec.ts`（8）/`flow-interrupt.spec.ts`（8）/`loop-sim-login.spec.ts`（1，真行为账目）/`runtime-defer.spec.ts`（4，投递通道 + 收束判据）/`preset-agent.spec.ts`（15，**两条装配路径都接通道**）/`runtime-watchdog.spec.ts`（5）全绿，全包 316 例。**未落地**：`pendingEntry` 端到端用例、`hpbrief` 应答折叠进 world（§19.7 待定）。投递通道切换（§19.6.2）与 fullme 流程（§11）均已落地 |
 
 > W1/W2 已随 v0.1 落地：新增 `perception/engine.ts`（L1）、`perception/split.ts`（L2 纯函数）、
 > T1 改为 hit 渲染器（`trigger-llm/adapter.ts`）；桥删除行集表并对齐 GA 边界接线
@@ -662,7 +731,7 @@ segment = 遗留段 ++ 本文本块的行
 13. **`fullme:request` 判据已实录**（用户 2026-09-12 给出原文 `5M后长时间不使用fullme，会被系统判定为机器人。`）：判据 = 这一串本身（作为流程 `fullme/request` 步的 driver，见 §11/§19）。
 14. **流程化的待放宽项（v0.4.0 之后）**：① **单挂起（I11）** —— 本版按"一条流程同时最多一个挂起步骤"实现（桥单槽），将来若出现"同一步骤需要并发多条命令"的需求再放宽为多挂起；② **流程内部并行分支** —— 当前分支是"命中哪个后继 driver 就走哪条"，同一时刻只推进一条路径；③ **跨会话流程编排**（多用户协同）—— 明确不在范围内。
 15. **打断的第一版范围**：`onInterrupt` 只声明"打断时要先发的直发命令"（如练功的 `halt`）；"打断后自动重试"、"打断原因的模型判定"留给 T2 决策一次，不自动重试。
-16. **W5 落地后新增的待定项集中在 §19.7**（作者 2026-09-13 已定三条：MXP 发任何命令都能跳过 / GA 与其它判据同权 / `succeedStep` 只是里程碑；仍待定：`awaiting-branch` 的超时窗口、fullme 流程化、打断接线、待实录原文）。
+16. **W5 落地后新增的待定项集中在 §19.7**（作者 2026-09-13 已定：MXP 发任何命令都能跳过 / GA 与其它判据同权 / `succeedStep` 只是里程碑 / 打断接线 / 投递通道 `deferContext` / fullme 流程五步；仍待定：`pendingEntry` 端到端用例、`hpbrief` 应答折叠进 world、待实录原文核对）。
 
 ---
 
@@ -681,25 +750,34 @@ flow <id>
               login: !logged_in（已登录不再 arm 登录入口）；fullme: logged_in
   step <id>
     driver    驱动句判据（MatchSpec；服务端提示行）。**省略 = 顺序步**：上一节点成功后立即执行
-    action    工具调用声明：{ tool, args }（可含 {name}/{pass}/{captcha} 占位符）
-              可选 awaitExternal: ['captcha'] → 该步先挂起等人工
+    action    工具调用声明：{ tool, args }（可含 {name}/{pass}/{captcha} 与流程槽占位符）
+              可选 awaitExternal: ['captcha'] → 该步**先挂起动作**、进人工环节等人工补值
               **三者至少其一**：`driver`（条件进入）/ `action`（发命令等结果）/ 终态（全空）
+    capture   可选：{ 槽名: 正则 } —— 把**本步命中行**的抽取结果存进流程实例槽（如 captchaUrl）；
+              答错重试不重新抽取，沿用首次抽到的值
     onEnter   可选：进入本步即执行的副作用（`patch` 落 world / `direct` 直发命令），不等结果
     ok        本步成功判据（MatchSpec[]）—— **`GA` 是一种判据，必须显式声明**（见下）
     fail      本步失败判据（MatchSpec[]）—— 同上；**ok 与 fail 不得同时声明 GA**
     next      直接后继步骤 id 列表（**显式列出**；可多分支；**空 = 终态**）
               · 带 driver 的后继 = **条件分支**（先 arm，命中即走）
               · 不带 driver 的后继 = **顺序兜底**（本节点成功后就执行，不等待）
-    retry     可选：{ limit } —— 命中"本步 driver"时重发本步命令（给"需要重输"的流程用；
-              **login 不用**：登录每一步都是一次成功/失败）
-    timeoutMs 本步超时（缺省取流程级/Config 缺省；到点 = 超时结局）
+    retry     可选：{ attempts, on?, action? } —— 命中 `on`（缺省 ['driver']）里的判据时
+              **在原步内重试**：投 `action`（缺省 = 重发本步动作）→ 清空本步 `awaitExternal` 的槽
+              → 重新挂起等人工；`attempts` = **总尝试次数（含首次）**，用尽才算失败；
+              **不重置本步计时器**（时间预算是"一步总计"：fullme 的 answer = 3 分钟）
+    timeoutMs 本步超时（缺省取流程级/Config 缺省；到点 = 超时结局）。
+              **人工环节没有单独的超时字段** —— 等人工期间就用本步这一份预算
     onInterrupt  可选：被打断时要先发的直发命令（如练功的 halt）
   onSuccess   { patch?: 落 world; commands?: [走工具路径的命令]; direct?: [只发不等结果的直发命令] }
               —— **流程整体成功时**执行（终态节点之后）
-  failPolicy  失败/超时出口（缺省：留痕 + 交 T2 决策一次）
+  failPolicy  失败/超时出口（缺省：留痕 + 交 T2 决策一次；`'none'` = 只留痕不叫 T2）
 ```
 
-**三种节点**：① **动作节点**（有 `action`，发命令并挂起等结果）；② **判定节点**（无 `action`，只有 `ok`/`fail` + `next`，如 login 的 `success`：判断"登录完成"并继续）；③ **终态节点**（`next` 为空）：进入即**流程成功结束**，随后执行流程级 `onSuccess`。
+**`MatchSpec` 的 kind**（`FlowMatch`）：`text`（行含某串）/ `regex`（行匹配）/ `ga`（本步命令被 GA 结算）/ **`tool`**（本步**工具调用结果**：`{ kind:'tool', outcome:'ok'|'error' }`，供"只调工具、不发游戏命令"的步骤判定）。任何 kind 都可带可选 `why`（只影响日志/决策文案，不参与匹配）。
+
+**占位符三类**（校验期 fail loud）：① 运行时值 `{name}`/`{pass}`/`{captcha}`（**发送瞬间**插值，不落转录）；② 内建流程槽 `{lastFail}`（本流程最近一次 `fail` 命中行原文）；③ `capture` 声明的槽（**投递前**插值）。不在三类内的占位符 = 装配期错误。
+
+**三种节点**：① **动作节点**（有 `action`，发命令并挂起等结果）；② **判定节点**（无 `action`，只有 `ok`/`fail` + `next`：进入即算成功，如 login 的旧 `success` 形态）；③ **终态节点**（`next` 为空）：**本节点成功即流程成功结束**，随后执行流程级 `onSuccess` —— 判定节点进入即成功；动作节点要等它的判据（如 fullme 的 `success` 等 `hpbrief` 的 `GA`）。
 
 **`GA` 判据**（v0.4.0）：`GA` 是与"行匹配"并列的一种**判据**（`MatchSpec` 的一个 kind），语义 = "该命令的应答被 GA 结算"。它**不是自动成功** —— 必须写进 `ok` 或 `fail` 才生效：
 
@@ -714,9 +792,13 @@ ok:[GA] ∧ fail:[GA] → **注册期报错**（互斥）
 | 校验 | 违反时 |
 |---|---|
 | 同一 step 的 `ok` 与 `fail` 判据集**互斥**（同一 pattern 不得两边都写；`GA` 不得两边都写） | 装配期抛错 + 留痕，流程不装配 |
-| `next` 引用的步骤必须存在；`next` 必须至少有一个后继或显式 `end` | 同上 |
+| `next` 引用的步骤必须存在（**空 = 终态**） | 同上 |
 | 步骤 id 在流程内唯一；流程 id 全局唯一 | 同上 |
 | `awaitExternal` 声明的占位符必须在 `action.args` 里出现 | 同上 |
+| `{ kind:'tool' }` 判据只能出现在**本步有 `action`** 的步骤上 | 同上 |
+| 动作参数里的每个 `{…}` 都必须是三类已知占位符之一（运行时值 / 内建槽 / 本流程 `capture` 槽） | 同上 |
+| `retry.on` 只能含 `'driver'`/`'fail'`；`capture` 的槽名在本流程内不得重名 | 同上 |
+| **不存在 `humanTimeoutMs` 字段** —— 人工环节沿用本步 `timeoutMs`（等人工与重试共用同一份预算） | 同上 |
 
 **每一类字段"谁消费"**（避免语义打架）：
 
@@ -725,10 +807,11 @@ ok:[GA] ∧ fail:[GA] → **注册期报错**（互斥）
 | `when` | 运行时（入口 arm 前） | 前置条件；不满足就不 arm 入口，流程根本不激活 |
 | `driver` | 运行时（arming 匹配） | 进入/重试本步；省略 = 顺序步 |
 | `action` | T1（渲染成 tool-call）→ 官方工具管道 | 动作仍走官方路径（I15） |
+| `capture` | 运行时（首次进入本步时） | 从命中行抽值存槽；答错重试沿用 |
 | `onEnter` | 运行时 | 进入即生效的副作用（落 world / 直发），不等结果 |
-| `ok` · `fail` · `next` | 运行时（结果判定） | 见 19.2 的判定顺序 |
-| `retry` | 运行时 | 命中本步 driver 时重发；**login 不使用** |
-| `awaitExternal` | 运行时 + 宿主 UI | 人工环节（暂停投递/看门狗、页面取图） |
+| `ok` · `fail` · `next` | 运行时（结果判定） | 见 19.2 的判定顺序；`tool` 判据由官方工具结果喂回 |
+| `retry` | 运行时 | 命中 `on` 判据 → **原步内**投 `action`（缺省重发本步动作）+ 清 `awaitExternal` 槽 + 重新挂起；**不重置计时器** |
+| `awaitExternal` | 运行时（挂起/收人工值/计时） | 人工环节：动作**先挂起**、停投递、停看门狗；等人期间用本步 `timeoutMs` 计时；取图与弹窗由 `mud_captcha` 工具做 |
 | `onSuccess.commands` · `.direct` · `.patch` | 流程成功时执行 | `commands` 走工具路径；`direct` 只发不等结果（与 save/分页同一机制） |
 
 - **与 trigger 不重复**：驱动句 / ok / fail 只写在流程表里；`state` 规则仍留在 trigger（§4）。流程表在**装配期**注册进运行时（只读声明），**每会话的流程实例**是运行时状态。
@@ -740,19 +823,29 @@ ok:[GA] ∧ fail:[GA] → **注册期报错**（互斥）
 ```
 空闲（无活跃流程）                → arm(各流程的**入口 driver**，须先满足流程 when；I10：同一时刻最多一个流程实例)
 进入流程（入口 driver 命中）      → 激活流程实例，收掉其它流程的入口（不再 arm）
-进入某一步                        → 执行 onEnter 副作用；若该步有 action 则发命令并挂起
+进入某一步                        → 执行 onEnter 副作用；抽 `capture` 槽
+                                  → 有 action 时：`awaitExternal` 步**挂起动作（不投递）+ 进人工环节**；
+                                    其余步照常发命令并挂起
                                   → arm(本步 driver(重试) ∪ 本步 ok ∪ 本步 fail ∪ 各后继 step.driver)
-结果判定（每批行 / 帧文本；按行序）
-                                  ① 命中本步 fail → **失败**
+结果判定（每批行 / 帧文本 / 工具结果；按行序）
+                                  ① 命中本步 fail → 若本步 `retry.on` 含 'fail' 且次数未用尽 ⇒ **原步内重试**
+                                     （投 `retry.action`（缺省重发本步动作）→ 清 `awaitExternal` 槽
+                                      → 重新挂起等人工；**计时器不重置**）；否则 **失败**
                                   ② 命中某个后继 driver → **成功 + 走该分支**
-                                  ③ 命中本步 ok → **成功**（含 `ok:[GA]` ⇒ GA 到达即成功）
+                                  ③ 命中本步 ok → **成功**（含 `ok:[GA]` ⇒ GA 到达即成功；
+                                     `ok:[{kind:'tool'}]` ⇒ 本步工具结果成功）
                                   ④ 本节点成功但**没有任何条件分支命中** → 走**顺序兜底后继**
                                      （`next` 里不带 driver 的那个；行判据成功 → 批尾跑，
                                        桥结算成功 → 结算后立刻跑）；**无后继 = 终态 ⇒ 流程成功结束**
                                      （随后执行流程级 `onSuccess`）
+人工回填（`awaitExternal` 槽有值）→ `resumeHuman()`：回到 awaiting-result（**计时器继续跑**）
+                                  → 投出挂起的动作（先人工值、后投递）
 连接断开 / 写失败                 → 本步失败 → 流程失败收束（复位：只留入口）
-到 timeoutMs                      → 超时 → 流程失败收束
+到本步 timeoutMs                  → 超时 → 流程失败收束（人工环节同样在跑这份预算）
 ```
+
+- **人工环节期间不判行**（作者定案 2026-09-13）：`phase === 'awaiting-human'` 时 `offer()` 只记录不判定 —— 人工环节只有一个出口（人工回填）；否则同批到达的成功句会把"命令还没发出"的步判成成功。**计时器不停**：等人期间用本步 `timeoutMs`（fullme 的 `answer` = 3 分钟，与图片有效期对齐）。
+- **重试与失败的分界**：`retry.on:['fail']` 让"答错"变成"重来"而不是"收场"（fullme 用 `attempts:3`）；重试**不出本步、不重置计时器**，只做三件事：投 `retry.action`、清空本步 `awaitExternal` 的槽值（否则旧码会被直接重发）、把命中行原文写进 `{lastFail}`。所以"等人工 + 答错重来 + 收结果"共用同一份时间预算 —— 这正是"一步总计 3 分钟"的实现方式。
 
 - **GA 是判据，不是自动成功**（用户定案）：`GA` 作为 `MatchSpec` 的一种 kind 写进 `ok` 或 `fail` 才生效；`ok:[GA]`= GA 到达即成功（如 `look` 步：命令被接受就够了），`fail:[GA]`= GA 到达即失败。**两边同时声明 `GA` 属注册期错误**（见 19.1 校验表）。**GA 与其它判据完全同权**（作者定案 2026-09-13）：任何一步都能直接声明，"哪些步该声明"不是文档层面的限制。
 - **条件分支 vs 顺序兜底**：`next` 里带 `driver` 的后继是**条件分支**（先 arm，命中即走，可多分支）；不带 driver 的后继是**顺序兜底**（本节点成功后直接执行，不等待）—— login 的 `replace`（同名确认句，可能不出现）就是条件分支的范例：出现才走，不出现不阻塞（§11）。
@@ -787,7 +880,7 @@ ok:[GA] ∧ fail:[GA] → **注册期报错**（互斥）
   - 帧文本判据（`text`/`regex`）不受归属限制（帧文本先到、GA 后到是常态）；受归属限制的是"与本步命令绑定的那类结算"。
 - **`GA` 由桥通知**：它是 `ok`/`fail` 里可声明的判据之一（§19.1）；没有声明 GA 的步骤，GA 到达只是"帧文本定稿"，判定继续等文本判据或超时。
 - 下一步动作的投递 = **一条正常的 mud-owned 消息（原文 + 动作请求）**，与 T2 拿到的消息同形（I15）：T2 若处理这一回合，读原文自行决定，动作请求只是"可用信息"。
-- **人工环节**（`awaitExternal`）：`answer` 步的 driver（`robot.php` 地址行）命中即挂起等人工 —— 暂停全部投递 + 停看门狗 + 页面取图；人工回填 `{captcha}` 后进入该步发命令（发送瞬间插值）。无超时（人工环节可无限等），断线重连作废。
+- **人工环节**（`awaitExternal`，2026-09-13 定稿）：进入该步即**挂起动作**（不投递）—— 暂停全部投递 + 停看门狗 + `requestAgent` 拒绝唤醒；**行判据在人工环节不结算本步**。取图与弹窗由动作里的 **`mud_captcha` 工具**做（`prompt` 步），运行时只管"挂起 + 计时 + 收人工值"。人工回填 `{captcha}` 后（页面发 `fullme <码>`，actor `user`）`exitHumanWait` 调 `flow.resumeHuman()`：回到 `awaiting-result`（**计时器继续跑、不重布防**），随后投出挂起的动作（**先人工值、后投递**，与"先投递后唤醒"相反）。**超时 = 本步 `timeoutMs`**（等人期间照跑；fullme 的 `answer` = 180000 = 图片有效期，与答错重试共用这一份预算）→ 该步超时 → 流程失败收束。断线重连作废人工环节。
 
 ### 19.4 打断与排队（I14）
 
@@ -842,7 +935,7 @@ ok:[GA] ∧ fail:[GA] → **注册期报错**（互斥）
 - **落地前与"一个流程 = 一个回合"不符**：旧实现是**一步一回合 + 每步一次空续步**（每个流程步 2 次模型请求）。这不是缺陷，是 `followup` 的官方语义：*"the item becomes the sole ordinary message of its own turn"*（`core/agent/src/runtime-types.ts:217-222`）—— **现在已按 §19.6.2 切到 `deferContext` + `concludeTurn`**。
 - 三次实测 `t2Calls = 0`：流程期间**没有**任何请求落到 T2（真实 LLM）—— `turnLane` 在回合内沿用（`agent-bridge.ts:219-241`）把工具续步/空续步都留在 T1。
 - **模拟器现在跑的是真行为**：`LoopSim.execute` 仿真官方包装器（`beginToolCall`/`endToolCall` → `takeDeferredDeliveries` → `exec.deferContext` → `result.ok && shouldConcludeTurn(callId)` → `exec.concludeTurn`），运行时那侧是**生产代码**。
-- 落地设计（编码前需作者审定，见 §19.7 待定 1）：① 两条通道分工 —— 有工具在途 ⇒ `deferContext`，无工具在途（帧内命中/人工回填/看门狗/一次性动作）⇒ `followup`；② 一次工具调用期间可能连推多步（`processBatch`），必须**按序全部** defer；③ `concludeTurn` 只对**T1/流程通道**的动作生效（T2 自己发起的工具调用绝不能收束回合）；④ 工具**不许抛异常**（registry 的 catch 会丢掉 deferred contexts，`core/tools/src/index.ts:1586-1588`），失败必须是"带错误的返回结果"（我们已是此风格）。
+- 落地设计（✅ 已按此实现，见 §19.6.2）：① 两条通道分工 —— 有工具在途 ⇒ `deferContext`，无工具在途（帧内命中/人工回填/看门狗/一次性动作）⇒ `followup`；② 一次工具调用期间可能连推多步（`processBatch`），必须**按序全部** defer；③ `concludeTurn` 只对**T1/流程通道**的动作生效（T2 自己发起的工具调用绝不能收束回合）；④ 工具**不许抛异常**（registry 的 catch 会丢掉 deferred contexts，`core/tools/src/index.ts:1586-1588`），失败必须是"带错误的返回结果"（我们已是此风格）。
 
 #### 19.6.2 投递通道：三条判据（✅ 已实现 2026-09-13）
 
@@ -883,12 +976,13 @@ ok:[GA] ∧ fail:[GA] → **注册期报错**（互斥）
 4. **分支阶段也要计时器**：一步成功不清掉时间预算 —— `succeedStep` 之后按 `step.timeoutMs ?? flow.timeoutMs` **重新布防**一个计时器（日志文案"等待后继判据超时 (Nms)"），到点即流程超时失败收束 + 留痕 + 交 T2。覆盖"判定节点（`success`）进入后等 MXP/收功句"与"只有条件分支后继、分支行永不到达"这两类静默等待（I4）。
 5. **打断/排队的运行时接线**（已落地）：规则动作的 `ActionSpec.interrupts` 声明 → 运行时在**批次内先做打断准入**（`admitRuleHits`）：档位够 ⇒ `FlowRuntime.interrupt()` 复位 + `onInterrupt` 直发 + **桥的在途/排队请求当场结算为 `interrupted`**（`CommandReplyController.interruptInFlight`，工具拿到 `{ok:false, settled:'interrupted'}`）+ 事件动作照常投递；档位不够 ⇒ 入 `FlowRuntime.pendingActions` 排队，**流程结束（终态/失败/打断）后由 `drainFlowQueue()` 出队投递**；未声明 ⇒ 不打断也不排队。端到端见 `tests/flow-interrupt.spec.ts`（含 login = 1000 不可打断）。
 6. **规则原文核对归作者**（作者 2026-09-13）：`需要创建新人物` / 密码错误 / 登录成功句 / fullme 成功句等**逐字原文**由作者上线前一一核对；实现方不代管、不代为"估计"，只保证**流程结构**正确（步骤图、判据分工、成功/失败/超时三态、打断档位）。
+7. **投递通道改用官方 `deferContext`（± `concludeTurn`）**（✅ 已落地 2026-09-13）：两条通道分工、多步按序 defer、`concludeTurn` 仅限 T1 通道、工具不许抛异常 —— 账目 1 回合 / 3 步 / 3 次模型请求（§19.6.1/§19.6.2）。
+8. **fullme 流程化**（✅ 定稿并落地 2026-09-13，作者逐条审定）：五步 `request → [stale | prompt] → answer → success`；流程表原文见 §11，八项实现面已全部落地。要点：`request` 只有 fail（"刚刚用过"动态时长）+ 两条条件分支，**无 ok**；`stale` 三连发 `fullme 1` 放弃上一轮后按失败收束；`prompt` 用 `mud_captcha` 工具取图 + 弹窗，以**工具结果**判定；`answer` 三次答错重来（**步内自环、不重置本步 3 分钟总预算**；错码等价于"三连放弃"）、`answer.timeoutMs = 180_000` = 图片有效期（等人工 + 重来 + 收结果共用这一份预算，**不引入 `humanTimeoutMs`**）；`success` 发 `hpbrief` 补状态。**三种收场（取图失败/答错 3 次/预算耗尽）都由下一轮的 `stale` 兜住**，运行时不另记状态。测试：`tests/flow-fullme.spec.ts`（声明面/校验/入口翻转）+ `tests/runtime-captcha.spec.ts`（真链路端到端）。
 
 **待定**：
 
-1. **投递通道：流程步改用官方 `deferContext`（± `concludeTurn`）**（作者已同意先研究；实测账目与落地设计见 §19.6.1）。现状是"一步一回合 + 每步一次空续步"（login 3 回合 / 6 次模型请求）；提议 A/B 在同一模拟器上测得 1 回合 / 4 次、1 回合 / 3 次。**编码前需要作者审定**四条落地设计（两条通道分工 / 多步按序 defer / `concludeTurn` 仅限 T1 通道 / 工具不许抛异常）。
-2. **fullme 流程化**（作者已指示"先 provide 流程表，我看看"）：提议的 `FlowSpec` 见 §11；实施前还缺"流程路径的人工环节要先挂起动作"与"三条 fullme 规则退役"两块（§11 那张表下面的两条）。
-3. **`pendingEntry` 的端到端用例**：`FlowRuntime` 已实现"流程活跃期间的其它流程入口 → 排队 → 当前流程结束后接续"，但还没有端到端测试（现有 7 例 `flow-interrupt.spec.ts` 覆盖打断、排队动作、超时出队与半截序列，不含入口接续）。
+1. **`pendingEntry` 的端到端用例**：`FlowRuntime` 已实现"流程活跃期间的其它流程入口 → 排队 → 当前流程结束后接续"，但还没有端到端测试（现有 7 例 `flow-interrupt.spec.ts` 覆盖打断、排队动作、超时出队与半截序列，不含入口接续）。
+2. **`hpbrief` 应答折叠进 world**（作者：后续一起加）：终态步已发 `hpbrief`，其应答目前只作 tool result；加一条 state 规则把气血/精力折进 world 由 T2 读取。
 
 ---
 

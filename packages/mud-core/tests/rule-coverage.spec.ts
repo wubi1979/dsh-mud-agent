@@ -40,10 +40,8 @@ const SAMPLES: Record<string, readonly string[]> = {
     '店小二(dian xiao er)',
   ],
   // ── event (T1 渲染) ──
-  'fullme:prompt': ['http://fullme.pkuxkx.net/robot.php?filename=1699999999'],
-  // 实录提醒原文 (用户 2026-09-12) —— 入口判据就是这句里的字面子串。
-  'fullme:request': ['5M后长时间不使用fullme，会被系统判定为机器人。'],
-  'fullme:done': ['你突然感到精神一振，浑身似乎又充满了力量！'],
+  // fullme 已流程化 (`FULLME_FLOW`): 提醒句/地址/成功句/答错句都是流程步的判据,
+  // 不再是规则 —— 样本随之移到 `tests/flow-fullme.spec.ts` 与 `tests/runtime-captcha.spec.ts`。
   'combat:start': ['野狗扑了上来，张嘴就咬。'],
   'combat:end': ['战斗结束。'],
   death: ['你死了。'],

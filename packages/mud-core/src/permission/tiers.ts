@@ -57,14 +57,14 @@ export const MUD_TIER_SPECS: Record<MudTier, MudTierSpec> = {
     description: '只看不发: 读世界快照与最近输出 (mud_state/mud_recall), 查命令语法 (mud_help); 登录流程照常。',
     // mud_send/world_patch = T1 T1 动作通道 (登录 + 置位), 见模块头部的取舍说明。
     // mud_help = 零发送语法查询 (只读档也要能查"有哪些命令")。
-    tools: ['mud_state', 'mud_recall', 'mud_help', 'mud_send', 'world_patch'],
+    tools: ['mud_state', 'mud_recall', 'mud_help', 'mud_send', 'world_patch', 'mud_captcha'],
     capabilities: [],
   },
   operate: {
     tier: 'operate',
     name: '读写',
     description: '读写游戏: 移动/观察/状态查询/任意命令。',
-    tools: ['mud_state', 'mud_recall', 'mud_help', 'mud_send', 'world_patch', 'mud_move', 'mud_look', 'mud_status'],
+    tools: ['mud_state', 'mud_recall', 'mud_help', 'mud_send', 'world_patch', 'mud_captcha', 'mud_move', 'mud_look', 'mud_status'],
     capabilities: [],
   },
   full: {
@@ -72,7 +72,7 @@ export const MUD_TIER_SPECS: Record<MudTier, MudTierSpec> = {
     name: '完全',
     description: '读写 + 外围能力 (连接/唤醒/目录/验证码刷新)。',
     tools: [
-      'mud_state', 'mud_recall', 'mud_help', 'mud_send', 'world_patch', 'mud_move', 'mud_look', 'mud_status',
+      'mud_state', 'mud_recall', 'mud_help', 'mud_send', 'world_patch', 'mud_captcha', 'mud_move', 'mud_look', 'mud_status',
       'mud_flow_list', 'mud_flow_disable', 'mud_flow_enable',
     ],
     capabilities: FULL_CAPABILITIES,

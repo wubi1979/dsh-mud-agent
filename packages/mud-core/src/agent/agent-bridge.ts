@@ -340,6 +340,16 @@ export interface MudDeliveryChannel {
   beginToolCall: () => void
   /** 工具调用离开。 */
   endToolCall: () => void
+  /**
+   * **工具结果 → 流程机**（可选；§19.1 的 `tool` 判据）。
+   *
+   * 只有"只调工具、不发游戏命令"的步骤（如 fullme 的取图步）才需要它：这类步骤没有
+   * GA 可判，靠工具结果是成功还是失败收尾。运行时会用 call-id 解析出步骤 id，
+   * 只接受**当前步**的结果（T2 自己发起的调用解析失败 → 忽略）。
+   * @param callId 本次工具调用 id（`mud-<delivery>-<index>`）。
+   * @param ok 工具结果是否成功。
+   */
+  noteToolResult?: (callId: string, ok: boolean) => void
   /** 取走本步待随结果进下一步的投递（顺序保持）。 */
   takeDeferredDeliveries: () => ReturnType<typeof ownedGameMessage>[]
   /** 本调用能否收束当前回合。 */
@@ -357,6 +367,9 @@ export interface MudDeliveryChannel {
  *   1. 进出工具调用通知运行时（期间产生的投递进 defer 槽）；
  *   2. 结果提交前把槽里的投递逐条 `exec.deferContext`（随本结果进下一步，同一回合）；
  *   3. `result.ok && shouldConcludeTurn(callId)` ⇒ `exec.concludeTurn()`（判据 B / 判据 C）。
+ *
+ * 另有一步**在 `endToolCall` 之前**：把工具结果喂回流程机（`noteToolResult`，`tool` 判据）——
+ * 这样判定产出的下一步动作仍在"在途"窗口里，会随本结果 defer 出去（判据 A），而不是另开回合。
  * @param input 通道（缺省 = 完全不接线，退回旧行为）、本次调用 id、官方 exec、以及工具执行体。
  * @returns 工具结果（原样透传）。
  */
@@ -372,6 +385,8 @@ export async function runWithDeliveryChannel(input: {
   let result: MudToolResult
   try {
     result = await run()
+    // 流程判定要在"工具仍算在途"时做（判据 A）：判定产出的投递随本结果进下一步。
+    channel.noteToolResult?.(callId, result.ok)
   } finally {
     channel.endToolCall()
   }

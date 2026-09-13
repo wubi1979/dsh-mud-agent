@@ -22,10 +22,25 @@ import type { PerceptionRule } from '../src/trigger-llm/types.ts'
 const SAVE_PROMPT = '建议经常使用save命令保存档案，避免造成意外损失。'
 const PAGER_PROMPT = '== 未完继续 88% == (q 离开，b 前一页，其他继续下一页)'
 const CAPTCHA_URL = 'http://fullme.pkuxkx.net/robot.php?filename=1699999999'
-/** 直接执行用例: save/分页 (direct) + fullme (人工环节入口, 用来验证"等待期不执行")。 */
+/** 直接执行用例: save/分页 (direct)。 */
 const DIRECT_RULES = defaultPerceptionRules.filter(
-  rule => rule.id === 'save:prompt' || rule.id === 'pager:continue' || rule.id === 'fullme:prompt',
+  rule => rule.id === 'save:prompt' || rule.id === 'pager:continue',
 )
+/**
+ * 人工环节样本规则（`awaitExternal`）：fullme 已流程化（`FULLME_FLOW`），规则表里不再有
+ * "等人工"的规则 —— 这里自建一条最小规则，只用来验证"等人工期间不执行直接动作"。
+ */
+const HUMAN_RULE: PerceptionRule = {
+  id: 'test:human',
+  eventType: 'p:test:human',
+  priority: 40,
+  match: { kind: 'regex', patterns: [/^https?:\/\/[^\s]*robot\.php\?filename=[^\s]+/] },
+  action: {
+    output: '测试: 等人工输入',
+    tool: { name: 'mud_send', args: { cmds: ['halt', 'fullme {captcha}'] } },
+    awaitExternal: ['captcha'],
+  },
+}
 
 function ml(text: string, abs: number): MudLine {
   return { text, raw: text, style: [], abs, time: Date.now(), isPrompt: false }
@@ -110,8 +125,8 @@ function harness(sessionId: string, extraRules: readonly PerceptionRule[] = []):
 }
 
 /** 建一个已登录连接 (直接执行要求已连接; 登录态让节拍/看门狗保持安静)。 */
-async function connected(sessionId: string) {
-  const h = harness(sessionId)
+async function connected(sessionId: string, extraRules: readonly PerceptionRule[] = []) {
+  const h = harness(sessionId, extraRules)
   h.runtime.connect()
   h.sink().onConnect()
   await h.runtime.tools().world_patch!.execute({ patch: { logged_in: true } })
@@ -161,7 +176,7 @@ describe('直接执行类动作 (无状态、无需返回的触发)', () => {
   })
 
   it('人工环节 (等验证码) 期间不执行直接动作', async () => {
-    const h = await connected('session-direct-human')
+    const h = await connected('session-direct-human', [HUMAN_RULE])
 
     h.sink().onLines([ml(CAPTCHA_URL, 0)])
     h.sink().onBoundary('ga')

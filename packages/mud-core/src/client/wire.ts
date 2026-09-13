@@ -59,6 +59,13 @@ export interface MudUiItem {
   url?: string
   /** captcha 专用: 预填命令 ("fullme <识别文字>"; OCR 完成前缺省 'fullme')。 */
   cmd?: string
+  /**
+   * captcha 专用: 需要展示给人工的提示（如上一轮答错的服务端原文）。
+   *
+   * fullme 走向流程化后，答错会**重新取图 + 重新弹窗**；服务端原话放在这里，
+   * 页面把它显示在对话框里（"再来一次试试！"），人工据此重输。
+   */
+  note?: string
 }
 
 /** Client → server hello handshake: resume from the last-seen seqs (zero = replay). */

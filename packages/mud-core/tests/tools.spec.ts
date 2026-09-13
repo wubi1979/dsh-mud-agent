@@ -130,6 +130,45 @@ describe('mud_send 兜底', () => {
   })
 })
 
+describe('mud_captcha 解析验证码 (系统流程工具)', () => {
+  it('缺 url 直接拒绝; 白名单外的地址拒绝且不发请求; 正常地址取图并推弹窗', async () => {
+    const pushed: { imageUrl: string; robotUrl: string; note?: string }[] = []
+    const tools = buildMudTools({
+      captcha: {
+        push: (imageUrl, robotUrl, note) => {
+          pushed.push({ imageUrl, robotUrl, ...(note === undefined ? {} : { note }) })
+        },
+      },
+    })
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => new TextEncoder().encode('<img src="./b2evo_captcha_tmp/a.jpg">').buffer,
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    // 参数校验: 没有地址 → 工具层拒绝（流程据此失败收束）。
+    expect((await tools.mud_captcha!.execute({})).ok).toBe(false)
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    // 出站围栏: 非 pkuxkx.net 一律拒绝（地址来自游戏文本，不可信）。
+    const rogue = await tools.mud_captcha!.execute({ url: 'http://169.254.169.254/robot.php?filename=1' })
+    expect(rogue.ok).toBe(false)
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    // 正常路径: 取图 → 归一为绝对地址 → 推弹窗（note 透传给人工）。
+    const robot = 'http://fullme.pkuxkx.net/robot.php?filename=1699999999'
+    const ok = await tools.mud_captcha!.execute({ url: robot, note: '上一轮答错了' })
+    expect(ok.ok).toBe(true)
+    expect(pushed).toEqual([{
+      imageUrl: 'http://fullme.pkuxkx.net/b2evo_captcha_tmp/a.jpg',
+      robotUrl: robot,
+      note: '上一轮答错了',
+    }])
+    vi.unstubAllGlobals()
+  })
+})
+
 describe('工具常量完备', () => {
   it('别名都在全名表内, 状态都有映射', () => {
     for (const alias of Object.keys(MOVE_ALIASES)) {

@@ -65,6 +65,10 @@ export interface FlowState {
   deadline: number
   pendingActions: number
   pendingEntry: number
+  /** 已重试次数（本步；`attempts` 见流程表）。 */
+  retries: number
+  /** 流程实例槽（`capture` 抽出的值 + 内建 `{lastFail}`）。 */
+  slots: Record<string, string>
 }
 
 /** 打断请求（由运行时在规则命中时提交）。 */
@@ -106,6 +110,11 @@ export interface FlowRuntimeOptions {
   patch: (patch: Record<string, unknown>) => void
   /** 直发命令（`onEnter.direct` / `onSuccess`；actor system，不入桥）。 */
   direct: (cmd: string) => void
+  /**
+   * 清空外部占位符的值（可选）：重试时本步 `awaitExternal` 声明的槽必须作废，
+   * 否则会把**上一轮的旧值**（如已失效的验证码）直接重发出去。
+   */
+  clearExternal?: (keys: readonly string[]) => void
   /** 流程失败/超时时唤醒 T2 一次（`failPolicy.notify='t2'`）。 */
   notifyFail: (context: string) => void
   /**
@@ -141,11 +150,17 @@ export class FlowRuntime {
     retries: number
     /** 顺序兜底后继（本节点成功后待执行；条件分支命中则作废）。 */
     sequential: string | null
+    /**
+     * **流程实例槽**：`capture` 抽出的值（如 `captchaUrl`）+ 内建 `{lastFail}`（最近一次
+     * `fail` 命中行原文）。跨步骤保留（`prompt` 抽、`answer` 用），流程收束/复位即作废；
+     * 重试**不重新抽取**（沿用首次的值）。
+     */
+    slots: Record<string, string>
   } | null = null
   /** 当前 arming 判据（行判据；`ga` 单独记在 `gaArmed`）。 */
   private armed: ArmedMatch[] = []
   /** 已布防的 GA 判据（针对本节点自己发出的命令）。 */
-  private gaArmed: { role: 'ok' | 'fail' } | null = null
+  private gaArmed: { role: 'ok' | 'fail'; why?: string } | null = null
   /**
    * 本步**已放行过的命令**（插值 + trim 后；桥结算归属判据）。
    *
@@ -187,6 +202,17 @@ export class FlowRuntime {
     this.armEntries()
   }
 
+  /**
+   * **重算入口布防**（`when` 读 world；只有空闲时才动 —— 活跃期间入口本来就不 arm）。
+   *
+   * 运行时在世界模型变化时调用：`login` 的 `when: !logged_in`、`fullme` 的 `when: logged_in`
+   * 都靠它随世界翻转（否则流程机只在收束/复位时重算，"登录完成后 fullme 入口永不 arm"）。
+   */
+  refreshEntries(): void {
+    if (this.disposed || this.active !== null) return
+    this.armEntries()
+  }
+
   /** 当前流程状态（`diag()`；空闲 = null）。 */
   state(): FlowState | null {
     if (this.active === null) return null
@@ -198,7 +224,30 @@ export class FlowRuntime {
       deadline: this.active.deadline,
       pendingActions: this.pendingActions.length,
       pendingEntry: this.pendingEntry.length,
+      retries: this.active.retries,
+      slots: { ...this.active.slots },
     }
+  }
+
+  /** 流程实例槽快照（运行时在**投递前**按它插值动作参数；空闲 = 空表）。 */
+  slots(): Readonly<Record<string, string>> {
+    return this.active?.slots ?? {}
+  }
+
+  /**
+   * **声明的槽名**（本流程表所有 `capture` 槽 + 内建 `lastFail`）。
+   *
+   * 用途：投递前插值时要能区分"未填的流程槽"（→ 空串）与"外部值"（`{captcha}`，
+   * 留到发送瞬间）。缺了它，首次投递会把 `{lastFail}` 字面发给工具。
+   */
+  slotNames(): readonly string[] {
+    const names = new Set<string>(['lastFail'])
+    for (const flow of this.flows) {
+      for (const step of flow.steps) {
+        for (const name of Object.keys(step.capture ?? {})) names.add(name)
+      }
+    }
+    return [...names]
   }
 
   /** 是否**挂起中**（桥上不允许第二条应答请求；I12 闸门）。 */
@@ -221,8 +270,51 @@ export class FlowRuntime {
     } else {
       // 活跃期间：其它流程入口只记录（当前流程结束后接续），不激活。
       this.notePendingEntries(lines)
+      if (this.active.phase === 'awaiting-human') {
+        // **人工环节不判行**（§19.2）：本步只有一个出口（人工回填），否则同批到达的成功句会
+        // 把"命令还没发出"的步判成成功。行照常进感知/终端，只是不参与流程判定。
+        this.debug(`人工环节：${lines.length} 行不参与本步判定`)
+        return hits
+      }
     }
     this.processBatch(lines, framed, hits)
+    return hits
+  }
+
+  /**
+   * **工具结果通知**（官方工具路径；`doc/ARCHITECTURE.md` §19.1 的 `tool` 判据）。
+   *
+   * 只接受**当前步**的结果（call-id 已经由运行时解析到步骤 id）：失败判据优先于成功判据；
+   * 工具结果失败**不走重试**（重试是给"答错"这类行判据用的：写失败/取图失败直接收束，
+   * 否则会把同一条命令重复发出去）。
+   * @param stepId 该工具调用所属的步骤 id（`mud-<delivery>-<index>` → 动作 ruleId）。
+   * @param ok 工具结果是否成功（`result.ok`）。
+   * @returns 判定产生的下一步动作（运行时负责投递；可能为空）。
+   */
+  noteToolResult(stepId: string, ok: boolean): FlowActionHit[] {
+    const hits: FlowActionHit[] = []
+    if (this.disposed || this.active === null) return hits
+    if (this.active.step.id !== stepId) {
+      this.debug(`工具结果（不是本步的: ${stepId}, 忽略）`)
+      return hits
+    }
+    const step = this.active.step
+    const outcome = ok ? 'ok' : 'error'
+    const hit = (list: readonly FlowMatch[] | undefined): FlowMatch | undefined =>
+      (list ?? []).find(match => match.kind === 'tool' && match.outcome === outcome)
+    const failMatch = hit(step.fail)
+    if (failMatch !== undefined) {
+      this.failStep(failMatch.why ?? `工具结果失败 (${stepId})`)
+      return hits
+    }
+    const okMatch = hit(step.ok)
+    if (okMatch === undefined) {
+      this.debug(`工具结果 ${outcome}（本步未声明该结果的判据, 忽略）`)
+      return hits
+    }
+    this.succeedStep(okMatch.why ?? `工具结果成功 (${stepId})`)
+    // 判定发生在批次之外：顺序兜底后继在这里补跑。
+    this.flushSequential([], false, hits)
     return hits
   }
 
@@ -273,10 +365,13 @@ export class FlowRuntime {
           return hits
         }
         if (ga.role === 'fail') {
-          this.failStep(`GA 判据 → 失败 (${preview(text)})`)
+          // `why` 是作者写的声明文案（如 stale 步的"放弃上一轮 → 本轮作废"）。
+          if (!this.tryRetry('fail', undefined, true, hits)) {
+            this.failStep(ga.why ?? `GA 判据 → 失败 (${preview(text)})`)
+          }
           return hits
         }
-        this.succeedStep(`GA 判据命中 (${preview(text)})`)
+        this.succeedStep(ga.why ?? `GA 判据命中 (${preview(text)})`)
         // 判定发生在批次之外：顺序兜底后继在这里补跑（帧内容已作为命令应答投过）。
         this.flushSequential([], true, hits)
         return hits
@@ -545,7 +640,9 @@ export class FlowRuntime {
   /** 应用一次判据命中（失败 / 条件分支 / 重试 / 成功）。 */
   private applyMatch(armed: ArmedMatch, line: MudLine, framed: boolean, hits: FlowActionHit[]): void {
     if (armed.role === 'fail') {
-      this.failStep(`命中失败判据 ${armed.label} (${preview(line.text)})`)
+      // 声明了 `retry.on: ['fail']` 的步骤：答错**重来**而不是收场（§19.2）。
+      if (this.tryRetry('fail', line, framed, hits)) return
+      this.failStep(armed.match.why ?? `命中失败判据 ${armed.label} (${preview(line.text)})`)
       return
     }
     if (armed.role === 'driver' && armed.target !== undefined) {
@@ -566,7 +663,9 @@ export class FlowRuntime {
       return
     }
     if (armed.role === 'driver') {
-      this.retryStep(hits, framed, line)
+      // 命中本步 driver：声明了 `retry.on`（含 'driver'，缺省值）才重发本步动作，否则失败。
+      if (this.tryRetry('driver', line, framed, hits)) return
+      this.failStep(`命中本步 driver 但没有声明 retry (${armed.label})`)
       return
     }
     this.succeedStep(`命中成功判据 ${armed.label} (${preview(line.text)})`)
@@ -623,7 +722,17 @@ export class FlowRuntime {
       this.reset()
       return
     }
-    this.active = { flow, step, phase: 'awaiting-result', deadline: 0, retries: 0, sequential: null }
+    const previous = this.active
+    this.active = {
+      flow,
+      step,
+      phase: 'awaiting-result',
+      deadline: 0,
+      retries: 0,
+      sequential: null,
+      // 槽跨步骤保留（`prompt` 抽的地址 `answer` 要用）；新流程实例则从空开始。
+      slots: previous !== null && previous.flow.id === flow.id ? previous.slots : {},
+    }
     // **每一次步骤迁移都把结算归属复位**（§19.3）：上一步命令的 GA/超时不得结算新进入的步骤。
     // 实测症状：`pass` 的命令在途时命中 `success` 的进入判据 → 进入 `success`（`ok:[GA]`），
     // 紧接着上一条命令的 GA 到达；若不复位，就会把"命令还没写出"的 `success` 判成成功。
@@ -632,6 +741,7 @@ export class FlowRuntime {
     this.opts.onTransition?.()
     this.opts.log(`[流程] ${flow.id} 进入步骤 ${step.id}`)
     this.applyEnter(step)
+    this.captureSlots(step, line)
     if (step.action === undefined) {
       // 判定节点：进入判据刚命中 ⇒ 视为成功；随后 arm 它的条件分支 + 待定顺序兜底。
       this.gaArmed = null
@@ -649,14 +759,33 @@ export class FlowRuntime {
       framed,
       ...((step.awaitExternal ?? []).length === 0 ? {} : { awaitExternal: step.awaitExternal }),
     })
-    if ((step.awaitExternal ?? []).length > 0) {
-      this.active.phase = 'awaiting-human'
-      this.opts.log(`[流程] ${flow.id}/${step.id} 等人工输入 (${(step.awaitExternal ?? []).map(k => `{${k}}`).join('/')})`)
-      return
-    }
     const timeout = step.timeoutMs ?? flow.timeoutMs ?? 30_000
     this.active.deadline = Date.now() + timeout
+    if ((step.awaitExternal ?? []).length > 0) {
+      // **人工环节照常布防计时器**（作者定案 2026-09-13）：等人工与答错重来共用本步这一份
+      // 时间预算（fullme 的 `answer` = 3 分钟 = 图片有效期）；到点即本步超时 → 流程失败收束。
+      this.active.phase = 'awaiting-human'
+      const keys = (step.awaitExternal ?? []).map(key => `{${key}}`).join('/')
+      this.opts.log(`[流程] ${flow.id}/${step.id} 等人工输入 (${keys}; 预算 ${timeout}ms)`)
+      this.armTimer(flow.id, step.id, timeout, `人工未在 ${timeout}ms 内提交（本步预算耗尽）`)
+      return
+    }
     this.armTimer(flow.id, step.id, timeout)
+  }
+
+  /** 把本步命中行按 `capture` 声明抽进流程实例槽（答错重试不重新抽取，沿用首次的值）。 */
+  private captureSlots(step: FlowStep, line?: MudLine): void {
+    const spec = step.capture
+    const active = this.active
+    if (spec === undefined || active === null || line === undefined) return
+    for (const [name, pattern] of Object.entries(spec)) {
+      const match = new RegExp(pattern).exec(line.text)
+      if (match === null) continue
+      const value = (match[1] ?? match[0]).trim()
+      if (value === '') continue
+      active.slots[name] = value
+      this.opts.log(`[流程] ${active.flow.id}/${step.id} 槽 {${name}} = ${preview(value)}`)
+    }
   }
 
   /** 激活流程时暂存的 flow（`enterStep` 需要）。 */
@@ -664,9 +793,13 @@ export class FlowRuntime {
 
   /** 布防本步自己的判据（GA 单独记）+ 条件分支后继的进入判据。 */
   private armOwnJudgements(step: FlowStep): void {
-    const gaOk = (step.ok ?? []).some(match => match.kind === 'ga')
-    const gaFail = (step.fail ?? []).some(match => match.kind === 'ga')
-    this.gaArmed = gaFail ? { role: 'fail' } : gaOk ? { role: 'ok' } : null
+    const gaOk = (step.ok ?? []).find(match => match.kind === 'ga')
+    const gaFail = (step.fail ?? []).find(match => match.kind === 'ga')
+    this.gaArmed = gaFail !== undefined
+      ? { role: 'fail', ...(gaFail.why === undefined ? {} : { why: gaFail.why }) }
+      : gaOk !== undefined
+        ? { role: 'ok', ...(gaOk.why === undefined ? {} : { why: gaOk.why }) }
+        : null
     const armed: ArmedMatch[] = []
     let order = 0
     if (step.driver !== undefined && step.retry !== undefined) {
@@ -708,7 +841,7 @@ export class FlowRuntime {
     const rules: PerceptionRule[] = []
     for (const entry of this.armed) {
       const match = entry.match
-      if (match.kind === 'ga') continue
+      if (!isLineMatch(match)) continue   // `ga`/`tool` 判据不由行匹配触发
       rules.push({
         id: entry.label,
         priority: 100 - entry.order,
@@ -741,26 +874,97 @@ export class FlowRuntime {
     return { conditional, sequential }
   }
 
-  /** 命中本步 driver → 重试（超限即失败）。 */
-  private retryStep(hits: FlowActionHit[], framed: boolean, line?: MudLine): void {
+  /**
+   * **原步内重试**（§19.2）：命中 `retry.on` 里的判据时回到"重新投动作 + 等结果/等人工"，
+   * **不换步、不重置计时器**（时间预算是"一步总计"）。
+   *
+   * 做四件事：① `{lastFail}` ← 命中行原文；② 清空本步 `awaitExternal` 的槽值（旧码作废）；
+   * ③ 投 `retry.action`（缺省 = 重发本步动作；已 `awaitExternal` 的步骤把本步动作**再挂起一次**）；
+   * ④ 重布防本步判据。`attempts` 用尽 → 直接失败收束（返回 true = 已处理）。
+   * @param on 触发来源（'driver' = 本步 driver 再次命中；'fail' = 命中失败判据）。
+   * @param line 命中行（失败原文进 `{lastFail}`）。
+   * @param framed 命中是否来自应答帧（动作投递路径）。
+   * @param hits 动作收集（由调用方投递）。
+   * @returns 是否已处理（false = 本步未声明该来源的重试，交给调用方走失败）。
+   */
+  private tryRetry(
+    on: 'driver' | 'fail',
+    line: MudLine | undefined,
+    framed: boolean,
+    hits: FlowActionHit[],
+  ): boolean {
     const active = this.active
-    if (active === null || active.step.action === undefined) return
-    const limit = active.step.retry?.limit ?? 0
-    if (limit <= 0 || active.retries >= limit) {
-      this.failStep(`重试超限 (${active.retries}/${limit}) 或未声明 retry`)
-      return
+    if (active === null) return false
+    const retry = active.step.retry
+    if (retry === undefined) return false
+    if (!(retry.on ?? ['driver']).includes(on)) return false
+    const total = Math.max(1, retry.attempts)
+    if (active.retries + 1 >= total) {
+      this.failStep(`重试次数用尽 (${active.retries + 1}/${total}${on === 'fail' ? '，答错' : ''})`)
+      return true
     }
+    const step = active.step
     active.retries += 1
-    this.opts.log(`[流程] ${active.flow.id}/${active.step.id} 重试 ${active.retries}/${limit}`)
-    hits.push({
-      ruleId: `flow:${active.flow.id}/${active.step.id}`,
-      output: `流程 ${active.flow.id}/${active.step.id}: 重试`,
-      tool: { name: active.step.action.tool, args: active.step.action.args },
-      text: line?.text ?? active.step.id,
-      anchorAbs: line?.abs ?? -1,
-      framed,
+    const attempt = active.retries + 1
+    if (line !== undefined) active.slots.lastFail = line.text
+    const keys = step.awaitExternal ?? []
+    if (keys.length > 0) this.opts.clearExternal?.(keys)
+    this.ownCommands.clear()
+    this.opts.log(`[流程] ${active.flow.id}/${step.id} 重试 ${attempt}/${total}` +
+      `${line === undefined ? '' : ` (${preview(line.text)})`}`)
+    this.opts.decision?.({
+      actor: 'flow',
+      flow: active.flow.id,
+      eventType: 'step-retry',
+      ruleId: `${active.flow.id}/${step.id}`,
+      action: '流程步骤重试',
+      result: `${attempt}/${total}`,
+      text: `[流程] ${active.flow.id}/${step.id} 重试 ${attempt}/${total}`,
     })
-    this.armOwnJudgements(active.step)
+    const ruleId = `flow:${active.flow.id}/${step.id}`
+    const anchorAbs = line?.abs ?? -1
+    const text = line?.text ?? step.id
+    // ① 重试前的动作（如重新取图 + 弹窗反馈失败原文）。
+    const pre = retry.action
+    if (pre !== undefined) {
+      hits.push({
+        ruleId,
+        output: `流程 ${active.flow.id}/${step.id}: 重试 ${attempt}/${total}`,
+        tool: { name: pre.tool, args: pre.args },
+        text,
+        anchorAbs,
+        framed,
+      })
+    }
+    if (keys.length > 0) {
+      // ② 等人工的步骤：本步动作**再挂起一次**（人工回填后由运行时投出）。
+      if (step.action !== undefined) {
+        hits.push({
+          ruleId,
+          output: `流程 ${active.flow.id}/${step.id}: 重试后重新等人工`,
+          tool: { name: step.action.tool, args: step.action.args },
+          text,
+          anchorAbs,
+          framed,
+          awaitExternal: keys,
+        })
+      }
+      active.phase = 'awaiting-human'
+      return true
+    }
+    // ③ 不等人工的步骤：缺省重发本步动作（旧语义）并重布防判据；计时器不动。
+    if (pre === undefined && step.action !== undefined) {
+      hits.push({
+        ruleId,
+        output: `流程 ${active.flow.id}/${step.id}: 重试 ${attempt}/${total}`,
+        tool: { name: step.action.tool, args: step.action.args },
+        text,
+        anchorAbs,
+        framed,
+      })
+    }
+    this.armOwnJudgements(step)
+    return true
   }
 
   /** 进入本步的副作用。 */

@@ -178,6 +178,17 @@ const WARN_STYLE: React.CSSProperties = {
   marginTop: 10,
 }
 
+/** 服务端反馈（上一轮答错原文；`captcha.note`）—— 提醒人工"图已刷新，请重输"。 */
+const NOTE_STYLE: React.CSSProperties = {
+  fontSize: 13,
+  color: '#c26b1f',
+  background: 'var(--dsw-alias-interactive-bg-hover)',
+  borderRadius: 6,
+  padding: '6px 8px',
+  marginTop: 10,
+  whiteSpace: 'pre-wrap',
+}
+
 /**
  * fullme 验证码对话框 (自驱动): 状态在 MudSocketController 的 captcha 存储
  * (替换语义, 全局唯一不叠开) — 新 captcha 事件整体覆盖当前对话框 (含 host
@@ -255,6 +266,9 @@ export function CaptchaDialog({ mudSocket, sendCommand, refreshCaptcha, sessionI
     >
       {captcha !== null && (
         <>
+          {/* 答错重来：服务端原话（图已自动刷新）先摆出来，人工据此重输。 */}
+          {captcha.note !== undefined && captcha.note.trim() !== ''
+            && <div style={NOTE_STYLE} role="status">{captcha.note}</div>}
           {/* eslint-disable-next-line @next/next/no-img-element -- 内部对话框, 直接用 img */}
           <img src={captcha.url ?? ''} alt="验证码图片" style={CAPTCHA_IMG_STYLE} />
           <div style={{...HINT_STYLE, display: 'flex', alignItems: 'center', gap: 4}}>
