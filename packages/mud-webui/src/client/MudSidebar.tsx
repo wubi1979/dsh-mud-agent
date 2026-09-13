@@ -8,10 +8,11 @@
  * collapsed rail are handled (owner `{ collapsed, width }`).
  *
  * Per-server rows carry a ➕ add-user control and a ⋯ delete menu; per-user
- * rows carry a ⋯ delete menu and open their session view on click. Connection
- * state is polled from GET /mud/status (2.5s) and reconciled by the
- * MudStateController; connecting/disconnecting is driven by the game page
- * buttons, never by the sidebar.
+ * rows open their session view on click, and their ⋯ menu carries 连接/断开
+ * (the session body does not render while the session is blank, so the connect
+ * gesture must live outside it) plus 删除用户. Connection state is polled from
+ * GET /mud/status (2.5s) and reconciled by the MudStateController; the game
+ * page toolbar mirrors the same actions once its tab is visible.
  * @module @deepseek-ai/dsh-mud-webui/client/MudSidebar
  */
 
@@ -23,8 +24,9 @@ import {
   IconRefreshOutline16, IconUserOutline16, Menu, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
-  MudConnInfo, MudConnState, MudServer, MudServersSnapshot,
+  MudConnInfo, MudConnState, MudServer, MudServersSnapshot, MudTier, MudUser,
 } from './mud-state.ts'
+import { MUD_TIER_CHOICES } from './mud-state.ts'
 import type { MudSocketController } from './mud-socket.ts'
 import { ServerDialog, UserDialog } from './MudDialogs.tsx'
 import css from './MudSidebar.module.css'
@@ -41,17 +43,25 @@ export interface MudClientInjected {
   removeServer: (serverId: string) => void
   addUser: (serverId: string, input: { name: string; pass: string }) => void
   removeUser: (serverId: string, userId: string) => void
+  /** 连接入口在用户行 ⋯ 菜单 (会话体渲染之前就可用)。 */
   connectUser: (serverId: string, userId: string) => Promise<void>
-  disconnect: () => Promise<void>
-  refreshStatus: () => Promise<void>
-  /** Select a user and open its dedicated session view (the game page drives the connection). */
+  /** 断开某会话 (缺省 = 当前活动会话)。 */
+  disconnect: (sessionId?: string) => Promise<void>
+  /** 轮询连接状态 (缺省 = 当前活动会话; 快照含每会话状态表)。 */
+  refreshStatus: (sessionId?: string) => Promise<void>
+  /** Select a user and open its dedicated session view. */
   openUserSession: (serverId: string, userId: string) => void
-  /** Ensure a user's session exists in the list (幂等 create), open it, and engage it so the 游戏/日志 tabs render. */
-  ensureAndOpenUserSession: (serverId: string, userId: string, shouldEngage: boolean) => void
-  /** Send one game command straight to the game (bypasses the agent). */
-  sendCommand: (cmd: string) => Promise<boolean>
+  /**
+   * Ensure a user's session exists in the list (幂等 create) and open it.
+   * 不发送占位消息: blank 由连接后第一批游戏输出的 turn/start 自然翻转。
+   */
+  ensureAndOpenUserSession: (serverId: string, userId: string) => void
+  /** Send one game command straight to the game (bypasses the agent) — 目标会话可指定。 */
+  sendCommand: (cmd: string, sessionId?: string) => Promise<boolean>
+  /** 切换某会话的权限档位 (只读/读写/完全; 用户行 ⋯ 菜单)。 */
+  setTier: (sessionId: string, tier: MudTier) => Promise<boolean>
   /** Refresh the captcha image (re-fetch robot.php and push a new captcha event). */
-  refreshCaptcha: (imageUrl: string) => Promise<string | null>
+  refreshCaptcha: (imageUrl: string, sessionId?: string) => Promise<string | null>
   toggleSidebar: () => void
 }
 
@@ -60,9 +70,20 @@ export type MudSidebarProps =
   PropsRuntime<'sidebar'>
   & InjectFace<MudClientInjected>
 
-/** Connection-state class for one roster row (only the active target lights up). */
-function rowState(conn: MudConnInfo, userId: string): MudConnState {
-  return conn.userId === userId ? conn.state : 'idle'
+/**
+ * Connection-state class for one roster row: 该用户绑定的会话状态优先, 回落
+ * 活动目标的连接状态 (roster 尚未拿到 sessionId 时)。
+ */
+function rowState(
+  conn: MudConnInfo,
+  sessionState: Readonly<Record<string, MudConnState>>,
+  user: MudUser,
+): MudConnState {
+  if (user.sessionId !== '') {
+    const perSession = sessionState[user.sessionId]
+    if (perSession !== undefined && perSession !== 'idle') return perSession
+  }
+  return conn.userId === user.id ? conn.state : 'idle'
 }
 
 /** Dot class for a connection state (indexed access is optional under noUncheckedIndexedAccess). */
@@ -97,11 +118,14 @@ export function MudSidebar({
   removeServer,
   addUser,
   removeUser,
+  connectUser,
+  disconnect,
   refreshStatus,
   openUserSession,
+  setTier,
   toggleSidebar,
 }: MudSidebarProps) {
-  const { servers, conn } = useServers(s => s)
+  const { servers, conn, sessionState, sessionTier } = useServers(s => s)
   const [serverDialogOpen, setServerDialogOpen] = useState(false)
   const [userDialogTarget, setUserDialogTarget] = useState<MudServer | null>(null)
   const [serverMenuFor, setServerMenuFor] = useState<MudServer | null>(null)
@@ -192,7 +216,7 @@ export function MudSidebar({
                 </div>
               </div>
               {server.users.map((user) => {
-                const state = rowState(conn, user.id)
+                const state = rowState(conn, sessionState, user)
                 return (
                   <div
                     key={user.id}
@@ -231,9 +255,30 @@ export function MudSidebar({
                           <IconEllipsisOutline16 size={14} />
                         </button>
                       )}
-                      items={[{ id: 'delete-user', label: '删除用户' }]}
+                      items={[
+                        // 连接/断开放在这里: 会话体 (游戏页) 在 blank 期间不渲染,
+                        // 而连接必须先于第一批游戏输出 — 用户行菜单是唯一始终可用的入口。
+                        state === 'connected' || state === 'connecting'
+                          ? { id: 'disconnect', label: '断开连接' }
+                          : { id: 'connect', label: '连接' },
+                        // 权限档位 (用户即会话): 三个档位各自一项, 当前档带标记。
+                        // 只读者不能发送游戏命令 (登录流程除外), 见文档 §10。
+                        ...MUD_TIER_CHOICES.map(choice => ({
+                          id: `tier:${choice.tier}`,
+                          label: `${user.sessionId !== '' && sessionTier[user.sessionId] === choice.tier ? '● ' : '　'}${choice.label}`,
+                        })),
+                        { id: 'delete-user', label: '删除用户' },
+                      ]}
                       onSelect={(id) => {
                         if (id === 'delete-user') removeUser(server.id, user.id)
+                        if (id === 'connect') void connectUser(server.id, user.id)
+                        if (id === 'disconnect') void disconnect(user.sessionId === '' ? undefined : user.sessionId)
+                        if (id.startsWith('tier:') && user.sessionId !== '') {
+                          const tier = id.slice('tier:'.length)
+                          if (tier === 'observe' || tier === 'operate' || tier === 'full') {
+                            void setTier(user.sessionId, tier)
+                          }
+                        }
                         setUserMenuFor(null)
                       }}
                       portal

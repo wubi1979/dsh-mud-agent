@@ -6,7 +6,7 @@
  * 工具", 不另设执行机制 (无流程引擎 / 无状态机)。
  *
  * 命令队列: 最小间隔节流 (默认 400ms) + 优先级 (halt > high > normal > low),
- * 防止规则反射与 agent 连发命令时洪水游戏服务器。
+ * 防止规则动作与 agent 连发命令时洪水游戏服务器。
  * @module @deepseek-ai/dsh-mud-core/execution
  */
 
@@ -18,8 +18,8 @@ export interface CommandMeta {
   priority?: keyof typeof QUEUE_PRIORITY
   source?: string
   /** 回显归属 (R2-2): 工具/规则 → 'agent'; 手动/WebUI 命令 → 'user'。 */
-  actor?: 'agent' | 'user'
-  /** 命令-应答桥 (REFACTOR-V7 机制 A): 应答请求 id。队列只透传不消费;
+  actor?: 'agent' | 'user' | 'system'
+  /** 命令-应答桥 (`doc/ARCHITECTURE.md` §8): 应答请求 id。队列只透传不消费;
    *  onSend 时宿主据其实调 controller.confirmSent (真实写 socket 后武装)。 */
   replyId?: string
 }

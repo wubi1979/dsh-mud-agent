@@ -157,6 +157,35 @@ describe('v6.5 锚定整行 + 捕获组提取', () => {
     // seed 不命中的行绝不可能命中锚定正则 → 预筛选跳。
     expect(s.match(toLines(['完全不相关的聊天。']))).toHaveLength(0)
   })
+
+  it('量词不参与 seed: `?`/`*` 后的字面不算必要前缀 (曾经 `^https?://` 推成 https → 规则永不命中)', () => {
+    const s = new TriggerMatchService([{
+      id: 'fullme:prompt', eventType: 'p:fullme',
+      match: { kind: 'regex', patterns: [/^https?:\/\/[^\s]*robot\.php\?filename=[^\s]+/] },
+      action: { output: '验证码' },
+    }])
+    // 两种形态都必须命中: `s?` 让 `https` 不是必要前缀。
+    expect(s.match(toLines(['http://fullme.pkuxkx.net/robot.php?filename=1']))).toHaveLength(1)
+    expect(s.match(toLines(['https://fullme.pkuxkx.net/robot.php?filename=2']))).toHaveLength(1)
+    // 无关行仍被正则拒绝 (规则只认 robot.php 形态; 域名白名单在取图的出站围栏上)。
+    expect(s.match(toLines(['http://example.com/index.html']))).toHaveLength(0)
+    expect(s.match(toLines(['欢迎使用北大侠客行']))).toHaveLength(0)
+  })
+
+  it('量词与顶层分支的 seed 必要性: `^a*b` 命中 `b…`; 顶层 `|` 放弃预筛 (不丢候选)', () => {
+    const star = new TriggerMatchService([{
+      id: 'star', eventType: 'p:star', match: { kind: 'regex', patterns: [/^a*b$/] }, action: { output: 'x' },
+    }])
+    expect(star.match(toLines(['b']))).toHaveLength(1)
+    expect(star.match(toLines(['aaab']))).toHaveLength(1)
+    expect(star.match(toLines(['c']))).toHaveLength(0)
+
+    const alt = new TriggerMatchService([{
+      id: 'alt', eventType: 'p:alt', match: { kind: 'regex', patterns: [/^甲|乙$/] }, action: { output: 'x' },
+    }])
+    expect(alt.match(toLines(['甲组的消息']))).toHaveLength(1)
+    expect(alt.match(toLines(['消息来自乙']))).toHaveLength(1)   // 不能因 seed 只认 '甲' 而漏
+  })
 })
 
 describe('v6.6 匹配类型分派 (regex / text / func)', () => {

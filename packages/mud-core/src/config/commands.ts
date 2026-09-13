@@ -8,13 +8,16 @@
  *   - 流程级 (skills.ts): 多步编排序列, 供 agent 按序执行。
  *
  * 用途:
- *   - **紧凑 agent 参考** (`commandsTextForAgent`): 一行一条、按类分组的命令语法
- *     注入系统提示 `mud-commands` 区段, 让 agent 用 `mud_send` 时拼对语法,
- *     而不用 70+ 个工具 schema 占每次请求的 token;
- *   - **安全边界** (`FORBIDDEN_COMMANDS`): 原始命令层的硬禁用命令 (suicide/passwd),
- *     由 `mud_send` 工具层拦截, 不发到游戏。
+ *   - **系统提示里的索引** (`commandsIndexForAgent`): 只列分类与命令 id, 语法按需用
+ *     `mud_help` 工具取 (`commandHelpText`) —— 70+ 条完整语法不必每轮都进前缀;
+ *   - **危险命令策略表** (`DEFAULT_DANGEROUS_COMMANDS`): 取代旧的静态黑名单
+ *     (`FORBIDDEN_COMMANDS`, 只有 suicide/passwd 两个字符串) —— 数据驱动、可配、
+ *     可测 (见 `doc/ARCHITECTURE.md` §10)。工具层据 `deny` 条目做硬拦截, 权限
+ *     闸门 (`permission/policy.ts`) 再做档位感知的 `deny`/`ask`。
  * @module @deepseek-ai/dsh-mud-core/config/commands
  */
+
+import type { MudTier } from '../permission/tiers.ts'
 
 /** 一条命令定义。 `command` 为模板串, 可含 `{占位符}` (参数由调用方注入)。 */
 export interface MudCommand {
@@ -134,11 +137,81 @@ export const mudCommands: readonly MudCommand[] = [
   { id: 'wield', category: 'trade', name: '装备武器', command: 'wield {item}', description: '装备武器 (可加 at left/right 指定手部)' },
 ]
 
-/** 原始命令层硬禁用命令 (安全边界)。迁移前 `lib/skills.js` 的 forbidden 判定
- * 依据 (suicide/passwd + 禁止语义): 这些命令直接不可执行, 由 `mud_send`
- * 工具层拦截, 防止 agent 拼错导致删号/改密等不可逆操作。
+/** 危险命令的处理方式 (`ask` 在无审批服务时等同拒绝 —— 官方 `PreToolDecision` 语义)。 */
+export type DangerousAction = 'deny' | 'ask'
+
+/** 一条危险命令策略 (数据驱动; 部署可用 Config.dangerousCommands 覆盖)。 */
+export interface DangerousRule {
+  /** 策略 id (日志/决策栏归因)。 */
+  id: string
+  /** 命令首词 (小写, 不含参数)。 */
+  commands: readonly string[]
+  action: DangerousAction
+  /** 拒绝/询问理由 (进模型可见文本与会话日志)。 */
+  reason: string
+  /** 生效档位 (缺省 = 全部档位)。 */
+  tiers?: readonly MudTier[]
+}
+
+/**
+ * 缺省危险命令表。
+ *
+ * `deny` = 不可逆/删除身份 (工具层同时按此表硬拦); `ask` = 可逆但有代价
+ * (丢东西/退游戏/放弃技能/叫杀), 由官方审批服务决定。
  */
-export const FORBIDDEN_COMMANDS: readonly string[] = ['suicide', 'passwd']
+export const DEFAULT_DANGEROUS_COMMANDS: readonly DangerousRule[] = [
+  { id: 'suicide', commands: ['suicide'], action: 'deny', reason: '自杀命令会删除人物档案, 不可逆' },
+  { id: 'passwd', commands: ['passwd'], action: 'deny', reason: '改密命令会影响账号凭据, 不可逆' },
+  { id: 'abandon', commands: ['abandon', 'part_abandon'], action: 'ask', reason: '放弃技能会从人物资料里删除该技能' },
+  { id: 'steal', commands: ['steal'], action: 'ask', reason: '偷窃会犯罪并被通缉' },
+  { id: 'kill', commands: ['kill', 'killall'], action: 'ask', reason: '叫杀可能被反杀, 禁地会招来官兵' },
+  { id: 'drop', commands: ['drop', 'junk'], action: 'ask', reason: '丢弃物品可能永久失去该物品' },
+  { id: 'quit', commands: ['quit', 'exit', 'logout'], action: 'ask', reason: '退出会中断当前修炼/任务状态' },
+]
+
+/**
+ * 命令首词 (小写; 按空白/分号切分后的第一段)。
+ * @param cmd 原始命令。
+ * @returns 首词 (空命令 = 空串)。
+ */
+export function commandHead(cmd: string): string {
+  return (String(cmd).trim().toLowerCase().split(/[\s;]+/)[0] ?? '')
+}
+
+/**
+ * 命中该命令的危险策略 (按表序取第一条命中)。
+ * @param cmd 原始命令。
+ * @param tier 当前档位 (策略可用 `tiers` 限定生效档位)。
+ * @param rules 策略表。
+ * @returns 命中的策略, 或 null。
+ */
+export function dangerousRuleFor(
+  cmd: string,
+  tier: MudTier,
+  rules: readonly DangerousRule[] = DEFAULT_DANGEROUS_COMMANDS,
+): DangerousRule | null {
+  const head = commandHead(cmd)
+  if (head === '') return null
+  for (const rule of rules) {
+    if (rule.tiers !== undefined && !rule.tiers.includes(tier)) continue
+    if (rule.commands.includes(head)) return rule
+  }
+  return null
+}
+
+/**
+ * 表里所有 `deny` 命令首词 (工具层硬边界的单一事实源)。
+ * @param rules 策略表。
+ * @returns 硬禁用首词集合。
+ */
+export function deniedCommands(rules: readonly DangerousRule[] = DEFAULT_DANGEROUS_COMMANDS): ReadonlySet<string> {
+  const out = new Set<string>()
+  for (const rule of rules) {
+    if (rule.action !== 'deny') continue
+    for (const cmd of rule.commands) out.add(cmd)
+  }
+  return out
+}
 
 /** 分类顺序 (渲染分组用)。 */
 const CATEGORY_ORDER = [
@@ -160,28 +233,73 @@ const CATEGORY_LABELS: Record<string, string> = {
 }
 
 /**
- * 渲染为 agent 系统提示 `mud-commands` 区段 (紧凑命令参考, 一行一条、按类分组)。
- * 让 agent 用 `mud_send` 时拼对命令语法, 而非 70+ 工具 schema 占每次请求 token。
+ * 渲染为 agent 系统提示 `mud-commands` 区段的**简短索引** (按类的命令 id 清单)。
+ *
+ * 为什么不再全量注入: 70+ 行语法+说明是每次请求都带的固定前缀, 而模型一轮里真正会用的
+ * 只有少数几条。索引给"有哪些命令可用" (足够模型意识到该查哪一类), 具体语法按需用
+ * `mud_help` 取 (`commandHelpText`)。
+ * @param commands 命令注册表 (缺省 `mudCommands`)。
+ * @returns 索引导航文本 (含查询方式说明)。
  */
-export function commandsTextForAgent(commands: readonly MudCommand[] = mudCommands): string {
-  const byCat = new Map<string, MudCommand[]>()
-  for (const c of commands) {
-    if (!c.command) continue // 载体/感知类无模板, 不给 agent 作可执行参考
-    const list = byCat.get(c.category) ?? []
-    list.push(c)
-    byCat.set(c.category, list)
-  }
-  const lines: string[] = ['以下是常用游戏命令语法 (用 mud_send 发送; 参数按模板填):']
+export function commandsIndexForAgent(commands: readonly MudCommand[] = mudCommands): string {
+  const lines: string[] = [
+    '游戏命令按类索引 (用 mud_send 发送; 具体语法用 mud_help 查):',
+  ]
   for (const cat of CATEGORY_ORDER) {
-    const list = byCat.get(cat)
-    if (!list || list.length === 0) continue
-    lines.push(`[${CATEGORY_LABELS[cat] ?? cat}]`)
-    for (const c of list) {
-      const forbidden = c.forbidden ? ' [禁止]' : ''
-      lines.push(`  ${c.command} — ${c.name}${forbidden}: ${c.description}`)
-    }
+    const ids = commands
+      .filter(c => c.category === cat && c.command !== '')
+      .map(c => c.id)
+    if (ids.length === 0) continue
+    lines.push(`  ${CATEGORY_LABELS[cat] ?? cat} (${ids.length}): ${ids.join(' ')}`)
   }
+  lines.push('  mud_help(topic=<分类或命令 id>) 取该类/该命令的完整语法与说明; 不带 topic = 全部 id。')
   return lines.join('\n')
+}
+
+/**
+ * 按主题展开命令目录 (agent 工具 `mud_help` 的实现)。
+ *
+ * 三种形态:
+ *   - 无 topic: 全部分类与命令 id (导航);
+ *   - topic = 分类 id (`navigation` 等): 该类的完整语法与说明;
+ *   - topic = 命令 id (`ask` 等): 该命令的语法与说明 (附带所属分类的其余 id)。
+ * 无法识别时返回可用取值 + 一句提示 (不抛错 —— 这是模型可输入的自由文本)。
+ * @param topic 主题 (分类 id 或命令 id; 空串 = 导航)。
+ * @param commands 命令注册表 (缺省 `mudCommands`)。
+ * @returns 供模型阅读的文本。
+ */
+export function commandHelpText(topic: string, commands: readonly MudCommand[] = mudCommands): string {
+  const want = topic.trim().toLowerCase()
+  const usable = commands.filter(c => c.command !== '')
+  if (want === '') {
+    const lines = ['命令分类与 id (用 mud_help topic=<id> 取语法):']
+    for (const cat of CATEGORY_ORDER) {
+      const ids = usable.filter(c => c.category === cat).map(c => c.id)
+      if (ids.length === 0) continue
+      lines.push(`[${cat}] ${CATEGORY_LABELS[cat] ?? cat}: ${ids.join(' ')}`)
+    }
+    return lines.join('\n')
+  }
+  const byCategory = usable.filter(c => c.category === want)
+  if (byCategory.length > 0) {
+    return [`[${want}] ${CATEGORY_LABELS[want] ?? want}:`, ...byCategory.map(commandLine)].join('\n')
+  }
+  const one = usable.find(c => c.id.toLowerCase() === want)
+  if (one !== undefined) {
+    const siblings = usable.filter(c => c.category === one.category).map(c => c.id)
+    return [
+      commandLine(one),
+      `分类 ${one.category} (${CATEGORY_LABELS[one.category] ?? one.category}) 其余命令: ${siblings.join(' ')}`,
+    ].join('\n')
+  }
+  return `未知主题 ${JSON.stringify(topic)}。可用分类: ${CATEGORY_ORDER.join(' ')}; `
+    + `命令 id 见 mud_help (不带 topic)。`
+}
+
+/** 一条命令的一行渲染 (语法 — 中文名: 说明)。 */
+function commandLine(c: MudCommand): string {
+  const forbidden = c.forbidden ? ' [禁止]' : ''
+  return `  ${c.command} — ${c.name}${forbidden}: ${c.description}`
 }
 
 export default mudCommands

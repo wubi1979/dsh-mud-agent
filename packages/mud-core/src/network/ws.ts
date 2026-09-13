@@ -210,8 +210,8 @@ export class MudWebSocketHub {
   }
 
   /** Broadcast a world snapshot (replacement semantics — no history). */
-  broadcastWorld(world: MudWorldSnapshot): void {
-    this.broadcast({ ch: 'world', world })
+  broadcastWorld(world: MudWorldSnapshot, sessionId?: string): void {
+    this.broadcast({ ch: 'world', ...(sessionId === undefined ? {} : { sessionId }), world })
   }
 
   /** Terminate every client, close the server, and unregister the route. */

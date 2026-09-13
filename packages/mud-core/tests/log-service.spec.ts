@@ -6,11 +6,11 @@
  * info/warn/error/debug 便捷方法。
  */
 
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { MudLogService, resolveLogDir, type LogEntry } from '../src/logging/log-service.ts'
+import { MudLogService, purgeSessionLogs, resolveLogDir, type LogEntry } from '../src/logging/log-service.ts'
 
 const tmpDirs: string[] = []
 
@@ -141,6 +141,53 @@ describe('MudLogService', () => {
     svc.info('runtime', 'a2')
     const restored = svc.readDayEntries('seq-a')
     expect(restored.map(e => e.seq)).toEqual([1, 2])
+  })
+
+  it('purge() 清内存缓冲并把 seq 归零 (删除用户后不该再有可读回的内容)', () => {
+    const svc = new MudLogService({ sessionId: 'purge-mem' })
+    svc.info('runtime', 'gone-a')
+    svc.info('runtime', 'gone-b')
+    expect(svc.entries()).toHaveLength(2)
+    svc.purge()
+    expect(svc.entries()).toHaveLength(0)
+    // seq 归零: 重建的同 id 会话从 1 重新计, 不与已删内容同号。
+    expect(svc.info('runtime', 'fresh').seq).toBe(1)
+  })
+})
+
+describe('purgeSessionLogs', () => {
+  it('删除该会话全部日期的文件 + 滚动分片, 不动其它会话', () => {
+    const dir = makeTmpDir()
+    const svcA = new MudLogService({ logDir: dir, sessionId: 'sess-a' })
+    svcA.info('runtime', 'a')
+    const svcB = new MudLogService({ logDir: dir, sessionId: 'sess-b' })
+    svcB.info('runtime', 'b')
+    // 滚动分片 + 历史日期 + 前缀相同的兄弟会话 (sess-a2 不能被误删)。
+    writeFileSync(join(dir, 'mud-20200101-sess-a-1.log'), '{}\n')
+    writeFileSync(join(dir, 'mud-20200101-sess-a-2.log'), '{}\n')
+    writeFileSync(join(dir, 'mud-20200101-sess-a2.log'), '{}\n')
+    expect(readdirSync(dir).filter(n => n.includes('sess-a'))).toHaveLength(4)
+
+    const removed = purgeSessionLogs(dir, 'sess-a')
+
+    expect(removed).toBe(3)
+    const left = readdirSync(dir)
+    expect(left.filter(n => n.startsWith('mud-') && n.includes('sess-a'))).toEqual(['mud-20200101-sess-a2.log'])
+    expect(left.some(n => n.includes('sess-b'))).toBe(true)
+    // 注销后读回: 空 (前端"当日恢复"拿不到任何内容)。
+    expect(svcB.readDayEntries('sess-a')).toEqual([])
+  })
+
+  it('无落盘目录 / 目录不存在 / sessionId 含正则元字符 → 不抛出', () => {
+    expect(purgeSessionLogs(undefined, 'x')).toBe(0)
+    expect(purgeSessionLogs('', 'x')).toBe(0)
+    expect(purgeSessionLogs(join(makeTmpDir(), 'missing'), 'x')).toBe(0)
+    const dir = makeTmpDir()
+    const svc = new MudLogService({ logDir: dir, sessionId: 'a+b.c' })
+    svc.info('runtime', 'literal')
+    writeFileSync(join(dir, 'mud-20200101-axbxc.log'), '{}\n') // 元字符不得当通配
+    expect(purgeSessionLogs(dir, 'a+b.c')).toBe(1)
+    expect(readdirSync(dir)).toContain('mud-20200101-axbxc.log')
   })
 })
 

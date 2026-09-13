@@ -77,9 +77,11 @@ export type LogViewProps =
  * Next-day entries are NOT restored (readDayEntries only reads today's file).
  */
 export function LogView({ sessionId, mudSocket }: LogViewProps) {
+  // 本会话视图 (帧按 sessionId 归集; 进程级条目并入每个会话)。
+  const sid = sessionId === undefined || String(sessionId) === '' ? undefined : String(sessionId)
   const view = useSyncExternalStore(
     listener => mudSocket.subscribeView(listener),
-    () => mudSocket.getView(),
+    () => mudSocket.getView(sid),
   )
   // 当日恢复历史 (挂载时拉取; entries 带 logSeq = logService.seq)。
   const [restored, setRestored] = useState<readonly MudUiItem[]>([])

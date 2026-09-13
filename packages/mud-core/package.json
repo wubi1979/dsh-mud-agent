@@ -22,6 +22,10 @@
       "types": "./dist/invariant.d.ts",
       "default": "./dist/invariant.js"
     },
+    "./preset-agent": {
+      "types": "./dist/preset-agent.d.ts",
+      "default": "./dist/preset-agent.js"
+    },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./client-wire": {
       "types": "./dist/client/wire.d.ts",
@@ -32,6 +36,7 @@
   },
   "files": [
     "dist",
+    "presets",
     "cordis.patch.yml"
   ],
   "license": "MIT",

@@ -12,6 +12,7 @@
 import { useSyncExternalStore } from 'react'
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { MudClientInjected } from './MudSidebar.tsx'
+import { MUD_TIER_CHOICES } from './mud-state.ts'
 import type { MudUiItem } from '@deepseek-ai/dsh-mud-core/src/client/wire.ts'
 import { CaptchaDialog } from './MudDialogs.tsx'
 
@@ -105,12 +106,18 @@ function statusLinesOf(world: {
 }
 
 /** 右栏: 决策摘要 (上) + 状态 (下)。由右栏 mud tab 激活时渲染, 同时承载
- *  fullme 验证码对话框 (全局唯一, 由 /mud/ws captcha 帧驱动)。 */
-export function Rail({ mudSocket, sendCommand, refreshCaptcha }: PropsRuntime<'sidebar.right.pane.tab'> & InjectFace<MudClientInjected>) {
+ *  fullme 验证码对话框 (页面级, 由 /mud/ws captcha 帧驱动)。
+ *  数据跟随**最近产出帧的会话** (mudSocket focus session) — 右栏是页面级面板,
+ *  没有会话上下文; 日志/游戏 tab 则按各自 sessionId 精确过滤。 */
+export function Rail({ mudSocket, sendCommand, refreshCaptcha, useServers }: PropsRuntime<'sidebar.right.pane.tab'> & InjectFace<MudClientInjected>) {
   const view = useSyncExternalStore(
     listener => mudSocket.subscribeView(listener),
     () => mudSocket.getView(),
   )
+  const focusSessionId = mudSocket.getFocusSessionId()
+  // 权限档位跟随 focus 会话 (host 权威, /mud/status 轮询回填; §10)。
+  const tier = useServers(s => (focusSessionId === '' ? undefined : s.sessionTier[focusSessionId]))
+  const tierLabel = MUD_TIER_CHOICES.find(choice => choice.tier === tier)?.label
   const decisions = view.decisions
   // 只显示实质决策 (规则执行 / 流程激活 / agent 工具调用 / 引擎初始化);
   // 过滤高频感知路由噪音 (per 感知事件 → 规则/agent 的路由行)。
@@ -120,10 +127,17 @@ export function Rail({ mudSocket, sendCommand, refreshCaptcha }: PropsRuntime<'s
     d.actor === 'rule' || d.actor === 'agent' || d.actor === 'flow'
     || (d.actor === 'router' && d.eventType === 'init'))
   const statusLines = statusLinesOf(view.world as Parameters<typeof statusLinesOf>[0])
+  if (tierLabel !== undefined) statusLines.push(`权限: ${tierLabel}`)
   return (
     <div style={RAIL_STYLE}>
-      {/* fullme 验证码对话框: 状态在 mudSocket captcha 存储, 替换语义全局唯一。 */}
-      <CaptchaDialog mudSocket={mudSocket} sendCommand={sendCommand} refreshCaptcha={refreshCaptcha} />
+      {/* fullme 验证码对话框: 状态在 mudSocket captcha 存储, 页面级唯一;
+          发送命令时带上 focus 会话 (回复用户 = 回复会话)。 */}
+      <CaptchaDialog
+        mudSocket={mudSocket}
+        sendCommand={sendCommand}
+        refreshCaptcha={refreshCaptcha}
+        sessionId={focusSessionId === '' ? undefined : focusSessionId}
+      />
       {/* 决策区: 与状态区各占右侧栏一半; 内容多时自身滚动, 面板高度不被撑高。 */}
       <div style={{ flex: '1 1 50%', minHeight: 0, overflowY: 'auto' }}>
         <div style={{ ...TITLE_STYLE, color: '#5c9cf5' }}>决策</div>

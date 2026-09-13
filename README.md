@@ -13,13 +13,27 @@
 
 > mud-core 是统一 host 引擎，mud-webui 是目前唯一壳。一次启动挂 **core + 壳**；终端壳（mud-tui）已在 M0 移除，如需换壳只需换 patch。
 
-## 词汇表(v5)
+## 架构
 
-- **感知（perception）**：`PerceptionDriver` 把 telnet 原始行折叠成感知记录；`TriggerService` 用 `contains`/`regex`/`color`/`guard` 匹配规则，命中发 `mud/percept` 事件（`p:*`）。
-- **路径 A（标准 LLM）**：游戏输出直接以 user/message 提交 DSH agent（`sendGameOutput`），全程标准 agent 流程（无注入/折叠/忙时桶）。
-- **路径 B（触发器模拟 LLM）**：触发器命中 → lite marker → `mud-trigger` 假 provider → 官方 agent 工具管道执行确定性动作。分流在 `agent/request` 瀑布按 step 粒度完成，无标记消息走真实 LLM。
-- **工具集（agent 视角）**：`mud_send`/`mud_recall`/`mud_status`/`mud_flow_enable|disable|status`（`mud_map_*` 在 M5）；路径 A 与路径 B 共用同一套工具，无触发器专用工具。
-- **未来事项**：login 重建为「触发器 → lite 假 LLM」；v5 已移除 dispatcher/decision/flow 与感知 lite 捕获器（LiteCapture）。
+> 设计事实源：**[`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md)**（版本 v0.1：不变量、术语、L1–L4 分层、权限档位、preset 化、交付切片）。本节只是速览，冲突以文档为准。
+
+- **用户即会话**：一个 MUD 账号 = 一个 DSH 会话 = 一个 `MudSessionRuntime`（连接绑定、感知折叠、观察窗、命令-应答桥、命令队列、WorldModel、recall 缓冲、登录看门狗都在该运行时内）。跨会话没有共享可变状态。
+- **官方路径分工**：
+  - 创建用户 = 创建会话：页面调官方 `ctx.sessions.create()`（id 由 host 分配并返回，页面不自铸身份）；切换用户 = 官方 `ctx.sessions.open(id)`。
+  - 回复用户 = 回复会话：host 用 `ctx.agents.get(sessionId)` **只读**解析该会话的 live agent，再 `agent.followup(mud-owned 消息)` 投递（与官方 webhook 入口同一模式）。本插件**不创建、不 dispose** agent；会话无 live agent 时行进该会话观察窗滞留，待官方 `agent/created` 冲刷。
+  - 网络连接只接入消息：`MudConnectionManager`（`runtime/connection.ts`）只认 host/port；绑定方向唯一 —— 会话 → 连接（`runtime.connectionId`），传输层不持有会话。
+- **T1 / T2（lane）**：投递前判类（event 规则命中 → `lane=t1`，其余 → `t2`）写入消息 `source`（`kind='mud-owned'`）；`agent/request` 瀑布注册在**该 agent 自己的 ctx** 上并 `prepend`（防官方 per-session 模型选择覆盖），只在 `lane=t1` 时把 provider 换成 `mud-t1`，其余**不介入**（T2 基线 = 会话自身模型选择）。
+  - T1：本地模拟模型 `mud-t1`（官方 `ctx.llm.registerAdapter`），按投递消息的 `turnRef` 取**感知引擎的命中队列**渲染确定性工具调用（不耗真实 LLM，不做文本反查）。
+  - T2：真实 LLM（会话当前模型选择），收到按预算裁剪的**批次**。
+- **感知与投递（V10）**：`perception/engine.ts`（L1，每会话一实例、多行状态跨文本块持久）+ `perception/split.ts`（L2 单流切分：消费边界前投 T1、其后留作遗留段）。在途命令应答的行只进桥与感知引擎（供命中），不作为投递消息重复出现。
+- **工具集（agent 视角）**：`mud_send`/`mud_recall`/`mud_status`/`mud_move`/`mud_look`/`world_patch`/`mud_flow_*`。工具注册在**该会话 agent 的 ctx** 上（`agent.ctx.tools.register`），闭包绑定本会话运行时，随 agent 释放（V10 计划改由官方 `mud-player` preset 挂载，见文档 §9）。
+- **HTTP/WS 入口**（全部按 `sessionId` 键控）：`POST /mud/bind`（声明"该官方会话是 MUD 会话"）、`/mud/connect`、`/mud/disconnect`、`/mud/command`、`/mud/captcha/refresh`、`/mud/logs`、`POST /mud/purge`（注销：删用户/删服务器时释放运行时与连接、删该会话全部日志文件）、`GET/POST /mud/capability`（权限档位读写）、`GET /mud/status`、`GET /mud/diag`；推送走 `/mud/ws`，条目自带 `sessionId`，前端按会话过滤。
+- **连接入口**：左栏用户行的 ⋯ 菜单（会话体在 blank 期间不渲染）；**不发送占位 prompt** —— `blank` 由首个 `turn/start` 翻转，连接后第一批发出的游戏输出自然开回合翻页。
+- **agent 装配（V10 §9，方案 A1）**：MUD 会话的能力面（工具 + 提示区段）由官方 **agent preset** 提供 —— `packages/mud-core/presets/mud-player/` 是 preset 目录，其 `agent.cordis.yml` 是 **`standard` 的整份副本 + 我们的 `mud-agent` 一行**（preset = 该会话的**全部**组装；只写自己那一行会让会话丢掉所有标准工具）。宿主在会话首个回合前用官方 `ctx.agentPresets.select(agent, 'mud-player')` 装配（仅空白会话可切），装配未落地前**不投递**；装配失败留痕并回落宿主侧装配。开关是 `Config.agentPreset`（留空 = 宿主侧装配，回退门）。升级 harness 后需重新对齐这份副本（harness 已知限制）。
+- **部署（全部在本包 patch，profile patch 留 `[]`）**：`agent-presets` 的 `roots` 与 `mud-core` 的 `agentPreset` 都写在 `packages/mud-core/cordis.patch.yml`（`--patch` 传入，启动期一层），用户不需要维护 profile patch。片段见 `doc/ARCHITECTURE.md` §9。**不要把这两条写进 profile patch**：本机 profile 是 `patchReload: live`，热应用一次 `agent-presets` 配置会重建它的常驻挂载，导致所有 preset 组装出来的工具当场消失（实测过两次，改回 `[]` 不重启即恢复）。
+- **权限档位（V10 §10）**：每会话三档 `observe`（只读：`mud_state`/`mud_recall`，登录流程除外）/`operate`（读写）/`full`（+外围能力）。可见性层按档注册工具（切换即重挂），强制层是官方 `tools/pre-execute` 上的闸门（T1 反射与 T2 推理同权受约束）；危险命令走数据驱动策略表（`deny`：suicide/passwd；`ask`：abandon/steal/kill/drop/quit，`Config.dangerousCommands` 可整体覆盖）。档位是会话日志里的 `mud/capability` 事件 + `mudCapabilities` 投影，读写走 `GET/POST /mud/capability`（`/mud/status` 每行带 `tier`），页面入口在用户行 ⋯ 菜单，右栏状态区显示当前档。**preset 模式下**档位只剩强制层 + 提示说明（共享组装无法按会话切换工具集）。
+- **删除用户 / 删除服务器**：配套的官方会话走**归档**（`IWorkspaces.archiveSession` —— 官方没有删除会话，归档即从分组/搜索界面隐藏，会话文件与 workspace 记账保留）；插件侧则调 `POST /mud/purge` 释放运行时与连接、删除该会话全部日志文件、清本页与 host 缓冲。日志是我们自己的资产，按现有按会话落盘的命名直接删除。
+- **已移除**：`/mud/prepare` 与自建 agent 的 `createMudAgent`/`prepareAgent`（旧实现与官方 `ApiSessionAgentController` 争夺同一会话的 agent 生命周期，是 T1 不通的根因）。
 
 ---
 
@@ -36,7 +50,7 @@ pnpm dev:web          # core + webui：构建并启动 harness web profile（浏
 pnpm restart:web      # 等价 pnpm run dev:web
 
 pnpm build            # 全量构建 packages/* → dist/
-pnpm test             # core vitest（131 用例）
+pnpm test             # core vitest（180 用例）
 ```
 
 等价的手工命令（`dev:web`）：
@@ -44,8 +58,11 @@ pnpm test             # core vitest（131 用例）
 ```bash
 pnpm --dir D:/Code/deepseek-harness dsh web \
   --patch D:/Code/dsh-mud-agent/packages/mud-core/cordis.patch.yml \
-  --patch D:/Code/dsh-mud-agent/packages/mud-webui/cordis.patch.yml
+  --patch D:/Code/dsh-mud-agent/packages/mud-webui/cordis.patch.yml \
+  --port 3081
 ```
+
+> 注意 `--patch` 是**最后**一层：本包 patch 负责插入 `mud-core`/`mud-webui` 两行，所以针对 `mud-core` 的配置只能写在**这份** patch 里；`agent-presets` 的 `roots` 覆盖也放这里（启动期应用，安全），**profile patch 保持 `[]`**（它是热应用的，改错会当场把 preset 组装出来的工具全部卸掉）。
 
 要点：
 

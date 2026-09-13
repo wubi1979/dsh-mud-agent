@@ -5,8 +5,11 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { buildMudTools, MOVE_ALIASES, MOVE_DIRS, STATUS_CMDS, type MudTools } from '../src/agent/tools.ts'
+import {
+  buildMudTools, DEFAULT_ACTIVITY_TABLE, MOVE_ALIASES, MOVE_DIRS, OUT_SCHEMA, STATUS_CMDS, type MudTools,
+} from '../src/agent/tools.ts'
 import { CommandResponseController, type ReplyOptions } from '../src/network/response.ts'
+import { createWorld } from '../src/world/world.ts'
 
 function makeTools(): { tools: MudTools; sent: string[]; logs: string[] } {
   const sent: string[] = []
@@ -54,16 +57,39 @@ describe('mud_status what 枚举校验', () => {
   })
 })
 
+describe('mud_help 命令语法查询 (零发送)', () => {
+  it('三种形态都不发命令: 索引 / 分类语法 / 单条命令', async () => {
+    const { tools, sent } = makeTools()
+
+    const index = await tools.mud_help!.execute({})
+    expect(index.ok).toBe(true)
+    expect(index.cmd).toBe('')
+    expect(index.note).toContain('[navigation]')
+
+    const category = await tools.mud_help!.execute({ topic: 'navigation' })
+    expect(category.note).toContain('go {direction}')
+    const one = await tools.mud_help!.execute({ topic: 'ask' })
+    expect(one.note).toContain('ask {target} about {topic}')
+    const unknown = await tools.mud_help!.execute({ topic: 'nope' })
+    expect(unknown.note).toContain('未知主题')
+
+    expect(sent).toEqual([])               // 零发送: 一条命令都不能出去
+  })
+})
+
 describe('mud_send 兜底', () => {
-  it('非空命令通过, 空白拒绝', async () => {
+  it('非空命令通过; 空命令 = 发一个空行 (合法); 只有参数缺失才拒绝', async () => {
     const { tools, sent } = makeTools()
     expect(await tools.mud_send!.execute({ cmd: 'ask zhang about 拜师' }))
       .toEqual({ ok: true, note: 'ask zhang about 拜师', cmd: 'ask zhang about 拜师' })
-    expect((await tools.mud_send!.execute({ cmd: '  ' })).ok).toBe(false)
-    expect((await tools.mud_send!.execute({ cmd: '' })).ok).toBe(false)
-    expect(sent).toEqual(['ask zhang about 拜师'])
+    // 空命令合法 (作者定案 2026-09-13: 其他客户端也允许; 登录收尾/翻页/退出 MXP 检测都是发空行)。
+    expect(await tools.mud_send!.execute({ cmd: '' })).toMatchObject({ ok: true, cmd: '' })
+    expect(await tools.mud_send!.execute({ cmd: '  ' })).toMatchObject({ ok: true, cmd: '' })
+    // 参数缺失 (既没 cmd 也没 cmds) = 参数错误。
+    expect((await tools.mud_send!.execute({})).ok).toBe(false)
+    expect(sent).toEqual(['ask zhang about 拜师', '', ''])
   })
-  it('命令序列允许空命令 (退 MXP 检测)', async () => {
+  it('命令序列允许空命令 (发完即走的直发路径; 分页等需要空行的场合)', async () => {
     const { tools, sent } = makeTools()
     expect(await tools.mud_send!.execute({ cmds: ['', 'look'] }))
       .toEqual({ ok: true, note: '命令序列', cmd: '' })
@@ -100,7 +126,7 @@ describe('mud_send 兜底', () => {
     const empty = buildMudTools() // 缺省 recall = () => []
     const r = empty.mud_recall!.execute({})
     expect(r.ok).toBe(true)
-    expect(r.note).toContain('缓冲暂无游戏输出')
+    expect(r.note).toContain('没有尚未投递的游戏输出')
   })
 })
 
@@ -162,7 +188,7 @@ describe('命令-应答桥装配 (sendAndAwait)', () => {
     const rej = tools.mud_move!.execute({ direction: 'xyz' })
     expect(rej.ok).toBe(false)
   })
-  it('P1-4/R2-3: dz/dazuo/sleep 自动附带完成句 until (无显式 until 时)', async () => {
+  it('§8 活动表: 每条声明的每个命令都自动附带该条的完成句 until (表驱动)', async () => {
     const seen: { cmd: string; opts?: ReplyOptions }[] = []
     const tools = buildMudTools({
       sendAndAwait: async (cmd, opts) => {
@@ -170,25 +196,98 @@ describe('命令-应答桥装配 (sendAndAwait)', () => {
         return { ok: true, cmd: String(cmd), text: '完成', lines: [], settled: 'ga' }
       },
     })
-    // dz: 自动 until (主形态 + 回退分支 + 90s 声明超时)。
-    await tools.mud_send!.execute({ cmd: 'dz' })
-    expect(seen[0]!.cmd).toBe('dz')
-    expect(seen[0]!.opts?.until?.regex).toContain('你将运转于全身经脉间的内息收回丹田')
-    expect(seen[0]!.opts?.until?.timeout).toBe(90_000)
-    // R2-3: 抓包实发首词 `dazuo 10` 同样附带 until。
-    await tools.mud_send!.execute({ cmd: 'dazuo 10' })
-    expect(seen[1]!.cmd).toBe('dazuo 10')
-    expect(seen[1]!.opts?.until?.regex).toContain('你将运转于全身经脉间的内息收回丹田')
-    expect(seen[1]!.opts?.until?.timeout).toBe(90_000)
-    // sleep: 自动 until。
-    await tools.mud_send!.execute({ cmd: 'sleep' })
-    expect(seen[2]!.opts?.until?.regex).toContain('你一觉醒来，精神抖擞地活动了几下手脚')
-    expect(seen[2]!.opts?.until?.timeout).toBe(90_000)
-    // 显式 until 不覆盖。
-    await tools.mud_send!.execute({ cmd: 'dz', until: { regex: '^自定义$', timeout: 120 } })
-    expect(seen[3]!.opts?.until?.regex).toBe('^自定义$')
-    expect(seen[3]!.opts?.until?.timeout).toBe(120)
+    // 遍历活动表本身: 新增一条活动不改测试也会被覆盖 (表是唯一事实源)。
+    const cases: { cmd: string; entry: (typeof DEFAULT_ACTIVITY_TABLE)[number] }[] = []
+    for (const entry of DEFAULT_ACTIVITY_TABLE) {
+      for (const cmd of entry.commands) cases.push({ cmd: cmd === 'dazuo' ? 'dazuo 10' : cmd, entry })
+    }
+    for (const c of cases) await tools.mud_send!.execute({ cmd: c.cmd })
+
+    expect(seen).toHaveLength(cases.length)
+    cases.forEach((c, i) => {
+      expect(seen[i]!.cmd).toBe(c.cmd)
+      expect(seen[i]!.opts?.until?.regex).toBe(c.entry.until)
+      expect(seen[i]!.opts?.until?.timeout).toBe(c.entry.timeoutMs)
+    })
+    // 覆盖抓包实证的两条关键正则 (活动表被改坏时能立刻看出来)。
+    expect(DEFAULT_ACTIVITY_TABLE.map(e => e.id)).toContain('meditate')
+    expect(seen.find(s => s.cmd === 'dz')!.opts?.until?.regex).toContain('你将运转于全身经脉间的内息收回丹田')
+    expect(seen.find(s => s.cmd === 'sleep')!.opts?.until?.regex).toContain('你一觉醒来，精神抖擞地活动了几下手脚')
   })
+
+  it('§8 活动表: 显式 until 优先; 未声明的命令不带 until; 部署可整体覆盖', async () => {
+    const seen: (ReplyOptions | undefined)[] = []
+    const tools = buildMudTools({
+      sendAndAwait: async (_cmd, opts) => {
+        seen.push(opts)
+        return { ok: true, cmd: 'x', text: '', lines: [], settled: 'ga' }
+      },
+    })
+    await tools.mud_send!.execute({ cmd: 'dz', until: { regex: '^自定义$', timeout: 120 } })
+    await tools.mud_send!.execute({ cmd: 'look' })
+    expect(seen[0]!.until).toEqual({ regex: '^自定义$', timeout: 120 })
+    expect(seen[1]).toBeUndefined()
+
+    // 覆盖表: 只有 pray 带完成句; dz 不再自动附带 (配置即事实)。
+    const custom = buildMudTools({
+      activity: [{ id: 'pray', commands: ['pray'], until: '^你祈祷完毕。$', note: '自定义' }],
+      sendAndAwait: async (_cmd, opts) => {
+        seen.push(opts)
+        return { ok: true, cmd: 'x', text: '', lines: [], settled: 'ga' }
+      },
+    })
+    await custom.mud_send!.execute({ cmd: 'pray' })
+    await custom.mud_send!.execute({ cmd: 'dz' })
+    expect(seen[2]!.until).toEqual({ regex: '^你祈祷完毕。$' })
+    expect(seen[3]).toBeUndefined()
+  })
+
+  it('§11 外部占位符: {captcha} 在发送瞬间由人工值插值 (明文不落转录)', async () => {
+    const sent: string[] = []
+    let captcha = ''
+    const tools = buildMudTools({
+      resolveExternalValues: () => (captcha === '' ? {} : { captcha }),
+      send: c => sent.push(c),
+    })
+    // 规则动作原文带占位符; 没有值时原样发出 (不该凭空消失)。
+    await tools.mud_send!.execute({ cmd: 'fullme {captcha}' })
+    expect(sent[0]).toBe('fullme {captcha}')
+    // 人工回填后插值; 凭据与外部值可同时生效。
+    captcha = '1234'
+    await tools.mud_send!.execute({ cmd: 'fullme {captcha}' })
+    expect(sent[1]).toBe('fullme 1234')
+    const withCreds = buildMudTools({
+      resolveCredentials: () => ({ name: 'vicrly', pass: 's3cret' }),
+      resolveExternalValues: () => ({ captcha: '99' }),
+      send: c => sent.push(c),
+    })
+    await withCreds.mud_send!.execute({ cmd: '{name} {pass} fullme {captcha}' })
+    expect(sent[2]).toBe('vicrly s3cret fullme 99')
+  })
+
+  it('§8 exec.signal: 回合取消信号转发给桥 (send 类工具), 非 send 工具不受影响', async () => {
+    const signals: (AbortSignal | undefined)[] = []
+    const tools = buildMudTools({
+      sendAndAwait: async (_cmd, opts) => {
+        signals.push(opts?.signal)
+        return { ok: true, cmd: 'x', text: '', lines: [], settled: 'ga' }
+      },
+    })
+    const controller = new AbortController()
+    await tools.mud_send!.execute({ cmd: 'look' }, { signal: controller.signal })
+    await tools.mud_move!.execute({ direction: 'north' }, { signal: controller.signal })
+    await tools.mud_look!.execute({}, { signal: controller.signal })
+    await tools.mud_status!.execute({ what: 'hp' }, { signal: controller.signal })
+    // 无 opts → 不传信号 (桥按自己的超时/静默结算)。
+    await tools.mud_send!.execute({ cmd: 'look' })
+    // 非 send 工具只读本地状态, 不碰桥。
+    expect(tools.mud_recall!.execute({ count: 1 }, { signal: controller.signal })).toMatchObject({ cmd: '' })
+
+    expect(signals).toHaveLength(5)
+    expect(signals.slice(0, 4).every(s => s === controller.signal)).toBe(true)
+    expect(signals[4]).toBeUndefined()
+  })
+
   it('P2-2: 命令序列逐条串行结算 (每条命令独立 GA)', async () => {
     const seenCmds: string[] = []
     const tools = buildMudTools({
@@ -202,5 +301,81 @@ describe('命令-应答桥装配 (sendAndAwait)', () => {
     expect(r.ok).toBe(true)
     expect(r.note).toBe('look done')
     expect(r.cmd).toBe('命令序列')
+  })
+})
+
+describe('危险命令策略表 (取代静态黑名单)', () => {
+  it('缺省表: deny 条目在工具层硬拦 (suicide/passwd)', async () => {
+    const { tools, sent } = makeTools()
+    const denied = await tools.mud_send!.execute({ cmd: 'suicide' })
+    expect(denied.ok).toBe(false)
+    expect(denied.note).toContain('安全禁用命令')
+    // ask 条目 (drop/quit) 不是工具层的硬边界 —— 工具照发, 由权限闸门决定。
+    expect((await tools.mud_send!.execute({ cmd: 'drop sword' })).ok).toBe(true)
+    expect(sent).toEqual(['drop sword'])
+  })
+
+  it('自定义策略表可整体替换 (部署配置路径)', async () => {
+    const sent: string[] = []
+    const tools = buildMudTools({
+      send: c => sent.push(c),
+      dangerous: [{ id: 'pray', commands: ['pray'], action: 'deny', reason: '自定义' }],
+    })
+    expect((await tools.mud_send!.execute({ cmd: 'pray' })).ok).toBe(false)
+    expect((await tools.mud_send!.execute({ cmd: 'suicide' })).ok).toBe(true)
+  })
+})
+
+describe('mud_state 零发送通路 (只读档信息源)', () => {
+  it('读世界快照 + 最近输出, 不发任何命令 (未连接也可用)', () => {
+    const sent: string[] = []
+    const tools = buildMudTools({
+      send: c => sent.push(c),
+      recall: () => ['北大街 - 北大侠客行', '这里明显的出口是 south。'],
+      world: createWorld(),
+      isConnected: () => false,
+    })
+    const r = tools.mud_state!.execute({ lines: 2 })
+    expect(r.ok).toBe(true)
+    expect(r.cmd).toBe('')
+    expect(r.note).toContain('连接: 未连接')
+    expect(r.note).toContain('世界模型:')
+    expect(r.note).toContain('这里明显的出口是 south。')
+    expect(sent).toEqual([])
+  })
+
+  it('lines=0 只读世界模型; 无 world 装配时显式说明', () => {
+    const tools = buildMudTools({ recall: () => ['x'] })
+    const r = tools.mud_state!.execute({ lines: 0 })
+    expect(r.ok).toBe(true)
+    expect(r.note).toContain('世界模型: 未装配')
+    expect(r.note).not.toContain('x')
+  })
+})
+
+describe('工具结果字段必须全部在 OUT_SCHEMA 中声明', () => {
+  // 回归: `settled` 曾漏声明 — `additionalProperties: false` 下判定为非法输出,
+  // 工具**实际已执行** (命令已发出、应答已收到) 却回给模型一条失败帧。
+  const declared = new Set(Object.keys(OUT_SCHEMA.properties))
+
+  it('OUT_SCHEMA 声明 settled (桥结算语义)', () => {
+    expect(declared).toContain('settled')
+    expect(OUT_SCHEMA.additionalProperties).toBe(false)
+  })
+
+  it('每个工具在 (桥结算 / 未连接拒发 / 参数非法) 三条路径上的结果字段都已声明', async () => {
+    const tools = buildMudTools({
+      isConnected: () => true,
+      sendAndAwait: async cmd => ({ ok: true, cmd: String(cmd), text: 'ok', lines: [], settled: 'ga' }),
+    })
+    const offlineTools = buildMudTools({ isConnected: () => false })
+    for (const [name, tool] of Object.entries(tools)) {
+      for (const probe of [tool, offlineTools[name]!]) {
+        const r = await probe.execute({})
+        for (const key of Object.keys(r)) {
+          expect(declared.has(key), `${name} 返回了未声明字段 ${key}`).toBe(true)
+        }
+      }
+    }
   })
 })

@@ -186,56 +186,90 @@ describe('bold→亮色耦合 (Mudlet 对齐)', () => {
   })
 })
 
-describe('matchDry 判类隔离 (P1-3b)', () => {
-  // 判类 (matchDry) 与 T1 真渲染 (match) 共用实例: readDry 不推进 multiLastAbs,
-  // 后续真渲染对同一批仍可完整推进 state 机, 命中不丢失。
-  it('matchDry 命中多行规则且不推进运行态 (真渲染仍可推进)', () => {
-    const svc = new TriggerMatchService([{
-      id: 'dry-ml',
-      eventType: 'p:dry',
-      multiline: true,
-      match: { kind: 'regex', patterns: [] },
-      patterns: [
-        { kind: 'substring', text: 'OPEN' },
-        { kind: 'substring', text: 'DONE' },
-      ],
-      action: { output: '多行命中' },
-    }])
+describe('多行状态持久 (V10: 判类与渲染合流, 无镜像克隆)', () => {
+  /** 两条件多行规则 (逐条件消费行)。 */
+  const makeService = (): TriggerMatchService => new TriggerMatchService([{
+    id: 'ml:persist',
+    eventType: 'p:persist',
+    multiline: true,
+    match: { kind: 'regex', patterns: [] },
+    patterns: [
+      { kind: 'substring', text: 'OPEN' },
+      { kind: 'substring', text: 'DONE' },
+    ],
+    action: { output: '多行命中' },
+  }])
 
-    const l1 = toRows([parsed('OPEN now')])
+  it('状态跨文本块持久: 捕获在后续块完成 (跨窗口不再丢命中)', () => {
+    const svc = makeService()
+    const l1 = toRows([parsed('OPEN now')]).map((r, i) => ({ ...r, abs: i }))
     const l2 = toRows([parsed('mid')]).map((r, i) => ({ ...r, abs: 1 + i }))
     const l3 = toRows([parsed('DONE now')]).map((r, i) => ({ ...r, abs: 2 + i }))
 
-    // 判类: 首次喂 OPEN — 不应推进实例状态 (matchDry), 也不应命中 (尚未满足末条件)。
-    const firstDry = svc.matchDry(l1)
-    expect(firstDry.map(h => h.id)).not.toContain('dry-ml')
-    // 真渲染推进: OPEN → mid → DONE 完整状态机命中 (matchDry 未污染 multiLastAbs)。
-    expect(svc.match(l1).map(h => h.id)).not.toContain('dry-ml')
-    expect(svc.match(l2).map(h => h.id)).not.toContain('dry-ml')
-    const hits = svc.match(l3)
-    expect(hits.some(h => h.id === 'dry-ml')).toBe(true)
+    expect(svc.match(l1).map(h => h.id)).not.toContain('ml:persist')
+    expect(svc.match(l2).map(h => h.id)).not.toContain('ml:persist')
+    // 第三块完成: 状态是第一块播种、第二块推进保留下来的。
+    expect(svc.match(l3).some(h => h.id === 'ml:persist')).toBe(true)
   })
 
-  it('matchDry 与 match 同批双跑: 先判类后渲染仍命中 (防状态被判类推进吞掉)', () => {
-    const svc = new TriggerMatchService([{
-      id: 'dry-ml2',
-      eventType: 'p:dry2',
-      multiline: true,
-      match: { kind: 'regex', patterns: [] },
-      patterns: [
-        { kind: 'substring', text: 'START' },
-        { kind: 'substring', text: 'END' },
-      ],
-      action: { output: 'x' },
-    }])
-    const batch = toRows([parsed('START'), parsed('skip'), parsed('END')])
-      .map((r, i) => ({ ...r, abs: i }))
-    // 判类先跑 (不推进), 真渲染后跑同一批 (须仍能推进完成)。
-    expect(svc.matchDry(batch).some(h => h.id === 'dry-ml2')).toBe(true)
-    const render = svc.match(batch)
-    expect(render.some(h => h.id === 'dry-ml2')).toBe(true)
+  it('resetContext: 清空半截捕获 (断线重建语境的依据)', () => {
+    const svc = makeService()
+    const l1 = toRows([parsed('OPEN now')]).map((r, i) => ({ ...r, abs: i }))
+    const l2 = toRows([parsed('DONE now')]).map((r, i) => ({ ...r, abs: 1 + i }))
+
+    svc.match(l1)
+    expect(svc.hasPendingCapture(new Set(['ml:persist']))).toBe(true)
+    svc.resetContext()
+    expect(svc.hasPendingCapture(new Set(['ml:persist']))).toBe(false)
+    // 清空后只喂 DONE: 无播种 → 不命中。
+    expect(svc.match(l2).map(h => h.id)).not.toContain('ml:persist')
   })
 })
+
+describe('hasPendingCapture — holdDelivery 判据', () => {
+  /** 声明 holdDelivery 的两条件规则 (login:replace-confirm 同形)。 */
+  const makeService = (): TriggerMatchService => new TriggerMatchService([{
+    id: 'hold:confirm',
+    eventType: 'p:hold',
+    multiline: true,
+    holdDelivery: true,
+    match: { kind: 'regex', patterns: [] },
+    patterns: [
+      { kind: 'substring', text: '是否替换' },
+      { kind: 'substring', text: '(y/n)' },
+    ],
+    action: { output: '确认覆盖', tool: { name: 'mud_send', args: { cmd: 'y' } } },
+  }])
+  const HOLD_IDS = new Set(['hold:confirm'])
+
+  it('半截捕获 (只满足首条件) → 无命中 + hasPendingCapture=true (投递方暂缓)', () => {
+    const svc = makeService()
+    const partial = toRows([parsed('已有同名用户存在，是否替换人物')]).map((r, i) => ({ ...r, abs: i }))
+
+    expect(svc.match(partial)).toEqual([])
+    expect(svc.hasPendingCapture(HOLD_IDS)).toBe(true)
+  })
+
+  it('两条件各占一行完成捕获 → 命中 + 无未完成捕获', () => {
+    const svc = makeService()
+    // 多行状态机逐条件消费行: 两条件 → 两行 (单行同时含两条件只算满足首条件)。
+    const complete = toRows([parsed('已有同名用户存在，是否替换人物'), parsed('(y/n)？')])
+      .map((r, i) => ({ ...r, abs: i }))
+
+    expect(svc.match(complete).map(h => h.id)).toEqual(['hold:confirm'])
+    expect(svc.hasPendingCapture(HOLD_IDS)).toBe(false)
+  })
+
+  it('空 id 集 → 恒 false (未声明 holdDelivery 的规则不参与)', () => {
+    const svc = makeService()
+    const partial = toRows([parsed('已有同名用户存在，是否替换人物')]).map((r, i) => ({ ...r, abs: i }))
+
+    svc.match(partial)
+    expect(svc.hasPendingCapture(new Set())).toBe(false)
+    expect(svc.pendingCaptureCount()).toBe(1)
+  })
+})
+
 function toRows(rows: ParsedLine[]): MudLine[] {
   return rows.map((r, i) => ({
     text: r.text,

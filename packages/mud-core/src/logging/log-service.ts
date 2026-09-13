@@ -18,7 +18,7 @@
  */
 
 import {
-  appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync,
+  appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync,
 } from 'node:fs'
 import { join } from 'node:path'
 
@@ -29,9 +29,9 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 export type LogChannel =
   | 'runtime'   // 系统/连接/生命周期/执行队列
   | 'network'   // telnet 网络层 (协商/断线/字节)
-  | 'perception' // 感知: feedParsed/折叠/观察窗/判类路由
+  | 'perception' // 感知: 文本块/折叠/命中/投递路由
   | 'send'      // 命令发送/回显 (已掩码)
-  | 'decision'  // 决策事件 (规则命中/agent 动作/路由判类)
+  | 'decision'  // 决策事件 (规则命中/agent 动作/投递选路)
 
 /** 一条日志条目 (wire 兼容: 前端按字段渲染, 未知字段忽略)。 */
 export interface LogEntry {
@@ -105,6 +105,39 @@ function appendJsonl(dir: string, stem: string, line: string): void {
 function dayStem(date: Date, sessionId: string): string {
   const pad = (n: number): string => String(n).padStart(2, '0')
   return `mud-${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${sessionId}`
+}
+
+/** 某会话日志文件名匹配 (`mud-<8位日期>-<sessionId>[-N].log`; sessionId 已转义)。 */
+function sessionLogPattern(sessionId: string): RegExp {
+  const escaped = sessionId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`^mud-\\d{8}-${escaped}(?:-\\d+)?\\.log$`)
+}
+
+/**
+ * 删除某会话的**全部**日志文件 (所有日期 + 滚动分片)。
+ *
+ * 语义: "删除用户 = 删除该用户的会话痕迹" (I3/I6)。删用户只应从名单里去掉一行,
+ * 但日志是按 sessionId 落盘的 — 若不清, 同名重建的用户 (或按旧 sessionId 补登记的
+ * 会话) 会把上一个身份的日志原样恢复出来 (读日志 = 读别人的会话内容)。
+ * 只删文件名属于该 sessionId 的文件, 绝不触碰其它会话。
+ * @param logDir 落盘目录 (undefined/空 = 不落盘, 直接 0)。
+ * @param sessionId 会话 id (官方 id; 空回落 'mud-player')。
+ * @returns 实际删除的文件数 (删失败的文件不抛出, best-effort)。
+ */
+export function purgeSessionLogs(logDir: string | undefined, sessionId: string): number {
+  if (logDir === undefined || logDir.trim() === '' || !existsSync(logDir)) return 0
+  const pattern = sessionLogPattern(sessionId.trim() || 'mud-player')
+  let removed = 0
+  try {
+    for (const name of readdirSync(logDir)) {
+      if (!pattern.test(name)) continue
+      try {
+        unlinkSync(join(logDir, name))
+        removed += 1
+      } catch { /* 占用/权限 → 跳过该文件 */ }
+    }
+  } catch { /* 目录不可读 → 0 */ }
+  return removed
 }
 
 /**
@@ -182,6 +215,16 @@ export class MudLogService {
   /** 是否有文件落盘目标。 */
   get fileTarget(): string | null {
     return this.logDir ?? null
+  }
+
+  /**
+   * 注销会话: 清空内存缓冲并把 seq 归零 (文件删除由 {@link purgeSessionLogs}
+   * 负责)。只在"删除用户"时调用 — 该身份不应再留下可被读回的内容。
+   */
+  purge(): void {
+    this.buffer.length = 0
+    this.seq = 0
+    this.fileErrorLogged = false
   }
 
   /** 追加一条日志 (seq/time 由服务分配)。 */

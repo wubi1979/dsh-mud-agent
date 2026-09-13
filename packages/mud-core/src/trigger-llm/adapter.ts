@@ -1,20 +1,20 @@
 /**
- * dsh-mud-core — TriggerLlmAdapter (trigger-llm/adapter). T1 本地模拟 LLM。
+ * dsh-mud-core — TriggerLlmAdapter (trigger-llm/adapter). T1 本地模拟 LLM = **动作渲染器**.
  *
- * T1 是注册进官方 llm 注册表的一个"本地模拟模型" (provider = T1_PROVIDER):
- * 只回答有限问题 (规则命中的游戏输出)。判定输入 = **当前请求自身**的尾部
- * user 文本 (从 options.messages 提取, 不依赖任何旁路行缓存):
- *   - 尾部是 tool-result (T1-owned 回合的续步) → 经 resolveLines 还原应答
- *     纯行 (命令-应答桥注册表) → matchLines 续步判定: 命中 → 渲染 action
- *     (工具链推进); 未命中 → finish stop (自然收束回合);
- *   - 尾部是游戏输出文本 → 经 resolveLines 找回该批行对象 (行号/style 保真,
- *     多行状态机跨批连续) → matchLines 匹配 → 渲染 action;
- *   - 其余 (未命中 / 控制消息 / 无注册行) → finish stop — **不再 NO_ANSWER
- *     交棒**: 谁接该批输出由装配方在 feed 判类时以所有权元数据决定 (T1 主
- *     反射 / T2 推理), 本层无级联编排。
+ * T1 是注册进官方 llm 注册表的一个"本地模拟模型" (provider = `mud-t1`)。v0.4.0 起它是
+ * **无状态**的（`doc/ARCHITECTURE.md` §7 契约）：
  *
- * 控制消息 (CONTROL_PREFIX 前缀, 如 "[系统] 断流唤醒") 由装配方路由到 T2
- * (所有权 lane=t2); T1 即便偶遇也仅收束, 不产生任何模型调用。
+ *   - 输入 = 本步**认领到的投递消息**里自带的**动作请求**（`source.actions`，
+ *     由规则/流程声明；与 T2 拿到的消息同形 —— 契约检验 I15）；
+ *   - 输出 = 对应的 `tool-call` 块（与真实 LLM 同构）→ 官方 `tools/pre-execute` 闸门 →
+ *     官方工具管道。动作参数原样渲染（`{name}`/`{pass}`/`{captcha}` 由工具执行层插值）。
+ *   - 没有动作请求 → `finish stop`（回合自然收束；失败路径就是"运行时不投递动作"）；
+ *   - **不查运行时**：不再有 turnRef / 命中队列 / 游标。"这条动作是否已执行过"用
+ *     **确定性 call-id**（`mud-<delivery>-<index>`）判断：会话里已有该 id 的 tool-result
+ *     就是已执行 → 收束（避免工具结果回来后又渲染一次同一个动作）。
+ *
+ * 契约检验（I15）：本文件不得依赖只有 T1 能理解的私有字段；`source.actions` 是模型可见的
+ * 声明（T2 读到同样能自行决定）。
  * @module @deepseek-ai/dsh-mud-core/trigger-llm/adapter
  */
 
@@ -26,60 +26,86 @@ import type {
   StreamChunk,
   ToolCallId,
 } from '@deepseek-ai/dsh-llm'
-import type { MudLine } from '../preprocess/ansi.ts'
-import type { ActionSpec, PerceptHit, PerceptionRule, TriggerAction } from './types.ts'
 import { CONTROL_PREFIX } from './types.ts'
+
+/** 一条动作请求（与 `agent-bridge` 的 `OwnedAction` 同形；用字面量避免循环依赖）。 */
+export interface RenderedAction {
+  /** 来源：规则 id 或 `flow:<flowId>/<stepId>`。 */
+  ruleId?: string
+  /** 渲染文本（output 文本块）。 */
+  output?: string
+  /** 要调用的工具与参数。 */
+  tool?: { name: string; args?: Record<string, unknown> }
+}
 
 /** 装配方注入的 T1 钩子。 */
 export interface TriggerLlmAdapterHooks {
-  /** 尾部 user 文本 → 该批游戏输出行对象 (内容寻址; miss → null, 如控制消息)。 */
-  resolveLines: (text: string) => MudLine[] | null
-  /** 命中匹配: 输入本步游戏输出行对象 → 带 action 的命中列表 (顺行序)。 */
-  matchLines: (lines: MudLine[]) => readonly TriggerAction[]
-  /** 诊断/留痕日志 (无答案、续步收束等)。 */
+  /** 诊断/留痕日志。 */
   onLog?: (text: string) => void
-  /** 命中通知 (每次渲染前; 装配方在此写留痕)。 */
-  onRender?: (entry: { action: ActionSpec; hit: PerceptHit; rule: PerceptionRule | null }) => void
 }
 
-/** 尾部输入判定结果。 */
-type TailInput =
-  | { kind: 'text'; text: string }
-  | { kind: 'tool-tail'; text: string }
-  | { kind: 'none' }
+/** 本插件投递消息的来源标记 (与 agent/agent-bridge 的 MessageSourceMap 同字面量)。 */
+const MUD_OWNED_KIND = 'mud-owned'
 
-/** 提取一条消息的渲染文本 (含 tool-result 嵌套块)。 */
-function messageText(m: Message): string {
-  const chunks: string[] = []
-  for (const block of m.content) {
-    if (block.type === 'text') chunks.push(block.text)
-    else if (block.type === 'tool-result') {
-      for (const inner of block.content) {
-        if (inner.type === 'text') chunks.push(inner.text)
-      }
-    }
-  }
-  return chunks.join('\n')
-}
+/** 一个请求所归属的投递。 */
+type TurnContext =
+  | { kind: 'actions'; lane: string; actions: readonly RenderedAction[]; delivery: string }
+  | { kind: 'foreign-lane'; lane: string }
+  | { kind: 'none'; why: string }
 
-/** 从尾部扫描: 首个 (自尾向前) role=user 消息决定形态 —
- *  source.kind 'tool' → tool-result 续步 (带应答文本); 'user' → 文本输入。 */
-function tailInput(messages: readonly Message[] | undefined): TailInput {
+/**
+ * 从请求消息回扫最近一条本插件投递的消息, 取出其中的动作请求。
+ * @param messages 请求消息序列。
+ * @returns 上下文: 有动作可渲染 / 选路异常 / 不可渲染的原因。
+ */
+function turnContext(messages: readonly Message[] | undefined): TurnContext {
   const list = messages
-  if (!list || list.length === 0) return { kind: 'none' }
+  if (!list || list.length === 0) return { kind: 'none', why: '无消息' }
   for (let i = list.length - 1; i >= 0; i -= 1) {
     const m = list[i]
-    if (!m || m.role !== 'user') continue
-    const text = messageText(m)
-    if (m.source.kind === 'tool') return { kind: 'tool-tail', text }
-    return text === '' ? { kind: 'none' } : { kind: 'text', text }
+    if (m === undefined || m.role !== 'user') continue
+    const source = m.source
+    if (source.kind !== MUD_OWNED_KIND) continue
+    // lane 先行: t2 批次本不该被路由到本 provider (走到这里是选路异常)。
+    if (source.lane !== 't1') return { kind: 'foreign-lane', lane: String(source.lane) }
+    const actions = source.actions
+    if (actions === undefined || actions.length === 0) {
+      return { kind: 'none', why: '本步投递不带动作请求' }
+    }
+    return {
+      kind: 'actions',
+      lane: source.lane,
+      actions,
+      delivery: source.delivery ?? 'd0',
+    }
   }
-  return { kind: 'none' }
+  return { kind: 'none', why: '无本插件投递' }
 }
 
-function renderActionId(hit: PerceptHit, n: number): ToolCallId {
-  const slug = hit.id.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 24)
-  return `mud-trigger-${slug}-${Date.now().toString(36)}${n.toString(36)}` as unknown as ToolCallId
+/** 从消息文本里提取首段文本 (仅用于诊断)。 */
+function preview(m: Message | undefined): string {
+  if (m === undefined) return ''
+  for (const block of m.content) {
+    if (block.type === 'text') return block.text.slice(0, 40)
+  }
+  return ''
+}
+
+/** 确定性 call-id（`mud-<delivery>-<index>`）。 */
+function actionId(delivery: string, index: number): ToolCallId {
+  const slug = delivery.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 32)
+  return `mud-${slug}-${index}` as unknown as ToolCallId
+}
+
+/** 会话里是否已有该 call-id 的工具结果（= 这条动作已执行过）。 */
+function alreadyAnswered(messages: readonly Message[] | undefined, id: ToolCallId): boolean {
+  if (!messages) return false
+  for (const message of messages) {
+    for (const block of message.content) {
+      if (block.type === 'tool-result' && block.toolCallId === id) return true
+    }
+  }
+  return false
 }
 
 function toolArgsJson(args: Record<string, unknown> | undefined): string {
@@ -87,66 +113,47 @@ function toolArgsJson(args: Record<string, unknown> | undefined): string {
   return JSON.stringify(obj)
 }
 
-/** T1 本地模拟适配器 (官方 LlmAdapter; 幂等渲染, 无内部状态)。 */
+/** T1 本地模拟适配器 (官方 LlmAdapter; 无状态动作渲染器)。 */
 export class TriggerLlmAdapter extends LlmAdapter {
-  constructor(private readonly hooks: TriggerLlmAdapterHooks) {
+  constructor(private readonly hooks: TriggerLlmAdapterHooks = {}) {
     super()
-    if (this.hooks === null || typeof this.hooks !== 'object') {
-      throw new Error('TriggerLlmAdapter: resolveLines/matchLines hooks are required')
-    }
   }
 
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     if (options?.signal?.aborted) return
-    const tail = tailInput(options?.messages)
-
-    // T1-owned 回合的续步 (工具已执行): 经命令-应答桥注册表还原应答纯行,
-    // 续步判定 — 命中 = 工具链继续推进; 未命中 = 回合自然收束。
-    if (tail.kind === 'tool-tail') {
-      const lines = tail.text !== '' ? this.hooks.resolveLines(tail.text) : null
-      const actions = lines ? this.hooks.matchLines(lines) : []
-      if (lines === null || actions.length === 0) {
-        this.hooks.onLog?.(`[t1] tool-result 续步无命中 → 收束回合 (${tail.text.length} 字符)`)
-        yield { type: 'finish', reason: { kind: 'stop' } }
-        return
-      }
-      this.hooks.onLog?.(`[t1] tool-result 续步命中 ${actions.length} 条 → 渲染动作`)
-      yield* this.renderActions(actions)
-      return
-    }
-
-    // 游戏输出文本 (T1 主 / 观察窗注入): 还原行对象 → 匹配。
-    const lines = tail.kind === 'text' && !tail.text.startsWith(CONTROL_PREFIX)
-      ? this.hooks.resolveLines(tail.text)
-      : null
-    const actions = lines ? this.hooks.matchLines(lines) : []
-    if (lines === null || actions.length === 0) {
-      const why = tail.kind !== 'text'
-        ? '无尾部文本'
-        : tail.text.startsWith(CONTROL_PREFIX)
-          ? '控制消息'
-          : lines === null ? '无注册行' : '规则未命中'
-      // 路由所有权已由装配方在 feed 判类时决定 — 本层不再交棒, 仅收束回合。
-      this.hooks.onLog?.(`[t1] 无应答 (${why}) → 收束回合 (所有权已定, 不再交棒)`)
+    const context = turnContext(options?.messages)
+    if (context.kind === 'foreign-lane') {
+      // 只有 lane=t1 才会被路由到本 provider; 走到这里说明选路异常。
+      this.hooks.onLog?.(`[t1] 收到 lane=${context.lane} 的请求 (选路异常) → 收束回合`)
       yield { type: 'finish', reason: { kind: 'stop' } }
       return
     }
-
-    yield* this.renderActions(actions)
+    if (context.kind === 'none') {
+      this.hooks.onLog?.(`[t1] 本步无动作可渲染 (${context.why}) → 收束回合`)
+      yield { type: 'finish', reason: { kind: 'stop' } }
+      return
+    }
+    // 只渲染"尚未执行"的动作：它的工具结果若已在会话里，说明这一步已经跑完。
+    const pending = context.actions
+      .map((action, index) => ({ action, index, id: actionId(context.delivery, index) }))
+      .filter(entry => !alreadyAnswered(options?.messages, entry.id))
+    if (pending.length === 0) {
+      const tail = options?.messages?.at(-1)
+      this.hooks.onLog?.(`[t1] 本次投递的动作都已执行 → 收束 (尾部: ${preview(tail)})`)
+      yield { type: 'finish', reason: { kind: 'stop' } }
+      return
+    }
+    this.hooks.onLog?.(`[t1] 渲染 ${pending.length} 条动作 (delivery=${context.delivery})`)
+    yield* this.renderActions(pending)
   }
 
-  /** 渲染全部动作 (顺行序): 每条 action 先 output 文本块, 后 tool-call 块。
-   *  tool args 原样渲染 (含 {name}/{pass} 等占位符) — 占位符的插值责任
-   *  在工具执行层 (mud_send), 渲染层绝不落明文。 */
-  private async *renderActions(actions: readonly TriggerAction[]): AsyncIterable<StreamChunk> {
+  /** 渲染动作：每条先 output 文本块，后 tool-call 块（与真实 LLM 同构）。 */
+  private async *renderActions(
+    entries: readonly { action: RenderedAction; index: number; id: ToolCallId }[],
+  ): AsyncIterable<StreamChunk> {
     let index = 0
     let hasTool = false
-    for (const entry of actions) {
-      this.hooks.onRender?.({
-        action: entry.action,
-        hit: entry.hit,
-        rule: null,
-      })
+    for (const entry of entries) {
       const output = entry.action.output
       if (typeof output === 'string' && output.length > 0) {
         const i = index++
@@ -158,16 +165,15 @@ export class TriggerLlmAdapter extends LlmAdapter {
       if (tool && typeof tool.name === 'string' && tool.name.length > 0) {
         hasTool = true
         const i = index++
-        const id = renderActionId(entry.hit, i)
         const argumentsJson = toolArgsJson(tool.args)
         yield { type: 'block-start', index: i, blockType: 'tool-call' }
-        yield { type: 'tool-call-delta', index: i, id, name: tool.name, argumentsDelta: argumentsJson }
+        yield { type: 'tool-call-delta', index: i, id: entry.id, name: tool.name, argumentsDelta: argumentsJson }
         yield {
           type: 'block-end',
           index: i,
           block: {
             type: 'tool-call',
-            id,
+            id: entry.id,
             name: tool.name,
             arguments: argumentsJson,
           } as ContentBlock,
@@ -177,3 +183,6 @@ export class TriggerLlmAdapter extends LlmAdapter {
     yield { type: 'finish', reason: { kind: hasTool ? 'tool-calls' : 'stop' } }
   }
 }
+
+/** 控制消息前缀的再导出 (装配方日志判据用)。 */
+export { CONTROL_PREFIX }

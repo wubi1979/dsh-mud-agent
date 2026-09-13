@@ -2,14 +2,16 @@
  * dsh-mud-webui — MUD WebSocket controller (client half).
  *
  * Owns the single `/mud/ws` connection for the whole page: same-origin ws/wss
- * derivation, hello handshake with per-channel resume seqs, exponential
- * backoff reconnect, and frame dispatch to event-style handlers. Data flows
- * one way (server → browser); the controller keeps only the last-seen seqs
- * and the latest world snapshot.
+ * derivation, hello handshake with per-channel resume seqs, exponential backoff
+ * reconnect, and frame dispatch to event-style handlers. The channel itself is
+ * session-agnostic — every item carries the `sessionId` it belongs to, and this
+ * controller keeps **per-session** retention so 游戏/日志 views of one session
+ * never show another session's stream (回复用户 = 回复会话 on the wire).
  *
  * Frame contract mirrors mud-core's src/client/wire.ts:
  *   client → server: `{type:'hello', lastGameSeq, lastUiSeq}`
- *   server → client: `{ch:'game', items}` / `{ch:'ui', items}` / `{ch:'world', world}`
+ *   server → client: `{ch:'game', items}` / `{ch:'ui', items}` /
+ *                    `{ch:'world', sessionId, world}`
  * @module @deepseek-ai/dsh-mud-webui/client/mud-socket
  */
 
@@ -20,17 +22,20 @@ export type MudSocketStatus = 'connecting' | 'open' | 'closed'
 
 type GameHandler = (items: readonly MudGameItem[]) => void
 type UiHandler = (items: readonly MudUiItem[]) => void
-type WorldHandler = (world: unknown) => void
+type WorldHandler = (sessionId: string, world: unknown) => void
 type StatusHandler = (status: MudSocketStatus) => void
 
 /** Reconnect backoff: doubling from 500ms, capped at 8s. */
 const RECONNECT_BASE_MS = 500
 const RECONNECT_MAX_MS = 8000
 
-/** Retention caps per view array (display-layer truncation only). */
+/** Retention caps per session (display-layer truncation only). */
 const GAME_RETAIN_MAX = 5000
 const LOGS_RETAIN_MAX = 500
 const DECISIONS_RETAIN_MAX = 200
+
+/** 进程级条目的 sessionId (所有会话视图都显示)。 */
+const GLOBAL_SESSION = ''
 
 /** 稳定的 useSyncExternalStore 快照容器 (captcha 替换语义, 全局唯一)。 */
 export interface MudCaptchaSnapshot {
@@ -42,6 +47,12 @@ export interface MudViewSnapshot {
   readonly logs: readonly MudUiItem[]
   readonly decisions: readonly MudUiItem[]
   readonly world: unknown
+}
+
+const EMPTY_VIEW: MudViewSnapshot = { logs: [], decisions: [], world: null }
+
+function sessionKeyOf(value: string | undefined): string {
+  return value === undefined || value === '' ? GLOBAL_SESSION : value
 }
 
 function isMudGameItem(value: unknown): value is MudGameItem {
@@ -60,9 +71,10 @@ function asUiItem(item: MudGameItem): MudUiItem {
 }
 
 /**
- * One shared WebSocket per page. Handlers are plain callbacks registered via
- * `onGame`/`onUi`/`onWorld`/`onStatus`; every handler sees frames in arrival
- * order, backfill batches included.
+ * One shared WebSocket per page. Data is retained **per session**; consumers
+ * ask for the session they render (`getView(sessionId)` / `getGameItems(sessionId)`),
+ * while the right-rail summary follows the focus session (the last session that
+ * produced a frame).
  */
 export class MudSocketController {
   private status: MudSocketStatus = 'connecting'
@@ -72,13 +84,14 @@ export class MudSocketController {
   private disposed = false
   private lastGameSeq = 0
   private lastUiSeq = 0
-  private latestWorld: unknown = null
 
-  // ── 保留视图 (组件重挂载也能渲染历史; 快照引用仅在内容变化时更换) ──
-  private readonly gameRetain: MudGameItem[] = []
-  private logs: readonly MudUiItem[] = []
-  private decisions: readonly MudUiItem[] = []
-  private view: MudViewSnapshot = { logs: this.logs, decisions: this.decisions, world: null }
+  // ── 每会话保留视图 (组件重挂载也能渲染本会话历史) ──
+  private readonly gameBySession = new Map<string, MudGameItem[]>()
+  private readonly logsBySession = new Map<string, MudUiItem[]>()
+  private readonly decisionsBySession = new Map<string, MudUiItem[]>()
+  private readonly worldBySession = new Map<string, unknown>()
+  private readonly viewCache = new Map<string, MudViewSnapshot>()
+  private focusSessionId = GLOBAL_SESSION
   private readonly viewListeners = new Set<() => void>()
 
   // ── 验证码交互 (替换语义): 新 captcha 条目整体替换, 全局唯一不叠开 ──
@@ -99,20 +112,22 @@ export class MudSocketController {
     return this.status
   }
 
-  /** Latest world snapshot received so far (null before the first frame). */
-  getWorld(): unknown {
-    return this.latestWorld
+  /** 最近产出帧的会话 (右栏摘要跟随; 无帧时为空串 = 进程级)。 */
+  getFocusSessionId(): string {
+    return this.focusSessionId
   }
 
   /**
-   * Stable view snapshot (logs/decisions/world) for useSyncExternalStore:
-   * array references change only when new ui/world frames land.
+   * Stable per-session view snapshot for useSyncExternalStore: the reference
+   * changes only when that session's logs/decisions/world change.
+   * @param sessionId 目标会话 (缺省 = focus 会话)。
    */
-  getView(): MudViewSnapshot {
-    return this.view
+  getView(sessionId?: string): MudViewSnapshot {
+    const key = sessionId === undefined ? this.focusSessionId : sessionKeyOf(sessionId)
+    return this.viewCache.get(key) ?? EMPTY_VIEW
   }
 
-  /** View subscription for useSyncExternalStore. */
+  /** View subscription for useSyncExternalStore (all sessions notify). */
   subscribeView(listener: () => void): () => void {
     this.viewListeners.add(listener)
     return () => { this.viewListeners.delete(listener) }
@@ -136,9 +151,41 @@ export class MudSocketController {
     for (const listener of [...this.captchaListeners]) listener()
   }
 
-  /** Retained game items — a late-mounting surface replays these on mount. */
-  getGameItems(): readonly MudGameItem[] {
-    return this.gameRetain
+  /**
+   * Retained game items of one session (进程级条目并入) — a late-mounting
+   * surface replays these on mount.
+   * @param sessionId 目标会话 (缺省 = focus 会话)。
+   */
+  getGameItems(sessionId?: string): readonly MudGameItem[] {
+    const key = sessionId === undefined ? this.focusSessionId : sessionKeyOf(sessionId)
+    const own = this.gameBySession.get(key) ?? []
+    if (key === GLOBAL_SESSION) return own
+    const global = this.gameBySession.get(GLOBAL_SESSION) ?? []
+    // 进程级条目 (连接分隔等) 与自身条目按 seq 归并。
+    return [...global, ...own].sort((a, b) => a.seq - b.seq)
+  }
+
+  /**
+   * 丢弃某会话在本页的全部缓冲 (终端/日志/决策/world + 视图缓存)。
+   *
+   * 删除用户时调用: 官方会话记录可能仍在列表里 (client `ISessions` 无删除
+   * 接口), 若不丢, 重新打开那个会话的视图会显示上一个身份的内容。
+   * @param sessionId 目标会话 id (空串忽略)。
+   */
+  forget(sessionId: string): void {
+    const key = sessionKeyOf(sessionId)
+    if (key === '') return
+    this.gameBySession.delete(key)
+    this.logsBySession.delete(key)
+    this.decisionsBySession.delete(key)
+    this.worldBySession.delete(key)
+    this.viewCache.delete(key)
+    if (this.focusSessionId === key) this.focusSessionId = GLOBAL_SESSION
+    if (this.captchaState.captcha?.sessionId === key) {
+      this.captchaState = { captcha: null }
+      for (const listener of [...this.captchaListeners]) listener()
+    }
+    for (const listener of [...this.viewListeners]) listener()
   }
 
   onGame(handler: GameHandler): () => void {
@@ -199,51 +246,57 @@ export class MudSocketController {
         return
       }
       if (typeof msg !== 'object' || msg === null) return
-      const frame = msg as { ch?: unknown; items?: unknown; world?: unknown }
+      const frame = msg as { ch?: unknown; items?: unknown; world?: unknown; sessionId?: unknown }
       if (frame.ch === 'game' && Array.isArray(frame.items)) {
         const items = frame.items.filter(isMudGameItem)
         for (const item of items) {
           if (item.seq > this.lastGameSeq) this.lastGameSeq = item.seq
-        }
-        this.gameRetain.push(...items)
-        if (this.gameRetain.length > GAME_RETAIN_MAX) {
-          this.gameRetain.splice(0, this.gameRetain.length - GAME_RETAIN_MAX)
+          const key = sessionKeyOf(item.sessionId)
+          const retained = this.gameBySession.get(key) ?? []
+          retained.push(item)
+          if (retained.length > GAME_RETAIN_MAX) retained.splice(0, retained.length - GAME_RETAIN_MAX)
+          this.gameBySession.set(key, retained)
+          if (key !== GLOBAL_SESSION) this.focusSessionId = key
         }
         for (const handler of [...this.gameHandlers]) handler(items)
         return
       }
       if (frame.ch === 'ui' && isMudUiItems(frame.items)) {
         const items = frame.items.filter(isMudGameItem).map(asUiItem)
+        const touched = new Set<string>()
+        const captcha = items.filter(item => item.kind === 'captcha')
         for (const item of items) {
           if (item.seq > this.lastUiSeq) this.lastUiSeq = item.seq
+          const key = sessionKeyOf(item.sessionId)
+          if (item.kind === 'log') {
+            const logs = this.logsBySession.get(key) ?? []
+            logs.push(item)
+            if (logs.length > LOGS_RETAIN_MAX) logs.splice(0, logs.length - LOGS_RETAIN_MAX)
+            this.logsBySession.set(key, logs)
+          } else if (item.kind === 'decision') {
+            const decisions = this.decisionsBySession.get(key) ?? []
+            decisions.push(item)
+            if (decisions.length > DECISIONS_RETAIN_MAX) decisions.splice(0, decisions.length - DECISIONS_RETAIN_MAX)
+            this.decisionsBySession.set(key, decisions)
+          }
+          touched.add(key)
+          if (key !== GLOBAL_SESSION) this.focusSessionId = key
         }
-        const logs = items.filter(item => item.kind === 'log')
-        const decisions = items.filter(item => item.kind === 'decision')
-        // captcha: 替换语义 — 取本批最后一条整体覆盖 (host 保证 OCR 增量
-        // 事件也走同一通道, 前端只需"新事件替换旧事件")。
-        const captcha = items.filter(item => item.kind === 'captcha')
+        // captcha: 替换语义 — 取本批最后一条整体覆盖 (页面级对话框)。
         if (captcha.length > 0) {
           this.captchaState = { captcha: captcha[captcha.length - 1] ?? null }
           for (const listener of [...this.captchaListeners]) listener()
         }
-        if (logs.length > 0) {
-          this.logs = [...this.logs, ...logs].slice(-LOGS_RETAIN_MAX)
-        }
-        if (decisions.length > 0) {
-          this.decisions = [...this.decisions, ...decisions].slice(-DECISIONS_RETAIN_MAX)
-        }
-        if (logs.length > 0 || decisions.length > 0) {
-          this.view = { logs: this.logs, decisions: this.decisions, world: this.latestWorld }
-          for (const listener of [...this.viewListeners]) listener()
-        }
+        this.rebuildViews(touched)
         for (const handler of [...this.uiHandlers]) handler(items)
         return
       }
       if (frame.ch === 'world') {
-        this.latestWorld = frame.world
-        this.view = { logs: this.logs, decisions: this.decisions, world: this.latestWorld }
-        for (const listener of [...this.viewListeners]) listener()
-        for (const handler of [...this.worldHandlers]) handler(frame.world)
+        const key = sessionKeyOf(typeof frame.sessionId === 'string' ? frame.sessionId : undefined)
+        this.worldBySession.set(key, frame.world)
+        if (key !== GLOBAL_SESSION) this.focusSessionId = key
+        this.rebuildViews(new Set([key]))
+        for (const handler of [...this.worldHandlers]) handler(key, frame.world)
       }
     }
     ws.onclose = () => {
@@ -252,6 +305,19 @@ export class MudSocketController {
       this.scheduleReconnect()
     }
     ws.onerror = () => { /* close follows; no double scheduling */ }
+  }
+
+  /** 受影响会话的视图快照重建 (未受影响会话引用保持不变)。 */
+  private rebuildViews(touched: ReadonlySet<string>): void {
+    if (touched.size === 0) return
+    for (const key of touched) {
+      this.viewCache.set(key, {
+        logs: this.logsBySession.get(key) ?? [],
+        decisions: this.decisionsBySession.get(key) ?? [],
+        world: this.worldBySession.get(key) ?? null,
+      })
+    }
+    for (const listener of [...this.viewListeners]) listener()
   }
 
   private scheduleReconnect(): void {

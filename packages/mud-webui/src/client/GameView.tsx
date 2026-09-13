@@ -9,8 +9,9 @@
  * host 进程级内存缓冲, 不进 session 事件流 (避免会话膨胀)。
  * 终端生命周期 = host 进程: 挂载时回放控制器保留的近期输出 (重挂载不丢),
  * 之后订阅增量帧; 断开重连由控制器自动回填。xterm 实例在组件挂载时创建、
- * 切 tab 时销毁重建 (回放补齐)。连接/断开按钮在未连接/已连接状态下切换,
- * 游戏页面驱动连接。
+ * 切 tab 时销毁重建 (回放补齐)。工具条上的连接/断开是**镜像入口**: 首次连接
+ * 必须先经左栏用户行的 ⋯ 菜单 (blank 会话不渲染会话体, 此时本页还看不到);
+ * 连接后第一批游戏输出开启回合并翻 blank, 本 tab 才出现。
  * @module @deepseek-ai/dsh-mud-webui/client/GameView
  */
 
@@ -131,20 +132,24 @@ export function GameView({
     }
   }, [])
 
-  // 终端数据: /mud/ws 推送订阅 + 重挂载回放。
+  // 终端数据: /mud/ws 推送订阅 + 重挂载回放 (只取本会话条目 + 进程级条目)。
   // 两条路径都按 seq 去重续写; 挂载即从 0 拉 (host 重启后缓冲为空 → 自然清空)。
   useEffect(() => {
     const term = termRef.current
     if (term === null) return
-    // /mud/ws 订阅: 先订阅增量 (seq 去重), 再回放控制器保留的近期历史 —
-    // 组件重挂载 (切换 tab / 断开重连) 时终端不丢已收内容。回放中与订阅后
-    // 重叠的 seq 由 writeGameBatch 去重, 顺序保持单调。
+    const sid = sessionId === undefined ? '' : String(sessionId)
+    const belongs = (item: { sessionId?: string }): boolean =>
+      (item.sessionId ?? '') === '' || item.sessionId === sid
     const off = mudSocket.onGame((items) => {
-      lastSeqRef.current = writeGameBatch(term, items, lastSeqRef.current)
+      lastSeqRef.current = writeGameBatch(term, items.filter(belongs), lastSeqRef.current)
     })
-    lastSeqRef.current = writeGameBatch(term, mudSocket.getGameItems(), lastSeqRef.current)
+    lastSeqRef.current = writeGameBatch(
+      term,
+      mudSocket.getGameItems(sid).filter(item => belongs(item)),
+      lastSeqRef.current,
+    )
     return off
-  }, [mudSocket])
+  }, [mudSocket, sessionId])
 
   // 顶部工具条: 连接/断开按钮 + 连接状态 (不覆盖终端; 终端常驻不卸载)。
   const handleConnect = (): void => {
@@ -169,7 +174,7 @@ export function GameView({
           <button
             type="button"
             className={css.toolbarButton}
-            onClick={() => { void disconnect() }}
+            onClick={() => { void disconnect(sessionId === undefined ? undefined : String(sessionId)) }}
           >
             断开连接
           </button>

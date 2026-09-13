@@ -1,10 +1,12 @@
 /**
  * dsh-mud-core — 命令-应答桥 (CommandResponseController) 单元测试。
  *
- * 覆盖 REFACTOR-V7 机制 A 的全部结算路径:
+ * 覆盖命令-应答桥 (`doc/ARCHITECTURE.md` §8) 的全部结算路径:
  *   GA/EOR 主边界 / until 声明边界 (跨帧) / 静默窗 / 超时 / 连续超时 reject /
- *   成功复位 / 无主观察与边界 / 一步一帧 / head 头部合并 / abort / 断线 close /
- *   注册表 resolveLines (标记剥离) / 序列命令 / fire-and-forget。
+ *   成功复位 / 无主边界转发 / 一步一帧 / head 帧首合并 / abort / 断线 close /
+ *   序列命令 / fire-and-forget。
+ * 行集表 (cacheLines/resolveLines) 已随 V10 行级化删除: T1 的渲染依据是
+ * 感知引擎的命中队列 (§4/§7), 不再按文本还原行对象。
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
@@ -22,17 +24,15 @@ function ml(text: string, abs = 0): MudLine {
   return { text, raw: text, style: [], abs, time: 0, isPrompt: false }
 }
 
-/** 测试宿主: 捕获 send/meta, 记录观察行与无主边界。 */
+/** 测试宿主: 捕获 send/meta, 记录无主边界。 */
 function harness() {
   const sent: { cmd: string; meta: { replyId?: string } }[] = []
-  const observed: MudLine[][] = []
   const boundaries: BoundaryKind[] = []
   const controller = new CommandResponseController({
     send: (cmd, meta) => { sent.push({ cmd, meta }) },
-    onObservation: (lines) => { observed.push(lines) },
     onBoundary: (kind) => { boundaries.push(kind) },
   })
-  return { controller, sent, observed, boundaries }
+  return { controller, sent, boundaries }
 }
 
 /** 已发送且尚未 confirm 的 replyId (按命令文字查找)。 */
@@ -235,11 +235,10 @@ describe('CommandResponseController', () => {
     expect((await p).settled).toBe('timeout')
   })
 
-  it('无主: 观察行转发 onObservation, 无主边界转发 onBoundary', () => {
+  it('无主: 无主行不登记 (投递归 L2), 无主边界转发 onBoundary', () => {
     const h = harness()
     h.controller.feedLines([ml('无主一行')])
-    expect(h.observed.length).toBe(1)
-    expect(h.observed[0].map(l => l.text)).toEqual(['无主一行'])
+    expect(h.controller.inFlight()).toBe(false)
     h.controller.boundaryReceived('ga')
     expect(h.boundaries).toEqual(['ga'])
   })
@@ -261,19 +260,25 @@ describe('CommandResponseController', () => {
     expect((await pb).settled).toBe('eor')
   })
 
-  it('head 合并: 武装前观察行并入帧首 (帧连续)', async () => {
+  it('武装前 (sending 窗) 到达的行归本帧, 且不会漏进下一帧 (曾经: 宿主另存帧首 → 重复)', async () => {
     const h = harness()
     const p = h.controller.sendAndAwait('look')
-    // 写 socket 前到达的行 (静默收集窗): 宿主暂存, 武装时回传。
-    const head = [ml('>')]
-    h.controller.feedLines(head)   // 此时未武装 → 走观察窗
-    expect(h.observed.flat().map(l => l.text)).toEqual(['>'])
-    h.controller.confirmSent(replyIdOf(h.sent, 'look'), head)
+    // 队列节流窗口: 已调用 sendAndAwait、还没真实写出 socket —— 这些行属于本帧。
+    h.controller.feedLines([ml('>')])
+    h.controller.confirmSent(replyIdOf(h.sent, 'look'))
     h.controller.feedLines([ml('北大街')])
     h.controller.boundaryReceived('ga')
     const reply = await p
     expect(reply.lines.map(l => l.text)).toEqual(['>', '北大街'])
     expect(reply.text).toBe('>\n北大街')
+
+    // 下一条命令的帧里绝不能出现上一帧的行 (实测 bug: look 的应答混进了旧行/MXP 文本)。
+    const p2 = h.controller.sendAndAwait('inventory')
+    h.controller.confirmSent(replyIdOf(h.sent, 'inventory'))
+    h.controller.feedLines([ml('你身上带着:')])
+    h.controller.boundaryReceived('ga')
+    const reply2 = await p2
+    expect(reply2.lines.map(l => l.text)).toEqual(['你身上带着:'])
   })
 
   it('abort 信号: 优雅结算 (settled=abort), 不悬挂', async () => {
@@ -285,9 +290,9 @@ describe('CommandResponseController', () => {
     const reply = await p
     expect(reply.settled).toBe('abort')
     expect(reply.ok).toBe(false)
-    // abort 后在途清空, 观察行不再归属任何请求。
+    // abort 后在途清空; 之后到达的行不再归属任何请求 (投递归 L2)。
     h.controller.feedLines([ml('迟到')])
-    expect(h.observed.flat().map(l => l.text)).toEqual(['迟到'])
+    expect(h.controller.inFlight()).toBe(false)
   })
 
   it('abort 于调用前: settled=abort 且不发命令 (信号已预先中止)', async () => {
@@ -364,17 +369,7 @@ describe('CommandResponseController', () => {
     expect((await p2).settled).toBe('ga')
   })
 
-  it('P1-3a: cacheLines 整批登记 → 合并文本 resolveLines 精确还原', async () => {
-    const h = harness()
-    // 观察窗合并注入路径: 整批登记后, 合并文本 (多批拼接) 可精确还原全部行。
-    h.controller.cacheLines([ml('批一'), ml('批二'), ml('批三')])
-    const merged = '批一\n批二\n批三'
-    const lines = h.controller.resolveLines(merged)
-    expect(lines).not.toBeNull()
-    expect(lines!.map(l => l.text)).toEqual(['批一', '批二', '批三'])
-  })
-
-  it('resolveLines: 标记剥离还原纯行 (工具结果 → T1 续步判定)', async () => {
+  it('超时结算: 帧行随 MudReply.lines 返回 (T1 不再按文本反查行集表)', async () => {
     const h = harness()
     const p = h.controller.sendAndAwait('dz', { timeout: 40 })
     h.controller.confirmSent(replyIdOf(h.sent, 'dz'))
@@ -382,15 +377,12 @@ describe('CommandResponseController', () => {
     await vi.advanceTimersByTimeAsync(50)
     const reply = await p
     expect(reply.settled).toBe('timeout')
-    // 工具结果文本 = reply.text (含标记) → resolveLines 还原纯行。
-    const lines = h.controller.resolveLines(reply.text)
-    expect(lines).not.toBeNull()
-    expect(lines!.map(l => l.text)).toEqual(['你开始打坐', '你一无所获。'])
+    expect(reply.lines.map(l => l.text)).toEqual(['你开始打坐', '你一无所获。'])
   })
 
   it('序列命令: 逐条发送同 replyId, confirmSent 幂等', async () => {
     const h = harness()
-    const p = h.controller.sendAndAwait(['', 'look'])  // 空命令成员 (退出检测模式)
+    const p = h.controller.sendAndAwait(['', 'look'])  // 序列里的空命令成员 (允许; 语义由调用方定)
     expect(h.sent.map(s => s.cmd)).toEqual(['', 'look'])
     const id = replyIdOf(h.sent, 'look')
     expect(id).toBeDefined()

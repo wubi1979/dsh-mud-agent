@@ -1,0 +1,6 @@
+name: MUD 玩家
+description: >-
+  北大侠客行玩家：游戏感知规则 + 语义工具
+  (mud_state / mud_recall / mud_send / mud_move / mud_look / mud_status / world_patch)，
+  由 dsh-mud-core 提供。
+order: 40

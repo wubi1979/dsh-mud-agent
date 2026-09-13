@@ -1,15 +1,35 @@
 # The dsh-mud-core bundle patch: the MUD core service row set (telnet client,
 # perception/trigger pipeline, trigger-llm, and the agent bridge published as
-# `ctx.mud`).
-# UI shell (`@deepseek-ai/dsh-mud-webui`) is a separate row added after this
-# one in a profile patch to pick the face.
+# `ctx.mud`), plus the preset-roster root that makes this package's `mud-player`
+# preset discoverable.
+#
+# This file is passed as a `--patch` overlay (see the repo's `dev:web` script),
+# i.e. it is the LAST layer: bundles → profile patch → home → `--patch`. Two
+# consequences drive everything below:
+#   - rows inserted here only exist at the very end, so a profile patch may NOT
+#     target `mud-core`. Doing that has been observed to break the profile's live
+#     patch reload and take the whole plugin tree down (the session's tools
+#     disappear until the entry is removed) — never put `mud-core` (or anything
+#     inserted by this file) in the profile patch;
+#   - conversely, `agent-presets` is inserted by the web-app bundle and therefore
+#     already exists when this layer applies, so its config can be overridden
+#     here — which keeps the deployment self-contained in this repository and
+#     leaves the user's profile patch empty.
 #
 # `name` points at the tsc build output (dist), so the row loads under plain
 # Node ESM without any tsx involvement. Rebuild before boot:
 #   pnpm --dir D:/Code/dsh-mud-agent -r build
-#
-# Deployment values live in the profile's own cordis.patch.yml (server,
-# account, session pacing) — never in this bundle.
+
+# 让本包 `presets/` 进入官方 preset 名单 (`@deepseek-ai/dsh-agent-presets`)。
+# 一条 patch 会**替换目标行的整份 config**, 所以必填的 `default` 必须原样带上
+# (`includeShippedRoot` / `includeUserRoot` 有 schema 默认值, 会保留为 true)。
+# 若某天你还要维护别的 preset root, 把它们一并写进这条 roots (否则会被这里覆盖)。
+- id: agent-presets
+  config:
+    default: standard
+    roots:
+      - path: D:/Code/dsh-mud-agent/packages/mud-core/presets
+        trust: system
 
 - insert:
     - id: mud-core
@@ -17,13 +37,27 @@
       config:
         host: mud.pkuxkx.net
         port: 8081
+        # 缺省会话 id (路由未带 sessionId 且尚无绑定会话时的回落; 正常情况下
+        # 会话由页面经官方 sessions.create 建立, 随每个请求带上 sessionId)。
         sessionId: mud-player
-        # 日志落盘目录 (JSONL, 按天轮转): 不设则默认 <host 进程 cwd>/mud-logs。
+        # 日志落盘目录 (JSONL, 按天 + 按会话轮转): 不设则默认 <host 进程 cwd>/mud-logs。
         logDir: 'D:/Code/dsh-mud-agent/logs'
-        # 接入 agent: 注入游戏输出 → 判类注入 (规则命中 = T1 不耗 LLM;
-        # 未命中 = T2 推理走 LLM provider)。关闭则连 T1 也不派发 (仅感知与终端)。
+        # 接入 agent: 游戏输出按会话投递给该会话的官方 agent
+        # (规则命中 = T1 不耗 LLM; 未命中 = T2 推理走 LLM provider)。
+        # 关闭则连 T1 也不派发 (仅感知与终端)。
         agentEnabled: true
         commandIntervalMs: 400
-        ruleDedupMs: 1500
         loginTimeoutMs: 20000
+        # 断流程序唤醒阈值 (仅"已登录 + 已连接"时计时): 观察期临时放宽到 60s。
+        deadAirMs: 60000
+        # holdDelivery 暂缓投递的兜底释放 (multiline 捕获未完成且无新窗口时以 T2 投出)。
+        holdTimeoutMs: 3000
+        # 新 MUD 会话的权限档位缺省值: observe(只读) / operate(读写) / full(完全)。
+        # 每会话可在页面"用户行 ⋯ 菜单"单独切换; 登录流程不受档位限制。
+        defaultTier: operate
+        # 官方 agent preset 装配 (doc/ARCHITECTURE.md §9): 填 preset id 即启用 ——
+        # 插件在会话首个回合前用官方 agentPresets.select 切到该 preset, 能力面
+        # (工具/提示) 由 packages/mud-core/presets/<id>/ 提供。留空 = 宿主侧装配。
+        # preset 根未注册时 select 报 not-found, 插件留痕并回落宿主侧装配 (不静默失效)。
+        agentPreset: mud-player
         persona: ''

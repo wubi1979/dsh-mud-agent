@@ -50,51 +50,6 @@
 
 import type { PerceptionRule } from '../trigger-llm/types.ts'
 
-/**
- * 登录阶段边界表 (三段式语义: 入口 / 推进 / 终态 / 错误)。
- *
- * 决策 (2026-09-10 登录重建): 登录命令**不声明 until** — 统一按应答桥 GA 主边界结算
- * (命令回显全部输出完才到 GA; 帧内容保真作为 tool result 供续步判定; 意外提示如
- * 替换确认/密码错误随帧自然承接, 不再锁帧等超时). 本表是登录"推进信号"的单一事实
- * 来源: 各 login 规则 match 复用, 强化语义 + 防各写各的正则漏承接 (替换确认曾双漏 —
- * 行首前缀与全角括号, 见 login:replace-confirm 注释)。
- *
- * 待实录 (后续抓包或人工修正): 替换确认 / 密码错误的精确文本 — 现为估计形态容错。
- */
-export const LOGIN_BOUNDARIES: {
-  entry: RegExp[]
-  pass: RegExp[]
-  replace: RegExp[]
-  terminal: RegExp[]
-  error: RegExp[]
-} = {
-  /** 入口 — 名字提示 (抓包实证: 无换行符, 空闲刷出补整行; 长/短两形态, R1b)。 */
-  entry: [
-    /^您的英文名字（要注册新人物请输入new。）：$/,
-    /^您的英文名字[：:]\s*$/,
-  ],
-  /** 推进 — 密码提示 (抓包字节实证老号复登前缀 "此ID档案已存在，"; 兼容旧估计
-   *   前缀 "ID已存在，" + 裸形态, 三形态全收)。 */
-  pass: [
-    /^(?:此ID档案已存在，|ID已存在，)?请输入密码[：:]\s*$/,
-  ],
-  /** 推进 — 替换/覆盖确认 (估计形态, 待实录; 行首多形态 + 全角/半角 y/n 括号)。 */
-  replace: [
-    /^[^]*(?:已有同名|同名|覆盖|替换|已被占用)[^]*[（(]\s*[yY]\s*[\/／]\s*[nN]\s*[）)][^]*$/,
-  ],
-  /** 终态 — 登录完成 (抓包实证 "目前权限：(player)"; 欢迎/重连为备选; GMCP.System 权威置位)。 */
-  terminal: [
-    /^目前权限[：:]\s*[（(]?[pP]layer[)）]\s*$/,
-    /^欢迎来到北大侠客行[^]*$/,
-    /^重新连线完毕[^]*$/,
-  ],
-  /** 错误 — 登录失败提示 (估计形态, 待实录; 命中 → flags.login_fault 标记, 供感知/看门狗). */
-  error: [
-    /^密码错误[^]*$/,
-    /^密码不正确[^]*$/,
-    /^登录失败[^]*$/,
-  ],
-}
 
 /** 地图行判定: 行首缩进 + 框线字符 ≥2 个 (pkuxkx ASCII 房间图: ┌─┐│└┘ 框线,
  *  或 +---+ / | | 半角框线)。≥2 是为避免描述行含单个 `+`/`-`/`|` (连字符/破折号)
@@ -216,89 +171,6 @@ const defaultPerceptionRules: readonly PerceptionRule[] = [
     action: { output: '状态已入库(look)' },
   },
 
-  // ══ event: T1 渲染 (事件/决策 → agent) ═══════════════════════════════
-  //   锚定整行正则 (近似文本, 依真实提示修正); 无 map (纯 action), extract 禁用。
-  //   ── login 登录 (确定性 T1): 凭据 {name}/{pass} 由发送通道最后一刻插值
-  //   (与会话绑定, 明文不落转录)。命令-应答桥 (sendAndAwait) 挂起等真实应答,
-  //   按 **GA 主边界** 结算 (不声明 until — 决策见 LOGIN_BOUNDARIES): 命令回显
-  //   完整入帧, GA 后帧内容作 tool result 供续步判定; 意外分支 (替换确认/密码
-  //   错误) 随帧自然承接, 不锁帧不等超时; 登录完成置位由 GMCP 权威 + 文本双保险。
-  { // ── login 登录 (确定性 T1): 凭据 {name}/{pass} 由发送通道最后一刻插值 ──
-    id: 'login:name',
-    eventType: 'p:login:name',
-    priority: 30,
-    // 实测 (2026-09-10 三轮 8081 抓包): 名字提示**自动出现**, 无需回编码选择。
-    //   第3轮 --no-select2: CHARSET ACCEPTED UTF-8 后不回 2, "您的英文名字（…）："
-    //   照常出现并完整登录 → login:encoding 规则已移除 (选2是可选步骤, 非阻断)。
-    // 本轮发现: 提示行/名字提示均无换行符, 由空闲刷出 (400ms) 补成整行。
-    // 结算边界: **不声明 until, 按 GA 主边界** — 回显（名字回显+后续提示）完整入帧,
-    //   GA 结算后帧内容作 tool result, 续步判定自然承接密码提示/替换确认等下一步信号;
-    //   任何分支（老号/新号/替换确认）不锁帧不等超时 (GA 方案决策见 LOGIN_BOUNDARIES)。
-    match: { kind: 'regex', patterns: [...LOGIN_BOUNDARIES.entry] },
-    action: {
-      output: '登录: 发送名字',
-      tool: { name: 'mud_send', args: { cmd: '{name}' } },
-    },
-  },
-  {
-    id: 'login:replace-confirm',
-    eventType: 'p:login:replace',
-    priority: 30,
-    multiline: true,
-    // 估计形态 (待实录精确文本): 现支持 "已有同名用户存在，是否替换人物（y/n）？"
-    //   及 同名/覆盖/替换/已被占用 行首多前缀 + 全角/半角 y/n 括号 — 旧正则
-    //   `^(?:同名|覆盖|替换)...\([yY]\/n\)` 对行首 "已有同名" 与全角括号**双漏**。
-    // 结算边界: 不声明 until, 按 GA 主边界 (确认回显后即结算, 续步承接密码提示)。
-    match: { kind: 'regex', patterns: [...LOGIN_BOUNDARIES.replace] },
-    action: {
-      output: '登录: 确认覆盖同名档案',
-      tool: { name: 'mud_send', args: { cmd: 'y' } },
-    },
-  },
-  {
-    id: 'login:pass',
-    eventType: 'p:login:pass',
-    priority: 30,
-    // 抓包字节实证 (2026-09-10, 8081, 老号复登): 真实提示为 "此ID档案已存在，请输入密码：" —
-    // 旧规则 ^请输入密码 锚定漏匹配 → 密码永不发 → 登录无声卡死。实证前缀/兼容旧估计
-    // 前缀/裸 三形态全收 (正则见 LOGIN_BOUNDARIES.pass)。
-    // 结算边界: **不声明 until, 按 GA 主边界** — 密码回显+登录内容（目前权限/帮助/
-    //   房间/提示）完整入帧, GA 结算作 tool result, 续步命中 login:done (终态) 置位;
-    //   密码错误/替换确认等意外文本随帧承接 — 不锁帧、不等 45s 超时。
-    match: { kind: 'regex', patterns: [...LOGIN_BOUNDARIES.pass] },
-    action: {
-      output: '登录: 发送密码',
-      tool: { name: 'mud_send', args: { cmd: '{pass}' } },
-    },
-  },
-  {
-    id: 'login:done',
-    eventType: 'p:login:done',
-    priority: 30,
-    // 登录完成信号 (抓包实证): 老号复登后紧跟帮助文本的为 "目前权限：(player)" —
-    // 横幅 "欢迎使用北大侠客行" 是**登录前**连接横幅, 不可作完成判定 (旧锚点会永不命中,
-    // 仅靠 GMCP.System 置位)。欢迎来到/重新连线完毕保留为备选 (新号/断线重连形态)。
-    // 终态置位路径: GMCP.System site (权威 1.0) 为主, 本文本规则为双保险。
-    match: { kind: 'regex', patterns: [...LOGIN_BOUNDARIES.terminal] },
-    action: {
-      output: '登录完成',
-      tool: { name: 'world_patch', args: { patch: { logged_in: true } } },
-    },
-  },
-  {
-    id: 'login:error',
-    eventType: 'p:login:error',
-    priority: 30,
-    // 登录失败提示 (估计形态, 待实录精确文本): 命中置 flags.login_fault — 供观察侧/
-    // 看门狗感知登录故障 (不自动重试靠凭据猜测循环: 错误具体形态决定 T2 决策或人工)。
-    // 注意: 密码错误文本若出现在密码命令帧内 (GA 前), 会随 tool result 进续步判定,
-    //   本规则在其作为**独立观察行**出现时兜底标记。
-    match: { kind: 'regex', patterns: [...LOGIN_BOUNDARIES.error] },
-    action: {
-      output: '登录错误: 凭据或账号状态异常 (flags.login_fault)',
-      tool: { name: 'world_patch', args: { patch: { login_fault: true } } },
-    },
-  },
   // ── combat 战斗 (近似锚定, 依真实输出修正) ──
   {
     id: 'combat:start',
@@ -342,7 +214,41 @@ const defaultPerceptionRules: readonly PerceptionRule[] = [
       tool: { name: 'world_patch', args: { patch: { dead: true, in_combat: false } } },
     },
   },
-  // ── save 档案保存提醒 (常驻): 文本到 → 触发器反射 save ──
+  // ── fullme 防机器人验证 (规则形态; 流程化见 §19, 迁移前保持现行为) ──
+  { // 入口: 服务端提醒 → **直接发** `fullme` (无状态、无需返回; 不受档位限制)
+    // 实录提醒原文 (用户 2026-09-12): 判据就是这一串本身。
+    id: 'fullme:request',
+    eventType: 'p:fullme:request',
+    priority: 35,
+    match: { kind: 'text', includes: ['5M后长时间不使用fullme，会被系统判定为机器人。'] },
+    action: {
+      output: 'fullme: 服务端提醒, 发送 fullme 命令',
+      tool: { name: 'mud_send', args: { cmd: 'fullme' } },
+      direct: true,
+    },
+  },
+  { // 验证码地址 (应答帧内) → 挂起等人工; 人工回填后由 T1 发答案
+    id: 'fullme:prompt',
+    eventType: 'p:fullme',
+    priority: 40,
+    match: { kind: 'regex', patterns: [/^https?:\/\/[^\s]*robot\.php\?filename=[^\s]+/] },
+    action: {
+      output: '验证码: 等人工输入后发送 halt + fullme <码>',
+      tool: { name: 'mud_send', args: { cmds: ['halt', 'fullme {captcha}'] } },
+      awaitExternal: ['captcha'],
+    },
+  },
+  { // 成功句 (关键文本, 实证): 置位 + 留痕
+    id: 'fullme:done',
+    eventType: 'p:fullme:done',
+    priority: 30,
+    match: { kind: 'regex', patterns: [/^你突然感到精神一振，浑身似乎又充满了力量！\s*$/] },
+    action: {
+      output: 'fullme 验证通过',
+      tool: { name: 'world_patch', args: { patch: { fullme_ok: true } } },
+    },
+  },
+  // ── save 档案保存提醒 (常驻): 文本到 → **直接执行** save (不投给 agent) ──
   {
     id: 'save:prompt',
     eventType: 'p:save:prompt',
@@ -351,6 +257,8 @@ const defaultPerceptionRules: readonly PerceptionRule[] = [
     action: {
       output: '正在保存...',
       tool: { name: 'mud_send', args: { cmd: 'save' } },
+      // 无状态、无需返回: 提醒行折叠 (模型不必看到"建议经常 save"), save 由运行时直接发出。
+      direct: true,
     },
   },
   // ── pager 分页自动翻页 (P2-4, 逐页化: 一页一 step, 不用命令序列):
@@ -359,6 +267,8 @@ const defaultPerceptionRules: readonly PerceptionRule[] = [
   //    翻下一页 (非序列, 防 P2-2 GA 计数失衡); 逐批最多一次; 规则作者不能假设
   //    "帧必以 prompt 行结尾" — 分页 GA 前一行可能无 prompt (抓包实证)。
   //    -- more -- 为通用 MUD 变体 (低风险附带支持)。
+  //    **直接执行**: 翻页是"照做即可"的反射, 提示行折叠 (模型不必逐页读分页提示),
+  //    空格由运行时立即发出 —— 也让分页不必等一个 T1 回合。
   {
     id: 'pager:continue',
     eventType: 'p:pager',
@@ -373,7 +283,10 @@ const defaultPerceptionRules: readonly PerceptionRule[] = [
     },
     action: {
       output: '分页自动翻页',
-      tool: { name: 'mud_send', args: { cmd: ' ' } },
+      // 用序列 `cmds` 而不是单体 `cmd`: `mud_send` 的单体命令会 trim 后把空白当"空命令"
+      // 拒绝, 而翻页的语义正是**发一个空行/空白行**（`direct: true` = 发完即走, 不进桥）。
+      tool: { name: 'mud_send', args: { cmds: [' '] } },
+      direct: true,
     },
   },
 ]

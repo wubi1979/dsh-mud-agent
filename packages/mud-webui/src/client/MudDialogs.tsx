@@ -185,10 +185,12 @@ const WARN_STYLE: React.CSSProperties = {
  * /mud/command 并行发送 (不经过 agent/流程); 中止 → 仅关闭。用户可随时
  * 修改命令框内容再发送。
  */
-export function CaptchaDialog({ mudSocket, sendCommand, refreshCaptcha }: {
+export function CaptchaDialog({ mudSocket, sendCommand, refreshCaptcha, sessionId }: {
   mudSocket: MudSocketController
-  sendCommand: (cmd: string) => Promise<boolean>
-  refreshCaptcha: (imageUrl: string) => Promise<string | null>
+  sendCommand: (cmd: string, sessionId?: string) => Promise<boolean>
+  refreshCaptcha: (imageUrl: string, sessionId?: string) => Promise<string | null>
+  /** 验证码所属会话 (右栏 focus 会话; 缺省 = host 回落最近绑定会话)。 */
+  sessionId?: string | undefined
 }) {
   const snapshot = useSyncExternalStore(
     listener => mudSocket.subscribeCaptcha(listener),
@@ -216,7 +218,7 @@ export function CaptchaDialog({ mudSocket, sendCommand, refreshCaptcha }: {
     }
     setSending(true)
     // 命令序列 [halt, fullme 文字]: 打坐/战斗等持续状态会阻断 fullme, 先 halt 再发送。
-    void Promise.resolve(sendCommand(`[${['halt', trimmed].join(',')}]`))
+    void Promise.resolve(sendCommand(`[${['halt', trimmed].join(',')}]`, sessionId))
       .then((ok) => {
         if (ok) { close() } else { setError('发送失败 (游戏可能未连接), 请重试') }
       })
@@ -227,7 +229,7 @@ export function CaptchaDialog({ mudSocket, sendCommand, refreshCaptcha }: {
     if (refreshing || captcha === null) return
     setRefreshing(true)
     setError(null)
-    void Promise.resolve(refreshCaptcha(captcha.url ?? ''))
+    void Promise.resolve(refreshCaptcha(captcha.url ?? '', sessionId))
       .then((newUrl) => {
         if (newUrl === null) setError('刷新失败, 请重试')
       })

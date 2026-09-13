@@ -21,9 +21,11 @@ export interface MudWorldSnapshot {
   flags: Record<string, unknown>
 }
 
-/** 一条游戏输出帧条目 (与终端缓冲条目同形, 原始文本含 ANSI)。 */
+/** 一条游戏输出帧条目 (与终端缓冲条目同形, 原始文本含 ANSI)。
+ *  `sessionId` 标明来源会话 — 前端按当前会话过滤 (通道本身与会话无关)。 */
 export interface MudGameItem {
   seq: number
+  sessionId?: string
   text: string
   time: number
 }
@@ -31,6 +33,8 @@ export interface MudGameItem {
 /** 一条 UI 流帧条目 (日志、结构化决策或验证码交互)。 */
 export interface MudUiItem {
   seq: number
+  /** 来源会话 id (进程级条目 = 空串, 所有会话视图都显示)。 */
+  sessionId?: string
   kind: 'log' | 'decision' | 'captcha'
   text: string
   time: number

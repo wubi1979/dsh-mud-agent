@@ -1,206 +1,145 @@
 /**
- * dsh-mud-core — T1 本地模拟 LLM 适配器测试。
+ * dsh-mud-core — TriggerLlmAdapter (T1) 契约测试 (`doc/ARCHITECTURE.md` §7)。
  *
- * 验证 T1 (mud-t1 provider) 的判定输入 = 当前请求自身尾部 user 消息:
- *   - 游戏输出命中 → 渲染 output 文本 + tool-call 块 (与真实 LLM 同构);
- *   - tool-result 续步 → 安静收束 (finish stop, T1 独立完成整个 turn);
- *   - 未命中 / 无注册行 / 控制消息 ([系统] 前缀) → finish{error, NO_ANSWER}
- *     (由装配方 agent/request-error 瀑布切 T2, 本层不编排级联);
- *   - 凭据插值: {name}/{pass} 占位符经 resolveToolArgs 解析。
+ * v0.4.0 起 T1 是**无状态动作渲染器**：
+ *   1. 输入 = 本步投递消息自带的**动作请求**（`source.actions`）→ 逐条渲染 tool-call；
+ *   2. 无动作请求 / 无本插件投递 → `finish stop`（回合自然收束）；
+ *   3. lane≠t1 被路由到本 provider = 选路异常 → `finish stop` + 日志；
+ *   4. **"是否已执行"用确定性 call-id 判断**（`mud-<delivery>-<index>`）：会话里已有该 id 的
+ *      tool-result ⇒ 已跑过 → 不再渲染（工具结果回来后 loop 会再调一次的常态）；
+ *   5. 不做文本反查、不查运行时（契约检验 I15）。
  */
 
 import { describe, expect, it } from 'vitest'
 import { createUserMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, Message, StreamChunk } from '@deepseek-ai/dsh-llm'
+import { ownedGameMessage } from '../src/agent/agent-bridge.ts'
+import type { OwnedAction } from '../src/agent/agent-bridge.ts'
 import { TriggerLlmAdapter } from '../src/trigger-llm/index.ts'
-import { TriggerMatchService } from '../src/trigger-llm/service.ts'
-import { CONTROL_PREFIX } from '../src/trigger-llm/types.ts'
-import type { TriggerLlmAdapterHooks } from '../src/trigger-llm/adapter.ts'
-import type { TriggerAction } from '../src/trigger-llm/types.ts'
-import type { MudLine } from '../src/preprocess/ansi.ts'
 
-/** 将多行文本转成标准行 (abs 自 0 递增)。 */
-function toLines(text: string): MudLine[] {
-  return text.split('\n').map((t, i) => ({
-    text: t, raw: t, style: [], abs: i, time: Date.now(), isPrompt: false,
-  }))
-}
+/** 动作请求 (契约同形; output 可省 = 纯工具动作)。 */
+type RenderedAction = Omit<OwnedAction, 'output'> & { output?: string }
 
-/** 构造一个 user 文本消息 (标准游戏输出导入形态)。 */
-function userMsg(text: string): ReturnType<typeof createUserMessage> {
-  return createUserMessage({
-    content: [{ type: 'text', text }],
-    source: { kind: 'user' },
-  })
-}
-
-/** 将适配器输出流收集为 chunk 列表。 */
-async function collect(adapter: TriggerLlmAdapter, options: GenerateOptions): Promise<StreamChunk[]> {
+/** 收集一次 stream。 */
+async function collect(
+  adapter: TriggerLlmAdapter,
+  messages: readonly Message[] | undefined,
+  signal?: AbortSignal,
+): Promise<StreamChunk[]> {
+  const options = {
+    provider: 'mud-t1',
+    model: 't1-local',
+    sessionId: 's1',
+    messages,
+    ...(signal === undefined ? {} : { signal }),
+  } as unknown as GenerateOptions
   const chunks: StreamChunk[] = []
   for await (const c of adapter.stream(options)) chunks.push(c)
   return chunks
 }
 
-function opts(messages: unknown, sessionId?: string): GenerateOptions {
-  return {
-    provider: 'mud-t1',
-    model: 't1-local',
-    ...(sessionId !== undefined ? { sessionId } : {}),
-    messages,
-  } as unknown as GenerateOptions
+/** 投递消息 (lane=t1 + 动作请求 + 投递号)。 */
+function delivered(
+  actions: readonly RenderedAction[] | undefined,
+  delivery = 'd1',
+  text = '游戏输出',
+): Message {
+  return ownedGameMessage(text, 't1', 's1', {
+    ...(actions === undefined ? {} : { actions: actions as readonly OwnedAction[] }),
+    delivery,
+  })
 }
 
-/** 匹配服务 (登录名提示 → mud_send {name})。 */
-function makeService(): TriggerMatchService {
-  return new TriggerMatchService([
-    {
-      id: 'login:name', eventType: 'p:login:name',
-      match: { kind: 'regex', patterns: [/^您的英文名字（要注册新人物请输入new。）：$/] },
-      action: { output: '登录提示: 输入英文名字', tool: { name: 'mud_send', args: { cmd: '{name}' } } },
-    },
-  ])
+/** 一条工具结果 (带 call-id)。 */
+function result(callId: string): Message {
+  return createToolResultMessage({ callId: callId as never, content: [{ type: 'text', text: '你已经在游戏中了。' }] })
 }
 
-/** 测试脚手架: registry (text → lines) + hooks 包装, 返回 adapter 与登记函数。 */
-function makeAdapter(service: TriggerMatchService, o: {
-  logs?: string[]
-} = {}): { adapter: TriggerLlmAdapter; register: (text: string) => void } {
-  const registry = new Map<string, MudLine[]>()
-  const hooks: TriggerLlmAdapterHooks = {
-    resolveLines: (text) => registry.get(text) ?? null,
-    matchLines: (lines): readonly TriggerAction[] =>
-      service.match(lines).filter(h => h.action).map(h => ({ hit: h, action: h.action! })),
-    onLog: (t) => o.logs?.push(t),
-  }
-  return {
-    adapter: new TriggerLlmAdapter(hooks),
-    register: (text: string) => registry.set(text.trim(), toLines(text)),
-  }
-}
+const SEND_NAME: RenderedAction[] = [
+  { ruleId: 'flow:login/name', output: '登录提示: 输入英文名字', tool: { name: 'mud_send', args: { cmd: '{name}' } } },
+]
 
-const LOGIN_PROMPT = '您的英文名字（要注册新人物请输入new。）：'
+describe('TriggerLlmAdapter — T1 动作渲染器', () => {
+  it('动作请求 → output 文本块 + tool-call 块 + finish{tool-calls}, call-id 确定性', async () => {
+    const chunks = await collect(new TriggerLlmAdapter(), [delivered(SEND_NAME, 't7')])
 
-describe('TriggerLlmAdapter — T1 本地模拟 (mud-t1)', () => {
-  it('命中 → output 文本块 + tool-call 块 + finish{tool-calls} (与真实 LLM 同构)', async () => {
-    const service = makeService()
-    const { adapter, register } = makeAdapter(service)
-    register(LOGIN_PROMPT)
-
-    const chunks = await collect(adapter, opts([userMsg(LOGIN_PROMPT)]))
     expect(chunks).toEqual([
       { type: 'block-start', index: 0, blockType: 'text' },
       { type: 'text-delta', index: 0, text: '登录提示: 输入英文名字' },
       { type: 'block-end', index: 0, block: { type: 'text', text: '登录提示: 输入英文名字' } },
       { type: 'block-start', index: 1, blockType: 'tool-call' },
-      expect.objectContaining({ type: 'tool-call-delta', name: 'mud_send', argumentsDelta: '{"cmd":"{name}"}' }),
+      { type: 'tool-call-delta', index: 1, id: 'mud-t7-0', name: 'mud_send', argumentsDelta: '{"cmd":"{name}"}' },
       expect.objectContaining({ type: 'block-end', block: expect.objectContaining({ type: 'tool-call', name: 'mud_send' }) }),
       { type: 'finish', reason: { kind: 'tool-calls' } },
     ])
   })
 
-  it('未命中 → finish{stop} (路由所有权已在 feed 判类时决定, 本层不交棒)', async () => {
-    const service = makeService()
-    const { adapter, register } = makeAdapter(service)
-    register('完全无关的游戏输出')
-
-    const chunks = await collect(adapter, opts([userMsg('完全无关的游戏输出')]))
-    expect(chunks).toEqual([{ type: 'finish', reason: { kind: 'stop' } }])
-  })
-
-  it('无注册行 (历史回放/未登记文本) → finish{stop}', async () => {
-    const service = makeService()
-    const { adapter } = makeAdapter(service)
-
-    const chunks = await collect(adapter, opts([userMsg(LOGIN_PROMPT)]))
-    expect(chunks).toEqual([{ type: 'finish', reason: { kind: 'stop' } }])
-  })
-
-  it('控制消息 ([系统] 前缀) → finish{stop} (路由交 T2, 本层不交棒)', async () => {
-    const service = makeService()
-    const logs: string[] = []
-    const { adapter, register } = makeAdapter(service, { logs })
-    register(LOGIN_PROMPT)
-
-    const chunks = await collect(adapter, opts([userMsg(`${CONTROL_PREFIX}已 30 秒无游戏事件`)]))
-    expect(chunks).toEqual([{ type: 'finish', reason: { kind: 'stop' } }])
-  })
-
-  it('tool-result 续步: 应答文本无命中 → 收束 finish{stop}', async () => {
-    const service = makeService()
-    const { adapter } = makeAdapter(service)
-    const toolTail = createToolResultMessage({
-      callId: 'mud-trigger-login-name-1' as never,
-      content: [{ type: 'text', text: '已发送' }],
-      isError: false,
-    })
-
-    const chunks = await collect(adapter, opts([userMsg(LOGIN_PROMPT), toolTail]))
-    expect(chunks).toEqual([{ type: 'finish', reason: { kind: 'stop' } }])
-  })
-
-  it('tool-result 续步: 应答文本命中 → 渲染动作 (工具链继续推进)', async () => {
-    // 续步场景: 上一步 mud_send {name} 的应答 "您的英文名字…" 再次命中登录提示
-    // 规则 → 应继续渲染 (而非安静收束)。
-    const service = makeService()
-    const { adapter, register } = makeAdapter(service)
-    register(LOGIN_PROMPT)  // 应答纯行已登记 (命令-应答桥注册表)。
-    const toolTail = createToolResultMessage({
-      callId: 'mud-trigger-login-name-1' as never,
-      content: [{ type: 'text', text: LOGIN_PROMPT }],
-      isError: false,
-    })
-
-    const chunks = await collect(adapter, opts([userMsg(LOGIN_PROMPT), toolTail]))
-    expect(chunks.some(c => c.type === 'tool-call-delta' && c.name === 'mud_send')).toBe(true)
+  it('多动作 → 按序渲染, call-id = mud-<delivery>-<index> (占位符原样下发)', async () => {
+    const chunks = await collect(new TriggerLlmAdapter(), [
+      delivered([
+        { ruleId: 'a', tool: { name: 'mud_send', args: { cmd: 'halt' } } },
+        { ruleId: 'b', tool: { name: 'mud_send', args: { cmd: 'fullme {captcha}' } } },
+      ], 'd9'),
+    ])
+    const calls = chunks.filter(c => c.type === 'tool-call-delta')
+    expect(calls.map(c => c.id)).toEqual(['mud-d9-0', 'mud-d9-1'])
+    expect(calls.map(c => c.type === 'tool-call-delta' ? c.argumentsDelta : ''))
+      .toEqual(['{"cmd":"halt"}', '{"cmd":"fullme {captcha}"}'])
     expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'tool-calls' } })
   })
 
-  it('空消息 / 无尾部 user 文本 → finish{stop}', async () => {
-    const service = makeService()
-    const { adapter } = makeAdapter(service)
-    const chunks = await collect(adapter, opts([]))
-    expect(chunks).toEqual([{ type: 'finish', reason: { kind: 'stop' } }])
+  it('无动作请求 / 无消息 → finish{stop} (回合自然收束)', async () => {
+    expect(await collect(new TriggerLlmAdapter(), [delivered(undefined)]))
+      .toEqual([{ type: 'finish', reason: { kind: 'stop' } }])
+    expect(await collect(new TriggerLlmAdapter(), [delivered([])]))
+      .toEqual([{ type: 'finish', reason: { kind: 'stop' } }])
+    expect(await collect(new TriggerLlmAdapter(), []))
+      .toEqual([{ type: 'finish', reason: { kind: 'stop' } }])
   })
 
-  it('signal 已中止 → 不产出任何 chunk', async () => {
-    const service = makeService()
-    const { adapter, register } = makeAdapter(service)
-    register(LOGIN_PROMPT)
+  it('无本插件投递 (人类消息) → finish{stop} + 日志', async () => {
+    const logs: string[] = []
+    const adapter = new TriggerLlmAdapter({ onLog: t => logs.push(t) })
+    const human = createUserMessage({ content: [{ type: 'text', text: '人类输入' }], source: { kind: 'user' } })
+
+    expect(await collect(adapter, [human])).toEqual([{ type: 'finish', reason: { kind: 'stop' } }])
+    expect(logs.join('\n')).toContain('无动作可渲染')
+  })
+
+  it('lane≠t1 被路由到 T1 → finish{stop} + 选路异常日志', async () => {
+    const logs: string[] = []
+    const adapter = new TriggerLlmAdapter({ onLog: t => logs.push(t) })
+
+    expect(await collect(adapter, [ownedGameMessage('批次文本', 't2', 's1')]))
+      .toEqual([{ type: 'finish', reason: { kind: 'stop' } }])
+    expect(logs.join('\n')).toContain('选路异常')
+  })
+
+  it('动作已执行过 (会话里已有该 call-id 的 tool-result) → 不重复渲染', async () => {
+    // 第一次: 渲染
+    expect((await collect(new TriggerLlmAdapter(), [delivered(SEND_NAME, 't7')]))
+      .filter(c => c.type === 'tool-call-delta')).toHaveLength(1)
+    // 工具结果回来后 loop 再调一次 (同一条投递消息还在历史里) → 收束
+    expect(await collect(new TriggerLlmAdapter(), [delivered(SEND_NAME, 't7'), result('mud-t7-0')]))
+      .toEqual([{ type: 'finish', reason: { kind: 'stop' } }])
+  })
+
+  it('同一投递多条动作, 部分已有结果 → 只渲染未执行的那部分', async () => {
+    const chunks = await collect(new TriggerLlmAdapter(), [
+      delivered([
+        { ruleId: 'a', tool: { name: 'mud_send', args: { cmd: 'a' } } },
+        { ruleId: 'b', tool: { name: 'mud_send', args: { cmd: 'b' } } },
+      ], 'd10'),
+      result('mud-d10-0'),
+    ])
+    const calls = chunks.filter(c => c.type === 'tool-call-delta')
+    expect(calls.map(c => c.id)).toEqual(['mud-d10-1'])
+    expect(calls[0]!.type === 'tool-call-delta' ? calls[0]!.argumentsDelta : '').toBe('{"cmd":"b"}')
+  })
+
+  it('中止信号已 abort → 不产出任何 chunk', async () => {
     const controller = new AbortController()
     controller.abort()
-
-    const options = opts([userMsg(LOGIN_PROMPT)], 's1') as GenerateOptions & { signal?: AbortSignal }
-    options.signal = controller.signal
-    const chunks = await collect(adapter, options)
-    expect(chunks).toHaveLength(0)
-  })
-
-  it('tool args 占位符原样下发 (凭据插值责任在工具执行层, 渲染层不落明文)', async () => {
-    const service = new TriggerMatchService([
-      {
-        id: 'login:name', eventType: 'p:login:name',
-        match: { kind: 'regex', patterns: [/^您的英文名字（要注册新人物请输入new。）：$/] },
-        action: { output: '登录', tool: { name: 'mud_send', args: { cmd: '{name}', note: '{pass}' } } },
-      },
-    ])
-    const { adapter, register } = makeAdapter(service)
-    register(LOGIN_PROMPT)
-
-    const chunks = await collect(adapter, opts([userMsg(LOGIN_PROMPT)], 's1'))
-    const toolEnd = chunks.filter(c => c.type === 'block-end').at(-1) as { block: { arguments: string } }
-    // 转录 (assistant tool-call) 只见占位符 — 无任何明文凭据。
-    expect(toolEnd.block.arguments).toBe('{"cmd":"{name}","note":"{pass}"}')
-  })
-
-  it('同一文本重复请求 (重试) → 幂等渲染 (tool-call id 时间戳除外; 依赖路由状态防重)', async () => {
-    const service = makeService()
-    const { adapter, register } = makeAdapter(service)
-    register(LOGIN_PROMPT)
-
-    const first = await collect(adapter, opts([userMsg(LOGIN_PROMPT)]))
-    const second = await collect(adapter, opts([userMsg(LOGIN_PROMPT)]))
-    // tool-call id 含时间戳 (跨回合唯一), 其余 chunk 必须完全一致。
-    const strip = (chunks: StreamChunk[]) => JSON.stringify(chunks).replaceAll(/mud-trigger-[^"]+/g, 'ID')
-    expect(strip(second)).toBe(strip(first))
+    expect(await collect(new TriggerLlmAdapter(), [delivered(SEND_NAME)], controller.signal)).toEqual([])
   })
 })

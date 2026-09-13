@@ -73,7 +73,12 @@ interface Seed {
 const REGEX_META = new Set(['\\', '.', '^', '$', '*', '+', '?', '(', ')', '[', ']', '{', '}', '|'])
 
 /** 从正则源码推导预筛 seed: `^字面…` → { prefix, 字面段 }; 否则 { substring, 首段字面 }。
- *  无字面前缀 (纯元字符开头) 返回 null → 该规则不做预筛。 */
+ *  无字面前缀 (纯元字符开头) 返回 null → 该规则不做预筛。
+ *
+ * **正确性要求: seed 必须是"命中 ⟹ 满足"的必要条件**（预筛只能丢不可能命中的行）。
+ * 因此量词与顶层选择分支必须按必要性强弱处理 —— 曾经漏了 `?`: `^https?://…` 推出的
+ * seed 是 `https`，于是 `http://…` 的行在预筛就被丢掉，规则永远不命中（fullme 提示行
+ * 的实录就是 `http://`）。 */
 function deriveSeed(src: string): Seed | null {
   let i = 0
   const anchored = src[0] === '^'
@@ -89,6 +94,17 @@ function deriveSeed(src: string): Seed | null {
       i += 2
       continue
     }
+    // `?` / `*` / `{n,m}` 作用于**前一个字面字符**: 它可能一次都不出现 → 不算必要,
+    // 把它从 seed 里去掉后停止推导 (更短的 seed 仍然是必要条件)。
+    if (c === '?' || c === '*' || c === '{') {
+      if (run !== '') run = run.slice(0, -1)
+      break
+    }
+    // `+` 要求前一字面至少一次 → 保留它; 其余无法静态判定 → 停止。
+    if (c === '+') break
+    // 顶层选择分支: 任一支都可命中 → 当前字面段不是必要条件 (`(` 会先 break, 所以
+    // 走到这里的 `|` 一定是顶层)。
+    if (c === '|') return null
     if (REGEX_META.has(c)) break
     run += c
     i += 1
@@ -553,21 +569,25 @@ export class TriggerMatchService {
   }
 
   /**
-   * 镜像匹配 (P1-3b): **不推进**实例运行态。判类先行与 T1 渲染共用同一实例时会
-   * 双跑: 判类先推进 multiLastAbs/adapter 再 match 同一批被单调保护整体跳过 →
-   * 命中丢失。这里用 ctx 的深克隆返回同结果, 实例 ctx 只由真渲染 (adapter) 推进。
+   * 指定规则当前是否有未完成的多行捕获 (`holdDelivery` 判据)。
+   * 读的是**实例**运行态: 判类与 T1 渲染已合流为同一次 `match`, 不存在镜像克隆。
+   * @param ruleIds 目标规则 id 集 (空集 = false)。
+   * @returns 任一规则存在未完成捕获即为 true。
    */
-  matchDry(lines: MudLine[]): PerceptHit[] {
-    const clone: MatchContext = {
-      multiStates: new Map(
-        [...this.ctx.multiStates].map(([id, states]) => [
-          id,
-          states.map(s => ({ ...s, captures: s.captures.map(c => ({ ...c })) })),
-        ]),
-      ),
-      multiLastAbs: new Map(this.ctx.multiLastAbs),
+  hasPendingCapture(ruleIds: ReadonlySet<string>): boolean {
+    if (ruleIds.size === 0) return false
+    for (const id of ruleIds) {
+      const states = this.ctx.multiStates.get(id)
+      if (states !== undefined && states.length > 0) return true
     }
-    return this.perceptor.match(lines, clone)
+    return false
+  }
+
+  /** 当前未完成捕获的状态数 (诊断/日志; 跨全部规则求和)。 */
+  pendingCaptureCount(): number {
+    let total = 0
+    for (const states of this.ctx.multiStates.values()) total += states.length
+    return total
   }
 
   /** 重置匹配上下文 (多行状态机清空; 连接重建/测试隔离)。 */

@@ -15,10 +15,12 @@ export const name = 'mud-core-invariant'
 export const inject = ['invariants']
 
 /**
- * 无运行时 invariant: mud-core 在自身 fiber 内持有单个 agent handle 与单个
- * telnet 连接 (由 `ctx.effect` teardown 释放), 只发布会话日志事件, UI 外壳
- * 消费提供的 `ctx.mud` 服务与该等事件。除提供的服务外, 本包不持有跨插件
- * 可变状态。
+ * 无运行时 invariant: mud-core 在自身 fiber 内持有会话运行时表
+ * (MudSessionRuntime: 每会话一个连接绑定、命令-应答桥与观察窗) 与会话无关的
+ * 连接注册表 (MudConnectionManager), 二者均由 `ctx.effect` teardown 释放;
+ * agent 生命周期归 dsh 官方 (本包只读 `ctx.agents.get` 投递, 不创建/不 dispose)。
+ * UI 外壳消费提供的 `ctx.mud` 服务与 `/mud/ws` 推送帧。除提供的服务外, 本包
+ * 不持有跨插件可变状态。
  */
 const install: InvariantInstaller = () => {}
 

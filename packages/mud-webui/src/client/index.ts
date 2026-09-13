@@ -10,24 +10,26 @@
  *     itself is NOT shadowed — once a user's session is open (点击用户), the
  *     native header renders 聊天/游戏/日志 tabs and the selected view fills
  *     the center. Terminal/log/decision/world data flows through the shared
- *     /mud/ws WebSocket channel, not session events.
- *  *   - a right-Sidebar tab type (`kind: 'mud'`, a page type): the decision
- *     summary + connection-status rail. Mounted additively (type in
- *     `ctx.sidebarRightTabs`, body in keyed `sidebar.right.pane.tab`), so the
- *     native side tabs/panes keep working — mud tab opens via
- *     `sidebarRight.openTab('mud')` when a user session opens.
+ *     /mud/ws WebSocket channel, filtered per session.
+ *   - a right-Sidebar tab type (`kind: 'mud'`, a page type): the decision
+ *     summary + connection-status rail.
  *
- * Each user owns a dedicated DSH session: creating a user calls
- * POST /mud/prepare (host creates/resumes the agent session and injects the
- * initial message, without a telnet connection). Clicking a user selects it
- * and opens that session; the connect/disconnect buttons live in the game
- * view (the game page drives the connection, the sidebar never does).
+ * Official-path contract (用户即会话):
+ *   - **创建用户 = 创建会话**: creating a user calls the official
+ *     `ctx.sessions.create()` and stores the id it returns; the page never
+ *     mints session ids.
+ *   - **切换用户 = 切换会话**: clicking a user calls `ctx.sessions.open(id)`
+ *     (the native session switch), so the host side follows the session, not a
+ *     page-local selection.
+ *   - **回复用户 = 回复会话**: every host call carries `sessionId`
+ *     (POST /mud/bind, /mud/connect, /mud/disconnect, /mud/command, /mud/logs,
+ *     GET /mud/status), and the sidebar keeps one state row per session.
  *
- * Roster + connection state lives in the MudStateController (apply-owned);
- * the same controller is exposed to every registration through the inject
- * `hooks` compartment (`useServers`) and its actions. The connection
- * lifecycle talks to the host routes POST /mud/connect, POST /mud/disconnect,
- * POST /mud/prepare, GET /mud/status — all provided by @deepseek-ai/dsh-mud-core.
+ * Roster (accounts + their session ids) and per-session connection state live in
+ * the MudStateController. Connect/disconnect is driven from the sidebar user-row
+ * ⋯ menu (the session body does not render while blank) and mirrored by the game
+ * page toolbar once its tab is visible. No placeholder prompt is ever sent: the
+ * first game batch delivered after connecting opens a turn and flips `blank`.
  * @module @deepseek-ai/dsh-mud-webui/client
  */
 
@@ -75,8 +77,7 @@ function ensureXtermCss(): void {
  * 列第一次展开时, 若 pane 仍为空, harness 的 settle 规则会按默认页 seed
  * 它 ("fresh surface shows only what it opened"); 而 openTab 总是先把列
  * 展开、再把目标页放进 pane —— 若 mud 是被放进 pane 的第一个 tab, 默认页
- * 就永远不会 seed (对右栏首个使用的会话, 用户会看到只有 mud 决策/状态而
- * 缺少默认的 files 页)。因此这里先决定 harness 的默认页 (与 defaultSeed
+ * 就永远不会 seed。因此这里先决定 harness 的默认页 (与 defaultSeed
  * 同规则: 恰一个 guide 条目 → 该 kind; 否则 guide 本体), 先把默认页一并
  * 放入 pane, 再打开 mud —— 两者在同一 pane 并存 (页面唯一性按 kind 区分,
  * 互不合并), mud 为激活 tab。任何一步失败都不阻塞 mud rail 本身。
@@ -99,81 +100,142 @@ function openMudRail(ctx: ClientContext): boolean {
  * Client 插件入口: 遮蔽 sidebar, 注册一个 right-Sidebar 页面 tab 类型 (mud:
  * 决策/状态 rail, additive, 不遮蔽原右栏 tabs), 向原生 conversation 槽
  * 注册 游戏/日志 两个 view 条目 (会话头 tab 由槽条目自动生成)。服务器/用户
- * 清单与连接状态由 MudStateController 统一持有, 经 inject hooks 舱
+ * 清单与每会话连接状态由 MudStateController 统一持有, 经 inject hooks 舱
  * (useServers) 与 actions 供各组件读写。终端/日志/决策/world 数据全部来自
- * 共享的 /mud/ws 推送通道 (MudSocketController), 不经 session 事件流。
+ * 共享的 /mud/ws 推送通道 (MudSocketController), 按 sessionId 过滤。
  * @param ctx - client root context.
  */
 export function apply(ctx: ClientContext): void {
   ensureXtermCss()
 
-  // Roster + connection controller: one observable source shared by every
-  // registration through the inject hooks compartment (one handle, one
-  // apply fiber — slot scope differences never matter because this is not a
-  // store seat, just a bare observable).
+  // Roster + per-session connection controller: one observable source shared by
+  // every registration through the inject hooks compartment.
   const mud = new MudStateController()
   // One shared /mud/ws channel per page: game/log/decision/world push frames.
   const mudSocket = new MudSocketController()
 
-  // 共建一个用户的会话: 幂等 create 登记进浏览器端 ctx.sessions 列表,
-  // open 打开, 并用一个静默占位 prompt 触发官方 engaged → blank:false,
-  // 让原生会话头渲染 游戏/日志 tab。占位文本无游戏意图, 避免 agent 误操作。
-  const ensureAndOpenUserSession = (serverId: string, userId: string, shouldEngage: boolean): void => {
+  /**
+   * 声明"该官方会话是 MUD 账号会话" (host 据此装配工具/提示/选路)。
+   * **必须先于会话内首个模型请求完成** — 否则该回合会落到真实 LLM;
+   * 调用方 await 本 promise 后再 open。
+   */
+  const bindSession = (sessionId: string): Promise<void> => {
+    if (sessionId === '') return Promise.resolve()
+    return fetch('/mud/bind', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    }).then(() => undefined).catch(() => { /* best-effort: connect 时仍会声明 */ })
+  }
+
+  /**
+   * 打开一个已登记的会话。
+   *
+   * **不发送任何占位 prompt**: `blank` 由该会话的**第一个 `turn/start`** 翻转
+   * (`session-controller/src/list.ts`), 而连接后第一批发出的游戏输出经
+   * `agent.followup` 自然开启回合 —— 真实信息自己翻页, 不需要伪造 user 消息。
+   * 连接入口在左栏用户行的 ⋯ 菜单 (会话体渲染之前就可用)。
+   */
+  const openSession = (sid: SessionId): void => {
+    const sessions = ctx.get('sessions') as ISessions | undefined
+    if (sessions === undefined) return
+    const listed = (): boolean => sessions.list.getSnapshot().ids.includes(sid)
+    if (listed()) {
+      sessions.open(sid)
+      return
+    }
+    // 旧用户 (roster 里的 id 尚未在本机列表登记): 拉权威列表, 仍不在则按该 id
+    // 走官方 create 补登记 (host 侧同 id 复用既有会话)。
+    void sessions.refresh().then(() => {
+      if (listed()) {
+        sessions.open(sid)
+        return undefined
+      }
+      return sessions.create({ sessionId: sid }).then(() => { sessions.open(sid) })
+    }).catch(() => { /* best-effort */ })
+  }
+
+  /**
+   * 共建一个用户的会话: 没有 sessionId 时走官方 `sessions.create()` (由 host
+   * 分配 id 并返回 — 页面不自铸身份), 登记进 roster, 声明 MUD 绑定, 然后打开。
+   * 不发送任何占位消息 (见 `openSession`)。
+   */
+  const ensureAndOpenUserSession = (serverId: string, userId: string): void => {
     const server = mud.getSnapshot().servers.find(candidate => candidate.id === serverId)
     const user = server?.users.find(candidate => candidate.id === userId)
     if (server === undefined || user === undefined) return
-    // 打开右栏 mud tab (页面类型按 kind 打开, 面板随同展开): 幂等, 会话
-    // 激活路径上每次请求都重开, 换会话时跟随; 先并入默认页, 避免抢占列的
-    // 首次展开导致默认 files 页永不 seed。注册就绪前/当前面板不可用时忽略。
+    // 打开右栏 mud tab (幂等; 先并入默认页, 避免抢占列的首次展开)。
     try { openMudRail(ctx) } catch { /* registry 未就绪或当前无面板 */ }
     const sessions = ctx.get('sessions') as ISessions | undefined
     if (sessions === undefined) return
-    const sid = user.sessionId as SessionId
-    const engage = (face: {
-      prompt: (content: Array<{ type: 'text'; text: string }>, mode: 'queue' | 'steer') => Promise<unknown>
-      getSnapshot?: () => { blank?: boolean }
-    } | undefined) => {
-      if (!shouldEngage || face === undefined) return
-      // 幂等: 仅当会话仍为 blank 才补一次占位 prompt (避免每次点击重复跑
-      // agent LLM 回合)。失败忽略 (会话可能已 engaged 或 host 正忙碌)。
-      if (face.getSnapshot?.().blank === false) return
-      void face.prompt([{ type: 'text', text: 'MUD 游戏尚未登录，无需做出任何动作和回答，等待后续问题' }], 'queue').catch(() => { /* best-effort */ })
-    }
-    const listed = () => sessions.list.getSnapshot().ids.includes(sid)
-    const openIfListed = () => {
-      if (!listed()) return
-      sessions.open(sid)
-      engage(sessions.binding(sid)?.session as never)
-    }
-    try {
-      openIfListed()
-    } catch (err) {
-      mud.setConn({
-        ...mud.getSnapshot().conn,
-        state: 'error',
-        serverId,
-        userId,
-        sessionId: sid,
-        label: `${server.name} / ${user.name}`,
-        error: err instanceof Error ? err.message : String(err),
+    if (user.sessionId !== '') {
+      // 先声明绑定再打开: host 侧 agent 装配 (工具/提示/选路) 先于该会话的首个
+      // 模型请求 (连接后第一批游戏输出) 生效。
+      void bindSession(user.sessionId).then(() => {
+        openSession(user.sessionId as SessionId)
       })
+      return
     }
-    // 旧用户 (修复前创建) 从未在列表 → 幂等 create 补登记, 成功后 open+engage。
-    if (!listed()) {
-      void sessions.create({ sessionId: sid, ...(server.cwd !== '' ? { cwd: server.cwd } : {}) })
-        .then(() => {
-          sessions.open(sid)
-          engage(sessions.binding(sid)?.session as never)
+    // 用户尚无会话: 官方创建 (不带 sessionId → host 分配并返回)。
+    void sessions.create({ ...(server.cwd !== '' ? { cwd: server.cwd } : {}) })
+      .then(async (created) => {
+        const sessionId = String(created)
+        mud.setUserSession(serverId, userId, sessionId)
+        await bindSession(sessionId)
+        openSession(sessionId as SessionId)
+      })
+      .catch((err: unknown) => {
+        mud.setConn({
+          ...mud.getSnapshot().conn,
+          state: 'error',
+          serverId,
+          userId,
+          sessionId: null,
+          label: `${server.name} / ${user.name}`,
+          error: err instanceof Error ? err.message : String(err),
         })
-        .catch(() => {
-          // 会话可能已存在于 host (旧用户): 拉权威列表补登记, 再 open+engage。
-          void sessions.refresh().then(() => {
-            if (!listed()) return
-            sessions.open(sid)
-            engage(sessions.binding(sid)?.session as never)
-          }).catch(() => { /* best-effort */ })
-        })
-    }
+      })
+  }
+
+  /**
+   * Host 侧注销一个会话 (删除用户/服务器时调用): 释放运行时与连接, 删除该
+   * 会话的全部日志文件, 清空 host 缓冲。失败不阻塞页面 — 名单行已经删掉,
+   * 残留清理是尽力而为。
+   */
+  const purgeSessionOnHost = (sessionId: string): void => {
+    if (sessionId === '') return
+    void fetch('/mud/purge', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    }).catch(() => { /* best-effort */ })
+  }
+
+  /**
+   * 归档该用户配套的官方会话 (删除用户时调用)。
+   *
+   * 官方没有"删除会话", 但有**归档**: `IWorkspaces.archiveSession` 把会话加入
+   * registry 全局归档集 —— 从所有分组/搜索界面隐藏, 会话文件与 workspace 记账
+   * 槽位保留 (官方语义见 `api/workspace-controller/src/client/service.ts`),
+   * 归档当前会话时 harness 自己会把选择清成新会话视图 (ui-workspace 的
+   * `clearArchivedCurrent`)。因此删用户后该会话不会再出现在界面上。
+   * 归档要求会话存在 (live 或持久化里), 名单里可能是失效 id → 失败只记不抛。
+   */
+  const archiveSessionOnHost = (sessionId: string): void => {
+    if (sessionId === '') return
+    const workspaces = ctx.get('workspaces') as IWorkspaces | undefined
+    void workspaces?.archiveSession(sessionId as SessionId).catch((err: unknown) => {
+      // 归档失败只影响"界面隐藏"这一步 (运行痕迹已由 /mud/purge 清掉), 不阻塞
+      // 页面流程; 但**不能静默** —— 归档失败时 tab 不会翻成 blank, 得能查。
+      console.warn(`[mud] 会话归档失败 (${sessionId}):`, err)
+    })
+  }
+
+  /** 删除用户/服务器的共同回收: 归档官方会话 + 注销插件侧运行痕迹。 */
+  const recycleSession = (sessionId: string): void => {
+    mudSocket.forget(sessionId)
+    archiveSessionOnHost(sessionId)
+    purgeSessionOnHost(sessionId)
   }
 
   /** Shared inject face: the hook sources plus the action surface. */
@@ -190,39 +252,47 @@ export function apply(ctx: ClientContext): void {
         void workspaces?.create({ path: input.cwd.trim() }).catch(() => { /* exists or unavailable */ })
       }
     },
-    removeServer: (serverId) => { mud.removeServer(serverId) },
+    removeServer: (serverId) => {
+      // 删服务器 = 回收它名下全部用户会话 (与 removeUser 同一条理由)。
+      const server = mud.getSnapshot().servers.find(candidate => candidate.id === serverId)
+      const sessionIds = server?.users.map(user => user.sessionId).filter(id => id !== '') ?? []
+      mud.removeServer(serverId)
+      for (const sessionId of sessionIds) recycleSession(sessionId)
+    },
     addUser: (serverId, input) => {
       const user = mud.addUser(serverId, input)
       if (user === null) return
-      // 创建用户 = 创建会话 (用户=会话): 走官方新建会话流程, 把该用户的
-      // 专属会话 (唯一 sessionId) 登记进浏览器端 ctx.sessions 列表并打开,
-      // 再发一个静默占位 prompt 触发 engaged → blank:false, 让原生会话头
-      // 渲染 游戏/日志 tab。host 侧 /mud/prepare 物化 agent (同一 sessionId)。
-      const server = mud.getSnapshot().servers.find(candidate => candidate.id === serverId)
-      const cwd = server?.cwd ?? ''
-      fetch('/mud/prepare', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sessionId: user.sessionId, cwd }),
-      }).catch(() => { /* best-effort: 连接时 host 仍会确保会话 */ })
-      ensureAndOpenUserSession(serverId, user.id, true)
+      // 创建用户 = 创建会话: 走官方新建会话流程 (id 由 host 返回并登记),
+      // 再声明 MUD 绑定 + 打开会话。不发占位消息 — 连接后第一批游戏输出
+      // 自然开回合并翻 blank (见 openSession)。
+      ensureAndOpenUserSession(serverId, user.id)
     },
-    removeUser: (serverId, userId) => { mud.removeUser(serverId, userId) },
-    // 共建: 委托给上面的 ensureAndOpenUserSession (幂等 create + open +
-    // 静默占位 engage, 让原生会话头渲染 游戏/日志 tab)。
-    ensureAndOpenUserSession: (serverId, userId, shouldEngage) => {
-      ensureAndOpenUserSession(serverId, userId, shouldEngage)
+    removeUser: (serverId, userId) => {
+      // 删除用户 = 归档会话 + 注销插件痕迹 (用户即会话): 先取出该用户的官方
+      // sessionId, 用它在 host 侧释放运行时/连接、删除该会话的全部日志文件
+      // (否则同名重建或按旧 id 补登记的用户会把上一个身份的日志读回来), 并把
+      // 配套的官方会话**归档** (官方界面从此不再显示它); 再丢弃本页该会话的
+      // 缓冲, 最后删名单行。
+      const server = mud.getSnapshot().servers.find(candidate => candidate.id === serverId)
+      const sessionId = server?.users.find(candidate => candidate.id === userId)?.sessionId ?? ''
+      mud.removeUser(serverId, userId)
+      recycleSession(sessionId)
+    },
+    // 共建: 委托给上面的 ensureAndOpenUserSession (官方 create + 绑定 + 打开)。
+    ensureAndOpenUserSession: (serverId, userId) => {
+      ensureAndOpenUserSession(serverId, userId)
     },
     connectUser: (serverId, userId) => mud.connectUser(serverId, userId),
-    disconnect: () => mud.disconnect(),
-    refreshStatus: () => mud.refreshStatus(),
-    // 点击用户: 选中该用户 + 打开其专属会话视图, 并 (幂等) engage 会话,
-    // 确保原生会话头渲染 游戏/日志 tab。
+    disconnect: (sessionId) => mud.disconnect(sessionId),
+    refreshStatus: (sessionId) => mud.refreshStatus(sessionId),
+    setTier: (sessionId, tier) => mud.setTier(sessionId, tier),
+    // 点击用户: 选中该用户 + 打开其专属会话视图 (官方 sessions.open = 切换会话);
+    // 连接动作在用户行的 ⋯ 菜单 (会话体渲染之前就可用)。
     openUserSession: (serverId, userId) => {
       mud.setActive(serverId, userId)
-      ensureAndOpenUserSession(serverId, userId, true)
+      ensureAndOpenUserSession(serverId, userId)
     },
-    sendCommand: async (cmd) => {
+    sendCommand: async (cmd, sessionId) => {
       try {
         // 命令序列格式 [halt,fullme text] → 发送 cmds 数组; 否则单命令。
         const seqMatch = /^\[(.+)\]$/.exec(cmd)
@@ -232,6 +302,7 @@ export function apply(ctx: ClientContext): void {
         } else {
           body = { cmd }
         }
+        if (sessionId !== undefined && sessionId !== '') body.sessionId = sessionId
         const res = await fetch('/mud/command', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -244,12 +315,12 @@ export function apply(ctx: ClientContext): void {
         return false
       }
     },
-    refreshCaptcha: async (imageUrl): Promise<string | null> => {
+    refreshCaptcha: async (imageUrl, sessionId) => {
       try {
         const res = await fetch('/mud/captcha/refresh', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ imageUrl }),
+          body: JSON.stringify(sessionId === undefined || sessionId === '' ? { imageUrl } : { imageUrl, sessionId }),
         })
         if (!res.ok) return null
         const body = (await res.json()) as { ok?: unknown; url?: unknown }
@@ -338,6 +409,9 @@ export function apply(ctx: ClientContext): void {
     if (initial.current !== undefined && initial.byId[initial.current] !== undefined) {
       watched = initial.current
       openMud()
+      // 恢复的历史会话若属于某个 MUD 用户, 同样先声明绑定 (装配先于模型请求)。
+      const bound = mud.userOfSession(String(initial.current))
+      if (bound !== null) void bindSession(String(initial.current))
     }
     const unsubscribe = sessions.list.subscribe(() => {
       const snapshot = sessions.list.getSnapshot()
@@ -345,6 +419,8 @@ export function apply(ctx: ClientContext): void {
       if (current === undefined || current === watched || snapshot.byId[current] === undefined) return
       watched = current
       openMud()
+      const bound = mud.userOfSession(String(current))
+      if (bound !== null) void bindSession(String(current))
     })
     return () => {
       if (timer !== undefined) clearTimeout(timer)
