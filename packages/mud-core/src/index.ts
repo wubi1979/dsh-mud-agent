@@ -30,33 +30,33 @@
  * @module @deepseek-ai/dsh-mud-core
  */
 
-import { MudConnectionManager } from './runtime/connection.ts'
+import { MudConnectionManager } from './services/network/manager.ts'
 import {
   DEFAULT_T2_DELIVER_INTERVAL_MS, MudSessionRuntime,
   type MudDecisionRecord, type MudRuntimeConfig, type MudRuntimeSink, type MudUiItemInput,
 } from './runtime/session-runtime.ts'
-import { SkillService } from './agent/skills.ts'
-import { commandsIndexForAgent } from './config/commands.ts'
-import defaultPerceptionRules from './config/trigger-rules.ts'
-import { flowCommands, defaultFlows } from './config/flows.ts'
+import { SkillService } from './agents/skills.ts'
+import { commandsIndexForAgent } from './shared/commands.ts'
+import defaultPerceptionRules from './perceive/rules.ts'
+import { flowCommands, defaultFlows } from './runtime/flow/flows.ts'
 import {
   attachMudPersona, attachMudPrompt, attachMudTools, installOwnedLaneRouting,
   registerTriggerProvider, type TriggerProvider,
 } from './agent/agent-bridge.ts'
-import { installMudToolGate } from './agent/tool-gate.ts'
-import type { ActivityEntry } from './agent/tools.ts'
-import { DEFAULT_DANGEROUS_COMMANDS, type DangerousRule } from './config/commands.ts'
-import { registerMudCapability, resolveMudTier, type MudCapabilityApi } from './permission/capability.ts'
-import { visibleTools, MUD_TIER_NAMES, mudTierNote, type MudTier } from './permission/tiers.ts'
+import { installMudToolGate } from './services/gate/tool-gate.ts'
+import type { ActivityEntry } from './agents/tools.ts'
+import { DEFAULT_DANGEROUS_COMMANDS, type DangerousRule } from './shared/commands.ts'
+import { registerMudCapability, resolveMudTier, type MudCapabilityApi } from './services/gate/capability.ts'
+import { visibleTools, MUD_TIER_NAMES, mudTierNote, type MudTier } from './services/gate/tiers.ts'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join } from 'node:path'
-import { MudLogService, purgeSessionLogs, resolveLogDir } from './logging/log-service.ts'
-import { MudWebSocketHub, isTrustedRequest } from './network/ws.ts'
-import { resolveCaptchaImage } from './network/captcha.ts'
-import type { MudGameItem, MudUiItem, MudWorldSnapshot } from './client/wire.ts'
+import { MudLogService, purgeSessionLogs, resolveLogDir } from './services/log/log-service.ts'
+import { MudWebSocketHub, isTrustedRequest } from './shell/hub.ts'
+import { resolveCaptchaImage } from './agents/captcha.ts'
+import type { MudGameItem, MudUiItem, MudWorldSnapshot } from './shell/wire.ts'
 import type {
   MudAgentKit, MudConnectOptions, MudConnectionStatus, MudCoreService, MudDiag,
 } from './service.ts'

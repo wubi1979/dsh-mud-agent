@@ -14,14 +14,14 @@
  * @module @deepseek-ai/dsh-mud-core/runtime/flow-runtime
  */
 
-import type { MudLine } from '../preprocess/ansi.ts'
+import type { MudLine } from '../services/network/ansi.ts'
 import { TriggerMatchService } from '../trigger-llm/service.ts'
 import type { PerceptionRule } from '../trigger-llm/types.ts'
-import type { WorldModel } from '../world/world.ts'
+import type { WorldModel } from '../shared/world.ts'
 import {
   isLineMatch, matchLabel, PRIORITY_NORMAL, validateFlows,
   type FlowMatch, type FlowSpec, type FlowStep,
-} from '../config/flows.ts'
+} from './flow/flows.ts'
 
 /** 流程发出的动作（交给运行时的投递层；字段与规则命中对齐）。 */
 export interface FlowActionHit {

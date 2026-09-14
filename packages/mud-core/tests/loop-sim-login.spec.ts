@@ -6,11 +6,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import defaultPerceptionRules from '../src/config/trigger-rules.ts'
-import { defaultFlows } from '../src/config/flows.ts'
+import defaultPerceptionRules from '../src/perceive/rules.ts'
+import { defaultFlows } from '../src/runtime/flow/flows.ts'
 import { MudSessionRuntime, type MudRuntimeConfig, type MudRuntimeSink } from '../src/runtime/session-runtime.ts'
-import type { MudConnectionManager, MudConnectionSink } from '../src/runtime/connection.ts'
-import type { MudLine } from '../src/preprocess/ansi.ts'
+import type { MudConnectionManager, MudConnectionSink } from '../src/services/network/manager.ts'
+import type { MudLine } from '../src/services/network/ansi.ts'
 import { LoopSim, until } from './loop-sim.ts'
 
 const NAME_PROMPT = '您的英文名字：'

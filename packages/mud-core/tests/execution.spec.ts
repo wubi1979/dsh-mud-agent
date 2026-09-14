@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { CommandQueue, renderTemplate } from '../src/agent/execution.ts'
+import { CommandQueue, renderTemplate } from '../src/runtime/session/queue.ts'
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
 

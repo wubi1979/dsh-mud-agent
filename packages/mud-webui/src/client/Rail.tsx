@@ -13,7 +13,7 @@ import { useSyncExternalStore } from 'react'
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { MudClientInjected } from './MudSidebar.tsx'
 import { MUD_TIER_CHOICES } from './mud-state.ts'
-import type { MudUiItem } from '@deepseek-ai/dsh-mud-core/src/client/wire.ts'
+import type { MudUiItem } from '@deepseek-ai/dsh-mud-core/src/shell/wire.ts'
 import { CaptchaDialog } from './MudDialogs.tsx'
 
 const RAIL_STYLE: React.CSSProperties = {

@@ -21,10 +21,11 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ParameterSchemaSpec, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
 import {
   DEFAULT_DANGEROUS_COMMANDS, commandHead, commandHelpText, deniedCommands, type DangerousRule,
-} from '../config/commands.ts'
-import { resolveCaptchaImage } from '../network/captcha.ts'
+} from '../shared/commands.ts'
+import { resolveCaptchaImage } from './captcha.ts'
+import { MOVE_ALIASES, MOVE_DIRS, STATUS_CMDS } from '../shared/game.ts'
 import type { MudReply, ReplyOptions, ReplySettle } from '../network/response.ts'
-import { applyPatch, worldSnapshot, type WorldModel } from '../world/world.ts'
+import { applyPatch, worldSnapshot, type WorldModel } from '../shared/world.ts'
 
 /** 工具统一返回。*/
 export interface MudToolResult {
@@ -76,31 +77,7 @@ export function interpolateExternal(
   return out
 }
 
-/** 合法移动方向 (pkuxkx)。 */
-export const MOVE_DIRS: readonly string[] = [
-  'north', 'south', 'east', 'west', 'up', 'down',
-  'northeast', 'northwest', 'southeast', 'southwest',
-  'northup', 'northdown', 'southup', 'southdown',
-  'eastup', 'eastdown', 'westup', 'westdown',
-  'enter', 'out',
-]
-
-/** 短别名 → 全名。 */
-export const MOVE_ALIASES: Record<string, string> = {
-  n: 'north', s: 'south', e: 'east', w: 'west', u: 'up', d: 'down',
-  ne: 'northeast', nw: 'northwest', se: 'southeast', sw: 'southwest',
-  nu: 'northup', nd: 'northdown', su: 'southup', sd: 'southdown',
-  eu: 'eastup', ed: 'eastdown', wu: 'westup', wd: 'westdown',
-}
-
-/** 状态查询: what → 实际命令。 */
-export const STATUS_CMDS: Record<string, string> = {
-  hp: 'hp',          // 气血/内力
-  score: 'score',    // 经验/潜能/门派
-  inventory: 'i',    // 物品/装备
-  skills: 'skills',  // 武功
-  busy: 'busy',      // 忙碌状态
-}
+/** 合法移动方向与状态命令别名见 `shared/game.ts` (MOVE_DIRS/MOVE_ALIASES/STATUS_CMDS)。 */
 
 /**
  * 一条"活动"声明 (`doc/ARCHITECTURE.md` §8 活动表): 慢命令的完成句锚定 + 声明超时。

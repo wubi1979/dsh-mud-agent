@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { AnsiStreamParser, stripAnsi, isPromptText, type MudLine } from '../src/preprocess/ansi.ts'
+import { AnsiStreamParser, stripAnsi, isPromptText, type MudLine } from '../src/services/network/ansi.ts'
 import { Perceptor, TriggerMatchService } from '../src/trigger-llm/service.ts'
 import { createMatchContext } from '../src/trigger-llm/types.ts'
 

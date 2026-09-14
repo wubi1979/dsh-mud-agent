@@ -13,12 +13,12 @@
  * @module @deepseek-ai/dsh-mud-core/permission/policy
  */
 
-import { STATUS_CMDS, MOVE_ALIASES } from '../agent/tools.ts'
-import { dangerousRuleFor, type DangerousRule } from '../config/commands.ts'
+import { STATUS_CMDS, MOVE_ALIASES } from '../../shared/game.ts'
+import { dangerousRuleFor, type DangerousRule } from '../../shared/commands.ts'
 import { tierSpec, type MudTier } from './tiers.ts'
 
-export type { DangerousAction, DangerousRule } from '../config/commands.ts'
-export { DEFAULT_DANGEROUS_COMMANDS, deniedCommands, dangerousRuleFor } from '../config/commands.ts'
+export type { DangerousAction, DangerousRule } from '../../shared/commands.ts'
+export { DEFAULT_DANGEROUS_COMMANDS, deniedCommands, dangerousRuleFor } from '../../shared/commands.ts'
 
 /**
  * 一个工具调用会发出的游戏命令 (无发送 = 空数组)。

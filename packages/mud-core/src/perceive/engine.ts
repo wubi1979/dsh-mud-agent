@@ -15,7 +15,7 @@
  * @module @deepseek-ai/dsh-mud-core/perception/engine
  */
 
-import type { MudLine } from '../preprocess/ansi.ts'
+import type { MudLine } from '../services/network/ansi.ts'
 import { TriggerMatchService } from '../trigger-llm/service.ts'
 import type { ActionSpec, PerceptionRule, PerceptHit } from '../trigger-llm/types.ts'
 

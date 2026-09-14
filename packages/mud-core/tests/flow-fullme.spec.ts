@@ -11,13 +11,13 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import rules from '../src/config/trigger-rules.ts'
+import rules from '../src/perceive/rules.ts'
 import {
   defaultFlows, flowCommands, FULLME_FLOW, LOGIN_FLOW, validateFlows, type FlowSpec,
-} from '../src/config/flows.ts'
+} from '../src/runtime/flow/flows.ts'
 import { FlowRuntime } from '../src/runtime/flow-runtime.ts'
-import type { WorldModel } from '../src/world/world.ts'
-import type { MudLine } from '../src/preprocess/ansi.ts'
+import type { WorldModel } from '../src/shared/world.ts'
+import type { MudLine } from '../src/services/network/ansi.ts'
 
 const NAME_PROMPT = '您的英文名字：'
 const FULLME_REMINDER = '5M后长时间不使用fullme，会被系统判定为机器人。'

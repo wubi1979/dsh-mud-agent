@@ -25,9 +25,9 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { runWithDeliveryChannel } from './agent/agent-bridge.ts'
-import { mudToolSchemaTable, type MudToolResult } from './agent/tools.ts'
-import type { MudAgentKit } from './service.ts'
+import { runWithDeliveryChannel } from '../agent/agent-bridge.ts'
+import { mudToolSchemaTable, type MudToolResult } from './tools.ts'
+import type { MudAgentKit } from '../service.ts'
 
 /** 插件名 (Loader 行标识)。 */
 export const name = 'mud-preset-agent'

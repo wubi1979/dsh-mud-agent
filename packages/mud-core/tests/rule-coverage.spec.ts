@@ -18,9 +18,9 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import rules from '../src/config/trigger-rules.ts'
-import { PerceptionEngine, type EngineHit } from '../src/perception/engine.ts'
-import type { MudLine } from '../src/preprocess/ansi.ts'
+import rules from '../src/perceive/rules.ts'
+import { PerceptionEngine, type EngineHit } from '../src/perceive/engine.ts'
+import type { MudLine } from '../src/services/network/ansi.ts'
 import { ownedGameMessage } from '../src/agent/agent-bridge.ts'
 import { TriggerLlmAdapter } from '../src/trigger-llm/index.ts'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'

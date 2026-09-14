@@ -16,13 +16,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import defaultPerceptionRules from '../src/config/trigger-rules.ts'
+import defaultPerceptionRules from '../src/perceive/rules.ts'
 import {
   LOGIN_FLOW, defaultFlows, flowCommands, validateFlows,
-} from '../src/config/flows.ts'
+} from '../src/runtime/flow/flows.ts'
 import { MudSessionRuntime, type MudRuntimeConfig, type MudRuntimeSink } from '../src/runtime/session-runtime.ts'
-import type { MudConnectionManager, MudConnectionSink } from '../src/runtime/connection.ts'
-import type { MudLine } from '../src/preprocess/ansi.ts'
+import type { MudConnectionManager, MudConnectionSink } from '../src/services/network/manager.ts'
+import type { MudLine } from '../src/services/network/ansi.ts'
 
 const NAME_PROMPT = '您的英文名字：'
 const PASS_PROMPT = '此ID档案已存在，请输入密码：'

@@ -10,8 +10,8 @@
  * @module @deepseek-ai/dsh-mud-core/runtime/connection
  */
 
-import { TelnetClient } from '../network/telnet.ts'
-import type { MudLine } from '../preprocess/ansi.ts'
+import { TelnetClient } from './telnet.ts'
+import type { MudLine } from './ansi.ts'
 
 /** 连接状态 (传输层视角)。 */
 export type MudConnectionState = 'connecting' | 'connected' | 'idle'

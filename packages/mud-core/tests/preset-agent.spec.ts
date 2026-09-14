@@ -16,11 +16,11 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { MudDeliveryChannel } from '../src/agent/agent-bridge.ts'
-import { mudToolSchemaTable, type MudTools } from '../src/agent/tools.ts'
+import { mudToolSchemaTable, type MudTools } from '../src/agents/tools.ts'
 import type { MudAgentKit } from '../src/service.ts'
 
 /** 载入 preset 行模块 (顶层不 import 任何 cordis 服务, 可安全直接 import)。 */
-import { apply as applyPresetAgent, name as presetAgentName } from '../src/preset-agent.ts'
+import { apply as applyPresetAgent, name as presetAgentName } from '../src/agents/preset.ts'
 
 interface RegisteredTool {
   name: string

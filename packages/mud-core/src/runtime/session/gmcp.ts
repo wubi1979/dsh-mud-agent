@@ -10,7 +10,7 @@
  * @module @deepseek-ai/dsh-mud-core/state
  */
 
-import { applyGmcp, type WorldModel } from './world.ts'
+import { applyGmcp, type WorldModel } from '../../shared/world.ts'
 
 /** 状态服务构造参数。 */
 export interface StateServiceOptions {

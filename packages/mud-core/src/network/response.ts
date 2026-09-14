@@ -36,7 +36,7 @@
  * @module @deepseek-ai/dsh-mud-core/network/response
  */
 
-import type { MudLine } from '../preprocess/ansi.ts'
+import type { MudLine } from '../services/network/ansi.ts'
 import { textOfLines } from '../preprocess/index.ts'
 
 /** 帧边界种类 (telnet 'boundary' 事件)。 */

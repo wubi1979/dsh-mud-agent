@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import type { MudLine } from '../src/preprocess/ansi.ts'
+import type { MudLine } from '../src/services/network/ansi.ts'
 import {
   CommandResponseController,
   TIMEOUT_MARKER,

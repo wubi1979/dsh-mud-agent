@@ -6,10 +6,11 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import {
-  buildMudTools, DEFAULT_ACTIVITY_TABLE, MOVE_ALIASES, MOVE_DIRS, OUT_SCHEMA, STATUS_CMDS, type MudTools,
-} from '../src/agent/tools.ts'
+  buildMudTools, DEFAULT_ACTIVITY_TABLE, OUT_SCHEMA, type MudTools,
+} from '../src/agents/tools.ts'
+import { MOVE_ALIASES, MOVE_DIRS, STATUS_CMDS } from '../src/shared/game.ts'
 import { CommandResponseController, type ReplyOptions } from '../src/network/response.ts'
-import { createWorld } from '../src/world/world.ts'
+import { createWorld } from '../src/shared/world.ts'
 
 function makeTools(): { tools: MudTools; sent: string[]; logs: string[] } {
   const sent: string[] = []

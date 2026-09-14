@@ -10,11 +10,11 @@
  */
 
 import type { MudDeliveryChannel } from './agent/agent-bridge.ts'
-import type { MudGameItem, MudWorldSnapshot } from './client/wire.ts'
-import type { SkillService } from './agent/skills.ts'
-import type { MudTools } from './agent/tools.ts'
-import type { MudCapabilityApi } from './permission/capability.ts'
-import type { MudTier } from './permission/tiers.ts'
+import type { MudGameItem, MudWorldSnapshot } from './shell/wire.ts'
+import type { SkillService } from './agents/skills.ts'
+import type { MudTools } from './agents/tools.ts'
+import type { MudCapabilityApi } from './services/gate/capability.ts'
+import type { MudTier } from './services/gate/tiers.ts'
 
 /** connect() 参数 (缺省回落插件 config 默认值)。 */
 export interface MudConnectOptions {

@@ -11,7 +11,7 @@
  * @module @deepseek-ai/dsh-mud-core/config/flows
  */
 
-import type { WorldModel } from '../world/world.ts'
+import type { WorldModel } from '../../shared/world.ts'
 
 /** 结果/进入判据。`ga` = "该命令的应答被 GA 结算"（与行匹配并列的一种判据）。 */
 export type FlowMatch =

@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest'
 import { Perceptor, type PerceptHit, TriggerMatchService } from '../src/trigger-llm/service.ts'
 import { createMatchContext, type MatchContext } from '../src/trigger-llm/types.ts'
-import { StyleFlag, type ParsedLine, type StyleRun, type MudLine } from '../src/preprocess/ansi.ts'
+import { StyleFlag, type ParsedLine, type StyleRun, type MudLine } from '../src/services/network/ansi.ts'
 
 function parsed(text: string, style: StyleRun[] = []): ParsedLine {
   return { text, raw: text, style, time: 0, isPrompt: false }

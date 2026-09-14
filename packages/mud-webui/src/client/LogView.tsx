@@ -15,7 +15,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { MudClientInjected } from './MudSidebar.tsx'
-import type { MudUiItem } from '@deepseek-ai/dsh-mud-core/client-wire'
+import type { MudUiItem } from '@deepseek-ai/dsh-mud-core/shell-wire'
 
 const LOG_STYLE: React.CSSProperties = {
   height: '100%',

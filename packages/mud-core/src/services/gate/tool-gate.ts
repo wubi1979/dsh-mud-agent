@@ -12,8 +12,8 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { PreToolDecision, ToolExecution } from '@deepseek-ai/dsh-tools'
-import { commandsOfToolCall, evaluateToolCall, type DangerousRule } from '../permission/policy.ts'
-import type { MudTier } from '../permission/tiers.ts'
+import { commandsOfToolCall, evaluateToolCall, type DangerousRule } from './policy.ts'
+import type { MudTier } from './tiers.ts'
 
 /** 闸门装配参数。 */
 export interface MudToolGateOptions {

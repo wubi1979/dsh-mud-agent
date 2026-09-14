@@ -25,8 +25,8 @@
  * @module @deepseek-ai/dsh-mud-core/trigger-llm/service
  */
 
-import type { MudLine, StyleRun } from '../preprocess/ansi.ts'
-import { StyleFlag } from '../preprocess/ansi.ts'
+import type { MudLine, StyleRun } from '../services/network/ansi.ts'
+import { StyleFlag } from '../services/network/ansi.ts'
 import type {
   ActionSpec,
   ColorCond,

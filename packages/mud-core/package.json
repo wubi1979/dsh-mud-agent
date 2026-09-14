@@ -23,13 +23,13 @@
       "default": "./dist/invariant.js"
     },
     "./preset-agent": {
-      "types": "./dist/preset-agent.d.ts",
-      "default": "./dist/preset-agent.js"
+      "types": "./dist/agents/preset.d.ts",
+      "default": "./dist/agents/preset.js"
     },
     "./cordis.patch.yml": "./cordis.patch.yml",
-    "./client-wire": {
-      "types": "./dist/client/wire.d.ts",
-      "default": "./dist/client/wire.js"
+    "./shell-wire": {
+      "types": "./dist/shell/wire.d.ts",
+      "default": "./dist/shell/wire.js"
     },
     "./src/*": "./src/*",
     "./package.json": "./package.json"

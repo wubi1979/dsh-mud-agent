@@ -26,7 +26,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { PERSONA_PREFIX_SECTION, PERSONA_SUFFIX_SECTION } from '@deepseek-ai/dsh-system-prompt'
 import { type Agent } from '@deepseek-ai/dsh-agent'
 import { TriggerLlmAdapter } from '../trigger-llm/adapter.ts'
-import type { MudTools, MudToolResult } from './tools.ts'
+import type { MudTools, MudToolResult } from '../agents/tools.ts'
 
 /** T1 provider 标识 (本地模拟模型注册名)。 */
 export const T1_PROVIDER = 'mud-t1' as const

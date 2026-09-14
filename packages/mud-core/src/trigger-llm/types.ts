@@ -108,7 +108,7 @@ export interface MultiMatchState {
   /** 当前处于 spacer 条件时已等待的行数。 */
   spacerCount: number
   /** 各条件命中的捕获 (按条件顺序)。 */
-  captures: { text: string; abs: number; row: import('../preprocess/ansi.ts').MudLine }[]
+  captures: { text: string; abs: number; row: import('../services/network/ansi.ts').MudLine }[]
 }
 
 /**
@@ -140,7 +140,7 @@ export function createMatchContext(): MatchContext {
 export type MatchSpec =
   | { kind: 'regex'; patterns: readonly (string | RegExp)[] }
   | { kind: 'text'; includes: readonly string[] }
-  | { kind: 'func'; test: (line: import('../preprocess/ansi.ts').MudLine) => boolean }
+  | { kind: 'func'; test: (line: import('../services/network/ansi.ts').MudLine) => boolean }
 
 /** 命中窗口声明 (单行规则; multiline 状态机的行序列本身就是窗口, 不支持)。
  *  单行命中时装配锚点行前后的**批内**上下文供 extract 复合提取 (房间抓取等):
@@ -158,9 +158,9 @@ export interface WindowSpec {
  *  声明 window 的单行规则额外装配 before/after (批内切片, 升序, 不含锚点行;
  *  未声明或切片为空时为空数组)。 */
 export interface PerceptRecord {
-  rows: import('../preprocess/ansi.ts').MudLine[]
-  before: import('../preprocess/ansi.ts').MudLine[]
-  after: import('../preprocess/ansi.ts').MudLine[]
+  rows: import('../services/network/ansi.ts').MudLine[]
+  before: import('../services/network/ansi.ts').MudLine[]
+  after: import('../services/network/ansi.ts').MudLine[]
 }
 
 /** 感知规则命中结果。 */

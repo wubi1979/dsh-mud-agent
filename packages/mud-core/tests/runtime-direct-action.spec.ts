@@ -13,10 +13,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import defaultPerceptionRules from '../src/config/trigger-rules.ts'
+import defaultPerceptionRules from '../src/perceive/rules.ts'
 import { MudSessionRuntime, type MudRuntimeConfig, type MudRuntimeSink } from '../src/runtime/session-runtime.ts'
-import type { MudConnectionManager, MudConnectionSink } from '../src/runtime/connection.ts'
-import type { MudLine } from '../src/preprocess/ansi.ts'
+import type { MudConnectionManager, MudConnectionSink } from '../src/services/network/manager.ts'
+import type { MudLine } from '../src/services/network/ansi.ts'
 import type { PerceptionRule } from '../src/trigger-llm/types.ts'
 
 const SAVE_PROMPT = '建议经常使用save命令保存档案，避免造成意外损失。'

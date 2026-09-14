@@ -11,8 +11,8 @@
  * @module @deepseek-ai/dsh-mud-core/preprocess
  */
 
-export * from './ansi.ts'
-import type { ParsedLine } from './ansi.ts'
+export * from '../services/network/ansi.ts'
+import type { ParsedLine } from '../services/network/ansi.ts'
 
 /** 解析行集 → 整批文本 (agent 提交面; 无 ANSI, 保留空行与顺序)。 */
 export function textOfLines(lines: readonly ParsedLine[]): string {

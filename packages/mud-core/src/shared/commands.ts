@@ -17,7 +17,7 @@
  * @module @deepseek-ai/dsh-mud-core/config/commands
  */
 
-import type { MudTier } from '../permission/tiers.ts'
+import type { MudTier } from '../services/gate/tiers.ts'
 
 /** 一条命令定义。 `command` 为模板串, 可含 `{占位符}` (参数由调用方注入)。 */
 export interface MudCommand {

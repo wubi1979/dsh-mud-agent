@@ -10,7 +10,7 @@
  * @module @deepseek-ai/dsh-mud-core/perception/split
  */
 
-import type { MudLine } from '../preprocess/ansi.ts'
+import type { MudLine } from '../services/network/ansi.ts'
 
 /** 一次切分的结果。 */
 export interface DeliverySplit {
