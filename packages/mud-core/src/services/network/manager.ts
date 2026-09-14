@@ -7,7 +7,7 @@
  *
  * 这样一次 `dsh web` 进程可以并存多条连接 (多用户/多会话), 每条连接各自
  * 引擎、节流与应答桥; 连接的生命周期只由"打开/关闭它的人"决定。
- * @module @deepseek-ai/dsh-mud-core/runtime/connection
+ * @module @deepseek-ai/dsh-mud-core/services/network/manager
  */
 
 import { TelnetClient } from './telnet.ts'

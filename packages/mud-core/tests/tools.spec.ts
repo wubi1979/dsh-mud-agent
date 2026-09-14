@@ -9,7 +9,7 @@ import {
   buildMudTools, DEFAULT_ACTIVITY_TABLE, OUT_SCHEMA, type MudTools,
 } from '../src/agents/tools.ts'
 import { MOVE_ALIASES, MOVE_DIRS, STATUS_CMDS } from '../src/shared/game.ts'
-import { CommandResponseController, type ReplyOptions } from '../src/network/response.ts'
+import { CommandResponseController, type ReplyOptions } from '../src/runtime/session/bridge.ts'
 import { createWorld } from '../src/shared/world.ts'
 
 function makeTools(): { tools: MudTools; sent: string[]; logs: string[] } {

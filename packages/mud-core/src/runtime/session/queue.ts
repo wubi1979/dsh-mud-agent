@@ -7,7 +7,7 @@
  *
  * 命令队列: 最小间隔节流 (默认 400ms) + 优先级 (halt > high > normal > low),
  * 防止规则动作与 agent 连发命令时洪水游戏服务器。
- * @module @deepseek-ai/dsh-mud-core/execution
+ * @module @deepseek-ai/dsh-mud-core/runtime/session/queue
  */
 
 /** 队列优先级: 数字越小越先发出。 */

@@ -11,7 +11,7 @@
  *      其余 agent **原样 `next()` 放行**, 不劫持进程内其他会话的模型路由。
  *
  * 人设注入 / 提示区段 / 工具挂载与投递通道接线见 `mount.ts`。
- * @module @deepseek-ai/dsh-mud-core/lane
+ * @module @deepseek-ai/dsh-mud-core/agents/lane
  */
 
 import type { Context } from '@deepseek-ai/cordis'

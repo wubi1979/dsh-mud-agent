@@ -14,7 +14,7 @@
  *     只见占位符或掩码文本 (sendCommand 的 redactCredential)。
  *
  * 落盘失败不炸主机: 文件错误经 onFileError 上报, 内存/WS 通道照常工作。
- * @module @deepseek-ai/dsh-mud-core/logging
+ * @module @deepseek-ai/dsh-mud-core/services/log/log-service
  */
 
 import {

@@ -14,7 +14,7 @@
  *   ok   是否成功入队
  *   note 结果说明 (工具层校验失败时的拒绝原因)
  *   cmd  实际发出的命令 (空 = 未发出)
- * @module @deepseek-ai/dsh-mud-core/tools
+ * @module @deepseek-ai/dsh-mud-core/agents/tools
  */
 
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
@@ -24,7 +24,7 @@ import {
 } from '../shared/commands.ts'
 import { resolveCaptchaImage } from './captcha.ts'
 import { MOVE_ALIASES, MOVE_DIRS, STATUS_CMDS } from '../shared/game.ts'
-import type { MudReply, ReplyOptions, ReplySettle } from '../network/response.ts'
+import type { MudReply, ReplyOptions, ReplySettle } from '../runtime/session/bridge.ts'
 import { applyPatch, worldSnapshot, type WorldModel } from '../shared/world.ts'
 
 /** 工具统一返回。*/
@@ -173,7 +173,7 @@ const OUT_RENDER = (_args: unknown, value: MudToolResult): ContentBlock[] => [{
  *
  * 这是**工具自身**的最后一道闸 (不可逆操作: 删号/改密), 与档位无关 —— 档位感知
  * 的 `deny`/`ask` 由官方 `tools/pre-execute` 上的权限闸门负责
- * (`permission/policy.ts`); 两层共用同一张表 (`config/commands.ts`)。
+ * (`services/gate/policy.ts`); 两层共用同一张表 (`shared/commands.ts`)。
  * @param cmd 原始命令。
  * @param denied `deny` 首词集合。
  * @returns 是否硬禁用。

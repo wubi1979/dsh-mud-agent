@@ -26,7 +26,7 @@
  * `MatchHit<TAction>`; 感知层把 `PerceptionRule` 投影为输入、把命中解读为
  * `PerceptHit`。引擎不感知策略字段 (action 原样透传)。
  *
- * @module @deepseek-ai/dsh-mud-core/matcher
+ * @module @deepseek-ai/dsh-mud-core/services/matcher/matcher
  */
 
 import type { MudLine, StyleRun } from '../network/ansi.ts'

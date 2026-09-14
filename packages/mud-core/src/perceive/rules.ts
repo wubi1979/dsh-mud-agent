@@ -45,7 +45,7 @@
  *             - tool:   可选工具调用 (name + args), 由 loop 官方工具管道执行
  *             state 规则的 action 为预留的联动接口 (当前 state 桶无消费方,
  *             仅占位; 折叠入库走 hit.data → applyPatch)。
- * @module @deepseek-ai/dsh-mud-core/config/trigger-rules
+ * @module @deepseek-ai/dsh-mud-core/perceive/rules
  */
 
 import type { PerceptionRule } from './types.ts'
@@ -214,7 +214,7 @@ const defaultPerceptionRules: readonly PerceptionRule[] = [
       tool: { name: 'world_patch', args: { patch: { dead: true, in_combat: false } } },
     },
   },
-  // ── fullme 防机器人验证: **已流程化**（`config/flows.ts` 的 `FULLME_FLOW`, §11）──
+  // ── fullme 防机器人验证: **已流程化**（`runtime/flow/flows.ts` 的 `FULLME_FLOW`, §11）──
   // 原 `fullme:request` / `fullme:prompt` / `fullme:done` 三条规则退役：
   // 入口提醒、验证码地址、成功句、答错句、上一轮未完成提示全部成为流程步的 driver/ok/fail
   // （驱动句/动作/判据只在流程表写一份；§16 删除清单）。

@@ -3,7 +3,7 @@
  *
  * 迁移前项目 `data/skills/*.yaml` 的命令级 API 静态编译版。这些是 pkuxkx 的
  * 命令行语法/参数契约 (一步成事的 `command` 模板), 不是流程级技能 (后者见
- * `src/config/skills.ts` 的 MudSkill)。命令与技能的判定:
+ * `src/agents/skills.ts` 的 MudSkill)。命令与技能的判定:
  *   - 命令级 (本文件): 单条命令模板, 参数到位即 `send(cmd)` — 是"事实/语法";
  *   - 流程级 (skills.ts): 多步编排序列, 供 agent 按序执行。
  *
@@ -13,8 +13,8 @@
  *   - **危险命令策略表** (`DEFAULT_DANGEROUS_COMMANDS`): 取代旧的静态黑名单
  *     (`FORBIDDEN_COMMANDS`, 只有 suicide/passwd 两个字符串) —— 数据驱动、可配、
  *     可测 (见 `doc/ARCHITECTURE.md` §10)。工具层据 `deny` 条目做硬拦截, 权限
- *     闸门 (`permission/policy.ts`) 再做档位感知的 `deny`/`ask`。
- * @module @deepseek-ai/dsh-mud-core/config/commands
+ *     闸门 (`services/gate/policy.ts`) 再做档位感知的 `deny`/`ask`。
+ * @module @deepseek-ai/dsh-mud-core/shared/commands
  */
 
 import type { MudTier } from '../services/gate/tiers.ts'

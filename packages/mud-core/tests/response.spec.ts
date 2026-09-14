@@ -17,7 +17,7 @@ import {
   SILENT_MARKER,
   type BoundaryKind,
   type ReplyOptions,
-} from '../src/network/response.ts'
+} from '../src/runtime/session/bridge.ts'
 
 /** MudLine 构造 (测试用; abs 手工分配)。 */
 function ml(text: string, abs = 0): MudLine {

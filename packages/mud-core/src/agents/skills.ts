@@ -1,21 +1,56 @@
 /**
  * dsh-mud-core — 技能服务 (Skills), host half. (`ctx.mud.skill`)
  *
- * 技能目录 = 预制基线 (config/skills.ts, agent 可读) + 运行中动态注册。
+ * 技能目录 = 预制基线 (agents/skills.ts 内置, agent 可读) + 运行中动态注册。
  * 核心场景: **skill 除预制外主要由 agent 根据游戏经验生成** — agent 训练出新的
  * 流程能力后经本服务 register, 注入其 mud-skills 系统提示区段 (下次 prompt 构建
  * 生效; 供后续会话/重连复用)。
  *
  * 与触发服务/流程引擎协作: 一个明确、可复用的 skill 可进一步落地为 flow
  * (确定性事务) 或 trigger (应激感知); 本服务的注册表是这些能力的上游来源。
- * @module @deepseek-ai/dsh-mud-core/skills
+ * @module @deepseek-ai/dsh-mud-core/agents/skills
  */
 
-import { defaultSkills, skillsTextForAgent, type MudSkill } from '../config/skills.ts'
+/** 一个流程级技能。 */
+export interface MudSkill {
+  id: string
+  name: string
+  description: string
+  /** 可编排的目标 (tool 名)。 */
+  targets: string[]
+  /** 编排步骤: 每步指名 tool + 判断要点 (结果需 agent 判断 → step)。 */
+  steps: string[]
+}
+
+/** 技能目录 (login: agent 侧的登录/重连决策知识; 确定性执行待重建为触发器 → lite)。 */
+export const defaultSkills: readonly MudSkill[] = [
+  {
+    id: 'login',
+    name: '登录/重连',
+    description: '登录进入游戏。正常场景由系统自动处理 (确定性登录流程, 待重建为触发器 → lite); 断线或自动登录失效时, 由你诊断并按步骤重连。流程执行进展会随游戏输出反馈给你。',
+    targets: ['mud_send'],
+    steps: [
+      '判断连接状态 (看输出/状态): 自动登录未生效 → 按提示修正输入重试',
+      '已断线需重连 → 手动重连 (建连 + 登录提示应答)',
+      '登录失败/超时 → 用 mud_send 按提示手动完成登录 (账号/密码/替换确认)',
+      '出现"欢迎来到北大侠客行"或"重新连线完毕" → 登录完成, 继续正常行动',
+    ],
+  },
+]
+
+/** 渲染为 agent 系统提示区段文本 (技能目录)。 */
+export function skillsTextForAgent(skills: readonly MudSkill[] = defaultSkills): string {
+  return skills
+    .map((s) => {
+      const steps = (s.steps ?? []).map((t, i) => `   ${i + 1}. ${t}`).join('\n')
+      return `- ${s.name}: ${s.description}${steps ? `\n  步骤:\n${steps}` : ''}`
+    })
+    .join('\n\n')
+}
 
 /** SkillService 构造参数。 */
 export interface SkillServiceOptions {
-  /** 预制基线 (缺省用 config/skills.ts 的 defaultSkills)。 */
+  /** 预制基线 (缺省用 defaultSkills)。 */
   base?: readonly MudSkill[]
   /** 每次目录变化后的回调 (宿主据此更新 agent 的 mud-skills 区段)。 */
   onChange?: () => void

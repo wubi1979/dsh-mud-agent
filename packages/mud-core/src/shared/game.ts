@@ -4,7 +4,7 @@
  * 纯数据模块, 零依赖; 由 `agents/tools` 与 `services/gate` 作为"注入规则"共同消费,
  * 使安全闸门保持机制通用 (规则注入模式, 参见 `services/gate/policy.ts`)。
  *
- * @module @deepseek-ai/dsh-mud-core/game
+ * @module @deepseek-ai/dsh-mud-core/shared/game
  */
 
 /** 合法移动方向 (pkuxkx)。 */

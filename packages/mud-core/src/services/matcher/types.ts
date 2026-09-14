@@ -12,7 +12,7 @@
  *     → map 组装 data (numeric 数值化); extract 逃生舱覆盖。
  * v6.7: 命中 = 主判据(regex/text/func) ∧ color(声明时) ∧ guard; extract 只做
  * 准入后的程序化提取, 不参与准入。
- * @module @deepseek-ai/dsh-mud-core/matcher/types
+ * @module @deepseek-ai/dsh-mud-core/services/matcher/types
  */
 
 import type { MudLine } from '../network/ansi.ts'

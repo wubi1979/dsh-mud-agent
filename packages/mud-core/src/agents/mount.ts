@@ -13,7 +13,7 @@
  *      (defer 槽 / 回合收束) 接起来。
  *
  * 选路 / T1 provider 在 `lane.ts`。
- * @module @deepseek-ai/dsh-mud-core/mount
+ * @module @deepseek-ai/dsh-mud-core/agents/mount
  */
 
 import type { Context } from '@deepseek-ai/cordis'

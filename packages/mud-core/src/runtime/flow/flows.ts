@@ -8,7 +8,7 @@
  *
  * 结果判据里 `GA` 是一种**判据**（不是"自动成功"）：写进 `ok` 或 `fail` 才生效；
  * 同一步的 `ok` 与 `fail` 判据集必须互斥（`validateFlows` 在装配期校验）。
- * @module @deepseek-ai/dsh-mud-core/config/flows
+ * @module @deepseek-ai/dsh-mud-core/runtime/flow/flows
  */
 
 import type { WorldModel } from '../../shared/world.ts'

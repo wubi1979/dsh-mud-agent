@@ -16,7 +16,7 @@
  *
  * GMCP 包名到世界字段的映射集中在 GMCP_GROUPS, 按包分组;
  * 字段值先做数值/数组归一化, 再落入对应分组。
- * @module @deepseek-ai/dsh-mud-core/world
+ * @module @deepseek-ai/dsh-mud-core/shared/world
  */
 
 /** 世界分组名。 */

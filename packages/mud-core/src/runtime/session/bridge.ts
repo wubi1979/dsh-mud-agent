@@ -1,5 +1,5 @@
 /**
- * dsh-mud-core — 命令-应答桥 (CommandResponseController), host half. 网络层.
+ * dsh-mud-core — 命令-应答桥 (CommandResponseController), host half. 会话层.
  *
  * 命令-应答桥 (`doc/ARCHITECTURE.md` §8; GA 主边界 + 声明边界 + 静默兜底) 的核心实现: 把
  * "mud 工具调用 → 应答" 建模为一次 **带结算边界的请求**:
@@ -9,7 +9,7 @@
  *     在等待结算; 后续请求驻留 pending, 前一个结算后才发送 (工具循环串行 +
  *     pump 双保险)。
  *     **本桥只服务我们自己命令的应答帧**; 规则判定与投递归 L1/L2
- *     (`perception/engine.ts` 与 `session-runtime.ts`), 两者通过"原始行同源、
+ *     (`perceive/engine.ts` 与 `runtime/session/session.ts`), 两者通过"原始行同源、
  *     责任分离"解耦 —— 桥不再持有行集表, T1 也不按文本反查行对象。
  *
  * 计时语义 (审阅注意点 #1): **静默窗 = 最后一行到达后静默 N 秒** (默认 2s),
@@ -33,11 +33,11 @@
  *
  * 结算分层的优先级 (`doc/ARCHITECTURE.md` §8): until (声明边界) > GA/EOR (主边界) >
  * 静默窗 (主边界兜底) > 超时 (最兜底)。
- * @module @deepseek-ai/dsh-mud-core/network/response
+ * @module @deepseek-ai/dsh-mud-core/runtime/session/bridge
  */
 
-import type { MudLine } from '../services/network/ansi.ts'
-import { textOfLines } from '../preprocess/index.ts'
+import type { MudLine } from '../../services/network/ansi.ts'
+import { textOfLines } from '../../services/network/ansi.ts'
 
 /** 帧边界种类 (telnet 'boundary' 事件)。 */
 export type BoundaryKind = 'ga' | 'eor'

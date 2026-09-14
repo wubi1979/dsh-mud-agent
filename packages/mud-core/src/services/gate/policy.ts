@@ -2,15 +2,15 @@
  * dsh-mud-core — 工具调用权限判定 (permission policy, `doc/ARCHITECTURE.md` §10).
  *
  * 这里是**纯判定**: 输入一次工具调用的名字与参数, 输出 `allow / deny / ask`。
- * 执行点在 `agent/tool-gate.ts` (官方 `tools/pre-execute` waterfall); 危险命令
- * 策略表在 `config/commands.ts` (`DEFAULT_DANGEROUS_COMMANDS`)。
+ * 执行点在 `services/gate/tool-gate.ts` (官方 `tools/pre-execute` waterfall); 危险命令
+ * 策略表在 `shared/commands.ts` (`DEFAULT_DANGEROUS_COMMANDS`)。
  *
  * **actor 模型** (§10): 只有 agent 受档位约束。页面手打命令走 `/mud/command`
  * (actor `user`) 不进工具管道; 连接/断开由页面入口驱动 (actor `system`) 同样不
  * 进管道; **登录流程**(发名字/密码/确认替换)虽借道 `mud_send`, 但属于 `system`
  * —— 判据是"该会话尚未登录 + 命令 ∈ 登录流程命令集", 因此只读档也能登录
  * (否则只读档永远上不了线, 档位就成了摆设)。
- * @module @deepseek-ai/dsh-mud-core/permission/policy
+ * @module @deepseek-ai/dsh-mud-core/services/gate/policy
  */
 
 import { STATUS_CMDS, MOVE_ALIASES } from '../../shared/game.ts'

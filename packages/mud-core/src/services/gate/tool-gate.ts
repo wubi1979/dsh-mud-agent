@@ -7,7 +7,7 @@
  *
  * 非 MUD 工具一律 `next()` 放行 —— 本闸门只认本插件注册的工具名。
  * waterfall 语义: 不调用 `next()` 即短路 (拒绝/询问), 调用即委托。
- * @module @deepseek-ai/dsh-mud-core/agent/tool-gate
+ * @module @deepseek-ai/dsh-mud-core/services/gate/tool-gate
  */
 
 import type { Context } from '@deepseek-ai/cordis'

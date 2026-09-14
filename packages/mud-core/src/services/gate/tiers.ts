@@ -16,7 +16,7 @@
  * 让登录动作直接失效 (工具未注册 = 官方在 pre-execute 之前就判 UNKNOWN_TOOL,
  * 强制层根本看不到该调用)。因此只读档对 `mud_send` 的约束落在强制层: 登录流程
  * 命令放行, 其余命令一律 deny。
- * @module @deepseek-ai/dsh-mud-core/permission/tiers
+ * @module @deepseek-ai/dsh-mud-core/services/gate/tiers
  */
 
 /** MUD 权限档位。 */

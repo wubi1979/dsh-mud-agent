@@ -13,7 +13,7 @@
  *   - 常用路径 pushGame/pushUi: 条目入队, 同一次事件循环 tick 合并为一条帧
  *     (突发多块文本不再逐块发帧 — 前端渲染与接收同帧批量落盘);
  *   - ping/pong 心跳清理死连接; teardown 关闭全部客户端并注销路由。
- * @module @deepseek-ai/dsh-mud-core/ws
+ * @module @deepseek-ai/dsh-mud-core/shell/hub
  */
 
 import type { IncomingMessage } from 'node:http'

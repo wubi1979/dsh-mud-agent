@@ -7,7 +7,7 @@
  *
  * 不变量 (I5): 一次投递只取走它该取走的那部分, 且两段之并 = 原序列、顺序不变。
  * 因此"把历次投递的消息体按序拼接"必然等于完整入站行流 (可测)。
- * @module @deepseek-ai/dsh-mud-core/perception/split
+ * @module @deepseek-ai/dsh-mud-core/perceive/split
  */
 
 import type { MudLine } from '../services/network/ansi.ts'

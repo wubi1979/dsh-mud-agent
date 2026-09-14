@@ -7,7 +7,7 @@
  * 感知文本事件 (mud/percept) 与 GMCP 派生事件 (mud/gmcp) 已随事件机制移除:
  * 文本语义统一走 agent (级联 provider 的 world_patch 工具), 不在状态层推断;
  * GMCP 既是铺底又是权威, 不再二次派生事件。
- * @module @deepseek-ai/dsh-mud-core/state
+ * @module @deepseek-ai/dsh-mud-core/runtime/session/gmcp
  */
 
 import { applyGmcp, type WorldModel } from '../../shared/world.ts'

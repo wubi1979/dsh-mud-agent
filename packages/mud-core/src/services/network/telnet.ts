@@ -31,7 +31,7 @@
  *        'text' (原始文本) | 'parsed' (MudLine[]) |
  *        'boundary' ({kind: 'ga' | 'eor'}) | 'gmcp' ({package, payload}) |
  *        'mssp' (pairs)
- * @module @deepseek-ai/dsh-mud-core/telnet
+ * @module @deepseek-ai/dsh-mud-core/services/network/telnet
  */
 
 import { EventEmitter } from 'node:events'

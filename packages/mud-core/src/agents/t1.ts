@@ -15,7 +15,7 @@
  *
  * 契约检验（I15）：本文件不得依赖只有 T1 能理解的私有字段；`source.actions` 是模型可见的
  * 声明（T2 读到同样能自行决定）。
- * @module @deepseek-ai/dsh-mud-core/t1
+ * @module @deepseek-ai/dsh-mud-core/agents/t1
  */
 
 import { LlmAdapter } from '@deepseek-ai/dsh-llm'

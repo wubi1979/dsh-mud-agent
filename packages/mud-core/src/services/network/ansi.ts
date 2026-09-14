@@ -13,7 +13,8 @@
  *
  * 样式游标跨行保持 (符合 ANSI 语义); 行末未显式清零则延续到下一行。
  * v6.2: abs 由 AnsiStreamParser 自分配 (标准行携带行号)。
- * @module @deepseek-ai/dsh-mud-core/preprocess/ansi
+ * v7: 并入原 preprocess 薄入口的 textOfLines (整批文本装配)。
+ * @module @deepseek-ai/dsh-mud-core/services/network/ansi
  */
 
 /** 样式位标志 (紧凑 bitmask, run-length 存储)。 */
@@ -89,6 +90,11 @@ const ESC = '\u001b'
 export function isPromptText(text: string): boolean {
   const t = text.trim()
   return t === '>' || t === '＞' || /^[>＞]\s*$/.test(t)
+}
+
+/** 解析行集 → 整批文本 (agent 提交面; 无 ANSI, 保留空行与顺序)。 */
+export function textOfLines(lines: readonly ParsedLine[]): string {
+  return lines.map(l => l.text).join('\n')
 }
 
 function toInt(v: string | undefined, max = 255): number | null {

@@ -10,7 +10,7 @@
  * 帧协议 (JSON 文本帧):
  *   client → server: `{type:'hello', lastGameSeq?, lastUiSeq?}`
  *   server → client: `{ch:'game', items}` / `{ch:'ui', items}` / `{ch:'world', world}`
- * @module @deepseek-ai/dsh-mud-core/client/wire
+ * @module @deepseek-ai/dsh-mud-core/shell/wire
  */
 
 /** 世界快照 (worldSnapshot 产物, JSON 可序列化)。 */

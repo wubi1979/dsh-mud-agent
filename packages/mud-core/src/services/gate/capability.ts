@@ -10,7 +10,7 @@
  * 对外 API 形状对齐官方 `permissionPresets` (`names/current/resolve/optionOf/
  * defaultTier`), 因为消费方 (页面档位选择器) 已经熟悉那个形状。**agent 永不自
  * 提权**: 工具层只读档位, 写入口只有 `ctx.mud.capability.set` (页面/宿主)。
- * @module @deepseek-ai/dsh-mud-core/permission/capability
+ * @module @deepseek-ai/dsh-mud-core/services/gate/capability
  */
 
 import type { Context } from '@deepseek-ai/cordis'
