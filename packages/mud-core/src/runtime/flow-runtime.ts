@@ -553,15 +553,11 @@ export class FlowRuntime {
     this.gaArmed = null
     this.ownCommands.clear()
     this.matcher = null
-    // 入口匹配器独立保存（活跃期间仍用于"其它流程入口 → pending entry"）。
+    // 入口匹配器独立保存（活跃期间仍用于"其它流程入口 → pending entry"；空闲时
+    // `matchEntries` 也复用它 —— 与入口规则同一次构建，规则集恒同步）。
     const entryRules = rules.filter(rule => this.entryLabels.has(rule.id))
     this.entryMatcher = entryRules.length > 0 ? new TriggerMatchService(entryRules, 'event') : null
-    // 空闲状态下，入口判定用的就是入口匹配器。
-    this.idleEntryRules = rules
   }
-
-  /** 空闲入口规则（`matchEntries` 用；活跃时改为"只记录"）。 */
-  private idleEntryRules: PerceptionRule[] = []
 
   /** 活跃期间：记录其它流程入口行（当前流程结束后接续）。 */
   private notePendingEntries(lines: readonly MudLine[]): void {
@@ -579,8 +575,11 @@ export class FlowRuntime {
 
   /** 空闲：入口命中即激活流程并进入入口步骤。 */
   private matchEntries(lines: readonly MudLine[], framed: boolean, hits: FlowActionHit[]): void {
-    if (this.idleEntryRules.length === 0) return
-    const matcher = new TriggerMatchService(this.idleEntryRules, 'event')
+    // **复用入口匹配器**（与入口规则同一次 `armEntries` 构建、恒同步）：不再每文本块
+    // `new TriggerMatchService(...)`。入口块全走单行判据（regex/text/func；非行判据在
+    // `armEntries` 里退化为永不命中的 func），`match()` 不触碰实例运行时态，复用与重建等价。
+    if (this.entryMatcher === null) return
+    const matcher = this.entryMatcher
     const percepts = matcher.match(lines as MudLine[])
     for (const percept of percepts) {
       const flow = this.entryLabels.get(percept.id)
