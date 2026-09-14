@@ -17,7 +17,7 @@ import defaultPerceptionRules from '../src/perceive/rules.ts'
 import { MudSessionRuntime, type MudRuntimeConfig, type MudRuntimeSink } from '../src/runtime/session-runtime.ts'
 import type { MudConnectionManager, MudConnectionSink } from '../src/services/network/manager.ts'
 import type { MudLine } from '../src/services/network/ansi.ts'
-import type { PerceptionRule } from '../src/trigger-llm/types.ts'
+import type { PerceptionRule } from '../src/perceive/types.ts'
 
 const SAVE_PROMPT = '建议经常使用save命令保存档案，避免造成意外损失。'
 const PAGER_PROMPT = '== 未完继续 88% == (q 离开，b 前一页，其他继续下一页)'

@@ -1,5 +1,5 @@
 /**
- * dsh-mud-agent — 触发匹配回归测试 (v6: 触发匹配器迁入 trigger-llm/service):
+ * dsh-mud-core — 触发匹配回归测试 (v6: 触发匹配器迁入 services/matcher):
  *   - 多行匹配状态机 (Mudlet 逐条件模型: 有序条件 / spacer / lineDelta 过期 /
  *     每行只喂一次);
  *   - 正则去 g 标志 (防 lastIndex 跨窗口错位);
@@ -7,8 +7,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Perceptor, type PerceptHit, TriggerMatchService } from '../src/trigger-llm/service.ts'
-import { createMatchContext, type MatchContext } from '../src/trigger-llm/types.ts'
+import { Perceptor, TriggerMatchService } from '../src/services/matcher/matcher.ts'
+import { createMatchContext, type MatchContext, type MatchHit } from '../src/services/matcher/types.ts'
 import { StyleFlag, type ParsedLine, type StyleRun, type MudLine } from '../src/services/network/ansi.ts'
 
 function parsed(text: string, style: StyleRun[] = []): ParsedLine {
@@ -51,7 +51,7 @@ describe('多行匹配状态机 (Mudlet 逐条件模型)', () => {
       ],
     })
     const feed = makeFeed()
-    const all: PerceptHit[] = []
+    const all: MatchHit[] = []
     all.push(...perceptor.match(feed([parsed('line1')]), ctx))
     all.push(...perceptor.match(feed([parsed('BEGIN thing')]), ctx))
     all.push(...perceptor.match(feed([parsed('line3')]), ctx))
@@ -98,7 +98,7 @@ describe('多行匹配状态机 (Mudlet 逐条件模型)', () => {
       ],
     })
     const feed = makeFeed()
-    const all: PerceptHit[] = []
+    const all: MatchHit[] = []
     all.push(...perceptor.match(feed([parsed('A')]), ctx))
     all.push(...perceptor.match(feed([parsed('X')]), ctx)) // X 充当 spacer 的 1 行
     all.push(...perceptor.match(feed([parsed('B')]), ctx))
@@ -119,7 +119,7 @@ describe('多行匹配状态机 (Mudlet 逐条件模型)', () => {
       ],
     })
     const feed = makeFeed()
-    const all: PerceptHit[] = []
+    const all: MatchHit[] = []
     all.push(...perceptor.match(feed([parsed('A')]), ctx))
     all.push(...perceptor.match(feed([parsed('x1')]), ctx))
     all.push(...perceptor.match(feed([parsed('x2')]), ctx))
@@ -137,7 +137,7 @@ describe('多行匹配状态机 (Mudlet 逐条件模型)', () => {
       match: { kind: 'regex', patterns: ['出发', '到达'] },
     })
     const feed = makeFeed()
-    const all: PerceptHit[] = []
+    const all: MatchHit[] = []
     all.push(...perceptor.match(feed([parsed('出发了')]), ctx))
     all.push(...perceptor.match(feed([parsed('到达!')]), ctx))
     const hits = all.filter(h => h.id === 'ml5')
@@ -188,7 +188,7 @@ describe('bold→亮色耦合 (Mudlet 对齐)', () => {
 
 describe('多行状态持久 (V10: 判类与渲染合流, 无镜像克隆)', () => {
   /** 两条件多行规则 (逐条件消费行)。 */
-  const makeService = (): TriggerMatchService => new TriggerMatchService([{
+  const makeService = () => new TriggerMatchService([{
     id: 'ml:persist',
     eventType: 'p:persist',
     multiline: true,
@@ -228,7 +228,7 @@ describe('多行状态持久 (V10: 判类与渲染合流, 无镜像克隆)', () 
 
 describe('hasPendingCapture — holdDelivery 判据', () => {
   /** 声明 holdDelivery 的两条件规则 (login:replace-confirm 同形)。 */
-  const makeService = (): TriggerMatchService => new TriggerMatchService([{
+  const makeService = () => new TriggerMatchService([{
     id: 'hold:confirm',
     eventType: 'p:hold',
     multiline: true,

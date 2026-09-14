@@ -38,6 +38,7 @@ import {
 import { SkillService } from './agents/skills.ts'
 import { commandsIndexForAgent } from './shared/commands.ts'
 import defaultPerceptionRules from './perceive/rules.ts'
+import { splitPerceptionRules } from './perceive/service.ts'
 import { flowCommands, defaultFlows } from './runtime/flow/flows.ts'
 import {
   attachMudPersona, attachMudPrompt, attachMudTools,
@@ -293,12 +294,7 @@ export function apply(ctx: Context, config: MudAgentConfig = {}): void {
   const attachedAgents = new WeakSet<Agent>()
   /** T1 provider (llm 就绪后装配; 释放随插件生命周期)。 */
   let provider: TriggerProvider | null = null
-  const stateRules = defaultPerceptionRules.filter(r => r.lane === 'state')
-  const eventRules = defaultPerceptionRules.filter(r => r.lane !== 'state')
-  /** 声明 holdDelivery 的规则 (投递原子性: 捕获未完成时暂缓窗口投递)。 */
-  const holdRuleIds: ReadonlySet<string> = new Set(
-    defaultPerceptionRules.filter(r => r.holdDelivery === true).map(r => r.id),
-  )
+  const { stateRules, eventRules, holdRuleIds } = splitPerceptionRules(defaultPerceptionRules)
   const skillService = new SkillService()
 
   /** 只读解析某会话当前 live agent (官方注册表; 缺失/已释放 = undefined)。 */

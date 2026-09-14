@@ -1,5 +1,5 @@
 /**
- * dsh-mud-core — 匹配服务 (TriggerMatchService) + 匹配器 (Perceptor), host half.
+ * dsh-mud-core — 匹配服务 (TriggerMatchService): 通用匹配引擎, host half.
  *
  * v6.5 语义: 准入唯一判据 = 锚定整行正则 (作者书写 `^…$`; 宽松 includes/contains
  * 已废弃 —— MUD 聊天/帮助文本误触发风险)。两段式匹配:
@@ -22,19 +22,22 @@
  *   准入): 曾使 func+extract 规则 (state:look) 每行命中并污染 world, 且使"同词异色"
  *   区分失效。extract 只做准入后的程序化提取, 不参与准入。
  *
- * @module @deepseek-ai/dsh-mud-core/trigger-llm/service
+ * 通用化 (目录重组): 引擎消费 `MatcherRule<TAction>` (机制层形状), 产出
+ * `MatchHit<TAction>`; 感知层把 `PerceptionRule` 投影为输入、把命中解读为
+ * `PerceptHit`。引擎不感知策略字段 (action 原样透传)。
+ *
+ * @module @deepseek-ai/dsh-mud-core/matcher
  */
 
-import type { MudLine, StyleRun } from '../services/network/ansi.ts'
-import { StyleFlag } from '../services/network/ansi.ts'
+import type { MudLine, StyleRun } from '../network/ansi.ts'
+import { StyleFlag } from '../network/ansi.ts'
 import type {
-  ActionSpec,
   ColorCond,
   MatchContext,
+  MatcherRule,
+  MatchHit,
   MultiCond,
   MultiMatchState,
-  PerceptionRule,
-  PerceptHit,
   PerceptRecord,
   WindowSpec,
 } from './types.ts'
@@ -155,7 +158,7 @@ function buildMapData(
 }
 
 /** 归一化触发规则 (配置态, 无运行时状态)。 */
-interface NormalizedTriggerRule {
+interface NormalizedTriggerRule<TAction> {
   id: string
   eventType: string
   priority: number
@@ -183,8 +186,8 @@ interface NormalizedTriggerRule {
   /** 捕获组 → world 点分键 (命中后组装 data)。 */
   map: Record<string, string> | null
   numeric: readonly string[] | null
-  /** 命中动作 (v6: 规则携带; 装配方据此渲染)。 */
-  action: ActionSpec | null
+  /** 命中动作 (泛占位; 引擎原样透传给命中)。 */
+  action: TAction | null
 }
 
 /** 构造去 g 标志的正则 (防 lastIndex 跨行错位; Mudlet 无全局串联语义)。 */
@@ -199,7 +202,7 @@ function stripG(re: RegExp): RegExp {
 }
 
 /** 推导多行有序条件 (patterns 优先, 否则 regex 逐条)。 */
-function buildMultiConds(rule: PerceptionRule, multiline: boolean): MultiCond[] {
+function buildMultiConds<TAction>(rule: MatcherRule<TAction>, multiline: boolean): MultiCond[] {
   if (rule.patterns && rule.patterns.length > 0) {
     return rule.patterns.map(p => {
       if (p.kind === 'spacer') return { kind: 'spacer', lines: Math.max(1, p.lines || 1) } satisfies MultiCond
@@ -220,15 +223,15 @@ function buildMultiConds(rule: PerceptionRule, multiline: boolean): MultiCond[] 
 }
 
 /**
- * 触发器匹配器 (Perceptor): 确定性规则匹配器, 对齐 Python Matcher。
+ * 匹配器 (Perceptor): 确定性规则匹配器, 对齐 Python Matcher。
  * match(lines, ctx) 一次跑完窗口内全部规则, 返回按行号排序的结果。
  * 运行态 (多行状态机) 由 MatchContext 承载, 与规则定义分离。
  */
-export class Perceptor {
-  private rules: NormalizedTriggerRule[] = []
+export class Perceptor<TAction = unknown> {
+  private rules: NormalizedTriggerRule<TAction>[] = []
   private readonly owners = new Map<string, string>()
 
-  register(rule: PerceptionRule, owner = ''): NormalizedTriggerRule {
+  register(rule: MatcherRule<TAction>, owner = ''): NormalizedTriggerRule<TAction> {
     const multiline = !!rule.multiline
     // v6.6 构造校验 (fail fast): 判据必填; multiline 仅 regex; 窗口仅单行。
     if (rule.match === undefined) {
@@ -256,7 +259,7 @@ export class Perceptor {
       : []
     const includes = kind === 'text' ? rule.match.includes.map(s => String(s)) : []
     const test = kind === 'func' ? rule.match.test : null
-    const norm: NormalizedTriggerRule = {
+    const norm: NormalizedTriggerRule<TAction> = {
       id: rule.id,
       eventType: rule.eventType || rule.id,
       priority: rule.priority ?? 10,
@@ -316,9 +319,9 @@ export class Perceptor {
   }
 
   /** 窗口匹配: 返回按 lineNumber 排序的结果。运行态由 ctx 承载。 */
-  match(lines: MudLine[], ctx: MatchContext): PerceptHit[] {
+  match(lines: MudLine[], ctx: MatchContext): MatchHit<TAction>[] {
     if (!lines || lines.length === 0) return []
-    const results: PerceptHit[] = []
+    const results: MatchHit<TAction>[] = []
     for (const rule of this.rules) {
       if (rule.multiline) {
         for (const line of lines) {
@@ -345,7 +348,7 @@ export class Perceptor {
     return results
   }
 
-  getRules(): NormalizedTriggerRule[] {
+  getRules(): NormalizedTriggerRule<TAction>[] {
     return this.rules.slice()
   }
 
@@ -355,7 +358,7 @@ export class Perceptor {
    *  - extract: 准入后的程序化提取 (matchLine 内调用), 绝不参与准入。
    *  v6.7 删除旧回退 (regex 全不中时曾以 color/extract 直接准入): 该回退使
    *  func+extract 规则 (state:look) 每行命中, 且 color 规则在文本未命中时误触发。 */
-  private ruleHit(rule: NormalizedTriggerRule, record: PerceptRecord): boolean {
+  private ruleHit(rule: NormalizedTriggerRule<TAction>, record: PerceptRecord): boolean {
     const text = record.rows.map(r => r.text).join('\n')
     if (rule.kind === 'regex') {
       let matched = false
@@ -376,7 +379,7 @@ export class Perceptor {
   }
 
   /** 命中窗口装配: 锚点行前后批内切片 (声明 window 时; 跨批不追)。 */
-  private buildRecord(rule: NormalizedTriggerRule, line: MudLine, batch: MudLine[], index: number): PerceptRecord {
+  private buildRecord(rule: NormalizedTriggerRule<TAction>, line: MudLine, batch: MudLine[], index: number): PerceptRecord {
     if (rule.window === null) return { rows: [line], before: [], after: [] }
     return {
       rows: [line],
@@ -385,10 +388,10 @@ export class Perceptor {
     }
   }
 
-  private matchLine(rule: NormalizedTriggerRule, line: MudLine, batch: MudLine[], index: number): PerceptHit | null {
+  private matchLine(rule: NormalizedTriggerRule<TAction>, line: MudLine, batch: MudLine[], index: number): MatchHit<TAction> | null {
     const record = this.buildRecord(rule, line, batch, index)
     if (!this.ruleHit(rule, record)) return null
-    const hit: PerceptHit = {
+    const hit: MatchHit<TAction> = {
       id: rule.id,
       eventType: rule.eventType,
       lineNumber: line.abs,
@@ -398,12 +401,12 @@ export class Perceptor {
         ? (rule.extract(record) ?? null)
         : this.collectSingleData(rule, line.text),
     }
-    if (rule.action) hit.action = rule.action
+    if (rule.action !== null) hit.action = rule.action
     return hit
   }
 
   /** 准入命中后: 首个匹配正则的命名捕获组 → map/numeric 组装 data。 */
-  private collectSingleData(rule: NormalizedTriggerRule, text: string): Record<string, unknown> | null {
+  private collectSingleData(rule: NormalizedTriggerRule<TAction>, text: string): Record<string, unknown> | null {
     if (rule.map === null) return null
     for (const re of rule.regex) {
       re.lastIndex = 0
@@ -417,7 +420,7 @@ export class Perceptor {
   }
 
   /** 多行命中后: 各条件正则的命名捕获组合并 → map/numeric 组装 data。 */
-  private collectMultiData(rule: NormalizedTriggerRule, st: MultiMatchState): Record<string, unknown> | null {
+  private collectMultiData(rule: NormalizedTriggerRule<TAction>, st: MultiMatchState): Record<string, unknown> | null {
     if (rule.map === null) return null
     const groups: Record<string, string> = {}
     let ci = 0
@@ -444,7 +447,7 @@ export class Perceptor {
     return false
   }
 
-  private stepMulti(rule: NormalizedTriggerRule, st: MultiMatchState, line: MudLine): boolean {
+  private stepMulti(rule: NormalizedTriggerRule<TAction>, st: MultiMatchState, line: MudLine): boolean {
     if (st.next >= rule.multiConds.length) return true
     const cond = rule.multiConds[st.next]
     if (cond === undefined) return true
@@ -462,7 +465,7 @@ export class Perceptor {
   }
 
   /** 多行状态机: 使用 ctx 中的状态, 而非规则上的可变状态。 */
-  private feedMultiline(rule: NormalizedTriggerRule, line: MudLine, ctx: MatchContext): PerceptHit | null {
+  private feedMultiline(rule: NormalizedTriggerRule<TAction>, line: MudLine, ctx: MatchContext): MatchHit<TAction> | null {
     const lastAbs = ctx.multiLastAbs.get(rule.id) ?? -1
     if (line.abs <= lastAbs) return null
     ctx.multiLastAbs.set(rule.id, line.abs)
@@ -501,7 +504,7 @@ export class Perceptor {
     const record: PerceptRecord = { rows, before: [], after: [] }
     if (rule.color !== null && !styleMatchesColor(rows, rule.color)) return null
     if (rule.guard && !rule.guard(record)) return null
-    const hit: PerceptHit = {
+    const hit: MatchHit<TAction> = {
       id: rule.id,
       eventType: rule.eventType,
       lineNumber: line.abs,
@@ -512,31 +515,31 @@ export class Perceptor {
         ? (rule.extract(record) ?? null)
         : this.collectMultiData(rule, st),
     }
-    if (rule.action) hit.action = rule.action
+    if (rule.action !== null) hit.action = rule.action
     return hit
   }
 }
 
 /**
- * 匹配服务 (TriggerMatchService): 独立实例，管理规则集 + 匹配上下文 + 行对象缓存。
+ * 匹配服务 (TriggerMatchService): 独立实例，管理规则集 + 匹配上下文。
  * 每个实例维护独立的 MatchContext (多行状态机运行态)。
  *
  * 典型用法:
  *   - stateInstance: 预匹配折叠 (状态/观察 → world)
  *   - eventInstance: T1 渲染 (事件/决策 → agent)
  */
-export class TriggerMatchService {
-  private readonly perceptor = new Perceptor()
+export class TriggerMatchService<TAction = unknown> {
+  private readonly perceptor = new Perceptor<TAction>()
   private readonly ctx: MatchContext = createMatchContext()
 
-  constructor(rules?: PerceptionRule[], owner = '') {
+  constructor(rules?: MatcherRule<TAction>[], owner = '') {
     if (rules) {
       for (const r of rules) this.perceptor.register(r, owner)
     }
   }
 
   /** 注册一个触发规则; owner 用于批量注销。 */
-  register(rule: PerceptionRule, owner = ''): void {
+  register(rule: MatcherRule<TAction>, owner = ''): void {
     this.perceptor.register(rule, owner)
   }
 
@@ -564,7 +567,7 @@ export class TriggerMatchService {
    * 匹配入口: 传入行对象 (已由 AnsiStreamParser 分配 abs)，返回按行号排序的命中。
    * 运行态 (多行状态机) 由内部 MatchContext 承载。
    */
-  match(lines: MudLine[]): PerceptHit[] {
+  match(lines: MudLine[]): MatchHit<TAction>[] {
     return this.perceptor.match(lines, this.ctx)
   }
 

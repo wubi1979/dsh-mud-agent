@@ -15,8 +15,8 @@
  */
 
 import type { MudLine } from '../services/network/ansi.ts'
-import { TriggerMatchService } from '../trigger-llm/service.ts'
-import type { PerceptionRule } from '../trigger-llm/types.ts'
+import { TriggerMatchService } from '../services/matcher/matcher.ts'
+import type { ActionSpec, PerceptionRule } from '../perceive/types.ts'
 import type { WorldModel } from '../shared/world.ts'
 import {
   isLineMatch, matchLabel, PRIORITY_NORMAL, validateFlows,
@@ -175,9 +175,9 @@ export class FlowRuntime {
    * 生命周期：步骤迁移时清空（`enterStep`），流程收束/复位/释放时清空。
    */
   private ownCommands = new Set<string>()
-  private matcher: TriggerMatchService | null = null
+  private matcher: TriggerMatchService<ActionSpec> | null = null
   /** 空闲入口匹配器（活跃期间仍用于记录其它流程入口 → pending entry）。 */
-  private entryMatcher: TriggerMatchService | null = null
+  private entryMatcher: TriggerMatchService<ActionSpec> | null = null
   private readonly pendingActions: InterruptRequest[] = []
   private readonly pendingEntry: MudLine[] = []
   private timer: ReturnType<typeof setTimeout> | null = null

@@ -1,5 +1,5 @@
 /**
- * dsh-mud-core — TriggerLlmAdapter (trigger-llm/adapter). T1 本地模拟 LLM = **动作渲染器**.
+ * dsh-mud-core — TriggerLlmAdapter (agents/t1). T1 本地模拟 LLM = **动作渲染器**.
  *
  * T1 是注册进官方 llm 注册表的一个"本地模拟模型" (provider = `mud-t1`)。v0.4.0 起它是
  * **无状态**的（`doc/ARCHITECTURE.md` §7 契约）：
@@ -15,7 +15,7 @@
  *
  * 契约检验（I15）：本文件不得依赖只有 T1 能理解的私有字段；`source.actions` 是模型可见的
  * 声明（T2 读到同样能自行决定）。
- * @module @deepseek-ai/dsh-mud-core/trigger-llm/adapter
+ * @module @deepseek-ai/dsh-mud-core/t1
  */
 
 import { LlmAdapter } from '@deepseek-ai/dsh-llm'
@@ -26,9 +26,8 @@ import type {
   StreamChunk,
   ToolCallId,
 } from '@deepseek-ai/dsh-llm'
-import { CONTROL_PREFIX } from './types.ts'
 
-/** 一条动作请求（与 `agent-bridge` 的 `OwnedAction` 同形；用字面量避免循环依赖）。 */
+/** 一条动作请求（与 `agents/lane` 的 `OwnedAction` 同形；用字面量避免循环依赖）。 */
 export interface RenderedAction {
   /** 来源：规则 id 或 `flow:<flowId>/<stepId>`。 */
   ruleId?: string
@@ -203,6 +202,3 @@ export class TriggerLlmAdapter extends LlmAdapter {
     yield { type: 'finish', reason: { kind: hasTool ? 'tool-calls' : 'stop' } }
   }
 }
-
-/** 控制消息前缀的再导出 (装配方日志判据用)。 */
-export { CONTROL_PREFIX }

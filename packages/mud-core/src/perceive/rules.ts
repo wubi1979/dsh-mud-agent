@@ -48,7 +48,7 @@
  * @module @deepseek-ai/dsh-mud-core/config/trigger-rules
  */
 
-import type { PerceptionRule } from '../trigger-llm/types.ts'
+import type { PerceptionRule } from './types.ts'
 
 
 /** 地图行判定: 行首缩进 + 框线字符 ≥2 个 (pkuxkx ASCII 房间图: ┌─┐│└┘ 框线,

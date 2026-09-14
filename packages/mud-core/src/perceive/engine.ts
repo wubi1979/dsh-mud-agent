@@ -12,12 +12,12 @@
  *     折叠只决定"哪些行不进 agent"，不参与消费边界。
  *
  * 本层不认识连接、agent、会话日志 —— 只有行进、判定出。
- * @module @deepseek-ai/dsh-mud-core/perception/engine
+ * @module @deepseek-ai/dsh-mud-core/perceive/engine
  */
 
 import type { MudLine } from '../services/network/ansi.ts'
-import { TriggerMatchService } from '../trigger-llm/service.ts'
-import type { ActionSpec, PerceptionRule, PerceptHit } from '../trigger-llm/types.ts'
+import { TriggerMatchService } from '../services/matcher/matcher.ts'
+import type { ActionSpec, PerceptionRule, PerceptHit } from './types.ts'
 
 /** 一条可渲染的命中 (T1 动作的输入单位)。 */
 export interface EngineHit {
@@ -68,8 +68,8 @@ export interface PerceptionEngineOptions {
 
 /** 行级感知引擎: 每会话一个, 状态在实例内持久。 */
 export class PerceptionEngine {
-  private readonly state: TriggerMatchService
-  private readonly event: TriggerMatchService
+  private readonly state: TriggerMatchService<ActionSpec>
+  private readonly event: TriggerMatchService<ActionSpec>
   private readonly holdRuleIds: ReadonlySet<string>
 
   /** @param options 规则集与 hold 规则 id。 */

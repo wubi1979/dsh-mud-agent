@@ -18,7 +18,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { LlmCallConfig, Message } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { TriggerLlmAdapter } from '../trigger-llm/adapter.ts'
+import { TriggerLlmAdapter } from './t1.ts'
 
 /** T1 provider 标识 (本地模拟模型注册名)。 */
 export const T1_PROVIDER = 'mud-t1' as const

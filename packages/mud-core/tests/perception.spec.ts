@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest'
 import { PerceptionEngine } from '../src/perceive/engine.ts'
 import { splitDelivery } from '../src/perceive/split.ts'
 import type { MudLine } from '../src/services/network/ansi.ts'
-import type { PerceptionRule } from '../src/trigger-llm/types.ts'
+import type { PerceptionRule } from '../src/perceive/types.ts'
 
 /** MudLine 构造 (abs 单调)。 */
 function line(text: string, abs: number): MudLine {

@@ -9,10 +9,10 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { TriggerMatchService } from '../src/trigger-llm/service.ts'
+import { TriggerMatchService } from '../src/services/matcher/matcher.ts'
 import defaultPerceptionRules from '../src/perceive/rules.ts'
 import type { MudLine } from '../src/services/network/ansi.ts'
-import type { PerceptRecord } from '../src/trigger-llm/types.ts'
+import type { PerceptRecord } from '../src/services/matcher/types.ts'
 
 function toLines(rows: string[]): MudLine[] {
   return rows.map((t, i) => ({
