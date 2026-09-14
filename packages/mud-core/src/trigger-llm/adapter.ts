@@ -49,12 +49,16 @@ const MUD_OWNED_KIND = 'mud-owned'
 
 /** 一个请求所归属的投递。 */
 type TurnContext =
-  | { kind: 'actions'; lane: string; actions: readonly RenderedAction[]; delivery: string }
+  | { kind: 'actions'; lane: string; actions: readonly RenderedAction[]; delivery: string; index: number }
   | { kind: 'foreign-lane'; lane: string }
   | { kind: 'none'; why: string }
 
 /**
- * 从请求消息回扫最近一条本插件投递的消息, 取出其中的动作请求。
+ * 从请求消息**尾部反扫**最近一条本插件投递的消息, 取出其中的动作请求。
+ *
+ * `index` = 该投递消息在 messages 里的下标 —— 它产出的工具结果**只可能出现在它之后**
+ * （助手工具调用 + 工具结果都是后置的），`alreadyAnswered` 据此把历史扫描下界锚定在
+ * 这里，长会话下 T1 渲染不再全量扫历史。
  * @param messages 请求消息序列。
  * @returns 上下文: 有动作可渲染 / 选路异常 / 不可渲染的原因。
  */
@@ -77,6 +81,7 @@ function turnContext(messages: readonly Message[] | undefined): TurnContext {
       lane: source.lane,
       actions,
       delivery: source.delivery ?? 'd0',
+      index: i,
     }
   }
   return { kind: 'none', why: '无本插件投递' }
@@ -97,10 +102,25 @@ function actionId(delivery: string, index: number): ToolCallId {
   return `mud-${slug}-${index}` as unknown as ToolCallId
 }
 
-/** 会话里是否已有该 call-id 的工具结果（= 这条动作已执行过）。 */
-function alreadyAnswered(messages: readonly Message[] | undefined, id: ToolCallId): boolean {
+/**
+ * 会话里是否已有该 call-id 的工具结果（= 这条动作已执行过）。
+ *
+ * **只扫投递消息之后的消息**：call-id 由本投递渲染产生，助手工具调用与工具结果都出现在
+ * 投递消息之后，从不早于它 —— 扫描下界锚定在后，长会话每次 T1 渲染的代价从
+ * O(会话长度) 降为 O(投递之后那段尾段)。行为与全量扫一致（结果不会早于投递消息）。
+ * @param messages 请求消息序列。
+ * @param id 确定性 call-id（`mud-<delivery>-<index>`）。
+ * @param afterIndex 目标投递消息在 messages 里的下标（该投递的结果只可能出现在它之后）。
+ */
+function alreadyAnswered(
+  messages: readonly Message[] | undefined,
+  id: ToolCallId,
+  afterIndex: number,
+): boolean {
   if (!messages) return false
-  for (const message of messages) {
+  for (let i = messages.length - 1; i > afterIndex; i -= 1) {
+    const message = messages[i]
+    if (message === undefined) continue
     for (const block of message.content) {
       if (block.type === 'tool-result' && block.toolCallId === id) return true
     }
@@ -136,7 +156,7 @@ export class TriggerLlmAdapter extends LlmAdapter {
     // 只渲染"尚未执行"的动作：它的工具结果若已在会话里，说明这一步已经跑完。
     const pending = context.actions
       .map((action, index) => ({ action, index, id: actionId(context.delivery, index) }))
-      .filter(entry => !alreadyAnswered(options?.messages, entry.id))
+      .filter(entry => !alreadyAnswered(options?.messages, entry.id, context.index))
     if (pending.length === 0) {
       const tail = options?.messages?.at(-1)
       this.hooks.onLog?.(`[t1] 本次投递的动作都已执行 → 收束 (尾部: ${preview(tail)})`)

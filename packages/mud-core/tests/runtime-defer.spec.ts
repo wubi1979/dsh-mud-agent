@@ -181,4 +181,54 @@ describe('收束判据 (判据 B: 最后一条动作 + 流程空闲)', () => {
     expect(h.runtime.shouldConcludeTurn('mud-d1-0')).toBe(false)
     h.runtime.dispose()
   })
+
+  it('慢结果: 5 条在途投递各 1 动作、结果未回 → 最旧的在途投递不被提前驱逐', () => {
+    const h = harness('session-retain')
+    h.runtime.connect()
+    h.sink().onConnect()
+
+    for (let round = 0; round < 5; round += 1) {
+      h.sink().onLines([ml('需要动作的行', round)])
+      h.sink().onBoundary('ga')
+    }
+    expect(h.delivered).toHaveLength(5)
+
+    // 旧实现"只留最近 4 条"：d1 会被驱逐 → shouldConcludeTurn('mud-d1-0') 永远 false（收不了束）。
+    // 现在按完成驱逐：d1..d5 全部仍在途, 账目全部保留。
+    expect(h.runtime.shouldConcludeTurn('mud-d1-0')).toBe(true)
+    expect(h.runtime.shouldConcludeTurn('mud-d5-0')).toBe(true)
+    h.runtime.dispose()
+  })
+
+  it('结果收齐 → 下一次新投递把它逐出账目 (按完成驱逐)', () => {
+    const h = harness('session-prune')
+    h.runtime.connect()
+    h.sink().onConnect()
+
+    h.sink().onLines([ml('需要动作的行', 0)])
+    h.sink().onBoundary('ga')                  // d1（1 动作）
+    h.runtime.noteToolResult('mud-d1-0', true) // d1 结果已回 → 完成
+    h.sink().onLines([ml('需要动作的行', 1)])
+    h.sink().onBoundary('ga')                  // d2 进入 → 逐出已完成的 d1
+    expect(h.runtime.shouldConcludeTurn('mud-d1-0')).toBe(false) // 已逐出
+    expect(h.runtime.shouldConcludeTurn('mud-d2-0')).toBe(true)
+    h.runtime.dispose()
+  })
+
+  it('安全上限: 在途投递超 32 条时仍从最旧开始丢, 最新的保留', () => {
+    const h = harness('session-cap')
+    h.runtime.connect()
+    h.sink().onConnect()
+
+    for (let round = 0; round < 40; round += 1) {
+      h.sink().onLines([ml('需要动作的行', round)])
+      h.sink().onBoundary('ga')
+    }
+    expect(h.delivered).toHaveLength(40)
+    // 0..40 → d1..d40；安全上限 32 ⇒ 仅保留 d9..d40。
+    expect(h.runtime.shouldConcludeTurn('mud-d8-0')).toBe(false)
+    expect(h.runtime.shouldConcludeTurn('mud-d9-0')).toBe(true)
+    expect(h.runtime.shouldConcludeTurn('mud-d40-0')).toBe(true)
+    h.runtime.dispose()
+  })
 })

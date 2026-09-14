@@ -137,6 +137,30 @@ describe('TriggerLlmAdapter — T1 动作渲染器', () => {
     expect(calls[0]!.type === 'tool-call-delta' ? calls[0]!.argumentsDelta : '').toBe('{"cmd":"b"}')
   })
 
+  it('长历史: 投递埋在大量旧消息之后、结果隔着多条消息才到 → 仍判定已执行 (扫描下界=投递下标)', async () => {
+    const noise: Message[] = Array.from({ length: 60 }, (_, k) =>
+      createUserMessage({ content: [{ type: 'text', text: `旧文本 ${k}` }], source: { kind: 'user' } }))
+    expect(await collect(new TriggerLlmAdapter(), [
+      ...noise,
+      delivered(SEND_NAME, 't99'),
+      createUserMessage({ content: [{ type: 'text', text: '跟进输入' }], source: { kind: 'user' } }),
+      result('mud-t99-0'),
+    ])).toEqual([{ type: 'finish', reason: { kind: 'stop' } }])
+  })
+
+  it('长历史: 结果未回 → 不误判已执行, 照常渲染动作 (不越过投递下标往前扫)', async () => {
+    const noise: Message[] = Array.from({ length: 60 }, (_, k) =>
+      createUserMessage({ content: [{ type: 'text', text: `旧文本 ${k}` }], source: { kind: 'user' } }))
+    const chunks = await collect(new TriggerLlmAdapter(), [
+      ...noise,
+      delivered(SEND_NAME, 't100'),
+      createUserMessage({ content: [{ type: 'text', text: '跟进输入' }], source: { kind: 'user' } }),
+    ])
+    const calls = chunks.filter(c => c.type === 'tool-call-delta')
+    expect(calls.map(c => c.id)).toEqual(['mud-t100-0'])
+    expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'tool-calls' } })
+  })
+
   it('中止信号已 abort → 不产出任何 chunk', async () => {
     const controller = new AbortController()
     controller.abort()

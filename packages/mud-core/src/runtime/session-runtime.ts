@@ -306,6 +306,14 @@ export class MudSessionRuntime {
    * `tool` 判据）。
    */
   private readonly deliveryRules = new Map<string, readonly string[]>()
+  /**
+   * 每条投递的**未完成动作数**：工具结果每回一条（`noteToolResult`）减一，归零 = 该投递
+   * 已收齐全部结果。新投递进来时把这些"已完成"的投递从账目里剔除 —— 旧版"只留最近
+   * 4 条"会在动作结果迟迟不回（T2 限速 / defer 连串 / 人工等值）时把**仍在途**的投递
+   * 提前清掉：`shouldConcludeTurn` 永远收不了束，`noteToolResult` 找不到 `ruleId` 而让
+   * 流程的 `tool` 判据挂到超时才失败。保留窗口现在是"按完成驱逐 + 安全上限"。
+   */
+  private readonly deliveryPending = new Map<string, number>()
   private worldTimer: ReturnType<typeof setTimeout> | null = null
   /**
    * 唤醒类看门狗 (断流) —— 起停条件声明在构造器里, 运行时只在固定的状态变化点调用
@@ -694,6 +702,7 @@ export class MudSessionRuntime {
     this.deferSlot.length = 0
     this.inFlightTools = 0
     this.deliverySizes.clear()
+    this.deliveryPending.clear()
     this.flow.dispose()
   }
 
@@ -873,6 +882,7 @@ export class MudSessionRuntime {
     this.deferSlot.length = 0
     this.inFlightTools = 0
     this.deliverySizes.clear()
+    this.deliveryPending.clear()
     this.clearHoldTimer()
   }
 
@@ -1362,12 +1372,26 @@ export class MudSessionRuntime {
   private rememberDelivery(delivery: string, actions: readonly ActionRequest[]): void {
     this.deliverySizes.set(delivery, actions.length)
     this.deliveryRules.set(delivery, actions.map(action => action.ruleId))
-    // 只留最近几条（在途工具调用的 call-id 只可能来自最近的投递）。
-    while (this.deliverySizes.size > 4) {
+    this.deliveryPending.set(delivery, actions.length)
+    // **按完成驱逐**：只清"结果已收齐"的投递（`noteToolResult` 把 pending 减到 0 的），
+    // 在途的（T2 限速 / defer 连串 / 人工等值，结果可能很晚才回）必须保留 —— 收束判据
+    // 与流程 tool 判据都靠账目里的 size/rule 解析。
+    for (const key of this.deliveryPending.keys()) {
+      if (key === delivery) continue
+      if ((this.deliveryPending.get(key) ?? 0) > 0) continue
+      this.deliveryPending.delete(key)
+      this.deliverySizes.delete(key)
+      this.deliveryRules.delete(key)
+    }
+    // **安全上限**：极端场景（结果长期不回 / 投递爆发）也不让账目无界增长；超限从最旧的
+    // 开始丢（在途投递被丢后只是"少一次收束/少一条 tool 判据"，不会造成结构性错误）。
+    const safetyCap = 32
+    while (this.deliverySizes.size > safetyCap) {
       const oldest = this.deliverySizes.keys().next().value
       if (oldest === undefined) break
       this.deliverySizes.delete(oldest)
       this.deliveryRules.delete(oldest)
+      this.deliveryPending.delete(oldest)
     }
   }
 
@@ -1442,6 +1466,11 @@ export class MudSessionRuntime {
   noteToolResult(callId: string, ok: boolean): void {
     const parsed = parseDeliveryCallId(callId)
     if (parsed === null) return
+    // 记账：该投递的一条动作已收到结果（无论成败）。减到 0 = 收齐，交给下一次
+    // `rememberDelivery` 按完成驱逐；这里**先不删**——同一次工具调用里 `shouldConcludeTurn`
+    // 还要读 `deliverySizes` 判"最后一条动作"。
+    const pending = this.deliveryPending.get(parsed.delivery)
+    if (pending !== undefined) this.deliveryPending.set(parsed.delivery, pending - 1)
     const ruleId = this.deliveryRules.get(parsed.delivery)?.[parsed.index]
     if (ruleId === undefined || !ruleId.startsWith('flow:')) return
     const stepId = ruleId.slice('flow:'.length).split('/')[1]
