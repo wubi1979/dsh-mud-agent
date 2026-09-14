@@ -44,7 +44,7 @@ export interface TriggerLlmAdapterHooks {
   onLog?: (text: string) => void
 }
 
-/** 本插件投递消息的来源标记 (与 agent/agent-bridge 的 MessageSourceMap 同字面量)。 */
+/** 本插件投递消息的来源标记 (与 agents/lane 的 MessageSourceMap 同字面量)。 */
 const MUD_OWNED_KIND = 'mud-owned'
 
 /** 一个请求所归属的投递。 */

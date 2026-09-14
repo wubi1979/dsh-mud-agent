@@ -40,9 +40,11 @@ import { commandsIndexForAgent } from './shared/commands.ts'
 import defaultPerceptionRules from './perceive/rules.ts'
 import { flowCommands, defaultFlows } from './runtime/flow/flows.ts'
 import {
-  attachMudPersona, attachMudPrompt, attachMudTools, installOwnedLaneRouting,
-  registerTriggerProvider, type TriggerProvider,
-} from './agent/agent-bridge.ts'
+  attachMudPersona, attachMudPrompt, attachMudTools,
+} from './agents/mount.ts'
+import {
+  installOwnedLaneRouting, registerTriggerProvider, type TriggerProvider,
+} from './agents/lane.ts'
 import { installMudToolGate } from './services/gate/tool-gate.ts'
 import type { ActivityEntry } from './agents/tools.ts'
 import { DEFAULT_DANGEROUS_COMMANDS, type DangerousRule } from './shared/commands.ts'

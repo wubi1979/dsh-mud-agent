@@ -25,7 +25,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { runWithDeliveryChannel } from '../agent/agent-bridge.ts'
+import { runWithDeliveryChannel } from './mount.ts'
 import { mudToolSchemaTable, type MudToolResult } from './tools.ts'
 import type { MudAgentKit } from '../service.ts'
 

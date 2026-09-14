@@ -9,7 +9,7 @@
  * @module @deepseek-ai/dsh-mud-core/service
  */
 
-import type { MudDeliveryChannel } from './agent/agent-bridge.ts'
+import type { MudDeliveryChannel } from './agents/mount.ts'
 import type { MudGameItem, MudWorldSnapshot } from './shell/wire.ts'
 import type { SkillService } from './agents/skills.ts'
 import type { MudTools } from './agents/tools.ts'

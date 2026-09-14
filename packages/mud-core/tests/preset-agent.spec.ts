@@ -15,7 +15,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
-import type { MudDeliveryChannel } from '../src/agent/agent-bridge.ts'
+import type { MudDeliveryChannel } from '../src/agents/mount.ts'
 import { mudToolSchemaTable, type MudTools } from '../src/agents/tools.ts'
 import type { MudAgentKit } from '../src/service.ts'
 

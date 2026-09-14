@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
-import { resolveLaneConfig, toT1Config, T1_MODEL, T1_PROVIDER } from '../src/agent/agent-bridge.ts'
+import { resolveLaneConfig, toT1Config, T1_MODEL, T1_PROVIDER } from '../src/agents/lane.ts'
 
 /** 会话真实模型 (官方 per-session 选择给出的配置)。 */
 const REAL = {

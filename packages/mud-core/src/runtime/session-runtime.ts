@@ -24,7 +24,7 @@ import { buildMudTools, type ActivityEntry, type MudTools, type SessionCredentia
 import type { DangerousRule } from '../shared/commands.ts'
 import { DEFAULT_DANGEROUS_COMMANDS } from '../shared/commands.ts'
 import { evaluateToolCall } from '../services/gate/policy.ts'
-import { ownedGameMessage, type OwnedAction } from '../agent/agent-bridge.ts'
+import { ownedGameMessage, type OwnedAction } from '../agents/lane.ts'
 import { CommandResponseController, type BoundaryKind } from '../network/response.ts'
 import type { MudLine } from '../services/network/ansi.ts'
 import { textOfLines } from '../preprocess/index.ts'
