@@ -101,7 +101,7 @@ export interface WindowSpec {
  *  单行命中 rows=[锚点行]; multiline 命中 rows=条件命中行序列;
  *  声明 window 的单行规则额外装配 before/after (批内切片, 升序, 不含锚点行;
  *  未声明或切片为空时为空数组)。 */
-export interface PerceptRecord {
+export interface MatchRecord {
   rows: MudLine[]
   before: MudLine[]
   after: MudLine[]
@@ -142,11 +142,11 @@ export interface MatcherRule<TAction = unknown> {
   bg?: number | null
   fgTrue?: [number, number, number] | null
   bgTrue?: [number, number, number] | null
-  guard?: (record: PerceptRecord) => boolean
+  guard?: (record: MatchRecord) => boolean
   /** 准入后的程序化提取 (v6.5 逃生舱; 不参与准入): 复合/跨行提取 (房间抓取等
    *  必须跑代码的提取) 使用; 命中后调用, 返回非 null 时覆盖捕获组组装结果。
    *  常规规则禁用。 */
-  extract?: (record: PerceptRecord) => Record<string, unknown> | null
+  extract?: (record: MatchRecord) => Record<string, unknown> | null
   /** 命中窗口声明 (仅单行规则; multiline 不支持 — 构造时报错)。 */
   window?: WindowSpec
   /** 命中动作 (泛占位; 引擎原样透传给命中, 语义由策略层定义)。 */

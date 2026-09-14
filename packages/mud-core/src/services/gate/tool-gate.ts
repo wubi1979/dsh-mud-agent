@@ -12,7 +12,8 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { PreToolDecision, ToolExecution } from '@deepseek-ai/dsh-tools'
-import { commandsOfToolCall, evaluateToolCall, type DangerousRule } from './policy.ts'
+import { evaluateToolCall } from './policy.ts'
+import type { GateRules } from './rules.ts'
 import type { MudTier } from './tiers.ts'
 
 /** 闸门装配参数。 */
@@ -29,8 +30,8 @@ export interface MudToolGateOptions {
   mudTools: ReadonlySet<string>
   /** 读当前档位。 */
   tier: () => MudTier
-  /** 读当前危险命令策略表。 */
-  dangerous: () => readonly DangerousRule[]
+  /** 组装注入的门禁规则 (危险表 + 工具命令派生器; 见 rules.ts)。 */
+  rules: GateRules
   /** 本会话是否仍在登录流程 (未登录 = true)。 */
   loginFlow: () => boolean
   /** 登录流程命令集 (该集合内的命令按 `system` 处理, 不受档位限制)。 */
@@ -88,14 +89,15 @@ export function installMudToolGate(agentCtx: Context, options: MudToolGateOption
     if (!options.mudTools.has(exec.name)) return next()
     const tier = options.tier()
     const systemCall = options.loginFlow()
-      && commandsOfToolCall(exec.name, exec.arguments).every(cmd => options.loginCommands.has(cmd.trim()))
+      && (options.rules.commands[exec.name]?.(exec.arguments) ?? [])
+        .every(cmd => options.loginCommands.has(cmd.trim()))
     /** T1 通道 (规则动作 / 流程步动作): 系统流程, 免限速 (§10 限速口径)。 */
     const t1Call = options.currentLane?.() === 't1'
     const verdict = evaluateToolCall({
       name: exec.name,
       args: exec.arguments,
       tier,
-      dangerous: options.dangerous(),
+      rules: options.rules,
       loginFlow: options.loginFlow(),
       loginCommands: options.loginCommands,
       mudTools: options.mudTools,

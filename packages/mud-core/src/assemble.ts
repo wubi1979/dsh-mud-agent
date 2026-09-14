@@ -51,7 +51,8 @@ import {
   installOwnedLaneRouting, registerTriggerProvider, type TriggerProvider,
 } from './agents/lane.ts'
 import { installMudToolGate } from './services/gate/tool-gate.ts'
-import { DEFAULT_DANGEROUS_COMMANDS, type DangerousRule } from './shared/commands.ts'
+import { buildGateRules } from './services/gate/rules.ts'
+import type { DangerousRule } from './shared/commands.ts'
 import { registerMudCapability, resolveMudTier, type MudCapabilityApi } from './services/gate/capability.ts'
 import { visibleTools, mudTierNote } from './services/gate/tiers.ts'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -319,7 +320,14 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
   }
 
   // ── 权限档位 (每会话持久事实; §10) ───────────────────────
-  const dangerousCommands: readonly DangerousRule[] = config.dangerousCommands ?? DEFAULT_DANGEROUS_COMMANDS
+  /**
+   * 门禁注入规则 (机制与知识分离, 见 services/gate/rules.ts): 从 `shared/commands`
+   * 的危险表 (部署可整体替换 `config.dangerousCommands`) 与 `shared/game` 的命令
+   * 派生器组装, 注入 policy/tool-gate —— 判定层不直接持有游戏知识。
+   */
+  const gateRules = buildGateRules(
+    config.dangerousCommands !== undefined ? { dangerous: config.dangerousCommands } : undefined,
+  )
   /**
    * 系统流程命令集 (权限判据; §10/§19): **流程表声明的命令**（登录 + fullme 的
    * `fullme`/`halt`/`fullme {captcha}`/`fullme 1`/`hpbrief`…）。
@@ -440,7 +448,7 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
       agent,
       mudTools: new Set(Object.keys(runtime.tools())),
       tier: () => capability.current(sessionId),
-      dangerous: () => dangerousCommands,
+      rules: gateRules,
       loginFlow: () => runtime.isSystemFlow(),
       loginCommands,
       toolCallIntervalMs: runtimeConfig.toolCallIntervalMs,

@@ -20,8 +20,8 @@
 
 import { CommandQueue } from './queue.ts'
 import { buildMudTools, type MudTools, type SessionCredentials } from '../../agents/tools.ts'
-import { DEFAULT_DANGEROUS_COMMANDS } from '../../shared/commands.ts'
 import { evaluateToolCall } from '../../services/gate/policy.ts'
+import { buildGateRules, type GateRules } from '../../services/gate/rules.ts'
 import { ownedGameMessage } from '../../agents/lane.ts'
 import { CommandResponseController, type BoundaryKind } from './bridge.ts'
 import { textOfLines, type MudLine } from '../../services/network/ansi.ts'
@@ -139,6 +139,8 @@ export class MudSessionRuntime {
   private latestWorld: MudWorldSnapshot | null = null
   private toolCache: MudTools | null = null
   private disposed = false
+  /** 门禁注入规则 (direct-exec 判定用; 见 services/gate/rules.ts)。 */
+  private readonly gateRules: GateRules
   /** 最近一次 connect/agent/连接失败 (diag)。 */
   lastError: string | null = null
   /** 缺陷计数 (不变量 I9): 命中未渲染 / 遗留段丢弃 / hold 超时释放。 */
@@ -158,6 +160,7 @@ export class MudSessionRuntime {
   ) {
     this.sessionId = sessionId
     this.config = config
+    this.gateRules = buildGateRules(config.dangerous !== undefined ? { dangerous: config.dangerous } : undefined)
     this.sink = sink
     this.connections = connections
     this.engine = new PerceptionEngine({
@@ -740,7 +743,7 @@ export class MudSessionRuntime {
         args: call.args,
         // `full` = 只看危险命令硬边界: 直接执行动作不经过模型档位 (actor system)。
         tier: 'full',
-        dangerous: this.config.dangerous ?? DEFAULT_DANGEROUS_COMMANDS,
+        rules: this.gateRules,
         loginFlow: false,
         loginCommands: EMPTY_COMMANDS,
         mudTools,

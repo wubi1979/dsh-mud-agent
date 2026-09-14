@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest'
 import { TriggerMatchService } from '../src/services/matcher/matcher.ts'
 import defaultPerceptionRules from '../src/perceive/rules.ts'
 import type { MudLine } from '../src/services/network/ansi.ts'
-import type { PerceptRecord } from '../src/services/matcher/types.ts'
+import type { MatchRecord } from '../src/services/matcher/types.ts'
 
 function toLines(rows: string[]): MudLine[] {
   return rows.map((t, i) => ({
@@ -223,7 +223,7 @@ describe('v6.6 匹配类型分派 (regex / text / func)', () => {
   })
 
   it('未声明 window 的单行命中: record.before/after 为空数组', () => {
-    let seen: PerceptRecord | null = null
+    let seen: MatchRecord | null = null
     const s = new TriggerMatchService([{
       id: 'w0', eventType: 'p:w0', match: { kind: 'regex', patterns: [/^锚点/] },
       extract: (r) => { seen = r; return null },
@@ -238,7 +238,7 @@ describe('v6.6 匹配类型分派 (regex / text / func)', () => {
 
 describe('命中窗口 (window): before/after 批内装配', () => {
   it('声明 window: 锚点行前后按上限切片 (升序, 不含锚点行, 批尾即止)', () => {
-    let seen: PerceptRecord | null = null
+    let seen: MatchRecord | null = null
     const s = new TriggerMatchService([{
       id: 'w', eventType: 'p:w', match: { kind: 'regex', patterns: [/^锚点$/] },
       window: { before: 2, after: 3 },
@@ -252,7 +252,7 @@ describe('命中窗口 (window): before/after 批内装配', () => {
   })
 
   it('批首截断: before 不足上限时从批首起 (跨批不追)', () => {
-    let seen: PerceptRecord | null = null
+    let seen: MatchRecord | null = null
     const s = new TriggerMatchService([{
       id: 'w', eventType: 'p:w', match: { kind: 'regex', patterns: [/^锚点$/] },
       window: { before: 5, after: 0 },
@@ -305,7 +305,7 @@ describe('state:look extract (窗口提取: 地图/房间名/描述/出口/NPC)'
       rows: toLines([anchor]),
       before: toLines(before),
       after: toLines(after),
-    } as unknown as PerceptRecord)
+    } as unknown as MatchRecord)
 
   it('出口行解析为数组 (是/有 + 和/、/逗号分隔)', () => {
     expect(run([], '这里明显的出口是 north 和 south。', []))

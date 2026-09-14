@@ -3,7 +3,8 @@
  *
  * 这里是**纯判定**: 输入一次工具调用的名字与参数, 输出 `allow / deny / ask`。
  * 执行点在 `services/gate/tool-gate.ts` (官方 `tools/pre-execute` waterfall); 危险命令
- * 策略表在 `shared/commands.ts` (`DEFAULT_DANGEROUS_COMMANDS`)。
+ * 策略表由 `buildGateRules` 从 `shared/commands.ts` 组装注入 (`DEFAULT_DANGEROUS_COMMANDS`,
+ * 见 `rules.ts`) —— 本模块不直接持有游戏知识。
  *
  * **actor 模型** (§10): 只有 agent 受档位约束。页面手打命令走 `/mud/command`
  * (actor `user`) 不进工具管道; 连接/断开由页面入口驱动 (actor `system`) 同样不
@@ -13,9 +14,9 @@
  * @module @deepseek-ai/dsh-mud-core/services/gate/policy
  */
 
-import { STATUS_CMDS, MOVE_ALIASES } from '../../shared/game.ts'
-import { dangerousRuleFor, type DangerousRule } from '../../shared/commands.ts'
+import { dangerousRuleFor } from '../../shared/commands.ts'
 import { tierSpec, type MudTier } from './tiers.ts'
+import type { GateRules } from './rules.ts'
 
 export type { DangerousAction, DangerousRule } from '../../shared/commands.ts'
 export { DEFAULT_DANGEROUS_COMMANDS, deniedCommands, dangerousRuleFor } from '../../shared/commands.ts'
@@ -23,38 +24,20 @@ export { DEFAULT_DANGEROUS_COMMANDS, deniedCommands, dangerousRuleFor } from '..
 /**
  * 一个工具调用会发出的游戏命令 (无发送 = 空数组)。
  *
- * 语义工具的命令由工具自己拼 (与 `tools.ts` 的模板一致): `mud_move` → 方向全名、
- * `mud_look` → `look [target]`、`mud_status` → `STATUS_CMDS[what]`; `mud_send` 直接
- * 取 `cmd`/`cmds`。参数非法时返回由参数派生的原样文本 —— 判定层不做校验 (校验与
- * 拒绝由工具自己负责), 这里只回答"它会发什么"。
+ * 派生规则由 `buildGateRules` (services/gate/rules.ts) 从 `shared/game.ts`
+ * (MOVE_ALIASES/STATUS_CMDS) 组装 —— 与 `tools.ts` 的命令模板口径一致, 这里
+ * 只按注入的派生器回答"它会发什么", 不做参数校验 (校验与拒绝由工具自己负责)。
  * @param name 工具名。
  * @param args 工具参数 (模型给的 JSON)。
+ * @param commands 注入的命令派生表 (GateRules.commands)。
  * @returns 将发出的命令序列 (可能为空)。
  */
-export function commandsOfToolCall(name: string, args: unknown): readonly string[] {
-  const record = (typeof args === 'object' && args !== null ? args : {}) as Record<string, unknown>
-  if (name === 'mud_send') {
-    if (Array.isArray(record.cmds)) {
-      return record.cmds.filter((c): c is string => typeof c === 'string')
-    }
-    return typeof record.cmd === 'string' ? [record.cmd] : []
-  }
-  if (name === 'mud_move') {
-    if (typeof record.direction !== 'string') return []
-    const raw = record.direction.trim().toLowerCase()
-    return [MOVE_ALIASES[raw] ?? raw]
-  }
-  if (name === 'mud_look') {
-    return typeof record.target === 'string' && record.target.trim() !== ''
-      ? [`look ${record.target.trim()}`]
-      : ['look']
-  }
-  if (name === 'mud_status') {
-    if (typeof record.what !== 'string') return []
-    const key = record.what.trim().toLowerCase()
-    return [STATUS_CMDS[key] ?? key]
-  }
-  return []
+export function commandsOfToolCall(
+  name: string,
+  args: unknown,
+  commands: GateRules['commands'],
+): readonly string[] {
+  return commands[name]?.(args) ?? []
 }
 
 /** `tools/pre-execute` 判定的输入 (纯数据; 无 ctx 依赖 → 可直接单测)。 */
@@ -65,8 +48,8 @@ export interface ToolCallVerdictInput {
   args: unknown
   /** 当前档位。 */
   tier: MudTier
-  /** 危险命令策略表。 */
-  dangerous: readonly DangerousRule[]
+  /** 组装注入的门禁规则 (危险表 + 工具命令派生器)。 */
+  rules: GateRules
   /** 本会话尚未登录 (登录流程中) → 登录命令按 `system` 处理。 */
   loginFlow: boolean
   /** 登录流程命令集 (由登录规则派生)。 */
@@ -97,12 +80,12 @@ export function evaluateToolCall(input: ToolCallVerdictInput): ToolVerdict {
   if (!spec.tools.includes(input.name)) {
     return { kind: 'deny', reason: `权限档位「${spec.name}」不提供工具 ${input.name}` }
   }
-  const commands = commandsOfToolCall(input.name, input.args)
+  const commands = commandsOfToolCall(input.name, input.args, input.rules.commands)
   for (const cmd of commands) {
     const text = cmd.trim()
     if (text === '') continue
     if (input.loginFlow && input.loginCommands.has(text)) continue
-    const dangerous = dangerousRuleFor(text, input.tier, input.dangerous)
+    const dangerous = dangerousRuleFor(text, input.tier, input.rules.dangerous)
     if (dangerous?.action === 'deny') return { kind: 'deny', reason: dangerous.reason }
     if (dangerous?.action === 'ask') return { kind: 'ask', reason: dangerous.reason }
     if (input.tier === 'observe') {

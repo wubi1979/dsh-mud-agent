@@ -14,9 +14,8 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { PreToolDecision } from '@deepseek-ai/dsh-tools'
 import { installMudToolGate } from '../src/services/gate/tool-gate.ts'
-import {
-  DEFAULT_DANGEROUS_COMMANDS, commandsOfToolCall, evaluateToolCall, type ToolCallVerdictInput,
-} from '../src/services/gate/policy.ts'
+import { commandsOfToolCall, evaluateToolCall, type ToolCallVerdictInput } from '../src/services/gate/policy.ts'
+import { buildGateRules } from '../src/services/gate/rules.ts'
 import {
   MUD_TIER_NAMES, MUD_TIER_SPECS, isMudTier, mudTierNote, mudTierOption, resolveMudTier, visibleTools,
 } from '../src/services/gate/tiers.ts'
@@ -35,7 +34,7 @@ function verdict(input: Partial<ToolCallVerdictInput> & { name: string }): strin
   const decision = evaluateToolCall({
     args: {},
     tier: 'operate',
-    dangerous: DEFAULT_DANGEROUS_COMMANDS,
+    rules: buildGateRules(),
     loginFlow: false,
     loginCommands: LOGIN_COMMANDS,
     mudTools: MUD_TOOLS,
@@ -144,33 +143,40 @@ describe('强制判定矩阵 (evaluateToolCall)', () => {
   it('自定义策略表可整体替换 (部署配置路径)', () => {
     expect(verdict({
       name: 'mud_send', args: { cmd: 'pray' }, tier: 'operate',
-      dangerous: [{ id: 'pray', commands: ['pray'], action: 'ask', reason: '自定义' }],
+      rules: buildGateRules({ dangerous: [{ id: 'pray', commands: ['pray'], action: 'ask', reason: '自定义' }] }),
     })).toBe('ask')
     // 替换后原表的 suicide 不再拦 (配置即事实)。
     expect(verdict({
       name: 'mud_send', args: { cmd: 'suicide' }, tier: 'operate',
-      dangerous: [{ id: 'pray', commands: ['pray'], action: 'ask', reason: '自定义' }],
+      rules: buildGateRules({ dangerous: [{ id: 'pray', commands: ['pray'], action: 'ask', reason: '自定义' }] }),
     })).toBe('allow')
   })
 })
 
 describe('命令提取 (commandsOfToolCall)', () => {
+  /** 注入缺省命令派生器 (buildGateRules 从 shared/game 组装)。 */
+  const commands = buildGateRules().commands
+
   it('mud_send / 序列', () => {
-    expect(commandsOfToolCall('mud_send', { cmd: ' look ' })).toEqual([' look '])
-    expect(commandsOfToolCall('mud_send', { cmds: ['a', 1, 'b'] })).toEqual(['a', 'b'])
-    expect(commandsOfToolCall('mud_send', {})).toEqual([])
+    expect(commandsOfToolCall('mud_send', { cmd: ' look ' }, commands)).toEqual([' look '])
+    expect(commandsOfToolCall('mud_send', { cmds: ['a', 1, 'b'] }, commands)).toEqual(['a', 'b'])
+    expect(commandsOfToolCall('mud_send', {}, commands)).toEqual([])
   })
 
   it('语义工具 → 实际会发的命令', () => {
-    expect(commandsOfToolCall('mud_move', { direction: 'n' })).toEqual(['north'])
+    expect(commandsOfToolCall('mud_move', { direction: 'n' }, commands)).toEqual(['north'])
     // 工具自身会把方向归一成小写全名 (见 tools.ts), 判定层保持同一口径。
-    expect(commandsOfToolCall('mud_move', { direction: 'NORTH' })).toEqual(['north'])
-    expect(commandsOfToolCall('mud_move', { direction: 'xyz' })).toEqual(['xyz'])
-    expect(commandsOfToolCall('mud_look', {})).toEqual(['look'])
-    expect(commandsOfToolCall('mud_look', { target: ' paizi ' })).toEqual(['look paizi'])
-    expect(commandsOfToolCall('mud_status', { what: 'inventory' })).toEqual(['i'])
-    expect(commandsOfToolCall('mud_status', { what: 'xyz' })).toEqual(['xyz'])
-    expect(commandsOfToolCall('mud_state', {})).toEqual([])
+    expect(commandsOfToolCall('mud_move', { direction: 'NORTH' }, commands)).toEqual(['north'])
+    expect(commandsOfToolCall('mud_move', { direction: 'xyz' }, commands)).toEqual(['xyz'])
+    expect(commandsOfToolCall('mud_look', {}, commands)).toEqual(['look'])
+    expect(commandsOfToolCall('mud_look', { target: ' paizi ' }, commands)).toEqual(['look paizi'])
+    expect(commandsOfToolCall('mud_status', { what: 'inventory' }, commands)).toEqual(['i'])
+    expect(commandsOfToolCall('mud_status', { what: 'xyz' }, commands)).toEqual(['xyz'])
+    expect(commandsOfToolCall('mud_state', {}, commands)).toEqual([])
+  })
+
+  it('未注册的工具名派生为空 (判定层不发明语义)', () => {
+    expect(commandsOfToolCall('read_file', { path: 'x' }, commands)).toEqual([])
   })
 })
 
@@ -209,7 +215,7 @@ describe('闸门装配 (tools/pre-execute)', () => {
       sessionId: 's1',
       mudTools: MUD_TOOLS,
       tier: () => opts.tier,
-      dangerous: () => DEFAULT_DANGEROUS_COMMANDS,
+      rules: buildGateRules(),
       loginFlow: () => opts.loginFlow ?? false,
       loginCommands: LOGIN_COMMANDS,
       ...(opts.lane === undefined ? {} : { currentLane: () => opts.lane }),
@@ -256,7 +262,7 @@ describe('闸门装配 (tools/pre-execute)', () => {
       sessionId: 's1',
       mudTools: MUD_TOOLS,
       tier: () => tier,
-      dangerous: () => DEFAULT_DANGEROUS_COMMANDS,
+      rules: buildGateRules(),
       loginFlow: () => false,
       loginCommands: LOGIN_COMMANDS,
     })

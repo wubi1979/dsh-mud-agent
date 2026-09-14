@@ -14,7 +14,7 @@
  * v6.6 增补 (匹配类型三分 + 折叠语义):
  *   - MatchSpec: regex (锚定整行, seed 预筛) / text (字面子串, 本身即预筛) /
  *     func (每行谓词, 无预筛全量跑); 构造校验 fail fast。
- *   - window: 单行规则声明命中窗口, 批内切片装配 PerceptRecord.before/after。
+ *   - window: 单行规则声明命中窗口, 批内切片装配 MatchRecord.before/after。
  *   - 折叠 (hit.foldLines): 单行 regex/text = 仅锚点行; 单行 func = 不折叠
  *     (房间抓取类复合提取, 全部行进 agent); multiline = 全部被捕获的条件行。
  * v6.7 (准入语义收紧): ruleHit 改合取式 —— 命中 = 主判据(regex/text/func) ∧
@@ -38,7 +38,7 @@ import type {
   MatchHit,
   MultiCond,
   MultiMatchState,
-  PerceptRecord,
+  MatchRecord,
   WindowSpec,
 } from './types.ts'
 import { createMatchContext, MULTI_LINE_DELTA } from './types.ts'
@@ -179,8 +179,8 @@ interface NormalizedTriggerRule<TAction> {
   /** 多行: 首末条件最大间隔行数。 */
   lineDelta: number
   color: ColorCond | null
-  guard: ((record: PerceptRecord) => boolean) | null
-  extract: ((record: PerceptRecord) => Record<string, unknown> | null) | null
+  guard: ((record: MatchRecord) => boolean) | null
+  extract: ((record: MatchRecord) => Record<string, unknown> | null) | null
   /** 命中窗口声明 (单行规则; null = 不装配 before/after)。 */
   window: WindowSpec | null
   /** 捕获组 → world 点分键 (命中后组装 data)。 */
@@ -358,7 +358,7 @@ export class Perceptor<TAction = unknown> {
    *  - extract: 准入后的程序化提取 (matchLine 内调用), 绝不参与准入。
    *  v6.7 删除旧回退 (regex 全不中时曾以 color/extract 直接准入): 该回退使
    *  func+extract 规则 (state:look) 每行命中, 且 color 规则在文本未命中时误触发。 */
-  private ruleHit(rule: NormalizedTriggerRule<TAction>, record: PerceptRecord): boolean {
+  private ruleHit(rule: NormalizedTriggerRule<TAction>, record: MatchRecord): boolean {
     const text = record.rows.map(r => r.text).join('\n')
     if (rule.kind === 'regex') {
       let matched = false
@@ -379,7 +379,7 @@ export class Perceptor<TAction = unknown> {
   }
 
   /** 命中窗口装配: 锚点行前后批内切片 (声明 window 时; 跨批不追)。 */
-  private buildRecord(rule: NormalizedTriggerRule<TAction>, line: MudLine, batch: MudLine[], index: number): PerceptRecord {
+  private buildRecord(rule: NormalizedTriggerRule<TAction>, line: MudLine, batch: MudLine[], index: number): MatchRecord {
     if (rule.window === null) return { rows: [line], before: [], after: [] }
     return {
       rows: [line],
@@ -501,7 +501,7 @@ export class Perceptor<TAction = unknown> {
     if (st === undefined) return null
     const rows = st.captures.map(c => c.row)
     // multiline 行序列即窗口: before/after 恒空 (构造校验已禁 window)。
-    const record: PerceptRecord = { rows, before: [], after: [] }
+    const record: MatchRecord = { rows, before: [], after: [] }
     if (rule.color !== null && !styleMatchesColor(rows, rule.color)) return null
     if (rule.guard && !rule.guard(record)) return null
     const hit: MatchHit<TAction> = {
