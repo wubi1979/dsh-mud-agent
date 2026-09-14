@@ -34,7 +34,7 @@ import { splitDelivery } from '../../perceive/split.ts'
 import { MudConnectionManager, type MudConnectionSink } from '../../services/network/manager.ts'
 import { WatchdogTable } from '../watchdogs.ts'
 import { FlowRuntime } from '../flow/flow.ts'
-import type { FlowActionHit, FlowState } from '../flow/flow-types.ts'
+import type { FlowActionHit } from '../flow/flow-types.ts'
 import { defaultFlows } from '../flow/flows.ts'
 import type { MudWorldSnapshot } from '../../shell/wire.ts'
 import {
@@ -51,6 +51,7 @@ import {
   type MudDecisionRecord,
   type MudRuntimeConfig,
   type MudRuntimeSink,
+  type MudSessionDiag,
   type MudSessionStatus,
 } from './types.ts'
 
@@ -509,22 +510,7 @@ export class MudSessionRuntime {
   }
 
   /** 诊断: 待决/流程/缺陷计数/人工环节 (不变量 I9 的观测面)。 */
-  diag(): {
-    sessionId: string
-    connectionId: string | null
-    connected: boolean
-    pending: number
-    /** 待投递动作数 (规则命中 / 流程步动作)。 */
-    actionsPending: number
-    /** 活跃流程状态 (null = 空闲; §19: arming/挂起/打断/排队)。 */
-    flow: FlowState | null
-    recall: number
-    agent: boolean
-    /** 是否正在等人工验证码 (fullme): 投递与看门狗都暂停。 */
-    awaitingHuman: boolean
-    lastError: string | null
-    counters: { hitsDropped: number; carryDropped: number; holdReleases: number }
-  } {
+  diag(): MudSessionDiag {
     return {
       sessionId: this.sessionId,
       connectionId: this.connectionId,

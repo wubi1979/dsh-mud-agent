@@ -12,6 +12,7 @@ import type { ActivityEntry } from '../../agents/tools.ts'
 import type { DangerousRule } from '../../shared/commands.ts'
 import type { OwnedAction } from '../../agents/lane.ts'
 import type { MudUiItem, MudWorldSnapshot } from '../../shell/wire.ts'
+import type { FlowState } from '../flow/flow-types.ts'
 import type { FlowSpec } from '../flow/flows.ts'
 
 /** 一条待投递的动作请求 (与投递消息 `source.actions` 同形; §7)。 */
@@ -228,4 +229,26 @@ export interface MudSessionStatus {
   host: string
   port: number
   accountName: string | null
+}
+
+/** 单会话诊断 (`MudSessionRuntime.diag()`; 不变量 I9 的观测面; host face 经 `MudDiag` 转发)。 */
+export interface MudSessionDiag {
+  sessionId: string
+  connectionId: string | null
+  connected: boolean
+  /** 待决行数 (未投递; 正常应在 0 附近)。 */
+  pending: number
+  /** 待投递动作数 (规则命中 / 流程步动作; v0.4.0 取代命中队列)。 */
+  actionsPending: number
+  /** 活跃流程状态 (null = 空闲; §19: arming/挂起/打断/排队)。 */
+  flow: FlowState | null
+  /** 是否正在等**人工**验证码 (fullme): 等待期间投递与看门狗都暂停。 */
+  awaitingHuman: boolean
+  /** recall 缓冲行数。 */
+  recall: number
+  /** 该会话当前是否有官方 live agent (只读观测)。 */
+  agent: boolean
+  lastError: string | null
+  /** 缺陷计数 (不变量 I9; 非零都应在日志里有对应 error 行)。 */
+  counters: { hitsDropped: number; carryDropped: number; holdReleases: number }
 }

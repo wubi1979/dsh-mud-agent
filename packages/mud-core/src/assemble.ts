@@ -123,7 +123,7 @@ export interface MudAgentConfig {
   /**
    * 官方 agent preset id (`doc/ARCHITECTURE.md` §9)。非空 = **preset 装配路径**:
    * MUD 会话在首个回合前由 `ctx.agentPresets.select(agent, '<id>')` 切到该 preset
-   * (能力面由 preset 行提供, 见 `src/preset-agent.ts`), 宿主只保留策略面 (选路/权限
+   * (能力面由 preset 行提供, 见 `src/agents/preset.ts`), 宿主只保留策略面 (选路/权限
    * 闸门)。缺省空串 = **宿主侧装配** (回退门; preset 未就绪或部署未配置时使用)。
    */
   agentPreset?: string

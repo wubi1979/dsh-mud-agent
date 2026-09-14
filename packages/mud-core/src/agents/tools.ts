@@ -226,9 +226,9 @@ export interface MudToolSchema {
 /**
  * 工具声明表 (name/description/parameters/output), **不含执行体**。
  *
- * 用途: 官方 preset 线 (`preset-agent.ts`) 在**组装期**注册工具 —— 那时还没有任何
+ * 用途: 官方 preset 线 (`agents/preset.ts`) 在**组装期**注册工具 —— 那时还没有任何
  * 会话, 拿不到闭包绑定会话队列/桥/world/凭据的执行体; 执行体在执行时按调用方 agent
- * 解析 (见 preset-agent 的 `execute`)。声明表由 `buildMudTools()` 的无依赖默认实例
+ * 解析 (见 preset 插件的 `execute`)。声明表由 `buildMudTools()` 的无依赖默认实例
  * 产出, 保证与真实工具集同名同 schema (单一事实源, 不维护第二份列表)。
  * @returns 全部工具的声明 (与 `buildMudTools()` 的键集一致)。
  */

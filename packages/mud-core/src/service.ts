@@ -13,6 +13,7 @@ import type { MudDeliveryChannel } from './agents/mount.ts'
 import type { MudGameItem, MudWorldSnapshot } from './shell/wire.ts'
 import type { SkillService } from './agents/skills.ts'
 import type { MudTools } from './agents/tools.ts'
+import type { MudSessionDiag } from './runtime/session/types.ts'
 import type { MudCapabilityApi } from './services/gate/capability.ts'
 import type { MudTier } from './services/gate/tiers.ts'
 
@@ -46,36 +47,8 @@ export interface MudConnectionStatus {
   tier: MudTier
 }
 
-/** 游戏输出缓冲条目 (环形缓冲, 外壳按 sinceSeq 续拉; 条目自带 sessionId)。 */
-export type MudGameEntry = MudGameItem
-
-/** 单会话诊断。 */
-export interface MudSessionDiag {
-  sessionId: string
-  connectionId: string | null
-  connected: boolean
-  /** 待决行数 (未投递; 正常应在 0 附近)。 */
-  pending: number
-  /** 待投递动作数 (规则命中 / 流程步动作; v0.4.0 取代命中队列)。 */
-  actionsPending: number
-  /** 活跃流程状态 (null = 空闲; v0.4.0 §19: arming/挂起/打断/排队)。 */
-  flow: {
-    flowId: string
-    stepId: string
-    armed: string[]
-    phase: 'awaiting-result' | 'awaiting-human' | 'awaiting-branch'
-    deadline: number
-    pendingActions: number
-    pendingEntry: number
-  } | null
-  /** 是否正在等**人工**验证码 (fullme): 等待期间投递与看门狗都暂停。 */
-  awaitingHuman: boolean
-  recall: number
-  agent: boolean
-  lastError: string | null
-  /** 缺陷计数 (不变量 I9; 非零都应在日志里有对应 error 行)。 */
-  counters: { hitsDropped: number; carryDropped: number; holdReleases: number }
-}
+/** 单会话诊断 (类型本体在 `runtime/session/types.ts`, 随 `MudSessionRuntime.diag()` 声明)。 */
+export type { MudSessionDiag }
 
 /** 诊断信息 (diag(); 排查连接/agent 装配失败)。 */
 export interface MudDiag {
@@ -145,7 +118,7 @@ export interface MudCoreService {
   /** 技能服务: 预制基线 + agent 动态生成的技能注册。 */
   readonly skill: SkillService
   /**
-   * preset 线 (`preset-agent.ts`) 的装配数据源 (§9)。
+   * preset 线 (`agents/preset.ts`) 的装配数据源 (§9)。
    *
    * 只有官方 agent preset 会调用它: 宿主侧装配路径 (preset 关闭时) 直接用会话运行时,
    * 不经过本接口。返回的 kit 是进程级单例 (每次调用返回同一对象), 其方法按 sessionId
