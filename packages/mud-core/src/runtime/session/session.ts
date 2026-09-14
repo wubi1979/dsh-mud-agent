@@ -24,6 +24,7 @@ import { evaluateToolCall } from '../../services/gate/policy.ts'
 import { buildGateRules, type GateRules } from '../../services/gate/rules.ts'
 import { ownedGameMessage } from '../../agents/lane.ts'
 import { CommandResponseController, type BoundaryKind } from './bridge.ts'
+import { FrameSplitter } from './frame-splitter.ts'
 import { textOfLines, type MudLine } from '../../services/network/ansi.ts'
 import { StateService } from './gmcp.ts'
 import { applyPatch, createWorld, worldSnapshot, type WorldModel } from '../../shared/world.ts'
@@ -68,6 +69,8 @@ export class MudSessionRuntime {
   private readonly world: WorldModel = createWorld()
   private readonly state: StateService
   private readonly controller: CommandResponseController
+  /** v0.6.0 S3: 边界裁决唯一出口。 */
+  private readonly splitter: FrameSplitter
   private readonly queue: CommandQueue
   /** L1 行级感知引擎 (每会话一实例; 多行状态在本实例内持久)。 */
   private readonly engine: PerceptionEngine
@@ -191,7 +194,13 @@ export class MudSessionRuntime {
         this.log(`[缺陷] 流程挂起期间收到第二条应答请求 (${cmd}) → 已拒绝`)
         return false
       },
+      // v0.6.0 S3c: until 武装标记 → 分帧器注册; 分帧器命中后回调 settleUntilFromSplitter。
+      onUntilArm: (markerId, pattern) => { this.splitter.arm({ id: markerId, pattern, once: true }) },
+      onUntilDisarm: (markerId) => { this.splitter.disarm(markerId) },
     })
+    // v0.6.0 S3a: 分帧器 — 边界裁决唯一出口。autoFlushMs=0 用 scheduleSettle 兜底。
+    this.splitter = new FrameSplitter({ autoFlushMs: 0, onLog: (t) => this.debug('perception', t) })
+    this.splitter.onFrame = (frame) => this.onFrameCommitted(frame)
     this.queue = new CommandQueue({
       minInterval: config.commandIntervalMs,
       onSend: (cmd, meta) => { this.onQueueSend(cmd, meta) },
@@ -414,7 +423,7 @@ export class MudSessionRuntime {
     const sink: MudConnectionSink = {
       onText: (text) => { this.feedRaw(text) },
       onLines: (lines) => { this.onTextBlock(lines) },
-      onBoundary: (kind) => { this.onBoundary(kind) },
+      onBoundary: (kind) => { this.splitter.boundary(kind) },
       onGmcp: (pkg, payload) => {
         this.state.onGmcp(pkg, payload)
         // GMCP 是权威登录信号 (置信度 1.0) → 走世界变化统一入口。
@@ -953,6 +962,8 @@ export class MudSessionRuntime {
     // 活动事件: 活跃看门狗重置窗口 (断流窗口从"最后一次游戏输出"重新计时)。
     this.watchdogs.touch()
     const result = this.engine.feed(lines)
+    // v0.6.0 S3a: 分帧器喂行 (累积进开放帧 + 逐行测已有武装标记)。
+    this.splitter.feedLines(lines)
     // 回看缓冲只收**可能投递给模型**的行: 折叠行 (state 入库 / 直接执行的动作) 已经被处理过,
     // 不再算"尚未投递的输出" —— 否则 `mud_recall` 会把模型本该看不到的原文又倒出来
     // (state 折叠行的信息在 world 快照里, 直接执行行的信息在命令执行结果里)。
@@ -1014,9 +1025,18 @@ export class MudSessionRuntime {
     this.scheduleSettle()
   }
 
-  /** 结算点: GA/EOR 边界 (帧切分点即投递点)。 */
-  private onBoundary(kind: BoundaryKind): void {
-    this.controller.boundaryReceived(kind)
+  /**
+   * v0.6.0 S3a: 分帧器帧提交回调 — 边界裁决的唯一出口。
+   *  GA/EOR → bridge.boundaryReceived (桥结算) → 清除 hold → settle (投递)
+   *  armed marker → bridge.settleUntilFromSplitter (until 结算) → 同上
+   *  valve → 仅清 hold + settle (bridge 边界没事件)
+   */
+  private onFrameCommitted(frame: import('./frame-splitter.ts').MudFrame): void {
+    if (frame.marker === 'ga' || frame.marker === 'eor') {
+      this.controller.boundaryReceived(frame.marker)
+    } else if (frame.marker === 'armed' && frame.markerId !== undefined) {
+      this.controller.settleUntilFromSplitter(frame.markerId)
+    }
     this.clearHoldTimer()
     this.settle()
   }
@@ -1025,10 +1045,11 @@ export class MudSessionRuntime {
   private scheduleSettle(delayMs: number = this.config.bridgeSilenceMs): void {
     if (this.settleTimer !== null) clearTimeout(this.settleTimer)
     if (this.pending.length >= MAX_SETTLE_LINES) {
+      this.splitter.flush()
       this.settle()
       return
     }
-    this.settleTimer = setTimeout(() => { this.settleTimer = null; this.settle() }, delayMs)
+    this.settleTimer = setTimeout(() => { this.settleTimer = null; this.splitter.flush(); this.settle() }, delayMs)
   }
 
   /**
@@ -1435,4 +1456,4 @@ export class MudSessionRuntime {
     // 控制消息也算一次 T2 投递：紧随其后的批次要等最小间隔（避免"刚唤醒又喂"）。
     this.lastT2DeliverAt = Date.now()
   }
-}
+}

@@ -226,6 +226,7 @@ export class FlowRuntime {
   noteSettle(kind: FlowSettleKind, text = '', cmds?: readonly string[]): FlowActionHit[] {
     const hits: FlowActionHit[] = []
     if (this.disposed || this.active === null) return hits
+    console.log('[FLOW.noteSettle] kind=', kind, 'step=', this.active.step.id, 'phase=', this.active.phase, 'cmds=', JSON.stringify(cmds), 'ownCommands=', [...this.ownCommands])
     if (this.active.phase !== 'awaiting-result') {
       this.debug(`结算 ${kind}（本步不在等结果, 忽略）`)
       return hits

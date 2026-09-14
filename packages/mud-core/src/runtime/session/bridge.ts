@@ -108,10 +108,19 @@ export interface CommandResponseControllerOptions {
    * 流程挂起期间只放行"该步声明的那条命令"（结算归属判据）。
    */
   canSend?: (cmd: string) => boolean
+  /**
+   * v0.6.0 S3c: until 武装标记 → 分帧器注册。宿主收到后调 splitter.arm({id, pattern, once:true})。
+   * 分帧器逐行测行, 命中即提交 armed 帧 → 宿主 onFrameCommitted 调 settleUntilFromSplitter。
+   */
+  onUntilArm?: (markerId: string, pattern: string | RegExp) => void
+  /** v0.6.0 S3c: 任何结算都注销 until 分帧器标记 (timeout/abort/error 后不能留脏标记)。 */
+  onUntilDisarm?: (markerId: string) => void
 }
 
-/** 超时标记 (追加在 text 末尾; agent 可见, 注册表查找忽略)。 */
+/** 超时标记 (v0.6.0 弃用; 保留常量引用兼容)。 */
 export const TIMEOUT_MARKER = '\n[应答超时，边界未命中，请决策]'
+/** v0.6.0 §8.4: timeout 放弃语义文本 (替代旧 TIMEOUT_MARKER)。 */
+export const ABANDON_TEXT = '[应答超时，边界未命中，请决策]'
 /** 静默结算标记 (追加在 text 末尾; agent 可见, 注册表查找忽略)。 */
 export const SILENT_MARKER = '\n[静默结算（边界未命中）]'
 /** 中止文本。 */
@@ -119,11 +128,8 @@ export const ABORT_TEXT = '（已中止）'
 /** 流程打断的缺省原因 (工具结果文本; `interruptInFlight` 用)。 */
 export const INTERRUPT_TEXT = '（流程被打断：本步已作废，请按新情况决策）'
 
-/** 帧行数上限 (P3-5: 抓包 dz 56 批/57 行; 声明 until 帧同量级累积,
- *  无上限会导致文本无限膨胀)。超限强制 timeout 结算。 */
-const MAX_FRAME_LINES = 256
-
-/** R2-11: 孤儿 GA 计数过期窗口 — 非 GA 结算 (silent/timeout/abort/until) 后
+/**
+ * v0.6.0: 孤儿 GA 计数过期窗口 — 非 GA 结算 (silent/timeout/abort/until) 后
  *  遗留 GA 只应吞"紧随其后"的一帧边界; 超过该窗 (GA 实测延迟 1–602ms,
  *  静默窗 2s) 仍累积的孤儿视为已无后续, 强制过期, 防止吞掉未来真实 GA。 */
 const ORPHAN_EXPIRE_MS = 3_000
@@ -146,6 +152,8 @@ interface PendingReply {
   timeoutTimer: ReturnType<typeof setTimeout> | null
   silenceTimer: ReturnType<typeof setTimeout> | null
   abortListener: (() => void) | null
+  /** v0.6.0 S3c: until 武装标记 id (分帧器对账用)。仅声明 until 时有值。 */
+  markerId?: string
 }
 
 /**
@@ -163,6 +171,8 @@ export class CommandResponseController {
     onLog?: (text: string) => void
     onSettle?: (kind: ReplySettle, text: string, cmds: readonly string[]) => void
     canSend?: (cmd: string) => boolean
+    onUntilArm?: (markerId: string, pattern: string | RegExp) => void
+    onUntilDisarm?: (markerId: string) => void
   }
 
   /** 已注册但未发送的请求 (FIFO)。 */
@@ -190,6 +200,8 @@ export class CommandResponseController {
       ...(options.onLog !== undefined ? { onLog: options.onLog } : {}),
       ...(options.onSettle !== undefined ? { onSettle: options.onSettle } : {}),
       ...(options.canSend !== undefined ? { canSend: options.canSend } : {}),
+      ...(options.onUntilArm !== undefined ? { onUntilArm: options.onUntilArm } : {}),
+      ...(options.onUntilDisarm !== undefined ? { onUntilDisarm: options.onUntilDisarm } : {}),
     }
   }
 
@@ -240,6 +252,8 @@ export class CommandResponseController {
       silenceTimer: null,
       abortListener: null,
     }
+    // v0.6.0 S3c: until 声明 → 分配 markerId (分帧器对账用)。
+    if (opts.until) reply.markerId = `tx-${reply.id}`
     const promise = new Promise<MudReply>((resolve, reject) => {
       reply.resolve = resolve
       reply.reject = reject
@@ -265,6 +279,10 @@ export class CommandResponseController {
     if (!reply || reply.state !== 'sending' || reply.id !== replyId) return
     reply.state = 'armed'
     this.armTimers(reply)
+    // v0.6.0 S3c: 声明 until → 武装分帧器标记 (宿主 splitter.arm)。
+    if (reply.markerId !== undefined && reply.opts.until) {
+      this.opts.onUntilArm?.(reply.markerId, reply.opts.until.regex)
+    }
   }
 
   /**
@@ -298,35 +316,17 @@ export class CommandResponseController {
     reply.text = textOfLines(reply.lines)
     if (reply.state !== 'armed') return
     this.resetSilence(reply)
-    // 声明边界: 任一既有行命中即结算 (跨帧累积; 逐行语义, 锚定整行正则)。
-    // R2-5: until 判定必须先于行数上限 — 长列表命令完成句排在 256 行之后时,
-    // 若先判上限会把"完成句即将到达"误判为边界未命中 (强制 timeout)。
-    if (reply.opts.until && this.testUntil(reply.opts.until.regex, reply.lines)) {
-      this.settle(reply, 'until')
-      return
-    }
-    // P3-5: 帧行数超限强制 timeout 结算 (防 dz 渐进推送等无 GA/prompt 场景无限累积)。
-    if (reply.lines.length >= MAX_FRAME_LINES) {
-      this.opts.onLog?.(`[应答] 帧行数超限 (${reply.lines.length} >= ${MAX_FRAME_LINES}), 强制 timeout 结算`)
-      this.settle(reply, 'timeout')
-    }
+    // v0.6.0 S3c: until 判定移到分帧器 armed marker — bridge 不再自己判边界。
   }
 
   /**
-   * 帧边界 (telnet 'boundary' {kind}): 未声明 until 的 armed 请求即刻结算;
-   * 声明 until 仅作帧切分继续累积; 无主边界丢弃 (转发 onBoundary)。
+   * 帧边界 (telnet 'boundary' {kind}): v0.6.0 S3c — GA/EOR 对任何 armed 请求 (含 until)
+   *  都正常 settle。until 命中由分帧器 armed marker 在 GA 之前触发 settleUntilFromSplitter。
+   *  无主边界丢弃 (转发 onBoundary)。
    */
   boundaryReceived(kind: BoundaryKind): void {
     const reply = this.live
     if (reply && reply.state === 'armed') {
-      if (reply.opts.until) {
-        // 声明边界为主: 至此帧尾测一次既有行 (便于"整行尾"语义), 未命中继续累积。
-        if (this.testUntil(reply.opts.until.regex, reply.lines)) this.settle(reply, 'until')
-        return
-      }
-      // P3-2/R2-11: 非 GA 结算 (silent/timeout/abort/until) 后迟到 GA 丢弃 —
-      // 不提前结算下一帧; 计数带过期窗 (只增、只在边界到达时减会吞掉未来真实 GA,
-      // 且可能链式放大 — 本命令若本就没有 GA, 计数器会永久驻留)。
       if (this.orphanBoundaries > 0) {
         if (Date.now() - this.orphanBoundaryAt > ORPHAN_EXPIRE_MS) {
           this.orphanBoundaries = 0
@@ -340,6 +340,18 @@ export class CommandResponseController {
       return
     }
     this.opts.onBoundary?.(kind)
+  }
+
+  /**
+   * v0.6.0 S3c: 分帧器 armed marker 命中 → 按 markerId 结算 until。
+   * 宿主 session 在 onFrameCommitted(armed) 时调此方法。
+   * 仅当 live armed 且 markerId 匹配时 settle('until')。
+   */
+  settleUntilFromSplitter(markerId: string): void {
+    const reply = this.live
+    if (!reply || reply.state !== 'armed') return
+    if (reply.markerId !== markerId) return
+    this.settle(reply, 'until')
   }
 
   /** 断线: 在途/排队请求全部 reject (error), 停止接受新请求 (终止语义)。 */
@@ -463,6 +475,10 @@ export class CommandResponseController {
     if (reply.state === 'settled') return
     reply.state = 'settled'
     this.clearTimers(reply)
+    // v0.6.0 S3c: 任何结算都注销 until 分帧器标记 (timeout/abort/error 后不能留脏标记)。
+    if (reply.markerId !== undefined) {
+      this.opts.onUntilDisarm?.(reply.markerId)
+    }
     if (reply.abortListener) {
       reply.opts.signal?.removeEventListener('abort', reply.abortListener)
       reply.abortListener = null
@@ -484,16 +500,13 @@ export class CommandResponseController {
       if (this.consecutiveTimeouts >= limit) {
         this.consecutiveTimeouts = 0
         reply.reject(new Error(`连续 ${limit} 次应答超时 (边界未命中), 回合失败终止`))
-        this.notifySettle('timeout', reply.text, reply.cmds)
+        this.notifySettle('timeout', ABANDON_TEXT, reply.cmds)
         this.pump()
         return
       }
-      const text = reply.text + TIMEOUT_MARKER
-      reply.resolve({ ok: false, cmd: reply.cmd, text, lines: reply.lines, settled: kind })
-      // P3-2: timeout 为非 GA 路径 — 遗留 GA 不结算下一帧 (R2-11: 带过期窗)。
-      this.orphanBoundaries += 1
-      this.orphanBoundaryAt = Date.now()
-      this.notifySettle('timeout', text, reply.cmds)
+      // v0.6.0 §8.4: timeout = 放弃, 帧不动、标记保持武装。回放只进诊断日志。
+      reply.resolve({ ok: false, cmd: reply.cmd, text: ABANDON_TEXT, lines: [], settled: kind })
+      this.notifySettle('timeout', ABANDON_TEXT, reply.cmds)
       this.pump()
       return
     }
@@ -575,22 +588,5 @@ export class CommandResponseController {
   private clearTimers(reply: PendingReply): void {
     if (reply.timeoutTimer) { clearTimeout(reply.timeoutTimer); reply.timeoutTimer = null }
     if (reply.silenceTimer) { clearTimeout(reply.silenceTimer); reply.silenceTimer = null }
-  }
-
-  /** 声明边界正则测试 (P1-2: 锚定整行正则须**逐行测** — 多行累积文本上对整串无
-   *  /m 的 test 使 ^…$ 恒 false, 声明边界只能挂到声明超时)。字符串编译为
-   *  RegExp; 非法正则视为永不命中。 */
-  private testUntil(pattern: string | RegExp, lines: readonly MudLine[]): boolean {
-    try {
-      const re = typeof pattern === 'string' ? new RegExp(pattern) : pattern
-      for (const line of lines) {
-        re.lastIndex = 0
-        if (re.test(line.text)) return true
-      }
-      return false
-    } catch {
-      this.opts.onLog?.(`[应答] until 正则非法, 忽略: ${String(pattern)}`)
-      return false
-    }
   }
 }
