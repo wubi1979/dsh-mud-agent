@@ -13,9 +13,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { FlowSpec } from '../src/runtime/flow/flows.ts'
-import { MudSessionRuntime, type MudRuntimeConfig, type MudRuntimeSink } from '../src/runtime/session-runtime.ts'
+import { MudSessionRuntime } from '../src/runtime/session-runtime.ts'
+import type { MudRuntimeConfig, MudRuntimeSink } from '../src/runtime/session/types.ts'
 import type { MudConnectionSink, MudConnectionManager } from '../src/services/network/manager.ts'
-import type { MudDecisionRecord } from '../src/runtime/session-runtime.ts'
+import type { MudDecisionRecord } from '../src/runtime/session/types.ts'
 import type { MudLine } from '../src/services/network/ansi.ts'
 
 /** 单步探针流程：`开始` 进入（发一条命令）→ `结束` 命中 `ok` → 无后继 = 终态。 */

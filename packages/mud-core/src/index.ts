@@ -31,10 +31,14 @@
  */
 
 import { MudConnectionManager } from './services/network/manager.ts'
+import { MudSessionRuntime } from './runtime/session-runtime.ts'
 import {
-  DEFAULT_T2_DELIVER_INTERVAL_MS, MudSessionRuntime,
-  type MudDecisionRecord, type MudRuntimeConfig, type MudRuntimeSink, type MudUiItemInput,
-} from './runtime/session-runtime.ts'
+  DEFAULT_T2_DELIVER_INTERVAL_MS,
+  type MudDecisionRecord,
+  type MudRuntimeConfig,
+  type MudRuntimeSink,
+  type MudUiItemInput,
+} from './runtime/session/types.ts'
 import { SkillService } from './agents/skills.ts'
 import { commandsIndexForAgent } from './shared/commands.ts'
 import defaultPerceptionRules from './perceive/rules.ts'

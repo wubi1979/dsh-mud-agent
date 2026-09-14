@@ -20,7 +20,8 @@ import defaultPerceptionRules from '../src/perceive/rules.ts'
 import {
   LOGIN_FLOW, defaultFlows, flowCommands, validateFlows,
 } from '../src/runtime/flow/flows.ts'
-import { MudSessionRuntime, type MudRuntimeConfig, type MudRuntimeSink } from '../src/runtime/session-runtime.ts'
+import { MudSessionRuntime } from '../src/runtime/session-runtime.ts'
+import type { MudRuntimeConfig, MudRuntimeSink } from '../src/runtime/session/types.ts'
 import type { MudConnectionManager, MudConnectionSink } from '../src/services/network/manager.ts'
 import type { MudLine } from '../src/services/network/ansi.ts'
 

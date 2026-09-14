@@ -29,7 +29,8 @@ import {
   defaultFlows, FULLME_OK_TEXT, FULLME_REMINDER_TEXT, FULLME_STALE_TEXT, FULLME_WRONG_TEXT,
 } from '../src/runtime/flow/flows.ts'
 import { runWithDeliveryChannel } from '../src/agents/mount.ts'
-import { MudSessionRuntime, type MudRuntimeConfig, type MudRuntimeSink } from '../src/runtime/session-runtime.ts'
+import { MudSessionRuntime } from '../src/runtime/session-runtime.ts'
+import type { MudRuntimeConfig, MudRuntimeSink } from '../src/runtime/session/types.ts'
 import type { MudConnectionManager, MudConnectionSink } from '../src/services/network/manager.ts'
 import type { MudLine } from '../src/services/network/ansi.ts'
 
