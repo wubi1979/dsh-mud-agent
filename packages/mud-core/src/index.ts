@@ -31,7 +31,7 @@
  */
 
 import { MudConnectionManager } from './services/network/manager.ts'
-import { MudSessionRuntime } from './runtime/session-runtime.ts'
+import { MudSessionRuntime } from './runtime/session/session.ts'
 import {
   DEFAULT_T2_DELIVER_INTERVAL_MS,
   type MudDecisionRecord,

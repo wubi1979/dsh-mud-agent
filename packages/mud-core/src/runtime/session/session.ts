@@ -15,28 +15,29 @@
  *     待 `onAgentReady()` (官方 agent/created) 冲刷, 绝不自行创建会话/agent。
  *   - **网络连接不属于会话** — 连接由会话无关的 MudConnectionManager 持有,
  *     本类只保存 `connectionId` (会话 → 连接)。
- * @module @deepseek-ai/dsh-mud-core/runtime/session-runtime
+ * @module @deepseek-ai/dsh-mud-core/runtime/session/session
  */
 
-import { CommandQueue } from './session/queue.ts'
-import { buildMudTools, type MudTools, type SessionCredentials } from '../agents/tools.ts'
-import { DEFAULT_DANGEROUS_COMMANDS } from '../shared/commands.ts'
-import { evaluateToolCall } from '../services/gate/policy.ts'
-import { ownedGameMessage } from '../agents/lane.ts'
-import { CommandResponseController, type BoundaryKind } from '../network/response.ts'
-import type { MudLine } from '../services/network/ansi.ts'
-import { textOfLines } from '../preprocess/index.ts'
-import { StateService } from './session/gmcp.ts'
-import { applyPatch, createWorld, worldSnapshot, type WorldModel } from '../shared/world.ts'
-import { CONTROL_PREFIX } from '../perceive/types.ts'
-import type { PerceptionRule } from '../perceive/types.ts'
-import { PerceptionEngine, type EngineHit } from '../perceive/engine.ts'
-import { splitDelivery } from '../perceive/split.ts'
-import { MudConnectionManager, type MudConnectionSink } from '../services/network/manager.ts'
-import { WatchdogTable } from './watchdogs.ts'
-import { FlowRuntime, type FlowActionHit, type FlowState } from './flow-runtime.ts'
-import { defaultFlows } from './flow/flows.ts'
-import type { MudWorldSnapshot } from '../shell/wire.ts'
+import { CommandQueue } from './queue.ts'
+import { buildMudTools, type MudTools, type SessionCredentials } from '../../agents/tools.ts'
+import { DEFAULT_DANGEROUS_COMMANDS } from '../../shared/commands.ts'
+import { evaluateToolCall } from '../../services/gate/policy.ts'
+import { ownedGameMessage } from '../../agents/lane.ts'
+import { CommandResponseController, type BoundaryKind } from '../../network/response.ts'
+import type { MudLine } from '../../services/network/ansi.ts'
+import { textOfLines } from '../../preprocess/index.ts'
+import { StateService } from './gmcp.ts'
+import { applyPatch, createWorld, worldSnapshot, type WorldModel } from '../../shared/world.ts'
+import { CONTROL_PREFIX } from '../../perceive/types.ts'
+import type { PerceptionRule } from '../../perceive/types.ts'
+import { PerceptionEngine, type EngineHit } from '../../perceive/engine.ts'
+import { splitDelivery } from '../../perceive/split.ts'
+import { MudConnectionManager, type MudConnectionSink } from '../../services/network/manager.ts'
+import { WatchdogTable } from '../watchdogs.ts'
+import { FlowRuntime } from '../flow/flow.ts'
+import type { FlowActionHit, FlowState } from '../flow/flow-types.ts'
+import { defaultFlows } from '../flow/flows.ts'
+import type { MudWorldSnapshot } from '../../shell/wire.ts'
 import {
   actionOf,
   EMPTY_COMMANDS,
@@ -52,7 +53,7 @@ import {
   type MudRuntimeConfig,
   type MudRuntimeSink,
   type MudSessionStatus,
-} from './session/types.ts'
+} from './types.ts'
 
 
 /**
