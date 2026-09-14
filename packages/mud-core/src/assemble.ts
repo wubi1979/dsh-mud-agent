@@ -440,6 +440,7 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
   function attachPolicy(agent: Agent, sessionId: string, runtime: MudSessionRuntime): void {
     attachMudPersona(agent.ctx, () => runtime.promptSections().persona)
     installOwnedLaneRouting(agent, {
+      ctx,
       isMudSession: (id) => runtimes.has(id),
       log: (text) => { tuiLog(sessionId, text) },
     })

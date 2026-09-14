@@ -6,9 +6,10 @@
  *   1. **T1 provider** (`ctx.llm.registerAdapter`): `mud-t1` 本地模拟模型, 把
  *      L1 行级感知的**命中队列**渲染成确定性工具调用 (hit 渲染器, 不做文本反查);
  *   2. **所有权消息与每 agent 选路**: 投递消息携带 `kind='mud-owned'` + `lane` +
- *      `sessionId` + `turnRef` (`MessageSourceMap` 声明合并), 选路 (`agent/request`
- *      waterfall, 注册在 **agent 自己的 ctx** 上) 只对"已绑定 MUD 会话"的 agent 生效,
- *      其余 agent **原样 `next()` 放行**, 不劫持进程内其他会话的模型路由。
+ *      `sessionId` (`MessageSourceMap` 声明合并), 选路走官方
+ *      `installModelSelection` 的 `ModelSelectionRef.current` —— pre-step 写入,
+ *      官方 system-prompt/assemble → agent/request 链自动完成路由 (T2 基线,
+ *      T1 唯一干预点, doc/ARCHITECTURE.md §6)。
  *
  * 人设注入 / 提示区段 / 工具挂载与投递通道接线见 `mount.ts`。
  * @module @deepseek-ai/dsh-mud-core/agents/lane
@@ -16,8 +17,8 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { LlmCallConfig, Message } from '@deepseek-ai/dsh-llm'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Message } from '@deepseek-ai/dsh-llm'
+import type { Agent, ModelSelection } from '@deepseek-ai/dsh-agent'
 import { TriggerLlmAdapter } from './t1.ts'
 
 /** T1 provider 标识 (本地模拟模型注册名)。 */
@@ -129,6 +130,8 @@ export function registerTriggerProvider(ctx: Context, opts: {
 
 /** 每 agent 选路参数。 */
 export interface OwnedLaneRoutingOptions {
+  /** 宿主上下文 (用于访问 sessionController 拿 ModelSelectionRef)。 */
+  ctx: Context
   /** 该会话是否是已绑定的 MUD 会话 (false = 完全不介入)。 */
   isMudSession: (sessionId: string) => boolean
   log?: (text: string) => void
@@ -143,83 +146,64 @@ export interface OwnedLaneRoutingOptions {
 }
 
 /**
- * T1 拦截的配置变换: 换 provider/model, 并**剥离继承的 `reasoningEffort`**。
+ * ModelSelectionRef 的最简形状 (与 @deepseek-ai/dsh-agent 兼容)。
  *
- * 官方 per-session 模型选择可能带着 `reasoningEffort` (如 deepseek 的 "high"),
- * 而它是 **adapter-owned** 的参数 —— 本地模拟 provider 不支持, 原样传递会被
- * llm 层拒绝: `provider "mud-t1" model "t1-local" does not support reasoning
- * effort "high"`。官方换模型时同样丢弃继承的 effort (见 harness
- * `core/agent/src/model-selection.ts`), 这里沿用同一惯用法。
- * @param config 官方瀑布给出的调用配置。
- * @returns 指向 `mud-t1` 的配置 (无 `reasoningEffort`)。
+ * 我们只需要 `current` getter/setter —— setter 写入 picked, getter 在 picked
+ * 存在时直接返回 picked, 不会从 requestHeader 回读 (这正是我们要的: 阻断污染链)。
  */
-export function toT1Config(config: LlmCallConfig): LlmCallConfig {
-  const { reasoningEffort: _inherited, ...withoutInheritedEffort } = config
-  return { ...withoutInheritedEffort, provider: T1_PROVIDER, model: T1_MODEL }
+interface ModelSelectionRef {
+  current: ModelSelection | undefined
+  assembled: ModelSelection | undefined
 }
 
 /**
- * 一次请求的选路决定 (纯函数; 便于单测)。
- *
- * **为什么要记忆"真实模型"**: 官方侧会把一次请求**实际生效**的 provider/model
- * 记成会话的模型选择。于是我们第一次把某回合拦成 `mud-t1` 之后, 后续请求
- * `next()` 就已经是 `mud-t1/t1-local` 了 —— 非 T1 回合会**打到本地模拟 provider**
- * (真实 LLM 永远不再参与; 表现: 断流唤醒投出的批次被 T1 适配器按"选路异常"收束)。
- * 因此这里记住最近一次非 T1 占位的配置, 并在非 T1 回合把它还原回去。
- *
- * 只在"官方给回的 provider 就是我们的占位"时还原: 用户手动换模型后 `next()` 给的是
- * 新模型, 照原样放行并更新记忆, 不会覆盖用户选择。
- * @param lane 本回合的 lane (`t1` = 规则动作, `t2`/undefined = 基线)。
- * @param config 官方瀑布给出的调用配置 (`next()` 的结果)。
- * @param memory 该 agent 上一次观测到的真实模型配置。
- * @returns 生效配置、更新后的记忆、以及是否发生了污染/还原 (供日志)。
+ * 通过 sessionController 内部的 ApiSessionAgentController 拿到某 agent 的
+ * ModelSelectionRef。类型断言绕过 private —— 运行时可访问, 编译期需要类型层面穿越。
  */
-export function resolveLaneConfig(
-  lane: OwnedLane | undefined,
-  config: LlmCallConfig,
-  memory: LlmCallConfig | null,
-): { config: LlmCallConfig; memory: LlmCallConfig | null; restored: boolean; polluted: boolean } {
-  if (lane === 't1') {
-    // 占位配置不值得记 (否则会把占位当成真实模型)。
-    const nextMemory = config.provider === T1_PROVIDER ? memory : config
-    return { config: toT1Config(config), memory: nextMemory, restored: false, polluted: false }
+function trySelectionRef(ctx: Context, agent: Agent): ModelSelectionRef | null {
+  const sc = ctx.get('sessionController')
+  if (sc === undefined) return null
+  const controller = (sc as unknown as { agents?: { selectionFor: (agent: Agent) => ModelSelectionRef } }).agents
+  if (controller === undefined) return null
+  try {
+    return controller.selectionFor(agent)
+  } catch {
+    return null
   }
-  if (config.provider !== T1_PROVIDER) {
-    return { config, memory: config, restored: false, polluted: false }
-  }
-  if (memory === null) return { config, memory, restored: false, polluted: true }
-  return { config: memory, memory, restored: true, polluted: true }
 }
 
 /**
- * 在**该 agent 自己的 ctx** 上注册 MUD 选路 (官方扩展点, 两个事件配合):
+ * 在**该 agent 自己的 ctx** 上注册 MUD 选路 (官方扩展点, 单事件):
  *
- * 框架: **T2 是基线, T1 是唯一干预点**。
+ * 框架: **T2 是基线, T1 是唯一干预点** (doc/ARCHITECTURE.md §6):
  *   - 投递前拦截: 装配方 (runtime) 在 `followup` 之前判类, 命中带 action 的
  *     event 规则 → 消息带 `lane=t1`, 未命中 → `lane=t2`;
- *   - `agent/pre-step` (waterfall, payload 带本步认领的 `messages`): 记下**本回合**
- *     的 lane (认领消息里第一条 `mud-owned` 的 lane)。lane 随消息走, 所以队列里
- *     排在后面的 T2 控制消息不会改写前面 T1 批次的选路; 同一回合的后续步
- *     (工具续步) 沿用该 lane。
- *   - `agent/request` (waterfall, prepend): **lane=t1 → 换成 `mud-t1`**;
- *     lane=t2 / 无 lane → 原样返回 —— 即"不介入", 由会话自身模型选择决定
- *     (缺省就是真实 LLM)。插件因此永远不需要写会话/全局模型状态。
+ *   - `agent/pre-step` (waterfall, 在 system-prompt/assemble 之后): 记下
+ *     **本回合**的 lane, 并通过官方 `ModelSelectionRef.current` 预先写入
+ *     下回合要用的 provider/model —— 官方 installModelSelection 会在 assemble
+ *     阶段快照 current, agent/request 阶段自动覆盖, 整个路由链由官方完成,
+ *     插件不再拦截 agent/request。
  *
- * prepend 的原因: Cordis waterfall 里**先注册者最后拍板**。官方 per-session 模型
- * 选择 (`installModelSelection`, setup 期注册 → 早于本插件在 `agent/created`
- * 的装配) 会对每个请求写回会话选择的 provider/model; 不抢到最外层, 本插件选出的
- * `mud-t1` 会被它覆盖回真实 LLM (T1 静默失效, 表现为每 2s 一次 `agent/request`
- * 的重试/续步而无任何 `[t1]` 输出)。
+ * 为什么不再拦截 agent/request: installModelSelection 会无条件用 selection.assembled
+ * 覆盖 provider/model, 我们只需要在 pre-step 里设好 selection.current (setter
+ * 写入 picked), 就能保证 current getter 不会从 requestHeader 回读 T1 占位,
+ * 彻底消除旧方案需要的记忆/还原/污染防御逻辑。
+ *
+ * 降级: 如果 sessionController 不可用 → 本函数只记录 lane, 不写 selection.current,
+ *       运行时走 T2 基线 (所有请求用真实模型, 无 T1 拦截 —— 退化但安全)。
  * @param agent 目标 agent (由官方创建/恢复)。
- * @param opts 判据。
+ * @param opts 判据 (含 ctx)。
  * @returns 释放函数 (同时随 agent 作用域自动释放)。
  */
 export function installOwnedLaneRouting(agent: Agent, opts: OwnedLaneRoutingOptions): () => void {
   const sessionId = String(agent.id)
   /** 本回合的 lane (由该回合认领的消息决定; 回合切换且无 MUD 投递时清空)。 */
   let turnLane: { turn: number; lane: OwnedLane } | null = null
-  /** 会话真实模型的最近观测值 (非 T1 占位; 见 resolveLaneConfig 的说明)。 */
-  let realConfig: LlmCallConfig | null = null
+  /** 会话真实模型 (从 requestHeader 读; 首次为 null 时走默认模型)。 */
+  let realModel: ModelSelection | null = null
+  /** 官方 ModelSelectionRef (pre-step 时获取一次, 后续复用)。 */
+  let selectionRef: ModelSelectionRef | null = null
+
   const offPreStep = agent.ctx.on('agent/pre-step', (payload, next) => {
     if (payload.agent === agent) {
       const lanes = payload.messages.map(ownedLaneOf)
@@ -232,34 +216,38 @@ export function installOwnedLaneRouting(agent: Agent, opts: OwnedLaneRoutingOpti
       opts.log?.(
         `[路由] step 认领 turn=${payload.turn} step=${payload.step} 消息=${lanes.length} mud-owned=${claimed ?? '无'}`,
       )
+
+      // ── 官方 ModelSelectionRef 路径 ──
+      // 懒获取 (首次 pre-step 时 sessionController 应该已就绪)。
+      if (selectionRef === null) selectionRef = trySelectionRef(opts.ctx, agent)
+      if (selectionRef !== null) {
+        // 保存真实模型: 从 requestHeader 读 (跳过 T1 占位)。
+        const header = agent.session.requestHeader()
+        if (header !== undefined && header.config.provider !== T1_PROVIDER) {
+          const { provider, model, reasoningEffort } = header.config
+          realModel = { provider, model, ...(reasoningEffort === undefined ? {} : { reasoningEffort }) }
+        } else if (realModel === null) {
+          // 首次无 requestHeader: 从 agentOptions 读。
+          realModel = { provider: agent.options.provider ?? '', model: agent.options.model ?? '' }
+        }
+
+        // 写入下回合要用的 selection.current (installModelSelection 会在 assemble 快照它)。
+        const pendingLane = turnLane !== null && turnLane.turn === payload.turn ? turnLane.lane : undefined
+        const pendingSelection: ModelSelection = pendingLane === 't1'
+          ? { provider: T1_PROVIDER, model: T1_MODEL }  // 不带 reasoningEffort → 官方自动剥离继承的 effort
+          : realModel ?? { provider: '', model: '' }
+        if (pendingSelection.provider !== '' && pendingSelection.model !== '') {
+          selectionRef.current = pendingSelection
+          opts.log?.(
+            `[路由] 写入 selection.current → ${pendingSelection.provider}/${pendingSelection.model}` +
+            (pendingLane === 't1' ? ' (T1)' : pendingLane === undefined ? ' (T2 基线)' : ''),
+          )
+        }
+      } else if (opts.isMudSession(sessionId)) {
+        opts.log?.('[路由] sessionController 不可用, 无法写入 selection.current — 本会话走 T2 基线')
+      }
     }
     return next()
   })
-  const offRequest = agent.ctx.on('agent/request', async (payload, next): Promise<LlmCallConfig> => {
-    const config = await next()
-    if (payload.agent !== agent) return config
-    if (!opts.isMudSession(sessionId)) return config
-    const lane = turnLane !== null && turnLane.turn === payload.turn ? turnLane.lane : undefined
-    // 观测: next() 之后的 provider 即"会话自身模型选择想用的路线"; 末尾是本插件实际返回。
-    const decision = resolveLaneConfig(lane, config, realConfig)
-    realConfig = decision.memory
-    const intercept = lane === 't1'
-    const outcome = intercept
-      ? `拦截为 T1 (${T1_PROVIDER})`
-      : decision.restored
-        ? `还原真实模型 (${decision.config.provider}/${decision.config.model})`
-        : '不介入 (T2 基线)'
-    opts.log?.(
-      `[路由] 请求 turn=${payload.turn} step=${payload.step} lane=${lane ?? '无'} ` +
-      `next=${config.provider}/${config.model}` +
-      `${config.reasoningEffort === undefined ? '' : ` (effort=${String(config.reasoningEffort)})`} → ${outcome}`,
-    )
-    if (decision.polluted) {
-      opts.log?.(decision.restored
-        ? `[路由] 会话模型被上次 T1 拦截 (${T1_PROVIDER}/${T1_MODEL}) → 本回合还原为 ${decision.config.provider}/${decision.config.model}`
-        : `[路由] 会话模型为 T1 占位且本会话从未观测到真实模型 → 本回合无法还原, 请求将打到 ${T1_PROVIDER}`)
-    }
-    return decision.config
-  }, { prepend: true })
-  return () => { offPreStep(); offRequest() }
+  return () => { offPreStep() }
 }
