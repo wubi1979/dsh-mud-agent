@@ -27,7 +27,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import defaultPerceptionRules from '../src/perceive/rules.ts'
 import {
   defaultFlows, FULLME_OK_TEXT, FULLME_REMINDER_TEXT, FULLME_STALE_TEXT, FULLME_WRONG_TEXT,
-} from '../src/runtime/flow/flows.ts'
+} from '../src/runtime/flow/flows/index.ts'
 import { runWithDeliveryChannel } from '../src/agents/mount.ts'
 import { MudSessionRuntime } from '../src/runtime/session/session.ts'
 import type { MudRuntimeConfig, MudRuntimeSink } from '../src/runtime/session/types.ts'

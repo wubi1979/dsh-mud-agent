@@ -1,7 +1,7 @@
 /**
  * dsh-mud-core — 流程运行时 (flow runtime), `doc/ARCHITECTURE.md` §19。
  *
- * 一条流程 = 显式的步骤图（`runtime/flow/flows.ts` 声明）。本类持有**每会话**的流程实例状态:
+ * 一条流程 = 显式的步骤图（`runtime/flow/flows/` 声明）。本类持有**每会话**的流程实例状态:
  *   - **arming 集**：当前开着的判据（本步 driver(重试) + 本步 ok/fail + 条件分支后继的进入判据）；
  *   - **挂起**：命令发出后等结果（实现上就是桥的一条 pending 应答，见 §8）；
  *   - **判定**：判据命中 / GA / 超时 → 成功 / 失败 / 超时（三态，无静默）；
@@ -20,9 +20,9 @@ import type { ActionSpec, PerceptionRule } from '../../perceive/types.ts'
 import {
   isLineMatch, matchLabel, PRIORITY_NORMAL, validateFlows,
   type FlowMatch, type FlowSpec, type FlowStep,
-} from './flows.ts'
+} from './flow-spec.ts'
 import type { ArmedMatch, FlowActionHit, FlowRuntimeOptions, FlowSettleKind, FlowState, InterruptOutcome, InterruptRequest } from './flow-types.ts'
-import { lineCriteriaPattern } from '../session/frame-splitter.ts'
+import { lineCriteriaPattern } from '../../services/matcher/criteria.ts'
 
 
 /**

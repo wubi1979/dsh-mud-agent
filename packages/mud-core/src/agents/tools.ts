@@ -25,6 +25,7 @@ import {
 import { resolveCaptchaImage } from './captcha.ts'
 import { MOVE_ALIASES, MOVE_DIRS, STATUS_CMDS } from '../shared/game.ts'
 import type { MudReply, ReplyOptions, ReplySettle } from '../runtime/session/bridge.ts'
+import type { SessionCredentials } from '../runtime/credentials.ts'
 import { applyPatch, worldSnapshot, type WorldModel } from '../shared/world.ts'
 
 /** 工具统一返回。*/
@@ -38,13 +39,9 @@ export interface MudToolResult {
 }
 
 // ── 会话登录凭据 (明文最小暴露面) ──────────────
-// 凭据由**会话运行时**持有 (MudSessionRuntime.account), 不设模块级共享表:
+// 类型 `SessionCredentials` 归 `runtime/credentials.ts` (契约随机制走);
 // 引用一律以 {name}/{pass} 占位符流转 (转录/日志/工具结果均只见占位符),
-// 明文仅在 mud_send 发送瞬间插值。
-export interface SessionCredentials {
-  name: string
-  pass: string
-}
+// 明文仅在 mud_send 发送瞬间插值 (下方 interpolateCredentials)。
 
 /** 凭据占位符插值: 字符串值中的 {name}/{pass} → 会话实际值 (逐值替换)。 */
 export function interpolateCredentials(

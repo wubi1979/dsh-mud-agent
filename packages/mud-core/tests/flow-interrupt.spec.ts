@@ -13,7 +13,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { LOGIN_FLOW, PRIORITY_NORMAL, type FlowSpec } from '../src/runtime/flow/flows.ts'
+import { LOGIN_FLOW, PRIORITY_NORMAL, type FlowSpec } from '../src/runtime/flow/flows/index.ts'
 import type { PerceptionRule } from '../src/perceive/types.ts'
 import { MudSessionRuntime } from '../src/runtime/session/session.ts'
 import type { MudRuntimeConfig, MudRuntimeSink } from '../src/runtime/session/types.ts'

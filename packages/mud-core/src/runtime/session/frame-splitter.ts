@@ -208,30 +208,6 @@ function compile(pattern: string | RegExp): RegExp | null {
   }
 }
 
-/**
- * §8.5 武装接线: 把**行判据** (MatchSpec/FlowMatch 的 `regex`/`text` 子集) 编译为
- * 单个标记正则 (any-of, 逐行测) —— `regex` 各 pattern 包裹后取 alternation;
- * `text` 字面量转义后取 alternation (未锚定正则 ≈ 子串语义)。`func`/`ga` 等
- * 非行判据返回 null (调用方跳过武装, 仍走帧提交后的被动匹配)。
- */
-export function lineCriteriaPattern(spec: {
-  kind: string
-  patterns?: readonly (string | RegExp)[]
-  includes?: readonly string[]
-}): RegExp | null {
-  try {
-    if (spec.kind === 'regex' && spec.patterns !== undefined && spec.patterns.length > 0) {
-      return new RegExp(spec.patterns.map(p => `(?:${typeof p === 'string' ? p : p.source})`).join('|'))
-    }
-    if (spec.kind === 'text' && spec.includes !== undefined && spec.includes.length > 0) {
-      return new RegExp(spec.includes.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'))
-    }
-  } catch {
-    return null // 非法正则 → 不武装 (宿主被动匹配仍生效)
-  }
-  return null
-}
-
 /** 逐行测试 (P1-2: 锚定整行正则须逐行测, 多行串上 ^…$ 恒 false)。 */
 function testRe(re: RegExp, text: string): boolean {
   re.lastIndex = 0

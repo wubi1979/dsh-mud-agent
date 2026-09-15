@@ -19,24 +19,28 @@
  */
 
 import { CommandQueue } from './queue.ts'
-import { buildMudTools, type MudTools, type SessionCredentials } from '../../agents/tools.ts'
+import { buildMudTools, type MudTools } from '../../agents/tools.ts'
 import { evaluateToolCall } from '../../services/gate/policy.ts'
 import { buildGateRules, type GateRules } from '../../services/gate/rules.ts'
 import { ownedGameMessage } from '../../agents/lane.ts'
 import { CommandResponseController } from './bridge.ts'
-import { FrameSplitter, lineCriteriaPattern, type MudFrame } from './frame-splitter.ts'
+import { FrameSplitter, type MudFrame } from './frame-splitter.ts'
+import { lineCriteriaPattern } from '../../services/matcher/criteria.ts'
+import { placeholderValues, redactCredential, redactSecrets, type SessionCredentials } from '../credentials.ts'
+import { ConnectionRuntime } from './connection-runtime.ts'
+import { DeliveryChannel } from './delivery-channel.ts'
 import { textOfLines, type MudLine } from '../../services/network/ansi.ts'
-import { StateService } from './gmcp.ts'
-import { applyPatch, createWorld, worldSnapshot, type WorldModel } from '../../shared/world.ts'
+import { StateService } from './state.ts'
+import { createWorld, worldSnapshot, type WorldModel } from '../../shared/world.ts'
 import { CONTROL_PREFIX } from '../../perceive/types.ts'
 import type { PerceptionRule } from '../../perceive/types.ts'
 import { PerceptionEngine, type EngineHit } from '../../perceive/engine.ts'
 import { splitDelivery } from '../../perceive/split.ts'
-import { MudConnectionManager, type MudConnectionSink } from '../../services/network/manager.ts'
+import { MudConnectionManager } from '../../services/network/manager.ts'
 import { WatchdogTable } from '../watchdogs.ts'
 import { FlowRuntime } from '../flow/flow.ts'
 import type { FlowActionHit } from '../flow/flow-types.ts'
-import { defaultFlows } from '../flow/flows.ts'
+import { defaultFlows } from '../flow/flows/index.ts'
 import type { MudWorldSnapshot } from '../../shell/wire.ts'
 import {
   actionOf,
@@ -65,7 +69,8 @@ export class MudSessionRuntime {
   readonly sessionId: string
   readonly config: MudRuntimeConfig
   private readonly sink: MudRuntimeSink
-  private readonly connections: MudConnectionManager
+  /** 连接域 (重连状态机/socket 接线/凭据/写出口) 收拢在连接运行时, 事件回调回会话。 */
+  private readonly conn: ConnectionRuntime
   private readonly world: WorldModel = createWorld()
   private readonly state: StateService
   private readonly controller: CommandResponseController
@@ -81,8 +86,8 @@ export class MudSessionRuntime {
    * 随下一条投递消息一起走 (`source.actions`)，T1 据此渲染 tool-call (`doc/ARCHITECTURE.md` §7)。
    */
   private pendingActions: ActionRequest[] = []
-  /** 投递 id 序号 (每会话单调递增; T1 用它生成确定性 call-id)。 */
-  private deliverySeq = 0
+  /** 投递通道 (工具在途/defer 槽/投递账本/T2 时刻; 编排留在本类, 机制归通道)。 */
+  private readonly channel: DeliveryChannel
   /**
    * 动作投递队列 (暂存的"无行可带"动作消息): 帧内命中 / 人工回填后的答案等 ——
    * 它们的锚点行不在待决缓冲里，需要自己一条消息投出去。
@@ -99,28 +104,6 @@ export class MudSessionRuntime {
   private readonly recallLines: { text: string; abs: number }[] = []
   /** 已投递给模型的最大行 abs (交付水位): recall 只回看其后的行, 保证 session 不重复。 */
   private deliveredAbs = -1
-  /** 上一次 **T2 投递**（批次 / 控制消息）的时刻（`t2DeliverIntervalMs` 限流用；0 = 尚未投过）。 */
-  private lastT2DeliverAt = 0
-  /** 在途工具调用数（>0 ⇒ 投递走 defer 槽；§19.6.2 判据 A）。 */
-  private inFlightTools = 0
-  /** defer 槽：工具在途期间产生的投递，由该调用结束时随结果提交（`exec.deferContext`）。 */
-  private readonly deferSlot: ReturnType<typeof ownedGameMessage>[] = []
-  /** 每条投递的动作数（判据 B：`mud-<delivery>-<index>` 的 index 是否等于 count-1）。 */
-  private readonly deliverySizes = new Map<string, number>()
-  /**
-   * 每条投递的**动作来源**（`ruleId`，按 index 对齐）：工具结果回来时据此解析"这条结果
-   * 属于哪个流程步骤"（`flow:<flowId>/<stepId>` → `FlowRuntime.noteToolResult`；§19.1 的
-   * `tool` 判据）。
-   */
-  private readonly deliveryRules = new Map<string, readonly string[]>()
-  /**
-   * 每条投递的**未完成动作数**：工具结果每回一条（`noteToolResult`）减一，归零 = 该投递
-   * 已收齐全部结果。新投递进来时把这些"已完成"的投递从账目里剔除 —— 旧版"只留最近
-   * 4 条"会在动作结果迟迟不回（T2 限速 / defer 连串 / 人工等值）时把**仍在途**的投递
-   * 提前清掉：`shouldConcludeTurn` 永远收不了束，`noteToolResult` 找不到 `ruleId` 而让
-   * 流程的 `tool` 判据挂到超时才失败。保留窗口现在是"按完成驱逐 + 安全上限"。
-   */
-  private readonly deliveryPending = new Map<string, number>()
   private worldTimer: ReturnType<typeof setTimeout> | null = null
   /**
    * 唤醒类看门狗 (断流) —— 起停条件声明在构造器里, 运行时只在固定的状态变化点调用
@@ -141,8 +124,6 @@ export class MudSessionRuntime {
   private pendingExternal: ActionRequest[] = []
   /** 外部占位符值 (`{captcha}` → 人工输入的验证码; 发送瞬间插值)。 */
   private externalValues: Record<string, string> = {}
-  private connectionId: string | null = null
-  private account: SessionCredentials | null = null
   private connectCount = 0
   private latestWorld: MudWorldSnapshot | null = null
   private toolCache: MudTools | null = null
@@ -179,7 +160,28 @@ export class MudSessionRuntime {
     })
     this.gateRules = buildGateRules(config.dangerous !== undefined ? { dangerous: config.dangerous } : undefined)
     this.sink = sink
-    this.connections = connections
+    this.conn = new ConnectionRuntime({
+      connections,
+      defaultHost: config.defaultHost,
+      defaultPort: config.defaultPort,
+      log: (text) => this.log(text),
+      debug: (text) => this.debug('network', text),
+      // 数据面透传 (感知域): 文本/行/边界/GMCP 由会话处理。
+      onText: (text) => { this.feedRaw(text) },
+      onLines: (lines) => { this.onTextBlock(lines) },
+      onBoundary: (kind) => { this.splitter.boundary(kind) },
+      onGmcp: (pkg, payload) => {
+        this.state.onGmcp(pkg, payload)
+        // GMCP 是权威登录信号 (置信度 1.0) → 走世界变化统一入口。
+        this.noteWorldChange()
+      },
+      events: {
+        onConnected: () => { this.onSocketConnect() },
+        onClosed: () => { this.onSocketClose() },
+        onError: (message) => { this.lastError = message },
+      },
+    })
+    this.channel = new DeliveryChannel({ debug: (text) => this.debug('perception', text) })
     this.engine = new PerceptionEngine({
       stateRules: perception.stateRules,
       eventRules: perception.eventRules,
@@ -203,7 +205,7 @@ export class MudSessionRuntime {
       // 挂起期闸门 + 结算归属 (I12/§19.3)：只有"本步声明的那条命令"能通过；
       // 流程挂起期间的第二条应答请求被拒绝并留痕。
       canSend: (cmd) => {
-        if (this.flow.allowBridgeRequest(cmd, this.placeholderValues())) return true
+        if (this.flow.allowBridgeRequest(cmd, placeholderValues(this.conn.credentials, this.externalValues))) return true
         this.log(`[缺陷] 流程挂起期间收到第二条应答请求 (${cmd}) → 已拒绝`)
         return false
       },
@@ -241,7 +243,7 @@ export class MudSessionRuntime {
         //     这一条同时承担"布防推迟到 login 流程收尾之后"。
         id: 'dead-air',
         active: () => this.config.agentEnabled
-          && this.connectionId !== null
+          && this.conn.id !== null
           && this.loggedIn
           && !this.awaitingHuman
           && this.flow.state() === null
@@ -261,7 +263,7 @@ export class MudSessionRuntime {
       log: (text) => { this.log(text) },
       decision: (record) => { this.decision(record) },
       patch: (patch) => {
-        const changes = applyPatch(this.world, patch)
+        const changes = this.state.patch(patch, 'flow')
         if (changes.length > 0) this.noteWorldChange()
         return changes
       },
@@ -279,7 +281,7 @@ export class MudSessionRuntime {
         this.requestAgent('流程失败', `${context} — 请判断是重试、换做法还是告知用户。`)
       },
       // 流程日志里的命令文本一律脱敏（密码/验证码不落日志；实测踩过一次明文泄漏）。
-      mask: (text) => { return this.redactSecrets(text) },
+      mask: (text) => { return redactSecrets(text, this.conn.credentials?.pass, this.externalValues) },
       // §8.5 武装集同步: 流程布防 (入口 driver / 步 ok·fail / 分支进入判据) 注册为
       // 分帧器武装标记 —— 命中 → 帧立即提交 → 消费链运行 → 唤醒/推进当场发生。
       onArmSync: (markers) => { this.syncFlowMarkers(markers) },
@@ -300,36 +302,34 @@ export class MudSessionRuntime {
 
   /** 当前绑定的连接 id (未连接 = null)。 */
   get boundConnectionId(): string | null {
-    return this.connectionId
+    return this.conn.id
   }
 
   /** 是否已建立 socket。 */
   get connected(): boolean {
-    const c = this.connectionId === null ? undefined : this.connections.get(this.connectionId)
-    return c?.state === 'connected'
+    return this.conn.state === 'connected'
   }
 
   /** 传输层状态。 */
   get connectionState(): 'idle' | 'connecting' | 'connected' {
-    const c = this.connectionId === null ? undefined : this.connections.get(this.connectionId)
-    return (c?.state ?? 'idle') as 'idle' | 'connecting' | 'connected'
+    return this.conn.state
   }
 
   /** 当前连接的账户名 (命令回显署名; 未连接/未设账户 = null)。 */
   get accountName(): string | null {
-    return this.account?.name ?? null
+    return this.conn.credentials?.name ?? null
   }
 
   /** 状态快照。 */
   status(): MudSessionStatus {
-    const c = this.connectionId === null ? undefined : this.connections.get(this.connectionId)
+    const info = this.conn.info
     return {
       sessionId: this.sessionId,
-      connected: c?.state === 'connected',
-      state: (c?.state ?? 'idle') as 'idle' | 'connecting' | 'connected',
-      host: c?.host ?? this.config.defaultHost,
-      port: c?.port ?? this.config.defaultPort,
-      accountName: c?.state === 'connected' ? (this.account?.name ?? null) : null,
+      connected: info.state === 'connected',
+      state: info.state,
+      host: info.host,
+      port: info.port,
+      accountName: info.state === 'connected' ? (this.conn.credentials?.name ?? null) : null,
     }
   }
 
@@ -371,7 +371,7 @@ export class MudSessionRuntime {
       log: (t) => this.log(t),
       recall: (count) => this.recall(count),
       world: this.world,
-      resolveCredentials: () => this.account ?? undefined,
+      resolveCredentials: () => this.conn.credentials ?? undefined,
       // 未连接时工具快速拒绝 (不入桥): agent 提前被唤醒也不会把命令塞进队列
       // 换来一串 "写 socket 失败"。
       isConnected: () => this.connectionState === 'connected',
@@ -430,52 +430,20 @@ export class MudSessionRuntime {
   // ── 连接生命周期 (会话 → 连接; 传输层不持有会话) ────────
 
   /**
-   * 建立本会话的游戏连接。传输层只拿到 host/port; session → connection 绑定
-   * 保存在本运行时 (`connectionId`)。
+   * 建立本会话的游戏连接。传输层只拿到 host/port; 会话 → 连接绑定、重入防护
+   * 与凭据持有都在连接运行时 (`conn`)。
    * @param host 服务器主机 (缺省 config.defaultHost)。
    * @param port 端口 (缺省 config.defaultPort)。
    * @param account 登录账户 (命令回显署名 + {name}/{pass} 插值源)。
    */
   connect(host?: string, port?: number, account?: SessionCredentials): void {
     if (this.disposed) return
-    const state = this.connectionState
-    if (state === 'connected' || state === 'connecting') return // 幂等: 已连接/连接中
-    if (this.connectionId !== null) this.connections.close(this.connectionId)
-    if (account !== undefined) this.account = account
-    const target = {
-      host: host !== undefined && host.trim() !== '' ? host.trim() : this.config.defaultHost,
-      port: port ?? this.config.defaultPort,
-    }
-    this.log(`[SYS] 连接 ${target.host}:${target.port}${this.account !== null ? ` (${this.account.name})` : ''}`)
-    const sink: MudConnectionSink = {
-      onText: (text) => { this.feedRaw(text) },
-      onLines: (lines) => { this.onTextBlock(lines) },
-      onBoundary: (kind) => { this.splitter.boundary(kind) },
-      onGmcp: (pkg, payload) => {
-        this.state.onGmcp(pkg, payload)
-        // GMCP 是权威登录信号 (置信度 1.0) → 走世界变化统一入口。
-        this.noteWorldChange()
-      },
-      onConnect: () => { this.onSocketConnect() },
-      onClose: () => { this.onSocketClose() },
-      onError: (err) => {
-        this.lastError = err.message
-        this.log(`[SYS] 连接错误: ${err.message}`)
-      },
-      onLog: (level, text) => {
-        if (level === 'info') this.debug('network', `[NET] ${text}`)
-      },
-    }
-    const connection = this.connections.open(target, sink)
-    this.connectionId = connection.id
+    this.conn.connect(host, port, account)
   }
 
   /** 断开本会话连接 (未连接时空操作)。 */
   disconnect(): void {
-    if (this.connectionId === null) return
-    this.log('[SYS] 手动断开')
-    this.connections.close(this.connectionId)
-    this.connectionId = null
+    this.conn.disconnect()
   }
 
   /**
@@ -525,10 +493,7 @@ export class MudSessionRuntime {
     this.controller.close()
     this.queue.clear()
     this.watchdogs.dispose()
-    if (this.connectionId !== null) {
-      this.connections.close(this.connectionId)
-      this.connectionId = null
-    }
+    this.conn.close()
     for (const timer of [this.settleTimer, this.worldTimer, this.holdTimer]) {
       if (timer !== null) clearTimeout(timer)
     }
@@ -538,10 +503,7 @@ export class MudSessionRuntime {
     this.pending.length = 0
     this.pendingActions = []
     this.standalone = null
-    this.deferSlot.length = 0
-    this.inFlightTools = 0
-    this.deliverySizes.clear()
-    this.deliveryPending.clear()
+    this.channel.reset()
     this.flow.dispose()
   }
 
@@ -549,7 +511,7 @@ export class MudSessionRuntime {
   diag(): MudSessionDiag {
     return {
       sessionId: this.sessionId,
-      connectionId: this.connectionId,
+      connectionId: this.conn.id,
       connected: this.connected,
       pending: this.pending.length,
       actionsPending: this.pendingActions.length,
@@ -598,48 +560,17 @@ export class MudSessionRuntime {
 
   /** 已发送命令回显 (亮蓝 ANSI; actor 区分 agent/user; 凭据掩码)。 */
   private appendCommandEcho(cmd: string, actor: CommandActor): void {
-    const name = this.account?.name ?? 'user'
-    this.pushGame(`\x1b[94m${name}@${actor}>${this.redactCredential(cmd)}\x1b[0m`)
-  }
-
-  /** 凭据掩码: 仅密码 (高敏感); 长度 ≥4 时做嵌入子串掩码。 */
-  private redactCredential(cmd: string): string {
-    const pass = this.account?.pass
-    if (!pass) return cmd
-    if (cmd === pass) return '***'
-    if (pass.length >= 4 && cmd.includes(pass)) return cmd.split(pass).join('***')
-    return cmd
-  }
-
-  /**
-   * **日志脱敏**（比 `redactCredential` 宽一层）: 密码 + 人工回填的外部值（验证码）。
-   *
-   * 用于一切"可能把命令原文写进会话日志"的通道（流程运行时的日志）。终端回显仍只用
-   * `redactCredential`（人工自己看的画面不必掩盖验证码）。
-   * @param text 待脱敏文本（命令或日志片段）。
-   * @returns 脱敏后的文本。
-   */
-  private redactSecrets(text: string): string {
-    let out = this.redactCredential(text)
-    for (const value of Object.values(this.externalValues)) {
-      // 短值（1–2 字符）不做子串替换：会把正常文本打烂，收益也低。
-      if (value.length < 3 || !out.includes(value)) continue
-      out = out.split(value).join('***')
-    }
-    return out
+    const creds = this.conn.credentials
+    const name = creds?.name ?? 'user'
+    this.pushGame(`\x1b[94m${name}@${actor}>${redactCredential(cmd, creds?.pass)}\x1b[0m`)
   }
 
   /** 真实写 socket (队列 onSend 调用; 未连接 = false)。 */
   private writeToSocket(cmd: string, actor: CommandActor = 'agent'): boolean {
-    const connection = this.connectionId === null ? undefined : this.connections.get(this.connectionId)
-    if (connection === undefined || connection.state !== 'connected') {
-      this.log(`[发送] 忽略命令 (未连接): ${JSON.stringify(cmd)}`)
-      return false
-    }
-    const sent = connection.client.send(String(cmd))
+    const sent = this.conn.write(cmd)
     if (sent) {
       this.appendCommandEcho(String(cmd), actor)
-      this.log(`[发送] ${cmd === '' ? '<空行>' : this.redactCredential(cmd)}`)
+      this.log(`[发送] ${cmd === '' ? '<空行>' : redactCredential(cmd, this.conn.credentials?.pass)}`)
     }
     return sent
   }
@@ -661,18 +592,9 @@ export class MudSessionRuntime {
     }
   }
 
-  /** 占位符值 (流程命令的"结算归属"比对用: 与发送瞬间插值同源)。 */
-  private placeholderValues(): Record<string, string> {
-    return {
-      ...(this.account === null ? {} : { name: this.account.name, pass: this.account.pass }),
-      ...this.externalValues,
-    }
-  }
-
   // ── socket 事件 ────────────────────────────────────────
 
   private onSocketConnect(): void {
-    this.log('[SYS] 已连接')
     // 新连接 = 新登录会话: 直接复位登录态 (置信度护栏压不过上次 GMCP 1.0)。
     this.world.flags.logged_in = false
     this.world.flags.awaiting = true
@@ -680,11 +602,11 @@ export class MudSessionRuntime {
       delete this.world._conf.flags.logged_in
       delete this.world._conf.flags.awaiting
     }
-    applyPatch(this.world, { connected: true })
+    this.state.patch({ connected: true }, 'lifecycle')
     this.pushWorld()
     this.connectCount += 1
     this.appendConnectMarker(this.connectCount === 1 ? 'connect' : 'reconnect')
-    applyPatch(this.world, { sent_name: false, sent_pass: false })
+    this.state.patch({ sent_name: false, sent_pass: false }, 'lifecycle')
     this.watchdogs.resetCounts()
     this.noteWorldChange()
     // 传输断裂 = 感知上下文作废: 清多行半匹配 + 重连复位应答桥/分帧器与投递缓冲。
@@ -709,15 +631,11 @@ export class MudSessionRuntime {
     this.pendingExternal = []
     this.externalValues = {}
     // 投递通道状态随连接作废: defer 槽里的消息属于上一连接的局面, 不再投出。
-    this.deferSlot.length = 0
-    this.inFlightTools = 0
-    this.deliverySizes.clear()
-    this.deliveryPending.clear()
+    this.channel.reset()
     this.clearHoldTimer()
   }
 
   private onSocketClose(): void {
-    this.log('[SYS] 连接关闭')
     this.controller.close()
     this.queue.clear()
     // 断线: 未投出的行与半截捕获失去上下文 (多行状态随连接作废), 丢弃并记日志。
@@ -736,7 +654,7 @@ export class MudSessionRuntime {
     // 断线 = 唤醒类看门狗全部停表 (`active()` 里的连接门已不满足); 流程实例随连接作废。
     this.watchdogs.reevaluate()
     this.flow.noteDisconnect()   // → 复位到只留入口 → armEntries → onArmSync 重挂流程标记
-    applyPatch(this.world, { connected: false })
+    this.state.patch({ connected: false }, 'lifecycle')
     this.pushWorld()
   }
 
@@ -754,7 +672,7 @@ export class MudSessionRuntime {
    * @param hits 本块直接执行类命中。
    */
   private runDirectHits(hits: readonly EngineHit[]): void {
-    if (this.awaitingHuman || this.connectionId === null) return
+    if (this.awaitingHuman || this.conn.id === null) return
     const tools = this.tools()
     const mudTools = new Set(Object.keys(tools))
     for (const hit of hits) {
@@ -962,7 +880,7 @@ export class MudSessionRuntime {
   /** 写入连接/重连分隔文本到终端缓冲。 */
   private appendConnectMarker(kind: 'connect' | 'reconnect'): void {
     const when = new Date().toLocaleString()
-    const label = this.account?.name ?? ''
+    const label = this.conn.credentials?.name ?? ''
     const head = kind === 'connect' ? '连接' : '重新连接'
     this.pushGame([
       '',
@@ -1008,7 +926,7 @@ export class MudSessionRuntime {
     const result = lines.length > 0 ? this.engine.feed(lines) : null
     if (result !== null) {
       for (const hit of result.stateHits) {
-        if (hit.data) applyPatch(this.world, hit.data)
+        if (hit.data) this.state.patch(hit.data, 'percept')
       }
       // 本帧折叠可能翻转 `logged_in` (state 规则) → 重评估看门狗起停 (见 watchdogs.ts)。
       if (result.stateHits.length > 0) this.noteWorldChange()
@@ -1177,9 +1095,9 @@ export class MudSessionRuntime {
     // **只压 T2 批次**：上面的 T1 动作投递（规则/流程步）与 `standalone`/控制消息都不受影响 ——
     // T1 是系统流程，不能被"给模型限速"的闸压住。
     const t2Gap = this.config.t2DeliverIntervalMs ?? 0
-    const sinceT2 = Date.now() - this.lastT2DeliverAt
+    const sinceT2 = this.channel.sinceT2()
     // 待决达上限 (MAX_SETTLE_LINES) 时旁路限流立即投 —— 防止"限流永远压着积压"。
-    if (t2Gap > 0 && this.lastT2DeliverAt > 0 && sinceT2 < t2Gap && this.pending.length < MAX_SETTLE_LINES) {
+    if (t2Gap > 0 && sinceT2 < t2Gap && this.pending.length < MAX_SETTLE_LINES) {
       // 动作投递（standalone）不受 T2 限流：它与 T1 同口径，被压住会让"重试重新取图"
       // 这类动作等不到人工环节开始就挂住（而且人工环节会暂停投递）。
       if (standalone !== null) this.flushStandalone()
@@ -1199,9 +1117,9 @@ export class MudSessionRuntime {
     this.noteDelivered(deliveredLines)
     this.debug('perception',
       `[感知] 批次投递 ${batchLines.length} 行 (agent ${agent.status}, 队列 ${agent.inbox.nextTurn.length} 条)`)
-    this.sendDelivery(agent, ownedGameMessage(text, 't2', this.sessionId))
+    this.channel.send(agent, ownedGameMessage(text, 't2', this.sessionId))
     // 记下这次 T2 投递的时刻（下一次批次要等 `t2DeliverIntervalMs`）；defer 也算"喂过了"。
-    this.lastT2DeliverAt = Date.now()
+    this.channel.markT2()
     this.decision({
       actor: 'router',
       eventType: 'feed-classify',
@@ -1218,9 +1136,9 @@ export class MudSessionRuntime {
     actions: readonly ActionRequest[],
     reason: string,
   ): void {
-    const delivery = `d${++this.deliverySeq}`
-    this.rememberDelivery(delivery, actions)
-    this.sendDelivery(agent, ownedGameMessage(text, 't1', this.sessionId, { actions, delivery }))
+    const delivery = this.channel.nextId()
+    this.channel.rememberDelivery(delivery, actions)
+    this.channel.send(agent, ownedGameMessage(text, 't1', this.sessionId, { actions, delivery }))
     this.decision({
       actor: 'router',
       eventType: 'feed-classify',
@@ -1231,67 +1149,7 @@ export class MudSessionRuntime {
   }
 
   // ── 投递通道：官方 `deferContext` / `followup`（§19.6.2） ──────────
-
-  /** 记下一条投递的动作（动作数 = 判据 B；来源 = 工具结果 → 流程步骤的解析依据）。 */
-  private rememberDelivery(delivery: string, actions: readonly ActionRequest[]): void {
-    this.deliverySizes.set(delivery, actions.length)
-    this.deliveryRules.set(delivery, actions.map(action => action.ruleId))
-    this.deliveryPending.set(delivery, actions.length)
-    // **按完成驱逐**：只清"结果已收齐"的投递（`noteToolResult` 把 pending 减到 0 的），
-    // 在途的（T2 限速 / defer 连串 / 人工等值，结果可能很晚才回）必须保留 —— 收束判据
-    // 与流程 tool 判据都靠账目里的 size/rule 解析。
-    for (const key of this.deliveryPending.keys()) {
-      if (key === delivery) continue
-      if ((this.deliveryPending.get(key) ?? 0) > 0) continue
-      this.deliveryPending.delete(key)
-      this.deliverySizes.delete(key)
-      this.deliveryRules.delete(key)
-    }
-    // **安全上限**：极端场景（结果长期不回 / 投递爆发）也不让账目无界增长；超限从最旧的
-    // 开始丢（在途投递被丢后只是"少一次收束/少一条 tool 判据"，不会造成结构性错误）。
-    const safetyCap = 32
-    while (this.deliverySizes.size > safetyCap) {
-      const oldest = this.deliverySizes.keys().next().value
-      if (oldest === undefined) break
-      this.deliverySizes.delete(oldest)
-      this.deliveryRules.delete(oldest)
-      this.deliveryPending.delete(oldest)
-    }
-  }
-
-  /**
-   * **投递一条 mud-owned 消息**（判据 A）：工具在途 ⇒ 存入 defer 槽，由该工具调用结束时
-   * 随结果提交（`exec.deferContext` → 官方 `next-step` inbox → **同一回合的下一步**）；
-   * 无工具在途 ⇒ 官方 `followup`（自己开一个回合）。
-   *
-   * 为什么这样分：`followup` 的官方语义是"这条消息独占它自己的回合"，而工具在途时我们**有
-   * 更好的载体** —— 结果本身。随结果走既省一次空续步，又让"结果 → 下一步输入"严格有序。
-   * @param agent 目标 agent。
-   * @param message 已构造好的 mud-owned 消息。
-   */
-  private sendDelivery(
-    agent: { followup: (message: ReturnType<typeof ownedGameMessage>) => void },
-    message: ReturnType<typeof ownedGameMessage>,
-  ): void {
-    if (this.inFlightTools > 0) {
-      this.deferSlot.push(message)
-      this.debug('perception',
-        `[感知] 投递改为 defer (工具在途 ${this.inFlightTools}): 随本结果进下一步`)
-      return
-    }
-    agent.followup(message)
-  }
-
-  /** 工具调用进入/离开（官方工具包装器调用；判据 A 的"在途"判据）。 */
-  beginToolCall(): void { this.inFlightTools += 1 }
-
-  /** 工具调用离开（与 `beginToolCall` 配对）。 */
-  endToolCall(): void { if (this.inFlightTools > 0) this.inFlightTools -= 1 }
-
-  /** 取走 defer 槽（包装器在结果提交前逐条 `exec.deferContext`）。 */
-  takeDeferredDeliveries(): ReturnType<typeof ownedGameMessage>[] {
-    return this.deferSlot.splice(0)
-  }
+  // 机制 (defer 槽/账本/T2 时刻) 在 DeliveryChannel; 这里只留编排与本类状态耦合的判定。
 
   /**
    * **判据 B**：本调用能否收束当前回合（`exec.concludeTurn`）。
@@ -1308,9 +1166,9 @@ export class MudSessionRuntime {
     if (!this.config.agentEnabled) return false
     const parsed = parseDeliveryCallId(callId)
     if (parsed === null) return false
-    const count = this.deliverySizes.get(parsed.delivery)
+    const count = this.channel.actionCount(parsed.delivery)
     if (count === undefined || parsed.index !== count - 1) return false
-    if (this.deferSlot.length > 0) return false
+    if (this.channel.deferCount > 0) return false
     if (this.pendingActions.length > 0) return false
     if (this.standalone !== null) return false
     if (this.flow.hasQueuedActions()) return false
@@ -1332,16 +1190,30 @@ export class MudSessionRuntime {
     if (parsed === null) return
     // 记账：该投递的一条动作已收到结果（无论成败）。减到 0 = 收齐，交给下一次
     // `rememberDelivery` 按完成驱逐；这里**先不删**——同一次工具调用里 `shouldConcludeTurn`
-    // 还要读 `deliverySizes` 判"最后一条动作"。
-    const pending = this.deliveryPending.get(parsed.delivery)
-    if (pending !== undefined) this.deliveryPending.set(parsed.delivery, pending - 1)
-    const ruleId = this.deliveryRules.get(parsed.delivery)?.[parsed.index]
+    // 还要读账本 size 判"最后一条动作"。
+    this.channel.recordResult(parsed.delivery)
+    const ruleId = this.channel.actionRule(parsed.delivery, parsed.index)
     if (ruleId === undefined || !ruleId.startsWith('flow:')) return
     const stepId = ruleId.slice('flow:'.length).split('/')[1]
     if (stepId === undefined || stepId === '') return
     const hits = this.flow.noteToolResult(stepId, ok)
     if (hits.length > 0) this.queueFlowActions(hits)
     this.drainFlowQueue()
+  }
+
+  // ── 投递通道委托 (MudDeliveryChannel 接口; `agents/mount.ts` §19.6.2) ──
+  // 工具包装器 (attachMudTools / preset) 经会话解析出通道 —— 机制全在
+  // DeliveryChannel, 这里只做接口形状的转发。
+
+  /** 工具调用进入（期间产生的投递改走 defer 槽）。 */
+  beginToolCall(): void { this.channel.beginToolCall() }
+
+  /** 工具调用离开（与 `beginToolCall` 配对）。 */
+  endToolCall(): void { this.channel.endToolCall() }
+
+  /** 取走 defer 槽（包装器在结果提交前逐条 `exec.deferContext`）。 */
+  takeDeferredDeliveries(): ReturnType<typeof ownedGameMessage>[] {
+    return this.channel.takeDeferred()
   }
 
   /**
@@ -1504,12 +1376,12 @@ export class MudSessionRuntime {
   private requestAgent(reason: string, context: string): void {
     if (this.disposed || !this.config.agentEnabled) return
     if (this.awaitingHuman) return   // 人工环节 (验证码): 任何唤醒源都不许把 agent 叫起来
-    if (this.connectionId === null) return
+    if (this.conn.id === null) return
     const agent = this.sink.agentOf(this.sessionId)
     if (agent === undefined) return
     this.decision({ actor: 'agent', eventType: reason, action: 'agent', text: `[决策] ${reason}` })
     agent.followup(ownedGameMessage(`${CONTROL_PREFIX}${context}`, 't2', this.sessionId))
     // 控制消息也算一次 T2 投递：紧随其后的批次要等最小间隔（避免"刚唤醒又喂"）。
-    this.lastT2DeliverAt = Date.now()
+    this.channel.markT2()
   }
 }

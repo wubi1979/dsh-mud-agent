@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import type { FlowSpec } from '../src/runtime/flow/flows.ts'
+import type { FlowSpec } from '../src/runtime/flow/flows/index.ts'
 import { FlowRuntime } from '../src/runtime/flow/flow.ts'
 import type { MudLine } from '../src/services/network/ansi.ts'
 

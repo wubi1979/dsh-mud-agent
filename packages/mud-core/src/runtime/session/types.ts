@@ -13,7 +13,7 @@ import type { DangerousRule } from '../../shared/commands.ts'
 import type { OwnedAction } from '../../agents/lane.ts'
 import type { MudUiItem, MudWorldSnapshot } from '../../shell/wire.ts'
 import type { FlowState } from '../flow/flow-types.ts'
-import type { FlowSpec } from '../flow/flows.ts'
+import type { FlowSpec } from '../flow/flow-spec.ts'
 
 /** 一条待投递的动作请求 (与投递消息 `source.actions` 同形; §7)。 */
 export type ActionRequest = OwnedAction

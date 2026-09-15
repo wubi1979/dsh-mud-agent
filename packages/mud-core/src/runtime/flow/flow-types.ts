@@ -7,7 +7,7 @@
  */
 
 import type { WorldModel } from '../../shared/world.ts'
-import type { FlowMatch, FlowSpec } from './flows.ts'
+import type { FlowMatch, FlowSpec } from './flow-spec.ts'
 
 /** 流程发出的动作（交给运行时的投递层；字段与规则命中对齐）。 */
 export interface FlowActionHit {
