@@ -4,7 +4,7 @@
  * 自有推送通道 (对齐 dsh-web-shell 的 /api/shell 模式):
  *   - `registerUpgrade('/mud/ws')` + noServer WebSocketServer;
  *   - 信任围栏: 与 `/api` 同语义的 loopback/trustedHosts/Origin 判定
- *     (本地精简实现, 不依赖框架内部导出);
+ *     (见 ./trust.ts, 与 /mud/* HTTP 路由共用);
  *   - 帧协议 (JSON 文本帧, 类型见 ./client/wire.ts):
  *       client → server: `{type:'hello', lastGameSeq?, lastUiSeq?}`
  *       server → client: `{ch:'game', items}` / `{ch:'ui', items}` /
@@ -19,6 +19,7 @@
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
+import { isTrustedRequest } from './trust.ts'
 import type { MudGameItem, MudUiItem, MudWorldSnapshot } from './wire.ts'
 
 export type { MudGameItem, MudUiItem, MudWorldSnapshot } from './wire.ts'
@@ -47,61 +48,7 @@ const HEARTBEAT_MS = 30_000
  *  (前端重连走 backfill 回填, 比无限缓冲积存更干净)。 */
 const MAX_BUFFERED_AMOUNT = 1 * 1024 * 1024
 
-// ── 信任围栏 (语义对齐 client/connection 的 api-request-trust) ──
-
-function parseAuthority(authority: string): URL | undefined {
-  try {
-    return new URL(`http://${authority}`)
-  } catch {
-    return undefined
-  }
-}
-
-function header(headers: IncomingMessage['headers'], name: string): string | undefined {
-  const value = headers[name]
-  return typeof value === 'string' ? value : undefined
-}
-
-/** Browser-safe loopback classification: localhost, ::1, or any 127/8 literal. */
-function isLoopbackHostname(hostname: string): boolean {
-  const name = hostname.toLowerCase()
-  return name === 'localhost' || name === '::1' || name.endsWith('.localhost')
-    || (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(name))
-}
-
-/** Whether the request Host authority matches one trustedHosts entry. */
-function matchesTrustedAuthority(hostUrl: URL, trustedHosts: readonly string[]): boolean {
-  return trustedHosts.some((entry) => {
-    const entryUrl = parseAuthority(entry)
-    if (entryUrl === undefined) return false
-    // Port-less entry matches the hostname on any port; explicit port is exact.
-    return entryUrl.port === ''
-      ? entryUrl.hostname === hostUrl.hostname
-      : entryUrl.host === hostUrl.host
-  })
-}
-
-/**
- * Whether one inbound request may pass (upgrade 与普通 HTTP 共用)。
- * Host fence first (the one header DNS rebinding cannot forge), then
- * cross-site/origin markers。WS upgrade handler 与 /mud/* HTTP 路由
- * (index.ts 包装层) 均使用本判定。
- */
-export function isTrustedRequest(req: IncomingMessage, trustedHosts: readonly string[]): boolean {
-  const host = header(req.headers, 'host')
-  if (host === undefined) return false
-  const hostUrl = parseAuthority(host)
-  if (hostUrl === undefined) return false
-  if (!isLoopbackHostname(hostUrl.hostname) && !matchesTrustedAuthority(hostUrl, trustedHosts)) return false
-  if (header(req.headers, 'sec-fetch-site') === 'cross-site') return false
-  const origin = header(req.headers, 'origin')
-  if (origin === undefined) return true
-  try {
-    return new URL(origin).host === hostUrl.host
-  } catch {
-    return false
-  }
-}
+// ── 信任围栏: 见 ./trust.ts (isTrustedRequest, hub 与 routes 共用) ──
 
 /**
  * Owns the `/mud/ws` upgrade route, the connected-client set, the heartbeat,
@@ -212,6 +159,13 @@ export class MudWebSocketHub {
   /** Broadcast a world snapshot (replacement semantics — no history). */
   broadcastWorld(world: MudWorldSnapshot, sessionId?: string): void {
     this.broadcast({ ch: 'world', ...(sessionId === undefined ? {} : { sessionId }), world })
+  }
+
+  /** 按会话清理待发队列 (与 GlobalBuffers.purgeSession 配对: 会话注销时,
+   *  已入队尚未 flush 的条目也不再广播 — 否则"回放不吐、实时漏一帧")。 */
+  purgeSession(sessionId: string): void {
+    this.gamePending = this.gamePending.filter(item => item.sessionId !== sessionId)
+    this.uiPending = this.uiPending.filter(item => item.sessionId !== sessionId)
   }
 
   /** Terminate every client, close the server, and unregister the route. */

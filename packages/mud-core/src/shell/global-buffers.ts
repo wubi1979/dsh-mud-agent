@@ -74,7 +74,9 @@ export class GlobalBuffers {
     }
   }
 
-  /** 起点 seq 之后的游戏条目 (HTTP 回放入口)。 */
+  /** 起点 seq 之后的游戏条目 (HTTP 回放入口)。
+   *  **只读游戏不读 UI 是刻意的**: UI 历史 (日志/决策) 走 /mud/logs 当日文件
+   *  恢复 (按 logSeq 与实时流去重), UI 缓冲仅服务 /mud/ws 回填, 不设 HTTP 面对称口。 */
   readGame(sinceSeq: number): { items: readonly MudGameItem[]; tailSeq: number } {
     const since = Number.isFinite(sinceSeq) ? sinceSeq : 0
     return { items: this.game.filter(item => item.seq > since), tailSeq: this.gameSeq }

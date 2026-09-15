@@ -4,6 +4,11 @@
  * host 的"当前视图会话"概念: 路由 / 服务入口未显式给出 sessionId 时回落
  * 最近一次 connect/bind 的会话, 再回落部署配置的缺省会话 id (最终兜底
  * `mud-player`)。会话即身份 —— 视图只是**回落指针**, 不持有任何会话状态。
+ *
+ * **单用户设计**: lastActive 是进程级指针, 多标签共享无碍 (前端绝大多数
+ * 调用显式带 sessionId, 仅"无会话上下文"的 roster 条目缺省回落)。多用户
+ * 部署下, 用户 A 的缺省请求会命中用户 B 的 lastActive 会话 —— 这是缺省
+ * 回落设计的已知代价; 多用户场景前端必须显式传 sessionId。
  * @module @deepseek-ai/dsh-mud-core/shell/view
  */
 

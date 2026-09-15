@@ -552,6 +552,9 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
     const files = purgeSessionLogs(logDir, target)
     // 全局缓冲按 sessionId 过滤: WS 回放不再吐出已注销身份的内容。
     buffers.purgeSession(target)
+    // hub 待发队列同款过滤: 已入队尚未 flush 的条目也不再广播 (与上者配对,
+    // 否则同 tick 内"回放不吐、实时漏一帧")。
+    hub?.purgeSession(target)
     view.clearActive(target)
     tuiLog(GLOBAL_SESSION, `[SYS] 会话已注销 (${target}): 运行时${runtime === undefined ? '本不存在' : '已释放'}, 日志文件删除 ${files} 个`)
     return { ok: true, files }

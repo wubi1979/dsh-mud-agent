@@ -22,7 +22,12 @@ export interface MudWorldSnapshot {
 }
 
 /** 一条游戏输出帧条目 (与终端缓冲条目同形, 原始文本含 ANSI)。
- *  `sessionId` 标明来源会话 — 前端按当前会话过滤 (通道本身与会话无关)。 */
+ *  `sessionId` 标明来源会话 — 前端按当前会话过滤 (通道本身与会话无关)。
+ *
+ *  **seq 契约**: seq 进程内全局单调; 同一条目可能经实时广播与 hello 回填
+ *  **两条路径到达** (回填与 flush 同 tick 重叠是正常时序), 前端必须按 seq
+ *  去重 (GameView 已实现)。**跳号是合法的**: 宿主缓冲有上限, 旧条目驱逐后
+ *  回填从剩余最旧开始, 中间缺口前端无从察觉也不应报错。 */
 export interface MudGameItem {
   seq: number
   sessionId?: string
@@ -30,7 +35,8 @@ export interface MudGameItem {
   time: number
 }
 
-/** 一条 UI 流帧条目 (日志、结构化决策或验证码交互)。 */
+/** 一条 UI 流帧条目 (日志、结构化决策或验证码交互)。
+ *  seq 契约同 `MudGameItem` (双路径可达需按 seq 去重; log 类以 logSeq 优先去重)。 */
 export interface MudUiItem {
   seq: number
   /** 来源会话 id (进程级条目 = 空串, 所有会话视图都显示)。 */
