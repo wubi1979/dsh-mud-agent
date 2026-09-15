@@ -11,7 +11,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import { isTrustedRequest } from './hub.ts'
-import { resolveCaptchaImage } from '../agents/captcha.ts'
+import { resolveCaptchaImage } from '../services/network/captcha.ts'
 import { MUD_TIER_NAMES, type MudTier } from '../services/gate/tiers.ts'
 import type { MudLogService } from '../services/log/log-service.ts'
 import type { MudCoreService } from '../service.ts'

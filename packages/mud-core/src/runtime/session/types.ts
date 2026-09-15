@@ -132,7 +132,7 @@ export interface MudRuntimeSink {
    * 可选: 把**已解析好的验证码图片**推给宿主（`mud_captcha` 工具调用它）。
    *
    * 边界：解析（出站围栏 + 抓 `robot.php` + 取 `<img src>` + 归一绝对地址）在工具里做
-   * （`agents/captcha.ts`），宿主只负责"变成页面上的验证码对话框"。宿主需要
+   * （`services/network/captcha.ts`），宿主只负责"变成页面上的验证码对话框"。宿主需要
    * `robotUrl` 才能实现"刷新图片"（同一个 `robot.php` 页面每次抓都是新图）。
    * @param sessionId 来源会话。
    * @param push 图片地址 + 触发它的页面地址 + 可选的失败反馈文案（上一轮答错原文）。

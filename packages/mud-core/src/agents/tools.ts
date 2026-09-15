@@ -22,7 +22,7 @@ import type { ParameterSchemaSpec, ValueSchemaSpec } from '@deepseek-ai/dsh-tool
 import {
   DEFAULT_DANGEROUS_COMMANDS, commandHead, commandHelpText, deniedCommands, type DangerousRule,
 } from '../shared/commands.ts'
-import { resolveCaptchaImage } from './captcha.ts'
+import { resolveCaptchaImage } from '../services/network/captcha.ts'
 import { MOVE_ALIASES, MOVE_DIRS, STATUS_CMDS } from '../shared/game.ts'
 import type { MudReply, ReplyOptions, ReplySettle } from '../runtime/session/bridge.ts'
 import type { SessionCredentials } from '../runtime/credentials.ts'
