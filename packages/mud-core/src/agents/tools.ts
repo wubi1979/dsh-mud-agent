@@ -415,7 +415,7 @@ export function buildMudTools({
         until: {
           type: 'object',
           additionalProperties: true,
-          description: '可选: 声明应答结算边界 (规则动作使用)。当声明的正则命中应答文本时结算 (跨帧累积; 慢命令如 dz/fullme), 缺省 GA/EOR 主边界 + 静默兜底',
+          description: '可选: 声明应答结算边界 (规则动作使用)。当声明的正则命中应答文本时结算 (跨帧累积; 慢命令如 dz/fullme), 缺省 GA/EOR 主边界结算 (八成)',
         },
       },
       output: { schema: OUT_SCHEMA, render: OUT_RENDER },
@@ -480,7 +480,7 @@ export function buildMudTools({
         }
         const wiredCmd = wire(cmd)
         // §8 活动表: 慢命令 (打坐/静坐/睡觉 …) 未显式声明 until 时自动附带完成句锚定 —
-        // 使桥等完成句到达再结算, 不依赖观察窗静默兜底或仅靠初始 GA 即结算。
+        // 完成句上收为分帧器武装标记, 命中即提交帧并由桥结算, 不依赖初始 GA 即结算。
         const activityEntry = activityFor(cmd, activity)
         if (activityEntry !== null && !replyOpts) {
           replyOpts = {

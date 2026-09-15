@@ -109,7 +109,9 @@ describe('回看水位: 只给尚未交付的行', () => {
   afterEach(() => { vi.useRealTimers() })
 
   it('T2 批次交付后, recall 不再重复给出这批行; 新行仍可见', () => {
-    const h = harness('session-recall')
+    // v0.6.0 S3: 消费链在帧提交点单遍执行 (§8.2 站⑤ 记账/recall); 未交付状态用
+    // T2 限流构造 (帧提交即结算投递, 没有"行到了但不结算"的中间态)。
+    const h = harness('session-recall', { t2DeliverIntervalMs: 5_000 })
     h.runtime.connect()
     h.sink().onConnect()
 
@@ -121,17 +123,21 @@ describe('回看水位: 只给尚未交付的行', () => {
     // 已交付 → 回看为空 (不再把连接至今的全部输出倒一遍)。
     expect(h.runtime.recall(60)).toEqual([])
 
-    // 未交付的新行 → 只回看这些。
+    // 未交付的新行 → 只回看这些 (帧提交点记账; 交付被 T2 限流压住 → 行留在待决)。
     h.sink().onLines([ml('你捡起一把长剑。', 2)])
+    h.sink().onBoundary('ga')
+    expect(h.delivered).toHaveLength(1)
     expect(h.runtime.recall(60)).toEqual(['你捡起一把长剑。'])
 
-    h.sink().onBoundary('ga')
+    // 限流窗口过后交付 → 回看再次为空。
+    vi.advanceTimersByTime(5_000)
+    expect(h.delivered).toHaveLength(2)
     expect(h.runtime.recall(60)).toEqual([])
     h.runtime.dispose()
   })
 
   it('重连后 abs 从 0 重来: 水位与回看缓冲一起复位 (否则永远为空)', () => {
-    const h = harness('session-recall-reconnect')
+    const h = harness('session-recall-reconnect', { t2DeliverIntervalMs: 5_000 })
     h.runtime.connect()
     h.sink().onConnect()
     h.sink().onLines([ml('第一连接的行', 0)])
@@ -140,7 +146,10 @@ describe('回看水位: 只给尚未交付的行', () => {
 
     h.sink().onClose()
     h.sink().onConnect()
+    // 重连后 abs 从 0 起: 若交付水位不清, 新行 (abs=0) 会被旧水位全部滤掉。
+    // T2 限流把交付压住 → 行留在待决 (未交付) → recall 可见。
     h.sink().onLines([ml('第二连接的第一行', 0)])
+    h.sink().onBoundary('ga')
     expect(h.runtime.recall(10)).toEqual(['第二连接的第一行'])
     h.runtime.dispose()
   })

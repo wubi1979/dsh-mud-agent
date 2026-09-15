@@ -1,38 +1,38 @@
 /**
  * dsh-mud-core — 命令-应答桥 (CommandResponseController), host half. 会话层.
  *
- * 命令-应答桥 (`doc/ARCHITECTURE.md` §8; GA 主边界 + 声明边界 + 静默兜底) 的核心实现: 把
- * "mud 工具调用 → 应答" 建模为一次 **带结算边界的请求**:
+ * 命令-应答桥 (`doc/architecture/07-08-t1-bridge.md` §8.3; v0.6.0 事务表瘦身版) 的核心实现:
+ * 把 "mud 工具调用 → 应答" 建模为一次 **带结算边界的请求**:
  *   - sendAndAwait(cmd, opts) → Promise<MudReply>: 工具调用同步挂起, 游戏应答
- *     到达 (声明边界 / GA / EOR / 静默窗 / 超时) 后结算为 MudReply;
+ *     到达 (GA/EOR 主边界 / until 声明判据 / 超时放弃) 后结算为 MudReply;
+ *   - **响应 = 事务窗口期间提交的所有帧的并集** (§8.3): 行由宿主从**分帧器提交的帧**
+ *     喂入 (`feedLines`); 桥不再自造边界 —— 静默/超时不是边界 (v0.6.0 删除), 未声明
+ *     判据的请求在下一个 GA 帧结算 (八成缺省), 等待超限即放弃 (§8.4, resolve
+ *     `{ok:false, settled:'timeout'}`, 帧不动、判据标记保持武装);
  *   - 一步一帧: 同一时刻至多一个**已武装** (armed = 真实写 socket 后) 的请求
  *     在等待结算; 后续请求驻留 pending, 前一个结算后才发送 (工具循环串行 +
  *     pump 双保险)。
  *     **本桥只服务我们自己命令的应答帧**; 规则判定与投递归 L1/L2
  *     (`perceive/engine.ts` 与 `runtime/session/session.ts`), 两者通过"原始行同源、
- *     责任分离"解耦 —— 桥不再持有行集表, T1 也不按文本反查行对象。
+ *     责任分离"解耦 —— 桥不持有行集表, T1 也不按文本反查行对象。
  *
- * 计时语义 (审阅注意点 #1): **静默窗 = 最后一行到达后静默 N 秒** (默认 2s),
- * 非"武装后 N 秒"; 声明 until 的请求禁用静默窗 (慢应答由声明超时兜底)。
- * 超时兜底: 未声明 10s (可逐请求覆盖) / 声明 120s; **连续 3 次超时**
- * → promise reject (工具 throw → DSH 失败终态), 任意非超时结算即复位。
+ * 计时语义 (§8.4): 唯一的计时器是**放弃** —— 未声明 10s / 声明 120s (可逐请求覆盖);
+ * **连续 3 次放弃** → promise reject (工具 throw → DSH 失败终态), 任意非超时结算即复位。
  *
  * 接线 (宿主):
  *   - options.send: 实际入队 (宿主接 CommandQueue; 队列 onSend = 真实写 socket
- *     后调 controller.confirmSent(replyId, head) — head = 静默收集窗未结算行,
- *     并入帧首, 见审阅注意点 #3 的帧连续语义);
- *   - feedLines: 每个文本块的行 (armed 帧归当前请求; 无主行不在此登记 —— 投递由
- *     L2 结算点负责, 见 `doc/ARCHITECTURE.md` §5);
- *   - boundaryReceived: 帧边界 (GA/EOR); armed 且未声明 until → 即刻结算;
- *     声明 until → 仅作帧切分继续累积 (跨帧匹配); 无主边界 → 转发 `onBoundary`
- *     (装配方据此做投递结算);
+ *     后调 controller.confirmSent(replyId));
+ *   - feedLines: **分帧器提交的帧行** (事务窗口 = 帧并集; until 判据已上收分帧器
+ *     武装标记, 命中经 `settleUntilFromSplitter` 回桥结算);
+ *   - boundaryReceived: GA/EOR 帧 (§8.1 主边界): armed 请求即刻结算;
  *   - close: 断线 → 在途/排队请求全部 reject (回合 error 语义); `close()` 为**终止**语义,
  *     重连后宿主须调 `reset()` 重开控制器;
  *   - sendFailed: 宿主真实写 socket 失败/异常时回执 → 在途 sending 请求 settle error
  *     (工具 throw → 回合 error); pump 另设发送守卫: 超窗未 confirmSent 武装 → 同样 error;
  *
- * 结算分层的优先级 (`doc/ARCHITECTURE.md` §8): until (声明边界) > GA/EOR (主边界) >
- * 静默窗 (主边界兜底) > 超时 (最兜底)。
+ * 结算出口 (§8.3/§8.4): 声明判据命中 → until (十成); 未声明 → GA/EOR 帧 (八成缺省);
+ * 等待超限 → timeout (放弃)。`close()`/`signal`/发送失败语义沿用旧桥
+ * (abort/error/interrupted 不变)。
  * @module @deepseek-ai/dsh-mud-core/runtime/session/bridge
  */
 
@@ -42,17 +42,17 @@ import { textOfLines } from '../../services/network/ansi.ts'
 /** 帧边界种类 (telnet 'boundary' 事件)。 */
 export type BoundaryKind = 'ga' | 'eor'
 
-/** 结算方式: 边界 (ga/eor) / 声明 (until) / 静默 (silent) / 超时 (timeout) /
+/** 结算方式: 边界 (ga/eor) / 声明 (until) / 超时放弃 (timeout, §8.4) /
  *  中止 (abort, signal) / 流程打断 (interrupted) / 连接错误 (error, 断线)。 */
-export type ReplySettle = BoundaryKind | 'until' | 'silent' | 'timeout' | 'abort' | 'interrupted' | 'error'
+export type ReplySettle = BoundaryKind | 'until' | 'timeout' | 'abort' | 'interrupted' | 'error'
 
 /** 一次命令-应答的结算结果 (工具 execute 的返回值形状; 规则续步判定入参)。 */
 export interface MudReply {
-  /** 是否成功结算 (ga/eor/until/silent 为 true; timeout/abort/interrupted/error 为 false)。 */
+  /** 是否成功结算 (ga/eor/until 为 true; timeout/abort/interrupted/error 为 false)。 */
   ok: boolean
   /** 实际发出的命令 (串行数列时为 '命令序列')。 */
   cmd: string
-  /** 完整应答文本: 纯帧文本 + 结算标记 (timeout/silent 追加; 渲染给 agent)。 */
+  /** 完整应答文本 (事务窗口内提交帧的并集; 渲染给 agent)。 */
   text: string
   /** 纯应答行 (MudLine[], 行号/style 保真 — T1 规则续步判定的唯一来源)。 */
   lines: MudLine[]
@@ -60,7 +60,7 @@ export interface MudReply {
   settled: ReplySettle
 }
 
-/** 声明边界 (until): 仅当文本命中该正则才结算 (跨帧累积; 静默窗禁用)。 */
+/** 声明边界 (until): 仅当文本命中该正则才结算 (判据上收分帧器武装标记, 跨帧累积)。 */
 export interface ReplyUntil {
   regex: string | RegExp
   /** 声明请求的超时 (缺省 DECLARED_TIMEOUT_MS)。 */
@@ -69,12 +69,10 @@ export interface ReplyUntil {
 
 /** 请求选项。 */
 export interface ReplyOptions {
-  /** 声明边界: 声明后 GA/EOR 不再结算, 文本命中正则即结算。 */
+  /** 声明边界: 声明后由分帧器武装判据命中结算 (GA 帧不再结算本请求, 跨帧累积)。 */
   until?: ReplyUntil
-  /** 请求级超时 (未声明 10s / 声明 120s 的覆盖值)。 */
+  /** 请求级超时 (未声明 10s / 声明 120s 的覆盖值; 到点 = 放弃, §8.4)。 */
   timeout?: number
-  /** 静默窗毫秒 (未声明 until 时生效; 缺省 DEFAULT_SILENCE_MS; 逐行到达重置)。 */
-  silence?: number
   /** 中止信号: 触发后优雅结算 (settled='abort'), 不留悬挂 promise。 */
   signal?: AbortSignal
 }
@@ -91,8 +89,6 @@ export interface CommandResponseControllerOptions {
   defaultTimeoutMs?: number
   /** 声明请求超时 (缺省 120s)。 */
   declaredTimeoutMs?: number
-  /** 静默窗 (缺省 2s)。 */
-  defaultSilenceMs?: number
   /** 连续超时上限 (缺省 3; 达到即 reject → DSH 失败终态)。 */
   consecutiveTimeoutLimit?: number
   /**
@@ -117,22 +113,12 @@ export interface CommandResponseControllerOptions {
   onUntilDisarm?: (markerId: string) => void
 }
 
-/** 超时标记 (v0.6.0 弃用; 保留常量引用兼容)。 */
-export const TIMEOUT_MARKER = '\n[应答超时，边界未命中，请决策]'
-/** v0.6.0 §8.4: timeout 放弃语义文本 (替代旧 TIMEOUT_MARKER)。 */
+/** v0.6.0 §8.4: timeout 放弃语义文本 (放弃 = 未等到权威边界, 内容将随帧到达)。 */
 export const ABANDON_TEXT = '[应答超时，边界未命中，请决策]'
-/** 静默结算标记 (追加在 text 末尾; agent 可见, 注册表查找忽略)。 */
-export const SILENT_MARKER = '\n[静默结算（边界未命中）]'
 /** 中止文本。 */
 export const ABORT_TEXT = '（已中止）'
 /** 流程打断的缺省原因 (工具结果文本; `interruptInFlight` 用)。 */
 export const INTERRUPT_TEXT = '（流程被打断：本步已作废，请按新情况决策）'
-
-/**
- * v0.6.0: 孤儿 GA 计数过期窗口 — 非 GA 结算 (silent/timeout/abort/until) 后
- *  遗留 GA 只应吞"紧随其后"的一帧边界; 超过该窗 (GA 实测延迟 1–602ms,
- *  静默窗 2s) 仍累积的孤儿视为已无后续, 强制过期, 防止吞掉未来真实 GA。 */
-const ORPHAN_EXPIRE_MS = 3_000
 
 /** 单次应答的运行时状态。 */
 interface PendingReply {
@@ -150,7 +136,6 @@ interface PendingReply {
   resolve: (r: MudReply) => void
   reject: (e: Error) => void
   timeoutTimer: ReturnType<typeof setTimeout> | null
-  silenceTimer: ReturnType<typeof setTimeout> | null
   abortListener: (() => void) | null
   /** v0.6.0 S3c: until 武装标记 id (分帧器对账用)。仅声明 until 时有值。 */
   markerId?: string
@@ -165,7 +150,7 @@ interface PendingReply {
  */
 export class CommandResponseController {
   private readonly opts: Required<
-    Pick<CommandResponseControllerOptions, 'send' | 'defaultTimeoutMs' | 'declaredTimeoutMs' | 'defaultSilenceMs' | 'consecutiveTimeoutLimit'>
+    Pick<CommandResponseControllerOptions, 'send' | 'defaultTimeoutMs' | 'declaredTimeoutMs' | 'consecutiveTimeoutLimit'>
   > & {
     onBoundary?: (kind: BoundaryKind) => void
     onLog?: (text: string) => void
@@ -181,11 +166,6 @@ export class CommandResponseController {
   private live: PendingReply | null = null
   /** 连续超时计数 (成功结算即复位; 达上限 → reject)。 */
   private consecutiveTimeouts = 0
-  /** P3-2/R2-11: 迟到 GA 计数 — 非 GA 路径结算 (silent/timeout/abort/until) 后,
-   *  遗留的 GA 不应提前结算下一帧 (abort 路径实证问题); orphanBoundaryAt 记录
-   *  最近一次递增时间, 消费时超窗 (ORPHAN_EXPIRE_MS) 即过期清零。 */
-  private orphanBoundaries = 0
-  private orphanBoundaryAt = 0
   private replySeq = 0
   private disposed = false
 
@@ -194,7 +174,6 @@ export class CommandResponseController {
       send: options.send,
       defaultTimeoutMs: options.defaultTimeoutMs ?? 10_000,
       declaredTimeoutMs: options.declaredTimeoutMs ?? 120_000,
-      defaultSilenceMs: options.defaultSilenceMs ?? 2_000,
       consecutiveTimeoutLimit: options.consecutiveTimeoutLimit ?? 3,
       ...(options.onBoundary !== undefined ? { onBoundary: options.onBoundary } : {}),
       ...(options.onLog !== undefined ? { onLog: options.onLog } : {}),
@@ -211,7 +190,7 @@ export class CommandResponseController {
    * 挂起等待应答: 注册请求 → pump 发送 (宿主队列节流) → 真实写 socket 后
    * 宿主调 confirmSent 武装 → 应答到达结算 → resolve MudReply。
    * @param cmd 单体命令或命令序列 (序列 = 同一次应答的一个帧)。
-   * @param opts 结算选项 (until/timeout/silence/signal)。
+   * @param opts 结算选项 (until/timeout/signal)。
    */
   sendAndAwait(cmd: string | string[], opts: ReplyOptions = {}): Promise<MudReply> {
     const list = Array.isArray(cmd) ? cmd : [cmd]
@@ -249,7 +228,6 @@ export class CommandResponseController {
       resolve: () => {},
       reject: () => {},
       timeoutTimer: null,
-      silenceTimer: null,
       abortListener: null,
     }
     // v0.6.0 S3c: until 声明 → 分配 markerId (分帧器对账用)。
@@ -298,44 +276,31 @@ export class CommandResponseController {
   }
 
   /**
-   * 喂入一个文本块的行 (宿主 telnet 'parsed' 粒度; 术语见 `doc/ARCHITECTURE.md` §2)。
-   * `lines` = 原始行 (state 折叠之前的全量): 边界匹配 (until 目标行可能是
-   * state 折叠行, 如 hp 的 气血 行) 与帧内容 (工具调用主动索取的应答) 一律
-   * 在原始行上。无主行不再在此登记 —— 投递由 L2 结算点负责
-   * (`doc/ARCHITECTURE.md` §5), 桥只服务**我们自己命令**的应答帧。
-   * @param lines 本文本块的行。
+   * 喂入一帧的行 (§8.3 响应 = 事务窗口期间提交帧的并集): 宿主把**分帧器提交的帧**
+   * 原样喂入, 在途请求 (sending/armed) 就地累积 —— 桥不自造边界、不持有标记。
+   * 无主帧 (无在途请求) 不在此登记 —— 投递由 L2 消费链负责 (§8.2 站⑤)。
+   * @param lines 本帧的行。
    */
   feedLines(lines: MudLine[]): void {
     if (lines.length === 0 || this.disposed) return
     const reply = this.live
     if (!reply || (reply.state !== 'armed' && reply.state !== 'sending')) return
-    // `sending` = 已调用 sendAndAwait 但还没真实写出 (队列节流窗口): 这里的行同样属于
-    // 本帧 —— 由**控制器自己**累积, 宿主不需要另存一份"帧首"再并回来 (那样同一批行会
-    // 同时留在本帧与下一帧: 实测 look 的应答文本里混进了上一次 look/MXP 的旧行)。
+    // `sending` = 已调用 sendAndAwait 但还没真实写出 (队列节流窗口): 窗口期间提交的帧
+    // 同样属于本事务 (§8.3 响应 = 窗口并集)。
     reply.lines = [...reply.lines, ...lines]
     reply.text = textOfLines(reply.lines)
-    if (reply.state !== 'armed') return
-    this.resetSilence(reply)
-    // v0.6.0 S3c: until 判定移到分帧器 armed marker — bridge 不再自己判边界。
+    // until 判定归分帧器武装标记 (§8.5) — 桥只累积行, 不判边界。
   }
 
   /**
-   * 帧边界 (telnet 'boundary' {kind}): v0.6.0 S3c — GA/EOR 对任何 armed 请求 (含 until)
-   *  都正常 settle。until 命中由分帧器 armed marker 在 GA 之前触发 settleUntilFromSplitter。
-   *  无主边界丢弃 (转发 onBoundary)。
+   * GA/EOR 帧 (§8.1 主边界, 八成): 未声明判据的 armed 请求即刻结算。
+   * 声明判据 (until) 的请求**不**在此结算 —— 判据命中即结算 (十成), 跨帧累积
+   * 由分帧器武装标记负责 (§8.3/§8.5)。无主边界转发 `onBoundary` (装配方据此结算投递)。
    */
   boundaryReceived(kind: BoundaryKind): void {
     const reply = this.live
     if (reply && reply.state === 'armed') {
-      if (this.orphanBoundaries > 0) {
-        if (Date.now() - this.orphanBoundaryAt > ORPHAN_EXPIRE_MS) {
-          this.orphanBoundaries = 0
-        } else {
-          this.orphanBoundaries -= 1
-          this.opts.onLog?.(`[应答] 迟到 GA 丢弃 (P3-2 orphan, 剩余 ${this.orphanBoundaries})`)
-          return
-        }
-      }
+      if (reply.markerId !== undefined) return
       this.settle(reply, kind)
       return
     }
@@ -366,7 +331,6 @@ export class CommandResponseController {
     }
     this.pending = []
     this.live = null
-    this.orphanBoundaries = 0
   }
 
   /** 重连复位 (P0-1): `close()` 为终止语义 (disposed 永真), 宿主每次 `connect` 事件
@@ -380,7 +344,6 @@ export class CommandResponseController {
     this.pending = []
     this.live = null
     this.consecutiveTimeouts = 0
-    this.orphanBoundaries = 0
     this.disposed = false
   }
 
@@ -515,10 +478,6 @@ export class CommandResponseController {
     let text: string
     let ok: boolean
     switch (kind) {
-      case 'silent':
-        text = reply.text + SILENT_MARKER
-        ok = true
-        break
       case 'abort':
         text = ABORT_TEXT
         ok = false
@@ -532,12 +491,6 @@ export class CommandResponseController {
         text = reply.text
         ok = true
         break
-    }
-    // P3-2/R2-11: 非 GA 路径 (silent/abort/interrupted/timeout/until) 遗留 GA 不结算下一帧;
-    // timeout 已提前返回; error 为断线 (无后续 GA); ga/eor 为正常路径, 不计。
-    if (kind !== 'ga' && kind !== 'eor') {
-      this.orphanBoundaries += 1
-      this.orphanBoundaryAt = Date.now()
     }
     reply.resolve({ ok, cmd: reply.cmd, text, lines: reply.lines, settled: kind })
     // 流程判定通知 (v0.4.0): 结算种类 + 帧文本 + **被这次结算关掉的命令** (§19.3 归属判据)。
@@ -555,7 +508,7 @@ export class CommandResponseController {
     }
   }
 
-  /** 武装后的计时: 超时必启; 静默窗仅在未声明 until 时启用。 */
+  /** 武装后的计时 (§8.4): 唯一的计时器是放弃 —— 超时即 resolve 放弃, 帧不动。 */
   private armTimers(reply: PendingReply): void {
     // R2-4: 先清掉 pump 阶段设置的**发送守卫**定时器 (sending 兜底; 最长存活
     // 120s, 闭包持 reply)。此前直接覆盖 timeoutTimer 引用使旧守卫泄漏 —
@@ -569,24 +522,9 @@ export class CommandResponseController {
     reply.timeoutTimer = setTimeout(() => {
       if (reply.state === 'armed') this.settle(reply, 'timeout')
     }, timeoutMs)
-    // 静默窗: 最后一行到达后静默 N 秒 (逐行重置); 声明 until 禁用。
-    if (!declared) {
-      this.resetSilence(reply)
-    }
-  }
-
-  /** 重置静默窗 (每次 armed 帧喂行时调用)。 */
-  private resetSilence(reply: PendingReply): void {
-    if (reply.state !== 'armed') return
-    if (reply.silenceTimer) clearTimeout(reply.silenceTimer)
-    const silenceMs = reply.opts.silence ?? this.opts.defaultSilenceMs
-    reply.silenceTimer = setTimeout(() => {
-      if (reply.state === 'armed') this.settle(reply, 'silent')
-    }, silenceMs)
   }
 
   private clearTimers(reply: PendingReply): void {
     if (reply.timeoutTimer) { clearTimeout(reply.timeoutTimer); reply.timeoutTimer = null }
-    if (reply.silenceTimer) { clearTimeout(reply.silenceTimer); reply.silenceTimer = null }
   }
 }

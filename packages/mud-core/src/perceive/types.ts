@@ -22,9 +22,9 @@ export interface ActionSpec {
   output: string
   /** 可选工具调用: 渲染为一个 tool-call 块, 由 loop 官方工具管道执行。 */
   tool?: { name: string; args: Record<string, unknown> }
-  /** 声明应答边界 (命令-应答桥, `doc/ARCHITECTURE.md` §8): 应答文本命中该正则才结算。
-   *  用于慢命令/多帧应答 (打坐 dz、验证码 fullme 等), 否则动作保持
-   *  GA/EOR 主边界 + 静默兜底。缺省: 未声明。 */
+  /** 声明应答边界 (命令-应答桥, `doc/ARCHITECTURE.md` §8): 应答文本命中该正则才结算
+   *  (判据上收为分帧器武装标记, 跨帧累积)。用于慢命令/多帧应答 (打坐 dz、验证码 fullme 等),
+   *  否则动作保持 GA/EOR 主边界结算 (八成缺省)。缺省: 未声明。 */
   until?: { regex: string | RegExp; timeout?: number }
   /**
    * 该动作的参数含**必须由外部补齐**的占位符 (如 `fullme {captcha}` 里的 `captcha`)。

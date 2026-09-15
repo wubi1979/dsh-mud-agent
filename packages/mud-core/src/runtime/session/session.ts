@@ -23,8 +23,8 @@ import { buildMudTools, type MudTools, type SessionCredentials } from '../../age
 import { evaluateToolCall } from '../../services/gate/policy.ts'
 import { buildGateRules, type GateRules } from '../../services/gate/rules.ts'
 import { ownedGameMessage } from '../../agents/lane.ts'
-import { CommandResponseController, type BoundaryKind } from './bridge.ts'
-import { FrameSplitter } from './frame-splitter.ts'
+import { CommandResponseController } from './bridge.ts'
+import { FrameSplitter, lineCriteriaPattern, type MudFrame } from './frame-splitter.ts'
 import { textOfLines, type MudLine } from '../../services/network/ansi.ts'
 import { StateService } from './gmcp.ts'
 import { applyPatch, createWorld, worldSnapshot, type WorldModel } from '../../shared/world.ts'
@@ -92,6 +92,10 @@ export class MudSessionRuntime {
   private consumeTo = -1
   private settleTimer: ReturnType<typeof setTimeout> | null = null
   private holdTimer: ReturnType<typeof setTimeout> | null = null
+  /** §8.5: 当前由流程布防同步来的分帧器武装标记 id (flow-arm:*; 全量替换同步)。 */
+  private readonly flowMarkerIds = new Set<string>()
+  /** §8.3: 在途 until 事务的武装标记 id (tx-*; 帧标记路由 —— 只有它们结算桥)。 */
+  private readonly untilMarkerIds = new Set<string>()
   private readonly recallLines: { text: string; abs: number }[] = []
   /** 已投递给模型的最大行 abs (交付水位): recall 只回看其后的行, 保证 session 不重复。 */
   private deliveredAbs = -1
@@ -149,6 +153,8 @@ export class MudSessionRuntime {
   lastError: string | null = null
   /** 缺陷计数 (不变量 I9): 命中未渲染 / 遗留段丢弃 / hold 超时释放。 */
   private readonly counters = { hitsDropped: 0, carryDropped: 0, holdReleases: 0 }
+  /** §8.5: 打断规则武装清单 (声明了 `interrupts` 的行判据事件规则; 常驻标记, 重连重挂)。 */
+  private readonly interruptMarkers: readonly { id: string; pattern: RegExp }[]
 
   constructor(
     sessionId: string,
@@ -164,6 +170,13 @@ export class MudSessionRuntime {
   ) {
     this.sessionId = sessionId
     this.config = config
+    // §8.5: 打断规则武装 —— 声明了 `interrupts` 的事件规则注册为常驻分帧器标记,
+    // 命中 → 帧立即提交 → 链站②打断/排队当场发生 (无 GA 的服务端推送行不再等帧)。
+    this.interruptMarkers = perception.eventRules.flatMap(rule => {
+      if (rule.action?.interrupts === undefined) return []
+      const pattern = lineCriteriaPattern(rule.match)
+      return pattern === null ? [] : [{ id: `rule-int:${rule.id}`, pattern }]
+    })
     this.gateRules = buildGateRules(config.dangerous !== undefined ? { dangerous: config.dangerous } : undefined)
     this.sink = sink
     this.connections = connections
@@ -195,12 +208,23 @@ export class MudSessionRuntime {
         return false
       },
       // v0.6.0 S3c: until 武装标记 → 分帧器注册; 分帧器命中后回调 settleUntilFromSplitter。
-      onUntilArm: (markerId, pattern) => { this.splitter.arm({ id: markerId, pattern, once: true }) },
-      onUntilDisarm: (markerId) => { this.splitter.disarm(markerId) },
+      // untilMarkerIds 记录在途标记 id —— 帧标记路由只认它们 (流程/打断标记也是
+      // 'armed' 帧, 但不走桥结算, 见 onFrameCommitted)。
+      onUntilArm: (markerId, pattern) => {
+        this.untilMarkerIds.add(markerId)
+        this.splitter.arm({ id: markerId, pattern, once: true })
+      },
+      onUntilDisarm: (markerId) => {
+        this.untilMarkerIds.delete(markerId)
+        this.splitter.disarm(markerId)
+      },
     })
-    // v0.6.0 S3a: 分帧器 — 边界裁决唯一出口。autoFlushMs=0 用 scheduleSettle 兜底。
-    this.splitter = new FrameSplitter({ autoFlushMs: 0, onLog: (t) => this.debug('perception', t) })
+    // v0.6.0 S3: 分帧器 = 唯一边界裁决者 + 网络装配层。静默窗 (bridgeSilenceMs) 降级为
+    // **网络装配粒度** (§8.7): 无标记到达时到点提交 valve 帧兜底走消费链; 消费边界只认
+    // 标记 (GA/EOR/武装判据), 不再有静默/超时"伪边界"。
+    this.splitter = new FrameSplitter({ autoFlushMs: this.config.bridgeSilenceMs, onLog: (t) => this.debug('perception', t) })
     this.splitter.onFrame = (frame) => this.onFrameCommitted(frame)
+    this.armInterruptRules()
     this.queue = new CommandQueue({
       minInterval: config.commandIntervalMs,
       onSend: (cmd, meta) => { this.onQueueSend(cmd, meta) },
@@ -256,6 +280,9 @@ export class MudSessionRuntime {
       },
       // 流程日志里的命令文本一律脱敏（密码/验证码不落日志；实测踩过一次明文泄漏）。
       mask: (text) => { return this.redactSecrets(text) },
+      // §8.5 武装集同步: 流程布防 (入口 driver / 步 ok·fail / 分支进入判据) 注册为
+      // 分帧器武装标记 —— 命中 → 帧立即提交 → 消费链运行 → 唤醒/推进当场发生。
+      onArmSync: (markers) => { this.syncFlowMarkers(markers) },
       // 流程实例状态变化 → 重评估看门狗（dead-air 的启动条件含"无活跃流程"；§11），
       // 并兜住"流程自己结束了但人工环节还挂着"（人工预算超时 / 打断 / 断线都会走这里）。
       onTransition: () => {
@@ -660,9 +687,15 @@ export class MudSessionRuntime {
     applyPatch(this.world, { sent_name: false, sent_pass: false })
     this.watchdogs.resetCounts()
     this.noteWorldChange()
-    // 传输断裂 = 感知上下文作废: 清多行半匹配 + 重连复位应答桥与投递缓冲。
+    // 传输断裂 = 感知上下文作废: 清多行半匹配 + 重连复位应答桥/分帧器与投递缓冲。
+    // 分帧器的开放帧与武装标记同属上一连接的行对象, 必须一起清 (§8.8: 重连后宿主须调 reset()）。
     this.engine.reset()
     this.controller.reset()
+    this.splitter.reset()
+    // 分帧器标记随 reset 全清: until 标记集作废; 流程武装布防与打断规则重挂 (§8.5)。
+    this.untilMarkerIds.clear()
+    this.flow.syncArming()
+    this.armInterruptRules()
     this.pending.length = 0
     this.pendingActions = []
     this.standalone = null
@@ -698,9 +731,11 @@ export class MudSessionRuntime {
     this.standalone = null
     this.consumeTo = -1
     this.engine.reset()
+    this.splitter.reset()
+    this.armInterruptRules()
     // 断线 = 唤醒类看门狗全部停表 (`active()` 里的连接门已不满足); 流程实例随连接作废。
     this.watchdogs.reevaluate()
-    this.flow.noteDisconnect()
+    this.flow.noteDisconnect()   // → 复位到只留入口 → armEntries → onArmSync 重挂流程标记
     applyPatch(this.world, { connected: false })
     this.pushWorld()
   }
@@ -946,117 +981,136 @@ export class MudSessionRuntime {
   }
 
   /**
-   * L1+L2 入口: 一个文本块的行 (`doc/ARCHITECTURE.md` §4/§5)。
-   *   1. 逐行推进感知引擎 (多行状态在此持久; 判类与渲染是同一次匹配);
-   *   2. state 折叠落库; 带动作命中入队;
-   *   3. **无主文本块的行**进入待决缓冲 (holdDelivery 未完成则暂不结算);
-   *   4. 结算点 (边界 / 静默 / 上限) 做单流切分并投递。
+   * L1+L2 入口 (v0.6.0 S3 重组): telnet 'parsed' 粒度的入站行**只进分帧器** (网络装配)。
    *
-   * 帧边界 (I5/I6): 在途命令应答的行走桥 (帧内容 → tool result), **不进投递** ——
-   * 否则同一段文本会既出现在 tool result 又作为 user 消息投一次, 并额外开一个回合。
-   * 帧里产生的命中不丢: 有工具在途就随本结果 `defer` 进下一步, 否则当场**动作投递**
-   * (工具应答与游戏输出同源进 L1, 见 §4)。
+   * 消费链五站 (§8.2: ①状态折叠 → ②规则触发 → ③事务结算 → ④流程判据 → ⑤残余记账/投递)
+   * 全部搬到**帧提交点** `onFrameCommitted` 单遍执行 —— 分帧器是唯一的边界裁决者,
+   * 静默/超时不是边界 (§8.7 删除), 本方法不再有任何判定/投递逻辑。
    */
   private onTextBlock(lines: MudLine[]): void {
     if (lines.length === 0) return
-    // 活动事件: 活跃看门狗重置窗口 (断流窗口从"最后一次游戏输出"重新计时)。
+    // 活动事件: 活跃看门狗重置窗口 (网络到达粒度 —— 断流看"最后一次游戏输出", 先于帧装配)。
     this.watchdogs.touch()
-    const result = this.engine.feed(lines)
-    // v0.6.0 S3a: 分帧器喂行 (累积进开放帧 + 逐行测已有武装标记)。
     this.splitter.feedLines(lines)
-    // 回看缓冲只收**可能投递给模型**的行: 折叠行 (state 入库 / 直接执行的动作) 已经被处理过,
-    // 不再算"尚未投递的输出" —— 否则 `mud_recall` 会把模型本该看不到的原文又倒出来
-    // (state 折叠行的信息在 world 快照里, 直接执行行的信息在命令执行结果里)。
-    for (const line of lines) {
-      if (result.foldedAbs.has(line.abs)) continue
-      this.recallLines.push({ text: line.text, abs: line.abs })
-      if (this.recallLines.length > 200) this.recallLines.shift()
-    }
-    for (const hit of result.stateHits) {
-      if (hit.data) applyPatch(this.world, hit.data)
-    }
-    // 本块折叠可能翻转 `logged_in` (state 规则) → 重评估看门狗起停 (见 watchdogs.ts)。
-    if (result.stateHits.length > 0) this.noteWorldChange()
-    // 直接执行类命中 (动作声明 `direct: true`): 无状态、无需返回的触发 (save 提醒 /
-    // 分页提示), 命中行已折叠 → 运行时立即执行声明的动作, 不投给 agent (见 runDirectHits)。
-    if (result.directHits.length > 0) this.runDirectHits(result.directHits)
+  }
+
+  /**
+   * v0.6.0 S3: **帧提交点 = 消费链唯一入口** (§8.2)。分帧器每提交一帧, 五站按固定
+   * 次序单遍过链; I5/I6 (每行恰投一次、一投递点 ≤ 一条消息) 由链的单遍结构保证,
+   * 不再靠结算分支纪律。
+   */
+  private onFrameCommitted(frame: MudFrame): void {
+    const lines = frame.lines
+    // 帧归属取样 (§8.3 帧并集判据): "提交时点是否在事务窗口内"。必须在 ③ 之前 ——
+    // GA/EOR 结算会翻转 inFlight。
     const inFrame = this.controller.inFlight()
-    // 流程判定 (v0.4.0 §19): 与静态规则同一批行; 命中即产出流程步动作 (或唤醒/打断/排队)。
-    const flowHits = this.flow.offer(lines, inFrame)
-    // 规则命中 → 动作请求 (待人工的先挂起)。
-    const parkedRuleHits = this.parkExternalHits(result.hits)
-    // 打断准入 (I14/§19.4): 有流程挂起时, 声明了 `interrupts` 的规则可能打断或排队。
+    // ① 状态折叠 → world 落库。
+    const result = lines.length > 0 ? this.engine.feed(lines) : null
+    if (result !== null) {
+      for (const hit of result.stateHits) {
+        if (hit.data) applyPatch(this.world, hit.data)
+      }
+      // 本帧折叠可能翻转 `logged_in` (state 规则) → 重评估看门狗起停 (见 watchdogs.ts)。
+      if (result.stateHits.length > 0) this.noteWorldChange()
+    }
+    // ② 规则触发 → 动作/direct-exec: 直接执行类先跑 (命中行已折叠, 不进投递);
+    //    其余命中 park (待人工) / admit (打断准入, I14/§19.4)。
+    if (result !== null && result.directHits.length > 0) this.runDirectHits(result.directHits)
+    const parkedRuleHits = result !== null ? this.parkExternalHits(result.hits) : []
     const readyRuleHits = this.admitRuleHits(parkedRuleHits, lines, inFrame)
+    // ③ 事务结算 → resolve 等待者: 行先入桥 (响应 = 事务窗口期间提交帧的并集, §8.3),
+    //    再按帧标记路由结算 —— GA/EOR 主边界; armed 帧只有**在途 until 事务**的标记
+    //    (tx-*) 才结算桥, 流程/打断标记 (flow-arm:*/rule-int:*) 只负责提交帧走链。
+    this.controller.feedLines(lines)
+    if (frame.marker === 'ga' || frame.marker === 'eor') this.controller.boundaryReceived(frame.marker)
+    else if (frame.marker === 'armed' && frame.markerId !== undefined && this.untilMarkerIds.has(frame.markerId)) {
+      this.controller.settleUntilFromSplitter(frame.markerId)
+    }
+    // ④ 流程判据 → 唤醒/打断/排队 (与静态规则同帧行; inFrame 用 ③ 前取样值)。
+    const flowHits = lines.length > 0 ? this.flow.offer(lines, inFrame) : []
     if (flowHits.length > 0) this.queueFlowActions(flowHits)
-    // 本批可能让流程到达终态/失败（或被打断）→ 排队的动作此时出队投递。
+    // 结算 (onSettle) / 判据命中可能让流程到达终态 → 排队的动作此时出队投递。
     this.drainFlowQueue()
+    // ⑤ 残余记账 → 投递视图 (批次/recall): 只记**可能投递给模型**的行 —— 折叠行
+    //    (state 入库 / 直接执行) 已被处理过, `mud_recall` 不再倒出模型本看不到的原文。
+    if (result !== null) {
+      for (const line of lines) {
+        if (result.foldedAbs.has(line.abs)) continue
+        this.recallLines.push({ text: line.text, abs: line.abs })
+        if (this.recallLines.length > 200) this.recallLines.shift()
+      }
+    }
     if (inFrame) {
-      // 帧内命中: 帧行不进待决缓冲 → 动作走**动作投递** (原文 = 命中行), 不依赖下一次结算。
+      // 帧内 (I5/I6): 帧行不进待决 → 走桥 (工具应答帧并集), **不进投递**; 命中不丢:
+      // 当场**动作投递** (工具应答与游戏输出同源进 L1, 见 §4)。
       if (readyRuleHits.length > 0) {
         this.deliverStandalone(
           textOfLines(lines).trim(),
           readyRuleHits.map(hit => actionOf(hit.ruleId, hit.action)),
         )
       }
-      // 帧内行会作为工具应答文本进模型 (tool result) → 计入交付水位, recall 不再重复给出。
       this.noteDelivered(lines)
     } else {
-      // 无主文本块: 动作随本段原文一起在一次原文投递里走 (行序与消费边界不变)。
+      // 无主帧: 动作随本帧原文在一次原文投递里走 (行序与消费边界不变)。
       const requests = readyRuleHits.map(hit => actionOf(hit.ruleId, hit.action))
       if (requests.length > 0) this.pendingActions.push(...requests)
-      if (result.consumeTo > this.consumeTo) this.consumeTo = result.consumeTo
+      if (result !== null && result.consumeTo > this.consumeTo) this.consumeTo = result.consumeTo
       for (const line of lines) {
-        if (!result.foldedAbs.has(line.abs)) this.pending.push(line)
+        if (result !== null && !result.foldedAbs.has(line.abs)) this.pending.push(line)
       }
     }
-    // 桥: 原始行照常喂 (armed 帧累积 / until / 边界); 与规则判定解耦。
-    this.controller.feedLines(lines)
     this.debug('perception',
-      `[感知] 文本块 ${lines.length} 行 (${inFrame ? '帧内' : '无主'}, 折叠 ${result.foldedAbs.size}, ` +
-      `规则命中 ${result.hits.length}, 流程动作 ${flowHits.length}, 待决 ${this.pending.length})`)
-    if (inFrame) return
-    if (result.holding) {
-      // 半截事务: 行留在待决, 暂不结算 —— 等捕获完成 (命中后合并投出) 或超时释放。
+      `[感知] 帧消费 ${lines.length} 行 (${frame.marker}${frame.markerId !== undefined ? `:${frame.markerId}` : ''}, ` +
+      `${inFrame ? '帧内' : '无主'}, 折叠 ${result?.foldedAbs.size ?? 0}, 规则命中 ${readyRuleHits.length}, ` +
+      `流程动作 ${flowHits.length}, 待决 ${this.pending.length})`)
+    // hold 门 (holdDelivery 投递原子性): GA/EOR 是权威边界, 无条件结算 (沿用旧 onBoundary
+    // 语义); armed/valve 帧尊重捕获 hold —— 半截捕获留待决, 等捕获完成 (后续帧合并投出)
+    // 或超时释放。
+    if (frame.marker !== 'ga' && frame.marker !== 'eor' && (result?.holding ?? false)) {
       this.armHoldTimeout()
-      this.debug('perception', '[感知] holdDelivery: 多行捕获未完成, 本块暂不投递')
+      this.debug('perception', '[感知] holdDelivery: 多行捕获未完成, 本帧暂不投递')
       return
-    }
-    this.clearHoldTimer()
-    this.scheduleSettle()
-  }
-
-  /**
-   * v0.6.0 S3a: 分帧器帧提交回调 — 边界裁决的唯一出口。
-   *  GA/EOR → bridge.boundaryReceived (桥结算) → 清除 hold → settle (投递)
-   *  armed marker → bridge.settleUntilFromSplitter (until 结算) → 同上
-   *  valve → 仅清 hold + settle (bridge 边界没事件)
-   */
-  private onFrameCommitted(frame: import('./frame-splitter.ts').MudFrame): void {
-    if (frame.marker === 'ga' || frame.marker === 'eor') {
-      this.controller.boundaryReceived(frame.marker)
-    } else if (frame.marker === 'armed' && frame.markerId !== undefined) {
-      this.controller.settleUntilFromSplitter(frame.markerId)
     }
     this.clearHoldTimer()
     this.settle()
   }
 
-  /** 静默窗 / 行数上限结算 (无边界时的兜底)。 */
-  private scheduleSettle(delayMs: number = this.config.bridgeSilenceMs): void {
-    if (this.settleTimer !== null) clearTimeout(this.settleTimer)
-    if (this.pending.length >= MAX_SETTLE_LINES) {
-      this.splitter.flush()
-      this.settle()
-      return
+  /**
+   * §8.5 武装集同步 (FlowRuntime.onArmSync): 把流程布防的行判据全量替换进分帧器 ——
+   * 全量替换而非增量, 天然兼容重连 (splitter.reset() 清空后一次重挂) 与布防收缩。
+   * `arm()` 的"arming 即测"处理换步时判据已命中开放帧行的情况 (当场提交, 重入安全)。
+   */
+  private syncFlowMarkers(markers: readonly { id: string; pattern: RegExp }[]): void {
+    for (const id of this.flowMarkerIds) this.splitter.disarm(id)
+    this.flowMarkerIds.clear()
+    for (const marker of markers) {
+      this.splitter.arm({ id: marker.id, pattern: marker.pattern, once: false })
+      this.flowMarkerIds.add(marker.id)
     }
-    this.settleTimer = setTimeout(() => { this.settleTimer = null; this.splitter.flush(); this.settle() }, delayMs)
+  }
+
+  /** §8.5: 重挂打断规则常驻标记 (构造后与每次 splitter.reset() 后调用)。 */
+  private armInterruptRules(): void {
+    for (const marker of this.interruptMarkers) {
+      this.splitter.arm({ id: marker.id, pattern: marker.pattern, once: false })
+    }
   }
 
   /**
-   * 单流切分与投递 (`doc/ARCHITECTURE.md` §5):
+   * 站⑤ 投递重试定时 (T2 限流差额等): 只重试**投递**, 不切帧 —— 消费边界只认标记
+   * (§8.2/§8.7), 这不是消费边界。
+   */
+  private scheduleSettle(delayMs: number): void {
+    if (this.settleTimer !== null) clearTimeout(this.settleTimer)
+    this.settleTimer = setTimeout(() => { this.settleTimer = null; this.settle() }, delayMs)
+  }
+
+  /**
+   * 站⑤ 投递 (`doc/ARCHITECTURE.md` §5; v0.6.0 S3 后 = 帧提交链的末站, 不再自造边界):
    *   有动作请求 → 动作消息 = `abs <= consumeTo` 的行 (带原文) + 动作请求;
    *   无动作请求 → 整段作为**批次** (T2) 并按预算裁剪。
-   * 每个结算点最多一条消息 (I6); 每条行恰好投出一次、顺序不变 (I5)。
+   * 每次投递最多一条消息 (I6); 每条行恰好投出一次、顺序不变 (I5)。
+   * 调用方: 帧提交点 (onFrameCommitted) / deliverStandalone / hold 释放 / T2 限流重试。
    */
   private settle(): void {
     if (this.settleTimer !== null) { clearTimeout(this.settleTimer); this.settleTimer = null }
@@ -1124,7 +1178,8 @@ export class MudSessionRuntime {
     // T1 是系统流程，不能被"给模型限速"的闸压住。
     const t2Gap = this.config.t2DeliverIntervalMs ?? 0
     const sinceT2 = Date.now() - this.lastT2DeliverAt
-    if (t2Gap > 0 && this.lastT2DeliverAt > 0 && sinceT2 < t2Gap) {
+    // 待决达上限 (MAX_SETTLE_LINES) 时旁路限流立即投 —— 防止"限流永远压着积压"。
+    if (t2Gap > 0 && this.lastT2DeliverAt > 0 && sinceT2 < t2Gap && this.pending.length < MAX_SETTLE_LINES) {
       // 动作投递（standalone）不受 T2 限流：它与 T1 同口径，被压住会让"重试重新取图"
       // 这类动作等不到人工环节开始就挂住（而且人工环节会暂停投递）。
       if (standalone !== null) this.flushStandalone()
@@ -1344,8 +1399,9 @@ export class MudSessionRuntime {
         this.pendingActions.push(request)
         if (hit.anchorAbs > this.consumeTo) this.consumeTo = hit.anchorAbs
       }
-      // 流程动作也要走结算 (无主块已在 onTextBlock 里进 pending)。
-      this.scheduleSettle()
+      // 流程动作也要走投递 (无主帧已在消费链站⑤里进 pending); 帧链外的调用方
+      // (人工回填等) 用装配粒度兜底重试。
+      this.scheduleSettle(this.config.bridgeSilenceMs)
     }
     for (const hit of framed) {
       const request = fillSlots(actionOf(hit.ruleId, { output: hit.output, tool: hit.tool }), slots, names)

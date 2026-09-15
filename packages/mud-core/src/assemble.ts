@@ -13,15 +13,16 @@
  *   - **网络连接只接入消息**: MudConnectionManager 只认 host/port, 不认识会话;
  *     绑定方向是唯一的 会话 → 连接 (`runtime.connectionId`)。
  *
- * 消息流 (V10 行级化; 见 `doc/ARCHITECTURE.md` §3–§7):
- *   文本块 (telnet `parsed`) → L1 行级感知引擎 (每会话一实例, 多行状态持久)
- *     → state 折叠落库 + 带动作命中入队 + 消费边界
- *     → L2 投递节拍 (结算点: GA/EOR 边界 / 静默窗 / 行数上限)
+ * 消息流 (v0.6.0 分帧器化; 见 `doc/ARCHITECTURE.md` §3–§8):
+ *   文本块 (telnet `parsed`) → 分帧器 FrameSplitter (唯一边界裁决者: GA/EOR 八成 +
+ *     武装判据十成切帧, 内存阀兜底; 300ms 静默降级为网络装配粒度, 非消费边界)
+ *     → 帧提交消费链 (§8.2, 固定次序单遍): ① 状态折叠落库 → ② 规则触发 (动作/direct-exec)
+ *       → ③ 事务结算 (B 桥, resolve 等待者) → ④ 流程判据 (唤醒/打断/排队) → ⑤ 投递视图
  *        有命中 → 原文投递消息 (原文 + 动作, lane=t1); 无命中 → 批次 (lane=t2)
  *     → 该会话 agent.followup(mud-owned 消息) → 官方 loop
  *     → agent/request (agent 作用域 + prepend): 仅 lane=t1 拦截为 mud-t1
- *     → L4 T1 hit 渲染器按 turnRef 取命中队列 → 工具调用 (mud_*)
- *     → sendAndAwait 挂起 → 应答帧结算 (B 桥) → tool result 续步
+ *     → L4 T1 动作渲染器按动作请求渲染 tool-call → 工具调用 (mud_*)
+ *     → sendAndAwait 挂起 → 帧并集结算 (B 桥) → tool result 续步
  *
  * 单面 (web face) 架构: 本包是统一 host 引擎, 唯一外壳为浏览器 WebUI
  *   (mud-webui)。终端/日志/决策帧走独立 `/mud/ws` 高吞吐通道 (条目自带
@@ -88,7 +89,7 @@ export interface MudAgentConfig {
   bridgeTimeoutMs?: number
   /** 命令-应答桥: 声明 (until) 请求超时 (缺省 120s)。 */
   bridgeDeclaredTimeoutMs?: number
-  /** 命令-应答桥/观察窗静默窗毫秒 (缺省 2s)。 */
+  /** 网络装配粒度毫秒 (缺省 2s; v0.6.0 静默窗降级为分帧器装配阀 autoFlushMs, 非消费边界 §8.7)。 */
   bridgeSilenceMs?: number
   /** 登录超时 (登录看门狗整体预算, 缺省 90s)。 */
   loginTimeoutMs?: number

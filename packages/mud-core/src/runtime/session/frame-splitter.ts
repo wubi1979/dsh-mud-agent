@@ -95,17 +95,18 @@ export class FrameSplitter {
       this.open.push(line)
       const hit = this.testLine(line)
       if (hit !== null) {
+        // 命中行(含)之前的行定格为帧; **继续处理本批剩余行** (它们属于下一开放帧,
+        // 不得丢弃 — I5 每行恰投一次)。
         this.commit(this.open.length - 1, 'armed', hit)
-        return
+        continue
+      }
+      if (this.open.length >= this.maxFrameLines) {
+        this.onLog?.(`[分帧] 帧内存阀触发 (${this.open.length} 行), 提交无标记帧 (§8.6)`)
+        this.commit(this.open.length - 1, 'valve')
       }
     }
-    if (this.open.length >= this.maxFrameLines) {
-      this.onLog?.(`[分帧] 帧内存阀触发 (${this.open.length} 行), 提交无标记帧 (§8.6)`)
-      this.commit(this.open.length - 1, 'valve')
-      return
-    }
     // 自动 flush 兜底 (非空帧, 无标记到达时提交 valve 帧)。
-    if (this.flushTimer === null && this.autoFlushMs > 0) {
+    if (this.open.length > 0 && this.flushTimer === null && this.autoFlushMs > 0) {
       this.flushTimer = setTimeout(() => {
         this.flushTimer = null
         if (this.open.length > 0) this.commit(this.open.length - 1, 'valve')
@@ -205,6 +206,30 @@ function compile(pattern: string | RegExp): RegExp | null {
   } catch {
     return null
   }
+}
+
+/**
+ * §8.5 武装接线: 把**行判据** (MatchSpec/FlowMatch 的 `regex`/`text` 子集) 编译为
+ * 单个标记正则 (any-of, 逐行测) —— `regex` 各 pattern 包裹后取 alternation;
+ * `text` 字面量转义后取 alternation (未锚定正则 ≈ 子串语义)。`func`/`ga` 等
+ * 非行判据返回 null (调用方跳过武装, 仍走帧提交后的被动匹配)。
+ */
+export function lineCriteriaPattern(spec: {
+  kind: string
+  patterns?: readonly (string | RegExp)[]
+  includes?: readonly string[]
+}): RegExp | null {
+  try {
+    if (spec.kind === 'regex' && spec.patterns !== undefined && spec.patterns.length > 0) {
+      return new RegExp(spec.patterns.map(p => `(?:${typeof p === 'string' ? p : p.source})`).join('|'))
+    }
+    if (spec.kind === 'text' && spec.includes !== undefined && spec.includes.length > 0) {
+      return new RegExp(spec.includes.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'))
+    }
+  } catch {
+    return null // 非法正则 → 不武装 (宿主被动匹配仍生效)
+  }
+  return null
 }
 
 /** 逐行测试 (P1-2: 锚定整行正则须逐行测, 多行串上 ^…$ 恒 false)。 */

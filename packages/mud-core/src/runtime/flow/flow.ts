@@ -22,6 +22,7 @@ import {
   type FlowMatch, type FlowSpec, type FlowStep,
 } from './flows.ts'
 import type { ArmedMatch, FlowActionHit, FlowRuntimeOptions, FlowSettleKind, FlowState, InterruptOutcome, InterruptRequest } from './flow-types.ts'
+import { lineCriteriaPattern } from '../session/frame-splitter.ts'
 
 
 /**
@@ -212,7 +213,7 @@ export class FlowRuntime {
   }
 
   /**
-   * 桥结算通知（GA/until/静默/超时/取消/写失败）。
+   * 桥结算通知（GA/until/超时放弃/取消/写失败）。
    *
    * 结算驱动的判定**不在批次里**，所以本方法自己补跑一次"顺序兜底后继"
    * （作者定案：`succeedStep` 只是里程碑，不是流程结束；流程收束在 `next` 为空的终态步）。
@@ -226,14 +227,8 @@ export class FlowRuntime {
   noteSettle(kind: FlowSettleKind, text = '', cmds?: readonly string[]): FlowActionHit[] {
     const hits: FlowActionHit[] = []
     if (this.disposed || this.active === null) return hits
-    console.log('[FLOW.noteSettle] kind=', kind, 'step=', this.active.step.id, 'phase=', this.active.phase, 'cmds=', JSON.stringify(cmds), 'ownCommands=', [...this.ownCommands])
     if (this.active.phase !== 'awaiting-result') {
       this.debug(`结算 ${kind}（本步不在等结果, 忽略）`)
-      return hits
-    }
-    if (kind === 'silent') {
-      // 静默不是流程结局（I4：只有成功/失败/超时）。
-      this.debug('结算 silent（流程不认静默）→ 继续等文本判据')
       return hits
     }
     // 桥结算归属（§19.3）：**按命令比对** —— 这条结算必须属于本步放行过的命令。
@@ -413,6 +408,7 @@ export class FlowRuntime {
     this.matcher = null
     this.pendingActions.length = 0
     this.pendingEntry.length = 0
+    this.syncArmingToHost()
   }
 
   // ── 内部：入口 / 批处理 / 转移 ─────────────────────────
@@ -447,6 +443,7 @@ export class FlowRuntime {
     this.gaArmed = null
     this.ownCommands.clear()
     this.matcher = null
+    this.syncArmingToHost()
     // 入口匹配器独立保存（活跃期间仍用于"其它流程入口 → pending entry"；空闲时
     // `matchEntries` 也复用它 —— 与入口规则同一次构建，规则集恒同步）。
     const entryRules = rules.filter(rule => this.entryLabels.has(rule.id))
@@ -746,6 +743,28 @@ export class FlowRuntime {
       })
     }
     this.matcher = rules.length > 0 ? new TriggerMatchService(rules, 'event') : null
+    this.syncArmingToHost()
+  }
+
+  /**
+   * §8.5 武装集同步: 把当前 arming 集的行判据 (regex/text) 编译为标记正则回调整合
+   * —— 宿主登记为分帧器武装标记, 命中 → 帧立即提交 → 链运行 → 唤醒/打断当场发生。
+   */
+  private syncArmingToHost(): void {
+    if (this.opts.onArmSync === undefined) return
+    const markers: { id: string; pattern: RegExp }[] = []
+    for (const entry of this.armed) {
+      if (!isLineMatch(entry.match)) continue
+      const pattern = lineCriteriaPattern(entry.match)
+      if (pattern === null) continue
+      markers.push({ id: `flow-arm:${entry.label}`, pattern })
+    }
+    this.opts.onArmSync(markers)
+  }
+
+  /** 重连复位后强制重发当前布防 (宿主分帧器已随 reset 清空)。 */
+  syncArming(): void {
+    this.syncArmingToHost()
   }
 
   /** 本步后继分类：条件分支（带进入判据）与顺序兜底（无进入判据）。 */

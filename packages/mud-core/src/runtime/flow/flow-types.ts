@@ -27,7 +27,7 @@ export interface FlowActionHit {
 }
 
 /** 桥结算结果（`CommandResponseController` 的结算种类）。 */
-export type FlowSettleKind = 'ga' | 'eor' | 'until' | 'silent' | 'timeout' | 'abort' | 'interrupted' | 'error'
+export type FlowSettleKind = 'ga' | 'eor' | 'until' | 'timeout' | 'abort' | 'interrupted' | 'error'
 
 /** 一条已布防的判据。 */
 export interface ArmedMatch {
@@ -108,6 +108,12 @@ export interface FlowRuntimeOptions {
    * （密码、验证码）不得落日志。缺省原样输出（测试可控）。
    */
   mask?: (text: string) => string
+  /**
+   * §8.5 武装集同步（可选）：布防变化时回调当前全部**行判据**（regex/text; ga/func
+   * 不在内）。宿主把它们登记为分帧器武装标记 —— 命中 → 帧立即提交 → 消费链运行 →
+   * 唤醒/打断当场发生（§19 的 arming 集与分帧器标记表是同一张表）。
+   */
+  onArmSync?: (markers: readonly { id: string; pattern: RegExp }[]) => void
   /**
    * **流程实例状态变化**（进入某步 / 收束 / 失败 / 复位；可选）。
    *

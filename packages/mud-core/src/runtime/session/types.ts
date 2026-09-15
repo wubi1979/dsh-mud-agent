@@ -166,7 +166,7 @@ export interface MudRuntimeConfig {
   bridgeTimeoutMs: number
   /** 声明 (until) 请求超时。 */
   bridgeDeclaredTimeoutMs: number
-  /** 静默窗毫秒。 */
+  /** 网络装配粒度毫秒 (v0.6.0: 静默窗降级为分帧器装配阀 autoFlushMs, 非消费边界 §8.7)。 */
   bridgeSilenceMs: number
   /** 登录整体预算。 */
   loginTimeoutMs: number
@@ -202,10 +202,10 @@ export interface MudRuntimeConfig {
   flows?: readonly FlowSpec[]
 }
 
-/** 结算点行数上限 (超限立即结算, 不等静默窗)。 */
+/** 帧行数上限 (超限即提交 valve 帧, 不等下一标记, §8.6)。 */
 export const MAX_SETTLE_LINES = 256
 
-/** 观察窗**注入**裁剪 (唯一裁剪职责: 只影响 T2 可见文本; 见 `doc/ARCHITECTURE.md` §5)。 */
+/** 事务窗口**注入**裁剪 (唯一裁剪职责: 只影响 T2 可见文本; 见 `doc/ARCHITECTURE.md` §5)。 */
 export const MAX_INJECT_TAIL_LINES = 64
 export const MAX_INJECT_TAIL_CHARS = 8_000
 
