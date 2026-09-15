@@ -43,7 +43,7 @@ import { SkillService } from './agents/skills.ts'
 import type { ActivityEntry } from './agents/tools.ts'
 import { commandsIndexForAgent } from './shared/commands.ts'
 import defaultPerceptionRules from './perceive/rules.ts'
-import { splitPerceptionRules } from './perceive/service.ts'
+import { splitPerceptionRules } from './perceive/engine.ts'
 import { flowCommands, defaultFlows } from './runtime/flow/flows/index.ts'
 import {
   attachMudPersona, attachMudPrompt, attachMudTools,

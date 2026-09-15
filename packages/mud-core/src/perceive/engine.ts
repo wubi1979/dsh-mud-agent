@@ -66,6 +66,21 @@ export interface PerceptionEngineOptions {
   holdRuleIds: ReadonlySet<string>
 }
 
+/**
+ * 装配期投影 (纯函数, 无运行态): 把完整感知规则集拆成引擎构造输入 ——
+ * `lane` 分双桶 (state 折叠 / event 渲染) + 提取 `holdDelivery` 规则 id 集。
+ * 调用方是包级装配方 (引擎构造前投一次影)。曾住独立的 `perceive/service.ts`
+ * ("装配服务"名不副实), 并入本模块 —— 它就是引擎构造输入的投影。
+ * @param rules 完整感知规则集 (默认规则 + 装配方追加)。
+ */
+export function splitPerceptionRules(rules: readonly PerceptionRule[]): PerceptionEngineOptions {
+  return {
+    stateRules: rules.filter(r => r.lane === 'state'),
+    eventRules: rules.filter(r => r.lane !== 'state'),
+    holdRuleIds: new Set(rules.filter(r => r.holdDelivery === true).map(r => r.id)),
+  }
+}
+
 /** 行级感知引擎: 每会话一个, 状态在实例内持久。 */
 export class PerceptionEngine {
   private readonly state: TriggerMatchService<ActionSpec>
