@@ -24,11 +24,12 @@ export const MOVE_ALIASES: Record<string, string> = {
   eu: 'eastup', ed: 'eastdown', wu: 'westup', wd: 'westdown',
 }
 
-/** 状态查询: what → 实际命令。 */
+/** 状态查询: what → 实际命令 (值必须与命令注册表 `mudCommands` 对齐 —
+ *  服务器别名也映射到注册表命令; 上线核实 2026-09-15: skills 是 sk 的别名,
+ *  busy 只是个人表情无状态价值, 不收录)。 */
 export const STATUS_CMDS: Record<string, string> = {
   hp: 'hp',          // 气血/内力
   score: 'score',    // 经验/潜能/门派
   inventory: 'i',    // 物品/装备
-  skills: 'skills',  // 武功
-  busy: 'busy',      // 忙碌状态
+  skills: 'sk',      // 武功 (skills 是服务器别名, 统一发注册表命令 sk)
 }

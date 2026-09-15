@@ -365,12 +365,12 @@ export function buildMudTools({
     /** 状态: what 枚举 → 对应命令, 非法拒绝。 */
     mud_status: {
       name: 'mud_status',
-      description: '查询角色状态。what 决定具体状态命令: hp (气血/内力), score (经验/潜能), inventory (物品/装备), skills (武功), busy (忙碌)。',
+      description: '查询角色状态。what 决定具体状态命令: hp (气血/内力), score (经验/潜能), inventory (物品/装备), skills (武功)。',
       parameters: {
         what: {
           type: 'string',
           required: true,
-          description: 'hp | score | inventory | skills | busy',
+          description: 'hp | score | inventory | skills',
         },
       },
       output: { schema: OUT_SCHEMA, render: OUT_RENDER },
@@ -378,7 +378,7 @@ export function buildMudTools({
         const what = String(args.what ?? '').trim().toLowerCase()
         const cmd = STATUS_CMDS[what]
         if (!cmd) {
-          return { ok: false, note: `未知状态: ${what} (可选 hp/score/inventory/skills/busy)`, cmd: '' }
+          return { ok: false, note: `未知状态: ${what} (可选 hp/score/inventory/skills)`, cmd: '' }
         }
         const refused = offline()
         if (refused !== null) return refused
