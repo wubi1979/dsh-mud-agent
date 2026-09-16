@@ -10,7 +10,7 @@
  */
 
 import type { MudDeliveryChannel } from './agents/mount.ts'
-import type { MudGameItem, MudWorldSnapshot } from './shell/wire.ts'
+import type { MudGameItem, MudWorldSnapshot } from './shell/remote-types.ts'
 import type { SkillService } from './agents/skills.ts'
 import type { MudTools } from './agents/tools.ts'
 import type { MudSessionDiag } from './runtime/session/types.ts'

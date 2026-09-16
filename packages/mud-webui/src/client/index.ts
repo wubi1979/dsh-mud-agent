@@ -46,6 +46,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import type { SidebarRightTabDefinition } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { MudStateController } from './mud-state.ts'
 import { MudSocketController } from './mud-socket.ts'
+import { MudRemoteController } from './mud-remote.ts'
 import { MudSidebar, type MudClientInjected } from './MudSidebar.tsx'
 import { GameView } from './GameView.tsx'
 import { LogView } from './LogView.tsx'
@@ -108,11 +109,19 @@ function openMudRail(ctx: ClientContext): boolean {
 export function apply(ctx: ClientContext): void {
   ensureXtermCss()
 
+  // RPC 面 (官方 typert 客户端): mount 后接入流消费; 失败只记不抛 (页面仍可
+  // 渲染名单, RPC 侧调用各自报未挂载错误)。
+  const mudRemote = new MudRemoteController()
   // Roster + per-session connection controller: one observable source shared by
   // every registration through the inject hooks compartment.
-  const mud = new MudStateController()
-  // One shared /mud/ws channel per page: game/log/decision/world push frames.
+  const mud = new MudStateController(mudRemote)
+  // One shared MUD stream consumer per page: game/log/decision/world push.
   const mudSocket = new MudSocketController()
+  void mudRemote.mount(ctx).then(namespace => {
+    mudSocket.start(namespace)
+  }).catch((err: unknown) => {
+    console.warn('[mud] remote mount 失败:', err)
+  })
 
   /**
    * 声明"该官方会话是 MUD 账号会话" (host 据此装配工具/提示/选路)。
@@ -121,11 +130,7 @@ export function apply(ctx: ClientContext): void {
    */
   const bindSession = (sessionId: string): Promise<void> => {
     if (sessionId === '') return Promise.resolve()
-    return fetch('/mud/bind', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId }),
-    }).then(() => undefined).catch(() => { /* best-effort: connect 时仍会声明 */ })
+    return mudRemote.bind(sessionId).catch(() => { /* best-effort: connect 时仍会声明 */ })
   }
 
   /**
@@ -204,11 +209,7 @@ export function apply(ctx: ClientContext): void {
    */
   const purgeSessionOnHost = (sessionId: string): void => {
     if (sessionId === '') return
-    void fetch('/mud/purge', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId }),
-    }).catch(() => { /* best-effort */ })
+    void mudRemote.purge(sessionId).catch(() => { /* best-effort */ })
   }
 
   /**
@@ -244,6 +245,7 @@ export function apply(ctx: ClientContext): void {
       servers: mud,
     },
     mudSocket,
+    remote: mudRemote,
     addServer: (input) => {
       mud.addServer(input)
       // 建立服务器即绑定工作空间: 注册 cwd 为 DSH workspace (幂等, 失败忽略)。
@@ -296,35 +298,18 @@ export function apply(ctx: ClientContext): void {
       try {
         // 命令序列格式 [halt,fullme text] → 发送 cmds 数组; 否则单命令。
         const seqMatch = /^\[(.+)\]$/.exec(cmd)
-        let body: Record<string, unknown>
         if (seqMatch !== null && seqMatch[1] !== undefined) {
-          body = { cmds: seqMatch[1].split(',').map(c => c.trim()).filter(c => c !== '') }
-        } else {
-          body = { cmd }
+          const cmds = seqMatch[1].split(',').map(c => c.trim()).filter(c => c !== '')
+          return await mudRemote.command(undefined, cmds, sessionId)
         }
-        if (sessionId !== undefined && sessionId !== '') body.sessionId = sessionId
-        const res = await fetch('/mud/command', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-        })
-        if (!res.ok) return false
-        const resBody = (await res.json()) as { ok?: unknown }
-        return resBody.ok === true
+        return await mudRemote.command(cmd, undefined, sessionId)
       } catch {
         return false
       }
     },
     refreshCaptcha: async (imageUrl, sessionId) => {
       try {
-        const res = await fetch('/mud/captcha/refresh', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(sessionId === undefined || sessionId === '' ? { imageUrl } : { imageUrl, sessionId }),
-        })
-        if (!res.ok) return null
-        const body = (await res.json()) as { ok?: unknown; url?: unknown }
-        return body.ok === true && typeof body.url === 'string' ? body.url : null
+        return await mudRemote.captchaRefresh(imageUrl, sessionId)
       } catch {
         return null
       }

@@ -23,8 +23,8 @@ note: 当前状态的唯一来源；本文件之外不写状态摘要
 ## §18 未决事项与风险
 
 1. **浏览器 roster 明文密码**：是否改走 host 侧凭据服务（§10）。
-2. **终端大流量文本走自有 `/mud/ws`**（不进 session 事件流）是否接受；官方无"非持久会话 UI 通道"。
-3. **`/mud/*` HTTP 路由**是否迁移到官方 Typert Remote 服务。
+2. **终端大流量文本通道 —— 已解决（v0.7.0）**：走 typert 流 `mud/game`（官方 mux WS，`/api/remote.mux`），不进 session 事件流；"官方无非持久会话 UI 通道"的前提已变化 —— 官方 remote 流通道即是。
+3. **`/mud/*` HTTP 路由迁移 —— 已解决（v0.7.0）**：全部迁入 typert Remote 命名空间 `mud`（`shell/mud-remote-service.ts`，生成器模式严格 descriptor + zod 参数校验）；自建 routes/hub/trust/view 四件与 ws 帧协议删除。
 4. **只读档是否允许 T1**（建议：允许但动作 `deny`）。
 5. **危险命令清单来源**（表 + Config 覆盖）。
 6. **逐次升级语义**（`ask` 批准 = 仅此一次 vs 提升会话档位；建议前者）。

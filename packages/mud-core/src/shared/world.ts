@@ -19,6 +19,8 @@
  * @module @deepseek-ai/dsh-mud-core/shared/world
  */
 
+import type { MudJsonValue, MudWorldSnapshot } from '../shell/remote-types.ts'
+
 /** 世界分组名。 */
 export const WORLD_SECTIONS = ['char', 'room', 'combat', 'flags'] as const
 
@@ -254,18 +256,14 @@ export function applyExtract(
   return changes
 }
 
-/** 序列化世界快照 (客户端状态面板 / LLM 上下文)。 */
-export function worldSnapshot(world: WorldModel): {
-  char: WorldSection
-  room: WorldSection
-  combat: WorldSection
-  flags: WorldSection
-} {
+/** 序列化世界快照 (客户端状态面板 / LLM 上下文)。
+ *  WorldSection 值写入源均为 JSON 兼容 (GMCP JSON / world_patch), 按传输通道事实收窄。 */
+export function worldSnapshot(world: WorldModel): MudWorldSnapshot {
   return {
-    char: { ...world.char },
-    room: { ...world.room },
-    combat: { ...world.combat },
-    flags: { ...world.flags },
+    char: { ...world.char } as Record<string, MudJsonValue>,
+    room: { ...world.room } as Record<string, MudJsonValue>,
+    combat: { ...world.combat } as Record<string, MudJsonValue>,
+    flags: { ...world.flags } as Record<string, MudJsonValue>,
   }
 }
 

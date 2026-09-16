@@ -276,7 +276,7 @@ export class MudLogService {
   }
 
   /** 读内存缓冲 (测试/诊断; since 为 seq 过滤, 缺省全部)。 */
-  entries(since = 0): readonly LogEntry[] {
+  entries(since: number = 0): readonly LogEntry[] {
     return since > 0 ? this.buffer.filter(e => e.seq > since) : this.buffer.slice()
   }
 

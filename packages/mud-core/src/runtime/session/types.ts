@@ -11,7 +11,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ActivityEntry } from '../../agents/tools.ts'
 import type { DangerousRule } from '../../shared/commands.ts'
 import type { OwnedAction } from '../../agents/lane.ts'
-import type { MudUiItem, MudWorldSnapshot } from '../../shell/wire.ts'
+import type { MudUiItem, MudWorldSnapshot } from '../../shell/remote-types.ts'
 import type { FlowState } from '../flow/flow-types.ts'
 import type { FlowSpec } from '../flow/flow-spec.ts'
 

@@ -32,8 +32,9 @@ const PLATFORM_MODULES: readonly string[] = [
 ]
 const isPlatformModule = (specifier: string): boolean => PLATFORM_MODULES.includes(specifier)
 
-/** Inline-safe @deepseek-ai wire/utility packages (browser-safe values). */
-const INLINE_SAFE = /^(?:@deepseek-ai\/dsh-(?:file-reference|session|llm|tools|brand|util-crypto|util-workspace-path)(?:\/|$)|@deepseek-ai\/dsh-token-meter\/client$)/
+/** Inline-safe @deepseek-ai wire/utility packages (browser-safe values).
+ *  dsh-mud-core/remote = typert 生成的客户端工件 (纯数据 + zod schema, 浏览器安全)。 */
+const INLINE_SAFE = /^(?:@deepseek-ai\/dsh-(?:file-reference|session|llm|tools|brand|util-crypto|util-workspace-path)(?:\/|$)|@deepseek-ai\/dsh-token-meter\/client$|@deepseek-ai\/dsh-mud-core\/remote$)/
 
 /** Vendored framework libraries, safe to inline. */
 const VENDORED_LIBRARY = /^@deepseek-ai\/(cosmokit|schemastery)(\/|$)/

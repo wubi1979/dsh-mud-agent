@@ -11,31 +11,47 @@
     "directory": "packages/mud-core"
   },
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
     },
     "./invariant": {
-      "types": "./dist/invariant.d.ts",
-      "default": "./dist/invariant.js"
+      "types": "./lib/invariant.d.ts",
+      "default": "./lib/invariant.js"
     },
     "./preset-agent": {
-      "types": "./dist/agents/preset.d.ts",
-      "default": "./dist/agents/preset.js"
+      "types": "./lib/agents/preset.d.ts",
+      "default": "./lib/agents/preset.js"
     },
     "./cordis.patch.yml": "./cordis.patch.yml",
-    "./shell-wire": {
-      "types": "./dist/shell/wire.d.ts",
-      "default": "./dist/shell/wire.js"
+    "./remote-types": {
+      "types": "./lib/shell/remote-types.d.ts",
+      "default": "./lib/shell/remote-types.js"
+    },
+    "./types": {
+      "types": "./lib/types.d.ts",
+      "default": "./lib/types.js"
+    },
+    "./typert": {
+      "types": "./lib/typert.host.d.ts",
+      "default": "./lib/typert.host.js"
+    },
+    "./remote": {
+      "types": "./lib/typert.remote-client.d.ts",
+      "default": "./lib/typert.remote-client.js"
     },
     "./src/*": "./src/*",
     "./package.json": "./package.json"
   },
   "files": [
-    "dist",
+    "lib",
+    "lib/typert.host.js",
+    "lib/typert.host.d.ts",
+    "lib/typert.remote-client.js",
+    "lib/typert.remote-client.d.ts",
     "presets",
     "cordis.patch.yml"
   ],
@@ -47,7 +63,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "gen:typert": "node ../../scripts/gen-typert.mjs",
+    "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\"",
     "test": "pnpm exec vitest run tests",
     "probe": "node tests/probe-client.mjs"
   },
@@ -56,7 +73,9 @@
     "@deepseek-ai/dsh-llm": "^0.1.5-rc.2",
     "@deepseek-ai/dsh-session": "^0.1.5-rc.2",
     "@deepseek-ai/dsh-tools": "^0.1.5-rc.2",
-    "ws": "^8.21.0"
+    "@deepseek-ai/dsh-typert-protocol": "workspace:*",
+    "ws": "^8.21.0",
+    "zod": "^4.4.3"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
@@ -73,6 +92,7 @@
     "@deepseek-ai/dsh-session-projection": "^0.1.5-rc.2",
     "@deepseek-ai/dsh-settings": "^0.1.5-rc.2",
     "@deepseek-ai/dsh-system-prompt": "^0.1.5-rc.2",
+    "@deepseek-ai/dsh-typert-generator": "^0.1.5-rc.2",
     "@types/ws": "^8.18.1",
     "vitest": "^4.1.8"
   }

@@ -1,21 +1,18 @@
 /**
- * dsh-mud-webui — MUD WebSocket controller (client half).
+ * dsh-mud-webui — MUD stream consumption + per-session view retention (client half).
  *
- * Owns the single `/mud/ws` connection for the whole page: same-origin ws/wss
- * derivation, hello handshake with per-channel resume seqs, exponential backoff
- * reconnect, and frame dispatch to event-style handlers. The channel itself is
- * session-agnostic — every item carries the `sessionId` it belongs to, and this
- * controller keeps **per-session** retention so 游戏/日志 views of one session
- * never show another session's stream (回复用户 = 回复会话 on the wire).
- *
- * Frame contract mirrors mud-core's src/client/wire.ts:
- *   client → server: `{type:'hello', lastGameSeq, lastUiSeq}`
- *   server → client: `{ch:'game', items}` / `{ch:'ui', items}` /
- *                    `{ch:'world', sessionId, world}`
+ * 传输面已迁移官方 typert 流 (host 侧 `@Remote({mode:'stream'})`, 客户端经
+ * `ctx.remote.mud.game/ui/world` 的 AsyncIterable 消费, 官方 gateway mux +
+ * RemoteStream 监督承担连接与断线重连)。本类只保留**视图职责**:
+ *   - 三条流循环 (start 后各起一条, 意外结束退避重开并携带 lastSeq 游标);
+ *   - **每会话**保留 (游戏/日志/决策/world), 组件重挂载也能渲染本会话历史;
+ *   - captcha 替换语义快照 + useSyncExternalStore 视图快照。
+ * 通道本身与会话无关 — 每个条目自带 `sessionId`, 回复用户 = 回复会话。
  * @module @deepseek-ai/dsh-mud-webui/client/mud-socket
  */
 
-import type { MudGameItem, MudUiItem } from '@deepseek-ai/dsh-mud-core/shell-wire'
+import type { MudGameItem, MudUiItem } from '@deepseek-ai/dsh-mud-core/remote-types'
+import type { MudNamespace } from './mud-remote.ts'
 
 /** Connection lifecycle shown by consumers that care about channel health. */
 export type MudSocketStatus = 'connecting' | 'open' | 'closed'
@@ -25,7 +22,7 @@ type UiHandler = (items: readonly MudUiItem[]) => void
 type WorldHandler = (sessionId: string, world: unknown) => void
 type StatusHandler = (status: MudSocketStatus) => void
 
-/** Reconnect backoff: doubling from 500ms, capped at 8s. */
+/** Stream retry backoff: doubling from 500ms, capped at 8s (官方监督之外的形态兜底). */
 const RECONNECT_BASE_MS = 500
 const RECONNECT_MAX_MS = 8000
 
@@ -61,27 +58,33 @@ function isMudGameItem(value: unknown): value is MudGameItem {
   return typeof v.seq === 'number' && typeof v.text === 'string' && typeof v.time === 'number'
 }
 
-function isMudUiItems(value: unknown): value is MudUiItem[] {
-  return Array.isArray(value) && value.every(isMudGameItem)
-}
-
 /** Narrow a shape-valid ui item to its kind union (wire data is host-authored). */
 function asUiItem(item: MudGameItem): MudUiItem {
   return item as MudUiItem
 }
 
+function delay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise(resolve => {
+    const timer = setTimeout(done, ms)
+    function done(): void {
+      signal.removeEventListener('abort', done)
+      clearTimeout(timer)
+      resolve()
+    }
+    signal.addEventListener('abort', done, { once: true })
+  })
+}
+
 /**
- * One shared WebSocket per page. Data is retained **per session**; consumers
+ * One page's MUD stream consumer. Data is retained **per session**; consumers
  * ask for the session they render (`getView(sessionId)` / `getGameItems(sessionId)`),
  * while the right-rail summary follows the focus session (the last session that
- * produced a frame).
+ * produced an item). `start()` 前流未接入 (RPC mount 完成后调用), 视图为空。
  */
 export class MudSocketController {
   private status: MudSocketStatus = 'connecting'
-  private ws: WebSocket | null = null
-  private attempt = 0
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private disposed = false
+  private abort: AbortController | null = null
   private lastGameSeq = 0
   private lastUiSeq = 0
 
@@ -102,10 +105,6 @@ export class MudSocketController {
   private readonly uiHandlers = new Set<UiHandler>()
   private readonly worldHandlers = new Set<WorldHandler>()
   private readonly statusHandlers = new Set<StatusHandler>()
-
-  constructor() {
-    this.connect()
-  }
 
   /** Current channel health (stable reference between changes). */
   getStatus(): MudSocketStatus {
@@ -144,7 +143,7 @@ export class MudSocketController {
     return () => { this.captchaListeners.delete(listener) }
   }
 
-  /** 用户确认/中止后清除对话框状态 (不发任何命令 — 发送由组件走 /mud/command)。 */
+  /** 用户确认/中止后清除对话框状态 (不发任何命令 — 发送由组件走 mud remote)。 */
   clearCaptcha(): void {
     if (this.captchaState.captcha === null) return
     this.captchaState = { captcha: null }
@@ -208,103 +207,116 @@ export class MudSocketController {
     return () => { this.statusHandlers.delete(handler) }
   }
 
-  /** Stop reconnecting and close the socket (plugin teardown). */
-  dispose(): void {
-    this.disposed = true
-    if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer)
-    this.reconnectTimer = null
-    try { this.ws?.close() } catch { /* already gone */ }
-    this.ws = null
+  /**
+   * 接入官方 typert 流 (RPC mount 完成后调用一次): game/ui/world 三条消费循环,
+   * 各自 until disposed。官方 RemoteStream 监督负责连接与断线重连; 这里只在
+   * 流迭代意外结束时退避重开 (携带 lastSeq 游标续读, 缺口按 seq 契约合法)。
+   */
+  start(mud: MudNamespace): void {
+    if (this.disposed || this.abort !== null) return
+    this.abort = new AbortController()
+    const signal = this.abort.signal
+    void this.consume('game', attempt => this.consumeGame(mud, attempt, signal))
+    void this.consume('ui', attempt => this.consumeUi(mud, attempt, signal))
+    void this.consume('world', attempt => this.consumeWorld(mud, attempt, signal))
   }
 
-  private connect(): void {
-    if (this.disposed || typeof WebSocket === 'undefined') return
-    this.setStatus('connecting')
-    let ws: WebSocket
-    try {
-      ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/mud/ws`)
-    } catch {
-      this.scheduleReconnect()
-      return
-    }
-    this.ws = ws
-    ws.onopen = () => {
-      if (this.ws !== ws) return
-      this.attempt = 0
-      this.setStatus('open')
-      // Resume from the last seqs this page has seen; zeros replay the buffer.
+  /** Stop stream consumption (plugin teardown). */
+  dispose(): void {
+    this.disposed = true
+    this.abort?.abort()
+    this.abort = null
+    this.setStatus('closed')
+  }
+
+  private async consume(
+    label: 'game' | 'ui' | 'world',
+    iteration: (attempt: number) => Promise<void>,
+  ): Promise<void> {
+    let attempt = 0
+    while (!this.disposed) {
       try {
-        ws.send(JSON.stringify({ type: 'hello', lastGameSeq: this.lastGameSeq, lastUiSeq: this.lastUiSeq }))
-      } catch { /* close handler schedules the retry */ }
+        await iteration(attempt)
+        attempt = 0
+      } catch { /* aborted → exit; transport hiccup → retry */ }
+      if (this.disposed) break
+      this.setStatus('closed')
+      await delay(Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** attempt), this.abort!.signal)
+      attempt += 1
     }
-    ws.onmessage = (event: MessageEvent) => {
-      if (this.ws !== ws) return
-      let msg: unknown
-      try {
-        msg = JSON.parse(String(event.data))
-      } catch {
-        return
-      }
-      if (typeof msg !== 'object' || msg === null) return
-      const frame = msg as { ch?: unknown; items?: unknown; world?: unknown; sessionId?: unknown }
-      if (frame.ch === 'game' && Array.isArray(frame.items)) {
-        const items = frame.items.filter(isMudGameItem)
-        for (const item of items) {
-          if (item.seq > this.lastGameSeq) this.lastGameSeq = item.seq
-          const key = sessionKeyOf(item.sessionId)
-          const retained = this.gameBySession.get(key) ?? []
-          retained.push(item)
-          if (retained.length > GAME_RETAIN_MAX) retained.splice(0, retained.length - GAME_RETAIN_MAX)
-          this.gameBySession.set(key, retained)
-          if (key !== GLOBAL_SESSION) this.focusSessionId = key
-        }
-        for (const handler of [...this.gameHandlers]) handler(items)
-        return
-      }
-      if (frame.ch === 'ui' && isMudUiItems(frame.items)) {
-        const items = frame.items.filter(isMudGameItem).map(asUiItem)
-        const touched = new Set<string>()
-        const captcha = items.filter(item => item.kind === 'captcha')
-        for (const item of items) {
-          if (item.seq > this.lastUiSeq) this.lastUiSeq = item.seq
-          const key = sessionKeyOf(item.sessionId)
-          if (item.kind === 'log') {
-            const logs = this.logsBySession.get(key) ?? []
-            logs.push(item)
-            if (logs.length > LOGS_RETAIN_MAX) logs.splice(0, logs.length - LOGS_RETAIN_MAX)
-            this.logsBySession.set(key, logs)
-          } else if (item.kind === 'decision') {
-            const decisions = this.decisionsBySession.get(key) ?? []
-            decisions.push(item)
-            if (decisions.length > DECISIONS_RETAIN_MAX) decisions.splice(0, decisions.length - DECISIONS_RETAIN_MAX)
-            this.decisionsBySession.set(key, decisions)
-          }
-          touched.add(key)
-          if (key !== GLOBAL_SESSION) this.focusSessionId = key
-        }
-        // captcha: 替换语义 — 取本批最后一条整体覆盖 (页面级对话框)。
-        if (captcha.length > 0) {
-          this.captchaState = { captcha: captcha[captcha.length - 1] ?? null }
-          for (const listener of [...this.captchaListeners]) listener()
-        }
-        this.rebuildViews(touched)
-        for (const handler of [...this.uiHandlers]) handler(items)
-        return
-      }
-      if (frame.ch === 'world') {
-        const key = sessionKeyOf(typeof frame.sessionId === 'string' ? frame.sessionId : undefined)
-        this.worldBySession.set(key, frame.world)
-        if (key !== GLOBAL_SESSION) this.focusSessionId = key
-        this.rebuildViews(new Set([key]))
-        for (const handler of [...this.worldHandlers]) handler(key, frame.world)
-      }
+    void label
+  }
+
+  private async consumeGame(mud: MudNamespace, attempt: number, signal: AbortSignal): Promise<void> {
+    this.setStatus('open')
+    const since = attempt === 0 && this.lastGameSeq === 0 ? undefined : this.lastGameSeq
+    for await (const items of await mud.game(since, signal)) this.ingestGame(items)
+  }
+
+  private async consumeUi(mud: MudNamespace, attempt: number, signal: AbortSignal): Promise<void> {
+    this.setStatus('open')
+    const since = attempt === 0 && this.lastUiSeq === 0 ? undefined : this.lastUiSeq
+    for await (const items of await mud.ui(since, signal)) this.ingestUi(items)
+  }
+
+  private async consumeWorld(mud: MudNamespace, _attempt: number, signal: AbortSignal): Promise<void> {
+    this.setStatus('open')
+    for await (const event of await mud.world(signal)) this.ingestWorld(event)
+  }
+
+  /** 游戏批次归集 (seq 游标 + 每会话保留 + handlers)。 */
+  private ingestGame(items: readonly MudGameItem[]): void {
+    const valid = items.filter(isMudGameItem)
+    for (const item of valid) {
+      if (item.seq > this.lastGameSeq) this.lastGameSeq = item.seq
+      const key = sessionKeyOf(item.sessionId)
+      const retained = this.gameBySession.get(key) ?? []
+      retained.push(item)
+      if (retained.length > GAME_RETAIN_MAX) retained.splice(0, retained.length - GAME_RETAIN_MAX)
+      this.gameBySession.set(key, retained)
+      if (key !== GLOBAL_SESSION) this.focusSessionId = key
     }
-    ws.onclose = () => {
-      if (this.ws !== ws) return // a newer socket superseded this one
-      this.ws = null
-      this.scheduleReconnect()
+    for (const handler of [...this.gameHandlers]) handler(valid)
+  }
+
+  /** UI 批次归集 (日志/决策保留 + captcha 替换 + 视图快照重建)。 */
+  private ingestUi(items: readonly MudUiItem[]): void {
+    const valid = (Array.isArray(items) ? items : []).filter(isMudGameItem).map(asUiItem)
+    const touched = new Set<string>()
+    const captcha = valid.filter(item => item.kind === 'captcha')
+    for (const item of valid) {
+      if (item.seq > this.lastUiSeq) this.lastUiSeq = item.seq
+      const key = sessionKeyOf(item.sessionId)
+      if (item.kind === 'log') {
+        const logs = this.logsBySession.get(key) ?? []
+        logs.push(item)
+        if (logs.length > LOGS_RETAIN_MAX) logs.splice(0, logs.length - LOGS_RETAIN_MAX)
+        this.logsBySession.set(key, logs)
+      } else if (item.kind === 'decision') {
+        const decisions = this.decisionsBySession.get(key) ?? []
+        decisions.push(item)
+        if (decisions.length > DECISIONS_RETAIN_MAX) decisions.splice(0, decisions.length - DECISIONS_RETAIN_MAX)
+        this.decisionsBySession.set(key, decisions)
+      }
+      touched.add(key)
+      if (key !== GLOBAL_SESSION) this.focusSessionId = key
     }
-    ws.onerror = () => { /* close follows; no double scheduling */ }
+    // captcha: 替换语义 — 取本批最后一条整体覆盖 (页面级对话框)。
+    if (captcha.length > 0) {
+      this.captchaState = { captcha: captcha[captcha.length - 1] ?? null }
+      for (const listener of [...this.captchaListeners]) listener()
+    }
+    this.rebuildViews(touched)
+    for (const handler of [...this.uiHandlers]) handler(valid)
+  }
+
+  /** 世界快照落座 (替换语义, 无历史)。 */
+  private ingestWorld(event: { sessionId?: string; world: unknown }): void {
+    const key = sessionKeyOf(event.sessionId)
+    this.worldBySession.set(key, event.world)
+    if (key !== GLOBAL_SESSION) this.focusSessionId = key
+    this.rebuildViews(new Set([key]))
+    for (const handler of [...this.worldHandlers]) handler(key, event.world)
   }
 
   /** 受影响会话的视图快照重建 (未受影响会话引用保持不变)。 */
@@ -318,17 +330,6 @@ export class MudSocketController {
       })
     }
     for (const listener of [...this.viewListeners]) listener()
-  }
-
-  private scheduleReconnect(): void {
-    if (this.disposed || this.reconnectTimer !== null) return
-    this.setStatus('closed')
-    const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** this.attempt)
-    this.attempt += 1
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null
-      this.connect()
-    }, delay)
   }
 
   private setStatus(status: MudSocketStatus): void {

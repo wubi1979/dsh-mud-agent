@@ -7,13 +7,14 @@
  * Clicking a user switches to that session (`ctx.sessions.open`) — 用户即会话.
  *
  * The roster is persisted to localStorage; connection state is not (the sidebar
- * and center poll /mud/status and reconcile). Game/log/decision/world data flows
- * through the /mud/ws push channel (MudSocketController), and every frame item
+ * and center poll the status RPC and reconcile). Game/log/decision/world data flows
+ * through the MUD stream consumer (MudSocketController), and every frame item
  * carries the sessionId it belongs to.
  * @module @deepseek-ai/dsh-mud-webui/client/mud-state
  */
 
 import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
+import type { MudRemoteController } from './mud-remote.ts'
 
 /** One MUD game account attached to a server, bound to its own DSH session. */
 export interface MudUser {
@@ -155,7 +156,11 @@ export class MudStateController {
   private state: MudServersSnapshot
   private readonly listeners = new Set<() => void>()
 
-  constructor() {
+  /** 官方 typert RPC 控制器 (构造注入; connect/断开/档位/状态轮询都走它)。 */
+  private readonly remote: MudRemoteController
+
+  constructor(remote: MudRemoteController) {
+    this.remote = remote
     const loaded = loadRoster()
     this.state = {
       servers: loaded.servers,
@@ -322,23 +327,14 @@ export class MudStateController {
     })
     try {
       // 声明 MUD 绑定 (工具/提示/选路装配到该官方会话的 agent), 再开连接。
-      await fetch('/mud/bind', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sessionId: user.sessionId }),
+      await this.remote.bind(user.sessionId)
+      await this.remote.connect({
+        host: server.host,
+        port: server.port,
+        name: user.name,
+        pass: user.pass,
+        sessionId: user.sessionId,
       })
-      const res = await fetch('/mud/connect', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          host: server.host,
-          port: server.port,
-          name: user.name,
-          pass: user.pass,
-          sessionId: user.sessionId,
-        }),
-      })
-      if (!res.ok) throw new Error(`connect failed (${res.status})`)
       await this.refreshStatus(user.sessionId)
     } catch (err) {
       this.setConn({
@@ -353,11 +349,7 @@ export class MudStateController {
   async disconnect(sessionId?: string): Promise<void> {
     const target = sessionId ?? this.state.conn.sessionId
     try {
-      await fetch('/mud/disconnect', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(target === null || target === undefined ? {} : { sessionId: target }),
-      })
+      await this.remote.disconnect(target === null || target === undefined ? undefined : target)
     } catch { /* the reconcile below settles the visible state */ }
     // 断开不销毁会话: 保留连接目标, 游戏页仍可一键重连。
     const active = this.state.active
@@ -385,14 +377,8 @@ export class MudStateController {
     if (sessionId === '') return false
     this.set({ sessionTier: { ...this.state.sessionTier, [sessionId]: tier } })
     try {
-      const res = await fetch('/mud/capability', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sessionId, tier }),
-      })
-      if (!res.ok) return false
-      const body = (await res.json()) as { tier?: unknown }
-      const applied = body.tier
+      const value = await this.remote.setCapability(tier, sessionId)
+      const applied = value.tier
       if (applied === 'observe' || applied === 'operate' || applied === 'full') {
         this.set({ sessionTier: { ...this.state.sessionTier, [sessionId]: applied } })
       }
@@ -403,53 +389,37 @@ export class MudStateController {
   }
 
   /**
-   * Poll GET /mud/status and reconcile the connection info with the roster.
+   * Poll status RPC and reconcile the connection info with the roster.
    * @param focusSessionId session whose status fills `conn` (缺省 = active target)。
    */
   async refreshStatus(focusSessionId?: string): Promise<void> {
     try {
-      const res = await fetch('/mud/status')
-      if (!res.ok) return
-      const body = (await res.json()) as {
-        connected?: unknown
-        state?: unknown
-        host?: unknown
-        port?: unknown
-        accountName?: unknown
-        sessionId?: unknown
-        sessions?: unknown
-      }
+      const body = await this.remote.status(focusSessionId)
       const sessionState: Record<string, MudConnState> = {}
       const sessionTier: Record<string, MudTier> = {}
-      if (Array.isArray(body.sessions)) {
-        for (const entry of body.sessions) {
-          if (typeof entry !== 'object' || entry === null) continue
-          const row = entry as { sessionId?: unknown; connected?: unknown; state?: unknown; tier?: unknown }
-          if (typeof row.sessionId !== 'string' || row.sessionId === '') continue
-          sessionState[row.sessionId] = row.connected === true
-            ? 'connected'
-            : row.state === 'connecting' ? 'connecting' : 'idle'
-          if (row.tier === 'observe' || row.tier === 'operate' || row.tier === 'full') {
-            sessionTier[row.sessionId] = row.tier
-          }
+      for (const row of body.sessions) {
+        if (row.sessionId === '') continue
+        sessionState[row.sessionId] = row.connected === true
+          ? 'connected'
+          : row.state === 'connecting' ? 'connecting' : 'idle'
+        if (row.tier === 'observe' || row.tier === 'operate' || row.tier === 'full') {
+          sessionTier[row.sessionId] = row.tier
         }
       }
-      const focus = focusSessionId ?? (typeof body.sessionId === 'string' ? body.sessionId : undefined)
+      const focus = focusSessionId ?? (body.status.sessionId === '' ? undefined : body.status.sessionId)
       const row = focus === undefined ? null : {
-        connected: sessionState[focus] === 'connected',
         state: sessionState[focus] ?? 'idle',
-        host: typeof body.host === 'string' ? body.host : null,
-        port: typeof body.port === 'number' ? body.port : null,
-        accountName: typeof body.accountName === 'string' && body.accountName !== '' ? body.accountName : null,
+        host: body.status.host,
+        port: body.status.port,
+        accountName: body.status.accountName !== '' ? body.status.accountName : null,
       }
-      const connected = row === null ? body.connected === true : row.connected
+      const connected = row === null ? body.status.connected : sessionState[focus!] === 'connected'
       const state: MudConnState = connected
         ? 'connected'
-        : (row === null ? body.state : row.state) === 'connecting' ? 'connecting' : 'idle'
-      const host = row?.host ?? (typeof body.host === 'string' ? body.host : null)
-      const port = row?.port ?? (typeof body.port === 'number' ? body.port : null)
-      const accountName = row?.accountName
-        ?? (typeof body.accountName === 'string' && body.accountName !== '' ? body.accountName : null)
+        : row?.state === 'connecting' ? 'connecting' : 'idle'
+      const host = row?.host ?? body.status.host
+      const port = row?.port ?? body.status.port
+      const accountName = row?.accountName ?? (body.status.accountName !== '' ? body.status.accountName : null)
       const { serverId, userId } = this.reconcile(host, port, accountName)
       this.set({
         sessionState,
@@ -458,7 +428,7 @@ export class MudStateController {
           state,
           serverId,
           userId,
-          sessionId: focus ?? (typeof body.sessionId === 'string' ? body.sessionId : null),
+          sessionId: focus ?? (body.status.sessionId === '' ? null : body.status.sessionId),
           label: serverId !== null && userId !== null
             ? this.labelOf(serverId, userId)
             : accountName,

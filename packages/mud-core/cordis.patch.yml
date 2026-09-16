@@ -33,7 +33,7 @@
 
 - insert:
     - id: mud-core
-      name: 'file:///D:/Code/dsh-mud-agent/packages/mud-core/dist/index.js'
+      name: 'file:///D:/Code/dsh-mud-agent/packages/mud-core/lib/index.js'
       config:
         host: mud.pkuxkx.net
         port: 8081

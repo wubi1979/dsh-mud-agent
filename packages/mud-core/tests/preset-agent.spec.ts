@@ -7,7 +7,7 @@
  *     未绑定会话 → 可读拒绝 (不发命令), 委托成功后记留痕;
  *   - 提示文案按 agent 求值 (persona/skills/commands 全局, tier 说明按会话), 无 agent
  *     上下文时退化为空/通用文本而不是抛错;
- *   - 组合文件 (`presets/mud-player/agent.cordis.yml`) 存在且指向 `dist/preset-agent.js`
+ *   - 组合文件 (`presets/mud-player/agent.cordis.yml`) 存在且指向 `lib/preset-agent.js`
  *     的相对路径 (部署根就是靠这个文件被发现)。
  */
 
@@ -253,9 +253,9 @@ describe('preset 组合文件 (部署根的被发现对象)', () => {
     expect(ids.length).toBeGreaterThanOrEqual(19)
   })
 
-  it('我们的行用相对路径指向 dist/preset-agent.js (行内不写死盘符)', () => {
+  it('我们的行用相对路径指向 lib/preset-agent.js (行内不写死盘符)', () => {
     const raw = readFileSync(join(dir, 'agent.cordis.yml'), 'utf8')
-    expect(raw).toContain("name: '../../dist/preset-agent.js'")
+    expect(raw).toContain("name: '../../lib/preset-agent.js'")
     // 只查**代码行**: 注释里提到 harness 检出路径是允许的 (生成说明)。
     const codeLines = raw.split('\n').filter(line => line.trim() !== '' && !line.trim().startsWith('#'))
     expect(codeLines.filter(line => /[A-Za-z]:[\\/]/.test(line))).toEqual([])

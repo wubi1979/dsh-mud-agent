@@ -41,7 +41,7 @@ import { WatchdogTable } from '../watchdogs.ts'
 import { FlowRuntime } from '../flow/flow.ts'
 import type { FlowActionHit } from '../flow/flow-types.ts'
 import { defaultFlows } from '../flow/flows/index.ts'
-import type { MudWorldSnapshot } from '../../shell/wire.ts'
+import type { MudWorldSnapshot } from '../../shell/remote-types.ts'
 import {
   actionOf,
   EMPTY_COMMANDS,

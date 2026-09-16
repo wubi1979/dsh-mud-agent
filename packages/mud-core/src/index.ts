@@ -5,12 +5,12 @@
  * 与消息流详见 `assemble.ts` 头注释 (`doc/ARCHITECTURE.md` §3–§7)。
  *
  * 本模块只做**入口** (插件描述 + 部署配置 + apply 转发); 装配主体在
- * `assemble.ts`, 网络面在 `shell/routes.ts`。
+ * `assemble.ts`, 网络面在 `shell/mud-remote-service.ts` (typert Remote 命名空间 `mud`)。
  * @module @deepseek-ai/dsh-mud-core
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { MudWorldSnapshot } from './shell/wire.ts'
+import type { MudWorldSnapshot } from './shell/remote-types.ts'
 import { createMudCore, type MudAgentConfig } from './assemble.ts'
 
 /** 插件名。 */
@@ -28,6 +28,7 @@ export type {
   MudDiag,
   MudGameRead,
 } from './service.ts'
+export { MudRemoteService, type MudRemoteServiceInternals } from './shell/mud-remote-service.ts'
 
 // 会话事件契约: 宿主消费会话内命令 (外壳命令走 HTTP /mud/command, 带 sessionId)。
 declare module '@deepseek-ai/dsh-session/types' {

@@ -15,7 +15,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { MudClientInjected } from './MudSidebar.tsx'
-import type { MudUiItem } from '@deepseek-ai/dsh-mud-core/shell-wire'
+import type { MudUiItem } from '@deepseek-ai/dsh-mud-core/remote-types'
 
 const LOG_STYLE: React.CSSProperties = {
   height: '100%',
@@ -72,11 +72,11 @@ export type LogViewProps =
  * Render the full run stream: restored history + runtime logs + decisions,
  * merged on the logSeq timeline (logService.seq = global identity key).
  *
- * On mount, POST /mud/logs to fetch today's history (JSONL). Restored entries
+ * On mount, logs RPC to fetch today's history. Restored entries
  * share logSeq with live items → dedup by logSeq, no duplicates.
  * Next-day entries are NOT restored (readDayEntries only reads today's file).
  */
-export function LogView({ sessionId, mudSocket }: LogViewProps) {
+export function LogView({ sessionId, mudSocket, remote }: LogViewProps) {
   // 本会话视图 (帧按 sessionId 归集; 进程级条目并入每个会话)。
   const sid = sessionId === undefined || String(sessionId) === '' ? undefined : String(sessionId)
   const view = useSyncExternalStore(
@@ -86,49 +86,37 @@ export function LogView({ sessionId, mudSocket }: LogViewProps) {
   // 当日恢复历史 (挂载时拉取; entries 带 logSeq = logService.seq)。
   const [restored, setRestored] = useState<readonly MudUiItem[]>([])
 
-  // 挂载时拉当日会话日志 (POST /mud/logs; sessionId 来自 PropsRuntime)。
+  // 挂载时拉当日会话日志 (logs RPC; sessionId 来自 PropsRuntime)。
   useEffect(() => {
     if (sessionId === undefined) return
     const sid = typeof sessionId === 'string' ? sessionId.trim() : ''
     if (sid === '') return
-    fetch('/mud/logs', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId: sid }),
-    })
-      .then(r => r.json())
-      .then((data: { ok?: boolean; entries?: Array<{
-        seq: number; level?: string; channel?: string;
-        text: string; time: number; actor?: string;
-        ruleId?: string; eventType?: string; flow?: string;
-        action?: string; result?: string;
-      }> }) => {
-        if (data.ok && Array.isArray(data.entries)) {
-          // 恢复条目转 MudUiItem (channel='decision' → kind='decision', 其余 → kind='log')。
-          const items: MudUiItem[] = data.entries.map(e => {
-            const isDecision = e.channel === 'decision'
-            const item: MudUiItem = {
-              seq: -1, // 恢复条目无 ui seq; 前端按 logSeq 排序/去重
-              kind: isDecision ? 'decision' : 'log',
-              text: e.text,
-              time: e.time,
-              logSeq: e.seq,
-            }
-            if (e.level !== undefined) item.level = e.level as MudUiItem['level'] & {}
-            if (e.channel !== undefined) item.channel = e.channel as MudUiItem['channel'] & {}
-            if (e.actor !== undefined) item.actor = e.actor as MudUiItem['actor'] & {}
-            if (e.ruleId !== undefined) item.ruleId = e.ruleId
-            if (e.eventType !== undefined) item.eventType = e.eventType
-            if (e.flow !== undefined) item.flow = e.flow
-            if (e.action !== undefined) item.action = e.action
-            if (e.result !== undefined) item.result = e.result
-            return item
-          })
-          setRestored(items)
-        }
+    remote.logs(sid)
+      .then(entries => {
+        // 恢复条目转 MudUiItem (channel='decision' → kind='decision', 其余 → kind='log')。
+        const items: MudUiItem[] = entries.map(e => {
+          const isDecision = e.channel === 'decision'
+          const item: MudUiItem = {
+            seq: -1, // 恢复条目无 ui seq; 前端按 logSeq 排序/去重
+            kind: isDecision ? 'decision' : 'log',
+            text: e.text,
+            time: e.time,
+            logSeq: e.seq,
+          }
+          if (e.level !== undefined) item.level = e.level as MudUiItem['level'] & {}
+          if (e.channel !== undefined) item.channel = e.channel as MudUiItem['channel'] & {}
+          if (e.actor !== undefined) item.actor = e.actor as MudUiItem['actor'] & {}
+          if (e.ruleId !== undefined) item.ruleId = e.ruleId
+          if (e.eventType !== undefined) item.eventType = e.eventType
+          if (e.flow !== undefined) item.flow = e.flow
+          if (e.action !== undefined) item.action = e.action
+          if (e.result !== undefined) item.result = e.result
+          return item
+        })
+        setRestored(items)
       })
-      .catch(() => { /* 恢复失败不阻塞实时流 */ })
-  }, [sessionId])
+      .catch(() => { /* 恢复失败不阻塞实时流 (含 remote 未挂载) */ })
+  }, [sessionId, remote])
 
   // 合并: 恢复历史 + 实时日志 + 实时决策, 按 logSeq 去重归并排序。
   const items = useMemoMergedTimeline(restored, view.logs, view.decisions)

@@ -61,11 +61,10 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { Context } from '@deepseek-ai/cordis'
 import { join } from 'node:path'
 import { MudLogService, purgeSessionLogs, resolveLogDir } from './services/log/log-service.ts'
-import { MudWebSocketHub } from './shell/hub.ts'
+import { MudFeedHub } from './shell/streams.ts'
 import { GlobalBuffers } from './shell/global-buffers.ts'
-import { SessionView } from './shell/view.ts'
-import { installRoutes } from './shell/routes.ts'
-import type { MudGameItem, MudWorldSnapshot } from './shell/wire.ts'
+import { MudRemoteService, SessionView } from './shell/mud-remote-service.ts'
+import type { MudGameItem, MudWorldSnapshot } from './shell/remote-types.ts'
 import type {
   MudAgentKit, MudConnectOptions, MudConnectionStatus, MudCoreService, MudDiag,
 } from './service.ts'
@@ -152,10 +151,12 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
   const logDir = resolveLogDir(config.logDir, join(config.cwd ?? process.cwd(), 'mud-logs'))
   // 每会话一个 LogService (文件 mud-YYYYMMDD-<sessionId>.log; seq 亦按会话).
   const logServices = new Map<string, MudLogService>()
-  // ── 全局 WS 缓冲 (会话无关通道; 每条条目自带 sessionId) + 活动会话视图 ──
+  // ── 全局流缓冲 (会话无关通道; 每条条目自带 sessionId) + 活动会话视图 ──
   const buffers = new GlobalBuffers()
   const view = new SessionView(config.sessionId ?? 'mud-player')
-  let hub: MudWebSocketHub | null = null
+  // 流扇出端 (game/ui/world 三条 remote 流的实时推送出口)。
+  const feeds = new MudFeedHub()
+  buffers.attachSink(feeds)
   let lastError: string | null = null
   // 验证码刷新映射: 图片URL → robot.php URL (供前端刷新按钮重新获取图片)。
   const robotUrlMap = new Map<string, string>()
@@ -394,7 +395,7 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
     },
     pushGame: (sessionId, text) => { buffers.pushGame(sessionId, text) },
     pushUi: (sessionId, item) => { buffers.pushUi(sessionId, item) },
-    pushWorld: (sessionId, world) => { hub?.broadcastWorld(world, sessionId) },
+    pushWorld: (sessionId, world) => { feeds.pushWorld(sessionId, world) },
     log: (sessionId, text) => { tuiLog(sessionId, text) },
     debug: (sessionId, channel, text) => {
       if (sessionId === GLOBAL_SESSION) return
@@ -550,11 +551,11 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
     logServices.get(target)?.purge()
     logServices.delete(target)
     const files = purgeSessionLogs(logDir, target)
-    // 全局缓冲按 sessionId 过滤: WS 回放不再吐出已注销身份的内容。
+    // 全局缓冲按 sessionId 过滤: 流回放不再吐出已注销身份的内容。
     buffers.purgeSession(target)
-    // hub 待发队列同款过滤: 已入队尚未 flush 的条目也不再广播 (与上者配对,
+    // 流扇出端同款过滤: 订阅者在途条目也不再投递 (与上者配对,
     // 否则同 tick 内"回放不吐、实时漏一帧")。
-    hub?.purgeSession(target)
+    feeds.purgeSession(target)
     view.clearActive(target)
     tuiLog(GLOBAL_SESSION, `[SYS] 会话已注销 (${target}): 运行时${runtime === undefined ? '本不存在' : '已释放'}, 日志文件删除 ${files} 个`)
     return { ok: true, files }
@@ -721,40 +722,40 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
   }
   ctx.provide('mud', service)
 
-  // ── 网络面: /mud/* HTTP 路由 + /mud/ws 通道 (webui 浏览器外壳) ──
-  const webServer = ctx.get('webServer', false)
-  const trustedHosts = (ctx.get('webRuntime' as never, false) as { trustedHosts?: readonly string[] } | undefined)?.trustedHosts ?? []
-  if (webServer !== undefined) {
-    hub = new MudWebSocketHub({
-      registerUpgrade: route => webServer.registerUpgrade(route),
-      trustedHosts,
-      backfill: (lastGameSeq, lastUiSeq) => buffers.backfill(lastGameSeq, lastUiSeq),
-      onError: (err) => {
-        try { ctx.logger.warn(err instanceof Error ? err : new Error(String(err))) } catch { /* ignore */ }
-      },
-    })
-    buffers.attachSink(hub)
-  }
-  tuiLog(GLOBAL_SESSION, `[LOG] 日志系统就绪${logDir !== undefined ? `, 落盘: ${logDir}` : ''}`)
-
-  const disposeRoutes = installRoutes({
-    ctx,
-    trustedHosts,
+  // ── 网络面: typert Remote 命名空间 `mud` (官方网关围栏 + mux 流通道) ──
+  // 生成器模式: gen:typert 产出严格 descriptor (zod 参数校验 + 客户端工件),
+  // assemble 自持注册 (file:// 补丁行 loader 解析不到)。
+  new MudRemoteService(ctx, {
     service,
     view,
+    buffers,
+    feeds,
     logServiceOf,
     pushUi: (sessionId, item) => { buffers.pushUi(sessionId, item) },
     tuiLog,
     robotUrlMap,
   })
+  // 生成工件注册进 ctx.typert: loader 按包名解析发现不了 file:// 补丁行, 所以本插件
+  // 自持注册; 运行环境无 typert 注册表或工件未生成 (先 build 后 gen) 时跳过。
+  const typert = (ctx as unknown as { typert?: { register: (contribution: unknown) => () => void } }).typert
+  if (typert !== undefined) {
+    void import('@deepseek-ai/dsh-mud-core/typert').then(({ TYPERT }) => {
+      const disposeTypert = typert.register(TYPERT)
+      tuiLog(GLOBAL_SESSION, '[SYS] typert 工件已注册 (remote mud 命名空间就绪)')
+      ctx.effect(() => () => disposeTypert(), 'mud-core: typert')
+    }).catch((err: unknown) => {
+      tuiLog(GLOBAL_SESSION, `[SYS] typert 工件注册失败 (先跑 gen:typert): ${err instanceof Error ? err.message : String(err)}`)
+    })
+  } else {
+    tuiLog(GLOBAL_SESSION, '[SYS] 无 typert 注册表, remote 命名空间未注册')
+  }
+  tuiLog(GLOBAL_SESSION, `[LOG] 日志系统就绪${logDir !== undefined ? `, 落盘: ${logDir}` : ''}`)
 
   // teardown
   ctx.effect(() => () => {
     for (const runtime of runtimes.values()) runtime.dispose()
     runtimes.clear()
     connections.closeAll()
-    if (hub) hub.dispose()
     buffers.attachSink(null)
-    disposeRoutes()
   }, 'mud-core: lifecycle')
 }

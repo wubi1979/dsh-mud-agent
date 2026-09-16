@@ -28,6 +28,7 @@ import type {
 } from './mud-state.ts'
 import { MUD_TIER_CHOICES } from './mud-state.ts'
 import type { MudSocketController } from './mud-socket.ts'
+import type { MudRemoteController } from './mud-remote.ts'
 import { ServerDialog, UserDialog } from './MudDialogs.tsx'
 import css from './MudSidebar.module.css'
 
@@ -37,8 +38,10 @@ export interface MudClientInjected {
   hooks: {
     servers: HostObservable<MudServersSnapshot>
   }
-  /** Shared /mud/ws push-channel controller (game/log/decision/world frames). */
+  /** Shared MUD stream consumer (per-session view retention + captcha). */
   mudSocket: MudSocketController
+  /** Shared MUD RPC controller (官方 typert 客户端; LogView 当日恢复等用)。 */
+  remote: MudRemoteController
   addServer: (input: { name: string; host: string; port: number; cwd: string }) => void
   removeServer: (serverId: string) => void
   addUser: (serverId: string, input: { name: string; pass: string }) => void
