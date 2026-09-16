@@ -60,6 +60,11 @@ import {
   type MudSessionStatus,
 } from './types.ts'
 
+/** T1 通道允许 (模式 `t1`/`full`): 规则/流程驱动的确定性动作走 agent 管道。 */
+const t1Allowed = (mode: MudRuntimeConfig['agentMode']): boolean => mode === 't1' || mode === 'full'
+/** T2 通道允许 (模式 `t2`/`full`): 行批次/控制唤醒进真实 LLM 回合。 */
+const t2Allowed = (mode: MudRuntimeConfig['agentMode']): boolean => mode === 't2' || mode === 'full'
+
 
 /**
  * 单个 MUD 会话的运行时。所有字段都是**会话私有** — 不存在跨会话共享的
@@ -250,7 +255,7 @@ export class MudSessionRuntime {
         //     注意 `logged_in` 可能被 GMCP 提前置真 (pkuxkx 的登录成功通知), 所以"无活跃流程"
         //     这一条同时承担"布防推迟到 login 流程收尾之后"。
         id: 'dead-air',
-        active: () => this.config.agentEnabled
+        active: () => t2Allowed(this.config.agentMode)
           && this.conn.id !== null
           && this.loggedIn
           && !this.awaitingHuman
@@ -1048,10 +1053,16 @@ export class MudSessionRuntime {
     const standalone = this.standalone
     if (this.pending.length === 0) {
       // 没有待决行: 暂存的动作消息就地投出 (帧内命中 / 人工回填后的答案)。
-      if (standalone !== null) this.flushStandalone()
+      if (standalone !== null) {
+        if (t1Allowed(this.config.agentMode)) this.flushStandalone()
+        else {
+          this.standalone = null
+          this.debug('perception', '[感知] T1 已关闭, 丢弃 1 条暂存动作')
+        }
+      }
       return
     }
-    if (!this.config.agentEnabled) {
+    if (this.config.agentMode === 'off') {
       this.debug('perception', `[感知] agent 未接入, ${this.pending.length} 行仅进终端`)
       this.pending.length = 0
       this.consumeTo = -1
@@ -1086,6 +1097,14 @@ export class MudSessionRuntime {
         `[感知] 会话 agent ${agent === undefined ? '不存在' : '装配未就绪'}, ${this.pending.length} 行留待决 (等官方 agent 就绪)`)
       return
     }
+    // T1 关闭 (模式 `t2`): 暂存动作不走 agent 管道, 在 `splitDelivery` 前丢弃 ——
+    // 否则动作会混进 T2 批次/原文一起喂给 LLM。仅留痕, 不影响待决行去向。
+    if (!t1Allowed(this.config.agentMode) && this.pendingActions.length > 0) {
+      const droppedActions = this.pendingActions.length
+      this.pendingActions = []
+      this.standalone = null
+      this.debug('perception', `[感知] T1 已关闭, 丢弃 ${droppedActions} 条暂存动作`)
+    }
     const { reflex: reflexLines, carry } = splitDelivery(this.pending, this.consumeTo)
     if (reflexLines.length > 0 && this.pendingActions.length > 0) {
       const actions = this.pendingActions
@@ -1100,6 +1119,14 @@ export class MudSessionRuntime {
         `agent ${agent.status}, 遗留 ${carry.length} 行)`)
       this.noteDelivered(reflexLines)
       this.deliver(agent, text, actions, 'T1 原文投递')
+      return
+    }
+    // **T2 关闭** (模式 `t1`): 行批次只进终端, 不喂真实 LLM; 暂存动作 (T1 口径) 照投。
+    if (!t2Allowed(this.config.agentMode)) {
+      if (standalone !== null) this.flushStandalone()
+      this.debug('perception', `[感知] T2 已关闭, ${this.pending.length} 行仅进终端`)
+      this.pending.length = 0
+      this.consumeTo = -1
       return
     }
     // **T2 投递限流**（作者定案 2026-09-13）：距上次 T2 投递不足最小间隔 ⇒ 本批**不投**，
@@ -1176,7 +1203,7 @@ export class MudSessionRuntime {
    * @returns 是否应当 `concludeTurn()`。
    */
   shouldConcludeTurn(callId: string): boolean {
-    if (!this.config.agentEnabled) return false
+    if (this.config.agentMode === 'off') return false
     const parsed = parseDeliveryCallId(callId)
     if (parsed === null) return false
     const count = this.channel.actionCount(parsed.delivery)
@@ -1387,7 +1414,12 @@ export class MudSessionRuntime {
    * agent 空转 (工具全部拒绝) 并挤占后续真正该跑的 T1 批次。
    */
   private requestAgent(reason: string, context: string): void {
-    if (this.disposed || !this.config.agentEnabled) return
+    if (this.disposed) return
+    if (!t2Allowed(this.config.agentMode)) {
+      // T2 关闭 (模式 `t1`/`off`): 程序唤醒不进真实 LLM, 留痕后放弃。
+      this.debug('perception', `[感知] T2 已关闭, 程序唤醒放弃 (${reason})`)
+      return
+    }
     if (this.awaitingHuman) return   // 人工环节 (验证码): 任何唤醒源都不许把 agent 叫起来
     if (this.conn.id === null) return
     const agent = this.sink.agentOf(this.sessionId)
@@ -1415,7 +1447,7 @@ export class MudSessionRuntime {
    * 走观察窗冲刷的既有路径翻 blank (慢但可达)。
    */
   private async deliverStarterTurn(): Promise<void> {
-    if (this.disposed || !this.config.agentEnabled) return
+    if (this.disposed || this.config.agentMode === 'off') return
     if (this.conn.id === null) return
     if (this.starterSent || !(this.sink.sessionEmpty?.(this.sessionId) ?? false)) return
     let agent = this.sink.agentOf(this.sessionId)

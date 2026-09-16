@@ -88,7 +88,7 @@ function makeRuntime(options: {
     decision: (_sessionId, record) => { options.decisions.push(record) },
   }
   const config: MudRuntimeConfig = {
-    agentEnabled: true,
+    agentMode: 'full',
     commandIntervalMs: 400,
     bridgeTimeoutMs: 10_000,
     bridgeDeclaredTimeoutMs: 120_000,

@@ -279,3 +279,12 @@ note: 只追加，不回改历史条目；每次设计变更在文末登记一�
 - §17：新增 **W6 传输层迁移官方 typert（v0.7.0）** 切片行（✅ 已实现）
 - §18 重组为两组：**未决（open）** 5 条（roster 明文密码 / 逐次升级语义 / 旧用户迁移 / 流程待放宽项 / W5 尾款）与 **已定（留档备查）** 11 条；已定条目**沿用旧编号**（2/3/4/5/7/9/11/12/13/15/16），代码注释与章节文件中的既有 `§18.N` 引用（§18.9/§18.11/§18.12/§18.15）全部继续有效，无需回改
 - 原 #6 与 #10（逐次升级语义，内容重复）合并为未决 #2；原 #16 的待定项（pendingEntry/hpbrief）上移为未决 #5
+
+## v0.7.1（2026-09-16，补）§9 落点路径勘误
+- preset 组合文件 `agent.cordis.yml` 的 `mud-agent` 行仍指向旧布局产物 `lib/preset-agent.js`（目录重构 0fd8e88 后实际产物为 `lib/agents/preset.js`），preset 挂载失败回落宿主侧装配；§9 两处 `dist/preset-agent.js` 陈旧引用同步更正为 `lib/agents/preset.js`
+
+## v0.7.2（2026-09-16，补）agentMode 四态（§11，原 `agentEnabled: boolean` 升级）
+- 作者提出：`agentEnabled` 完全停止接入不符合测试需求，需要单独关闭真实 LLM（T2）来测 T1
+- `Config.agentEnabled` → `Config.agentMode: 'off' | 't1' | 't2' | 'full'`（缺省 `t1`）：`off` 暂停接入（输出直推终端）/ `t1` 仅确定性管道（规则/流程动作走 T1，其余行仅进终端）/ `t2` 仅真实 LLM（全部行进批次投递，T1 暂存动作丢弃留痕）/ `full` 完整接入；`ctx.mud.setAgentEnabled(bool)` → `setAgentMode(mode)`，`MudConnectionStatus.agentEnabled` → `agentMode`
+- 门控落点（session.ts）：dead-air 布防与断流/流程失败唤醒要求 `t2|full`；settle 的 T1 暂存动作冲刷与原文/动作投递要求 `t1|full`（T2 关闭时批次仅进终端、暂存动作照投）；空回合翻 blank 只要求非 `off`；`shouldConcludeTurn` 仅 `off` 直接拒绝
+- 8 个测试 spec 的 `agentEnabled: true` → `agentMode: 'full'`；§11 Config 全集与看门狗表同步

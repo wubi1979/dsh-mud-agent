@@ -85,6 +85,9 @@ export function apply(ctx: Context): void {
           const tool = sessionKit?.tools(sessionId)?.[schema.name]
           if (tool === undefined) return unavailable(schema.name)
           // 官方的回合取消信号转发给桥 (preset 线同样适用; §8)。
+          // 调用留痕必须在执行前 (与宿主路径一致): 决策日志要反映因果序,
+          // 执行期间的结算/发送日志先落会倒挂。
+          sessionKit?.noteToolCall(sessionId, schema.name, args as Record<string, unknown>)
           // **投递通道接线**（§19.6.2）: 与宿主路径共用同一个 helper —— preset 部署下漏接它
           // 会让 defer 完全失效（实测: 投递仍走 followup, 账目停在 3 回合 / 6 次请求）。
           const channel = sessionKit?.channel(sessionId)
@@ -94,7 +97,6 @@ export function apply(ctx: Context): void {
             exec,
             run: async () => await tool.execute(args as Record<string, unknown>, { signal: exec.signal }),
           })
-          sessionKit?.noteToolCall(sessionId, schema.name, args as Record<string, unknown>)
           return result
         },
       }))

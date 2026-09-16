@@ -39,8 +39,8 @@ export interface MudConnectionStatus {
   host: string
   port: number
   accountName: string | null
-  /** agent 接入模式 (true = 游戏输出投递给会话 agent)。 */
-  agentEnabled: boolean
+  /** agent 接入模式 (`off`/`t1`/`t2`/`full`; §19)。 */
+  agentMode: 'off' | 't1' | 't2' | 'full'
   /** 该会话当前是否有官方 live agent (只读观测)。 */
   agentReady: boolean
   /** 该会话当前权限档位 (`observe`/`operate`/`full`; §10)。 */
@@ -166,8 +166,8 @@ export interface MudCoreService {
   readGame(sinceSeq: number): MudGameRead
   /** 某会话的世界模型快照 (未绑定 = null)。 */
   snapshot(sessionId?: string): MudWorldSnapshot | null
-  /** 运行时切换 agent 接入模式 (等价 config.agentEnabled 的动态开关)。 */
-  setAgentEnabled(enabled: boolean): void
+  /** 运行时切换 agent 接入模式 (`off`/`t1`/`t2`/`full`; 等价 config.agentMode 的动态开关)。 */
+  setAgentMode(mode: 'off' | 't1' | 't2' | 'full'): void
 }
 
 declare module '@deepseek-ai/cordis' {

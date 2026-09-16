@@ -178,6 +178,9 @@ export function attachMudTools(
       parameters: tool.parameters,
       output: { schema: tool.output.schema, render: tool.output.render },
       execute: async (args, exec) => {
+        // 调用留痕必须在执行前: 决策日志要反映因果序 (执行期间的 [工具]/[发送]/[流程] 结算
+        // 都先于"调用"落日志会倒挂, 实测踩过)。执行抛错时该次调用同样要留痕。
+        onTool?.(tool.name, args as Record<string, unknown>)
         // 官方的回合取消信号转发给桥: 回合取消时在途等待不再干等超时 (§8)。
         // 投递通道接线（§19.6.2）：defer / 收束判据都在这一个 helper 里（两条路径共用）。
         const result = await runWithDeliveryChannel({
@@ -186,7 +189,6 @@ export function attachMudTools(
           exec,
           run: async () => await tool.execute(args as Record<string, unknown>, { signal: exec.signal }),
         })
-        onTool?.(tool.name, args as Record<string, unknown>)
         return result
       },
     })))

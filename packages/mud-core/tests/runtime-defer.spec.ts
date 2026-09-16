@@ -76,7 +76,7 @@ function harness(sessionId: string, options: { flow?: boolean } = {}): {
     log: () => {}, debug: () => {}, decision: () => {},
   }
   const config: MudRuntimeConfig = {
-    agentEnabled: true,
+    agentMode: 'full',
     commandIntervalMs: 0,
     bridgeTimeoutMs: 10_000,
     bridgeDeclaredTimeoutMs: 120_000,

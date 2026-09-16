@@ -22,7 +22,7 @@ impl: packages/mud-core/src/agents/preset.ts + services/gate/
 1. `agents/preset.ts`（agent 平面插件行）：从 `ctx.get('mud').agentKit()` 取工具/人设/命令/skills，
    `ctx.tools.register(...)` + `systemPrompt.section(...)`；技能目录变化用**动态文本提供者**
    （`text: () => kit.skillsText()`，v8 已采用）而非 dispose/重注册。
-2. `presets/mud-player/`：`preset.yml` + `agent.cordis.yml`（单行指向 `dist/preset-agent.js`）。
+2. `presets/mud-player/`：`preset.yml` + `agent.cordis.yml`（单行指向 `lib/agents/preset.js`）。
 3. `package.json`：`exports` 增 `./preset-agent`；`files` 增 `presets`。
 4. 页面：`sessions.create({ agentPreset: 'mud-player' })`（依赖 harness client 透传）。
 5. profile patch：`agent-presets` 行追加 `roots: [{path: 'file:///…/mud-core/presets', trust: user}]`。
@@ -41,7 +41,7 @@ impl: packages/mud-core/src/agents/preset.ts + services/gate/
 |---|---|
 | preset 行（能力面） | `agents/preset.ts`：无 `inject`（宿主服务一律 `ctx.get`，挂载审计友好）；组装期注册全部工具声明 + **三段提示**（skills/tier/commands） |
 | 会话人设（两条路径共有，**在 agent 作用域替换官方人设槽**） | `agents/mount.ts#attachMudPersona`：往 `deployment:persona-prefix` 写 MUD 人设、把 `deployment:persona-suffix` 置空，由宿主在 `attachPolicy` 里调用。**为什么不放 preset 行**：会话人设已有主人（部署 `personaPrefix` 与 standard 的 `persona` 行），自建区段只会并列（模型同时被告知"你是编码 agent"和"你是 MUD 玩家"），而**同名**替换在 preset 作用域会与 standard 行撞名抛错 —— 官方 `systemPrompt` 的作用域链是"最近作用域胜出"，per-agent 覆盖只能经 `agent.ctx` 注册。`tests/mud-persona.spec.ts` 用真实注册表复现 preset → agent 两级作用域并断言渲染结果里只剩 MUD 人设 |
-| 组合文件 | `presets/mud-player/agent.cordis.yml`：**整份 `standard` 组装 + 我们的 `mud-agent` 行**（该行 `name: '../../dist/preset-agent.js'` —— **相对路径**，以 `.` 开头按 preset 目录解析）；`preset.yml`（展示名/描述） |
+| 组合文件 | `presets/mud-player/agent.cordis.yml`：**整份 `standard` 组装 + 我们的 `mud-agent` 行**（该行 `name: '../../lib/agents/preset.js'` —— **相对路径**，以 `.` 开头按 preset 目录解析）；`preset.yml`（展示名/描述） |
 | 包出口 | `package.json`：`exports["./preset-agent"]` + `files` 增 `presets` |
 | 会话侧数据源 | `ctx.mud.agentKit()`：`{ prompt, tools(sessionId), tierNote(sessionId), noteToolCall(sessionId,…) }` —— 共享组装与 per-session 状态（队列/桥/world/凭据）之间的唯一接法：工具声明共享，执行体按调用方 `agent.id` 解析 |
 | 宿主装配路径 | `Config.agentPreset` 非空 = preset 路径：`attachToAgent` 只装**策略面**（选路 + 权限闸门 + 人设槽覆盖），能力面交给 preset；装配失败（服务缺失 / `agent-preset/not-found` / 会话已锁定）→ 日志留痕 + **回落宿主侧装配**（`mountHostCapability`：按档注册工具 + 提示区段） |

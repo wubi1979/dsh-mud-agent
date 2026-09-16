@@ -191,10 +191,10 @@ const NOTE_STYLE: React.CSSProperties = {
 
 /**
  * fullme 验证码对话框 (自驱动): 状态在 MudSocketController 的 captcha 存储
- * (替换语义, 全局唯一不叠开) — 新 captcha 事件整体覆盖当前对话框 (含 host
- * 侧 OCR 完成后的增量预填事件, 命令框预填 "fullme <文字>")。确认 → 经
- * /mud/command 并行发送 (不经过 agent/流程); 中止 → 仅关闭。用户可随时
- * 修改命令框内容再发送。
+ * (替换语义, 全局唯一不叠开) — 新 captcha 事件整体覆盖当前对话框。输入框**只收
+ * 图片里的文字 (码)**, 其余一律不做 (§19.3 人工只负责提供值): 提交 → 经
+ * /mud/command 送到会话, 由后台人工回填 → 流程 answer 步动作统一包装成
+ * `halt + fullme <码>`; 中止 → 仅关闭。
  */
 export function CaptchaDialog({ mudSocket, sendCommand, refreshCaptcha, sessionId }: {
   mudSocket: MudSocketController
@@ -208,15 +208,15 @@ export function CaptchaDialog({ mudSocket, sendCommand, refreshCaptcha, sessionI
     () => mudSocket.getCaptcha(),
   )
   const captcha = snapshot.captcha
-  const [cmd, setCmd] = useState('fullme ')
+  const [cmd, setCmd] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
 
-  // 新验证码事件 → 重置命令预填为初始值 'fullme ' (带半角空格, 便于直接输入文字)。
+  // 新验证码事件 → 清空输入 (人工只填图片里的文字)。
   useEffect(() => {
     if (captcha === null) return
-    setCmd('fullme ')
+    setCmd('')
     setError(null)
   }, [captcha])
 
@@ -224,12 +224,11 @@ export function CaptchaDialog({ mudSocket, sendCommand, refreshCaptcha, sessionI
   const submit = (): void => {
     const trimmed = cmd.trim()
     if (trimmed === '') {
-      setError('请输入完整命令 (fullme 文字)')
+      setError('请输入图片中的文字')
       return
     }
     setSending(true)
-    // 命令序列 [halt, fullme 文字]: 打坐/战斗等持续状态会阻断 fullme, 先 halt 再发送。
-    void Promise.resolve(sendCommand(`[${['halt', trimmed].join(',')}]`, sessionId))
+    void Promise.resolve(sendCommand(trimmed, sessionId))
       .then((ok) => {
         if (ok) { close() } else { setError('发送失败 (游戏可能未连接), 请重试') }
       })

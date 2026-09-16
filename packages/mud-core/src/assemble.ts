@@ -81,8 +81,8 @@ export interface MudAgentConfig {
   cwd?: string
   /** 运行日志落盘目录 (JSONL; 缺省 `<cwd>/mud-logs`)。 */
   logDir?: string
-  /** 是否把游戏输出投递给会话 agent (false = 暂停接入: 输出直推终端)。 */
-  agentEnabled?: boolean
+  /** agent 接入模式 (`off`/`t1`/`t2`/`full`; 缺省 `t1`; §19)。 */
+  agentMode?: 'off' | 't1' | 't2' | 'full'
   persona?: string
   commandIntervalMs?: number
   /** 命令-应答桥: 未声明请求超时 (缺省 10s)。 */
@@ -231,7 +231,7 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
 
   /** 运行时共享配置 (单实例: agent 接入开关等动态项对所有会话即时生效)。 */
   const runtimeConfig: MudRuntimeConfig = {
-    agentEnabled: config.agentEnabled ?? false,
+    agentMode: config.agentMode ?? 't1',
     commandIntervalMs: config.commandIntervalMs ?? 400,
     bridgeTimeoutMs: config.bridgeTimeoutMs ?? 10_000,
     bridgeDeclaredTimeoutMs: config.bridgeDeclaredTimeoutMs ?? 120_000,
@@ -648,7 +648,7 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
   tuiDecision(GLOBAL_SESSION, {
     actor: 'router',
     eventType: 'init',
-    action: `感知引擎就绪 (${defaultPerceptionRules.length} 条感知规则, ${runtimeConfig.agentEnabled ? 'agent 接入' : '暂停接入'})`,
+    action: `感知引擎就绪 (${defaultPerceptionRules.length} 条感知规则, agent 模式 ${runtimeConfig.agentMode})`,
     text: '[初始化] 感知引擎就绪',
   })
 
@@ -702,7 +702,7 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
         host: runtimeStatus?.host ?? runtimeConfig.defaultHost,
         port: runtimeStatus?.port ?? runtimeConfig.defaultPort,
         accountName: runtimeStatus?.accountName ?? null,
-        agentEnabled: runtimeConfig.agentEnabled,
+        agentMode: runtimeConfig.agentMode,
         agentReady: agentOf(target) !== undefined,
         tier: capability.current(target),
       }
@@ -712,7 +712,7 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
         const status = runtime.status()
         return {
           ...status,
-          agentEnabled: runtimeConfig.agentEnabled,
+          agentMode: runtimeConfig.agentMode,
           agentReady: agentOf(status.sessionId) !== undefined,
           tier: capability.current(status.sessionId),
         }
@@ -744,18 +744,24 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
     snapshot(sessionId?: string): MudWorldSnapshot | null {
       return runtimes.get(view.resolve(sessionId))?.snapshot() ?? null
     },
-    setAgentEnabled(enabled: boolean): void {
-      if (runtimeConfig.agentEnabled === enabled) return
-      runtimeConfig.agentEnabled = enabled
-      config.agentEnabled = enabled
+    setAgentMode(mode: 'off' | 't1' | 't2' | 'full'): void {
+      if (runtimeConfig.agentMode === mode) return
+      runtimeConfig.agentMode = mode
+      config.agentMode = mode
+      const label: Record<typeof mode, string> = {
+        off: '暂停接入',
+        t1: '仅 T1 (确定性管道)',
+        t2: '仅 T2 (真实 LLM)',
+        full: '完整接入 (T1 + T2)',
+      }
       tuiDecision(GLOBAL_SESSION, {
         actor: 'router',
         eventType: 'agent-mode',
-        action: enabled ? 'agent 接入开启' : 'agent 接入关闭',
-        text: `[模式] ${enabled ? '开启' : '关闭'} agent 接入`,
+        action: `agent 模式 → ${mode} (${label[mode]})`,
+        text: `[模式] agent 接入 → ${mode}`,
       })
-      // 开启后冲刷各会话门阻期滞留的观察窗批次。
-      if (enabled) for (const runtime of runtimes.values()) runtime.onAgentReady()
+      // 非 off 模式冲刷各会话门阻期滞留的观察窗批次。
+      if (mode !== 'off') for (const runtime of runtimes.values()) runtime.onAgentReady()
     },
   }
   ctx.provide('mud', service)

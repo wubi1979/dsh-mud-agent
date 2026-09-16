@@ -91,7 +91,7 @@ function harness(sessionId: string, extraRules: readonly PerceptionRule[] = []):
     decision: (_id, record) => { decisions.push(`${record.actor}/${record.eventType ?? ''}/${record.action}`) },
   }
   const config: MudRuntimeConfig = {
-    agentEnabled: true,
+    agentMode: 'full',
     commandIntervalMs: 0,
     bridgeTimeoutMs: 10_000,
     bridgeDeclaredTimeoutMs: 120_000,

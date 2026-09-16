@@ -189,8 +189,14 @@ export interface MudRuntimeSink {
 
 /** 运行时配置 (plugin config 的会话无关子集 + 服务器默认值)。 */
 export interface MudRuntimeConfig {
-  /** 是否把游戏输出投递给会话 agent (false = 仅终端/感知)。 */
-  agentEnabled: boolean
+  /**
+   * agent 接入模式 (§19):
+   * - `off`  = 暂停接入: 输出直推终端, 不投递、不唤醒;
+   * - `t1`   = 仅 T1: 只有规则/流程驱动的确定性动作走 agent 管道, 其余行仅进终端;
+   * - `t2`   = 仅 T2: 全部行进入 LLM 批次投递, T1 暂存动作丢弃留痕;
+   * - `full` = 完整接入 (T1 + T2)。
+   */
+  agentMode: 'off' | 't1' | 't2' | 'full'
   /** 命令最小间隔 (节流)。 */
   commandIntervalMs: number
   /** 未声明请求超时。 */

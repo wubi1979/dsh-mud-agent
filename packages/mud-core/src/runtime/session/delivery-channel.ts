@@ -24,7 +24,7 @@ export interface DeliveryChannelOptions {
    * 只挂 followup 分支 —— defer 槽消息随工具结果进**同一回合的下一步**, 该步的
    * selection 已由上一步 pre-step 写好, 无预热窗口问题。
    */
-  preDeliver?: (message: OwnedMessage) => void
+  preDeliver?: ((message: OwnedMessage) => void) | undefined
 }
 
 /** 投递账本条目 (per 投递消息)。 */

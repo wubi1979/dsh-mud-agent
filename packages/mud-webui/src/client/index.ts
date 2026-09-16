@@ -316,12 +316,6 @@ export function apply(ctx: ClientContext): void {
     },
     sendCommand: async (cmd, sessionId) => {
       try {
-        // 命令序列格式 [halt,fullme text] → 发送 cmds 数组; 否则单命令。
-        const seqMatch = /^\[(.+)\]$/.exec(cmd)
-        if (seqMatch !== null && seqMatch[1] !== undefined) {
-          const cmds = seqMatch[1].split(',').map(c => c.trim()).filter(c => c !== '')
-          return await mudRemote.command(undefined, cmds, sessionId)
-        }
         return await mudRemote.command(cmd, undefined, sessionId)
       } catch {
         return false

@@ -15,7 +15,7 @@ note: §11 的流程声明部分（login / fullme 流程表）在 doc/flows/ 下
 
   | 看门狗 | 启动条件（`active()`） | 窗口 | 触发 | 续期 |
   |---|---|---|---|---|
-  | `dead-air`（断流唤醒） | `agentEnabled` ∧ 已连接 ∧ **已登录** ∧ 非人工环节 ∧ **无活跃流程** ∧ 有 live agent | `deadAirMs` | 唤醒 agent 自主行动（`lane=t2` 控制消息） | 是（条件仍成立才续） |
+  | `dead-air`（断流唤醒） | `agentMode ∈ {t2, full}` ∧ 已连接 ∧ **已登录** ∧ 非人工环节 ∧ **无活跃流程** ∧ 有 live agent | `deadAirMs` | 唤醒 agent 自主行动（`lane=t2` 控制消息） | 是（条件仍成立才续） |
 
   - **"无活跃流程"这一条的两个目的**：① **布防推迟到登录流程收尾之后** —— `logged_in` 可能被 **GMCP** 提前置真（pkuxkx 的 `GMCP.System {site}` 是"登录成功通知"，置信度 1.0，`shared/world.ts:130-147`），而我们的 login 流程那时还没走完（`success` 步的 `onEnter.patch` 只是兜底/权威确认）；② **活跃流程期间不抢答** —— 流程可能等很久才有结果（人工环节/慢命令），流程期间的唤醒职责归**流程自己的计时器**（每步 `timeoutMs`），看门狗不得插队。流程的起停由 `FlowRuntime.opts.onTransition` 通知运行时重评估（进入某步/收束/失败/复位）。
   - 时间尺度上这条也更稳：流程各阶段都有自身计时器（等结果 30s、等分支 30s、终态步 5s），人工环节则本来就停表 —— 所以"看门狗在流程中途唤醒 T2"在结构上不会发生。
@@ -30,4 +30,5 @@ note: §11 的流程声明部分（login / fullme 流程表）在 doc/flows/ 下
 - **UI**：连接/断开入口在左栏用户行的 ⋯ 菜单（blank 会话不渲染会话体）；**无占位 prompt** —— `blank` 由首个 `turn/start` 翻转，连接后第一批游戏输出自然开回合翻页。
 - **登录与 fullme 是流程表声明（v0.4.0，step 驱动）**：声明与逐条定案见 [doc/flows/login.md](../flows/login.md) 与 [doc/flows/fullme.md](../flows/fullme.md)；机制（arming / 挂起 / 唤醒 / 打断 / 人工环节）见 §19。两条流程的入口都是**匹配服务端提示行**，不是定时器；流程命令属**系统流程**（actor `system`，见 §10 / §19.1）。
 - **流程与运行时的关系**（v0.4.0）：流程表在装配期注册为运行时的只读声明面；**每会话的流程实例是运行时状态**（`diag()` 可见、每次迁移写决策/日志）：`{ flowId, stepId, armed[], phase: awaiting-result | awaiting-human, deadline, pendingActions[], pendingEntry[] }`。细节见 §19。
-- **Config 全集**（部署值一律可配，I8）：`host`/`port`/`sessionId`/`cwd`/`logDir`/`account`/`agentEnabled`/`persona`/`commandIntervalMs`/`bridgeTimeoutMs`/`bridgeDeclaredTimeoutMs`/`bridgeSilenceMs`/`loginTimeoutMs`/`deadAirMs`/`holdTimeoutMs`/`defaultTier`/`dangerousCommands`/`agentPreset`/`activityTable`/`toolCallIntervalMs`/`t2DeliverIntervalMs`/`captchaPatterns`。（v0.4.0：`loginExitCommands` 退役 —— 登录收尾由流程步骤承担；**不引入 `humanWaitMs`/`humanTimeoutMs`** —— 人工环节沿用本步 `timeoutMs`；fullme 流程化后 `captchaPatterns` 随取图职责迁入 `mud_captcha` 工具，见 §16。）
+- **Config 全集**（部署值一律可配，I8）：`host`/`port`/`sessionId`/`cwd`/`logDir`/`account`/`agentMode`/`persona`/`commandIntervalMs`/`bridgeTimeoutMs`/`bridgeDeclaredTimeoutMs`/`bridgeSilenceMs`/`loginTimeoutMs`/`deadAirMs`/`holdTimeoutMs`/`defaultTier`/`dangerousCommands`/`agentPreset`/`activityTable`/`toolCallIntervalMs`/`t2DeliverIntervalMs`/`captchaPatterns`。（v0.4.0：`loginExitCommands` 退役 —— 登录收尾由流程步骤承担；**不引入 `humanWaitMs`/`humanTimeoutMs`** —— 人工环节沿用本步 `timeoutMs`；fullme 流程化后 `captchaPatterns` 随取图职责迁入 `mud_captcha` 工具，见 §16。）
+- **agentMode 四态（v0.7.0，原 `agentEnabled: boolean` 升级）**：`off`（暂停接入：输出直推终端，不投递、不唤醒）/ `t1`（仅 T1：规则/流程驱动的确定性动作走 agent 管道，其余行仅进终端）/ `t2`（仅 T2：全部行进 LLM 批次投递，T1 暂存动作丢弃留痕）/ `full`（T1 + T2）。缺省 `t1`；运行时切换走 `ctx.mud.setAgentMode(mode)`。门控口径：T1 通道（原文投递/动作投递/暂存冲刷）要求 `t1|full`；T2 通道（行批次/断流唤醒/流程失败唤醒）要求 `t2|full`；空回合翻 blank 只要求非 `off`。
