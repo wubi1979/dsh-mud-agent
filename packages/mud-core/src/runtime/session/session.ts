@@ -183,7 +183,13 @@ export class MudSessionRuntime {
         onError: (message) => { this.lastError = message },
       },
     })
-    this.channel = new DeliveryChannel({ debug: (text) => this.debug('perception', text) })
+    this.channel = new DeliveryChannel({
+      debug: (text) => this.debug('perception', text),
+      // followup 前预写 lane selection (turn=1 step=1 无预热窗口, 见 sink.preDeliver)。
+      preDeliver: this.sink.preDeliver === undefined
+        ? undefined
+        : (message) => { this.sink.preDeliver?.(this.sessionId, message) },
+    })
     this.engine = new PerceptionEngine({
       stateRules: perception.stateRules,
       eventRules: perception.eventRules,

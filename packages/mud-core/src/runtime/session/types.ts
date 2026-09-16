@@ -8,6 +8,7 @@
  */
 
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Message } from '@deepseek-ai/dsh-llm'
 import type { ActivityEntry } from '../../agents/tools.ts'
 import type { DangerousRule } from '../../shared/commands.ts'
 import type { OwnedAction } from '../../agents/lane.ts'
@@ -134,6 +135,18 @@ export interface MudRuntimeSink {
    * @returns 会话事件流是否为空。
    */
   sessionEmpty?(sessionId: string): boolean
+  /**
+   * 可选: 投递前预写该投递的 lane selection (官方 ModelSelectionRef)。
+   *
+   * 为什么存在: 官方 installModelSelection 在**进入 assemble 时**快照 current、
+   * request 用 assembled —— pre-step (assemble 之后) 的写入只对**下一个 step**
+   * 生效, turn=1 step=1 没有预热窗口, T1 投递的首回合会落到会话真实模型 (真实
+   * LLM 暂停时直接"回合错误: no API key")。实现见 agents/lane.ts 的
+   * `presetLaneSelection` (投递通道在每次 followup 前调用)。
+   * @param sessionId 官方会话 id。
+   * @param message 待投递的 mud-owned 消息 (lane 从消息上读)。
+   */
+  preDeliver?(sessionId: string, message: Message): void
   /**
    * 可选: 该会话的 agent **装配**是否就绪 (preset 模式下 = 官方 composition 已是
    * `mud-player`)。缺省视为就绪。

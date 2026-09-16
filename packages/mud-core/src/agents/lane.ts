@@ -103,6 +103,44 @@ export function ownedLaneOf(message: Message): OwnedLane | undefined {
   return source.kind === 'mud-owned' ? source.lane : undefined
 }
 
+/**
+ * 投递前预写该投递的 lane selection (followup 之前, assemble 快照之前)。
+ *
+ * 为什么存在: 官方 installModelSelection 在**进入 assemble 时**快照 current、
+ * request 用 assembled —— pre-step (assemble 之后) 的写入只对**下一个 step** 生效,
+ * turn=1 step=1 没有预热窗口: T1 投递的首回合会落到会话真实模型 (真实 LLM 暂停时
+ * 直接"回合错误: no API key")。投递前写 current, 首个 step 的 assemble 就快照到
+ * 正确 lane。
+ * @param ctx 宿主上下文 (解析 sessionController 的 selectionRef)。
+ * @param agent 目标 agent。
+ * @param lane 本次投递的 lane (undefined = 非 mud 投递, 清回真实模型)。
+ */
+export function presetLaneSelection(ctx: Context, agent: Agent, lane: OwnedLane | undefined): void {
+  const ref = trySelectionRef(ctx, agent)
+  if (ref === null) return
+  if (lane === 't1') {
+    // 不带 reasoningEffort → 官方自动剥离继承的 effort。
+    ref.current = { provider: T1_PROVIDER, model: T1_MODEL }
+    return
+  }
+  // t2/undefined: 清回真实模型 (剥掉 t1 残留, 防止下回合 assemble 快照到 T1)。
+  const header = agent.session.requestHeader()
+  if (header !== undefined && header.config.provider !== T1_PROVIDER) {
+    const { provider, model, reasoningEffort } = header.config
+    ref.current = {
+      provider,
+      model,
+      ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+    }
+    return
+  }
+  // 无有效 header (尚未请求过/上回合还是 T1): 从 agentOptions 读。
+  const provider = agent.options.provider ?? ''
+  const model = agent.options.model ?? ''
+  if (provider === '' || model === '') return  // 真实模型未知 → 不写 (保持现状)
+  ref.current = { provider, model }
+}
+
 /** T1 provider 注册结果 (释放句柄)。 */
 export interface TriggerProvider {
   /** 释放 provider 注册 (插件卸载)。 */

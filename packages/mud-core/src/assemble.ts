@@ -49,7 +49,8 @@ import {
   attachMudPersona, attachMudPrompt, attachMudTools,
 } from './agents/mount.ts'
 import {
-  installOwnedLaneRouting, registerTriggerProvider, type TriggerProvider,
+  installOwnedLaneRouting, ownedLaneOf, presetLaneSelection, registerTriggerProvider,
+  type TriggerProvider,
 } from './agents/lane.ts'
 import { installMudToolGate } from './services/gate/tool-gate.ts'
 import { buildGateRules } from './services/gate/rules.ts'
@@ -405,6 +406,12 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
       } catch {
         return false
       }
+    },
+    // followup 前预写 lane selection: turn=1 step=1 无预热窗口 (官方 assemble 快照
+    // current 在 pre-step 写入之前), T1 首回合必须投递前就位, 否则落到会话真实模型。
+    preDeliver: (sessionId, message) => {
+      const agent = agentOf(sessionId)
+      if (agent !== undefined) presetLaneSelection(ctx, agent, ownedLaneOf(message))
     },
     // preset 模式下"agent 存在"不等于"可以投递": 官方 composition 就绪前投递会跑在
     // 旧组装上并让会话永久锁定。就绪判定看 `capabilityReady` 标志 —— preset 挂载成功
