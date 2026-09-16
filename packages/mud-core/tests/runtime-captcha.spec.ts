@@ -1,13 +1,14 @@
 /**
  * dsh-mud-core — fullme 流程端到端 (`doc/ARCHITECTURE.md` §11 + §19)。
  *
- * fullme 从"三条规则"升级为**五步流程**（作者 2026-09-13 逐条审定）：
+ * fullme 五步流程 + **ask-human 回合内提问**（对齐官方 `ApprovalService.request`）：
  *
  *   ```
  *   request  driver=服务端提醒  action=mud_send fullme   fail="刚刚用过"（时长动态）  next=[stale,prompt]
  *   stale    driver=上一轮未完成提示  action=mud_send ['fullme 1']×3   fail=GA（放弃上一轮 → 本轮作废）
- *   prompt   driver=robot.php 地址  capture={captchaUrl}  action=mud_captcha   ok/fail=**工具结果**
- *   answer   无 driver（由 prompt 顺序兜底进入）  awaitExternal=['captcha']
+ *   prompt   driver=robot.php 地址  capture={captchaUrl}  action=mud_captcha（ask-human: 推图后
+ *            **回合内挂起等人工**）  ok/fail=**工具结果**  timeoutMs=180_000（含等人工）
+ *   answer   无 driver（由 prompt 顺序兜底进入）  awaitExternal=['captcha']（兜底声明）
  *            timeoutMs=180_000（**本步总预算**：等人工 + 答错重来 + 收结果）
  *            action=mud_send ['halt','fullme {captcha}']  retry={attempts:3, action=mud_captcha}
  *   success  action=mud_send hpbrief   ok=[GA]（next 空 = 终态）
@@ -15,11 +16,13 @@
  *
  * 本文件测**运行时接线**（真链路，不是建模）：动作渲染 → 官方工具包装器
  * （`runWithDeliveryChannel`）→ 桥/工具 → 流程判定。
- *   - `tool` 判据：工具结果（取图成功/失败）经 call-id 解析喂回**当前步**；
- *   - 人工环节：`awaitExternal` 的动作**先挂起不投递**，`exitHumanWait` → `flow.resumeHuman()`
- *     后才投出（`{captcha}` 在**发送瞬间**插值）；
- *   - 答错重试：**原步内自环**（重新取图 + 弹窗带失败原文 + 重新挂起），**不重置 3 分钟预算**；
- *   - 三种收场（取图失败 / 答错 3 次 / 预算耗尽）都收束为流程失败，下一轮先撞 `stale`。
+ *   - `tool` 判据：工具结果（取图成功/失败/人工提交）经 call-id 解析喂回**当前步**；
+ *   - ask-human：`mud_captcha` 推图后**工具在途挂起**（回合不收束），人工提交 → 码入
+ *     externalValues + 解挂等待者 → 后续动作 defer 随**本工具结果**进同一回合（不分裂回合）；
+ *   - 答错重试：**原步内自环**（clearExternal 旧码作废 → 重新取图再问一次 + 本步动作再挂起；
+ *     新码提交后动作随第二次工具结果 defer 进同一回合），**不重置 3 分钟预算**；
+ *   - fail-closed：中止/超时 → 工具结果 `ok:false` → 所在步失败收束（不悬挂）；
+ *   - 三种收场（取图失败 / 答错 3 次 / 预算或等待超时）都收束为流程失败，下一轮先撞 `stale`。
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -168,8 +171,8 @@ function stubCaptchaPage(html = `<html><body><img src="${CAPTCHA_IMG}"></body></
 /**
  * 走**官方工具包装器**执行最新一条投递里的动作（真链路：begin/end + 工具结果回喂 + defer）。
  *
- * 返回的 `pending` 在桥结算（GA/边界）后才 resolve —— 与官方 loop 一致：工具调用阻塞在
- * 等游戏应答上，测试负责喂应答行再 await。
+ * 返回的 `pending` 在工具返回后才 resolve —— ask-human 工具会一直挂起到人工提交/中止/超时，
+ * 测试负责提交码再 await。
  */
 async function startAction(h: ReturnType<typeof harness>, index = 0): Promise<{
   ruleId: string
@@ -227,7 +230,10 @@ async function toRequest(h: ReturnType<typeof harness>) {
   return startAction(h)
 }
 
-/** 走到 `prompt` 步（地址在 `fullme` 的应答帧里）并执行 `mud_captcha`。 */
+/**
+ * 走到 `prompt` 步（地址在 `fullme` 的应答帧里）并执行 `mud_captcha`。
+ * ask-human：取图推弹窗后工具**挂起**（pending 不 resolve，等人工提交）。
+ */
 async function toPrompt(
   h: ReturnType<typeof harness>,
   request: Awaited<ReturnType<typeof startAction>>,
@@ -240,14 +246,17 @@ async function toPrompt(
   return startAction(h)
 }
 
-/** 人工回填 + 执行答案动作（**逐条命令**的真实应答：`halt` 的 GA → `fullme <码>` 的结果）。 */
+/**
+ * 人工提交裸码（弹窗语义）+ 执行答案动作（**逐条命令**的真实应答：`halt` 的 GA →
+ * `fullme <码>` 的结果）。提交解挂 ask-human 等待者 → 后续动作 defer 随工具结果进同一回合。
+ */
 async function answerWith(
   h: ReturnType<typeof harness>,
   code: string,
   reply: 'ok' | 'wrong',
   abs: number,
 ) {
-  expect(h.runtime.sendCommand(`fullme ${code}`)).toBe(true)
+  expect(h.runtime.sendCommand(code)).toBe(true)
   await vi.advanceTimersByTimeAsync(1)
   const action = await startAction(h)
   // 序列逐条写出：先 `halt`（等它的 GA），再 `fullme <码>`。
@@ -262,11 +271,11 @@ async function answerWith(
   return action
 }
 
-describe('fullme 流程 (提醒行 → fullme → 取图 → 人工回码 → 成功)', () => {
+describe('fullme 流程 (提醒行 → fullme → ask-human 提问 → 人工回码 → 成功)', () => {
   beforeEach(() => { vi.useFakeTimers(); stubCaptchaPage() })
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
 
-  it('全链: 提醒 → 发 fullme → 地址 → mud_captcha 取图推弹窗 → 人工回码 → 成功句 → hpbrief 收尾', async () => {
+  it('全链: 提醒 → 发 fullme → 地址 → mud_captcha 推图挂起 → 人工回码(同回合) → 成功句 → hpbrief 收尾', async () => {
     const h = await loggedIn('session-fullme-happy')
 
     // ① 入口提醒 → 流程激活 → 投递 fullme 动作（原文 = 提醒行；T1 通道）。
@@ -276,45 +285,42 @@ describe('fullme 流程 (提醒行 → fullme → 取图 → 人工回码 → �
     expect(h.delivered.at(-1)!.actions[0]!.tool.args).toEqual({ cmd: 'fullme' })
     expect(h.delivered.at(-1)!.text).toContain(FULLME_REMINDER_TEXT)
     expect(h.runtime.diag().flow).toMatchObject({ flowId: 'fullme', stepId: 'request' })
-
-    // ② 命令写出（T1 通道，不设 direct）。
     expect(h.sent).toContain('fullme')
 
-    // ③ 地址在应答帧里 → 进 prompt 步（capture 存槽）→ 投递 mud_captcha。
+    // ② 地址在应答帧里 → 进 prompt 步（capture 存槽）→ 投递 mud_captcha。
     const prompt = await toPrompt(h, request)
     expect(prompt.ruleId).toBe('flow:fullme/prompt')
     // 地址槽已抽出并**投递前**插好值；`{lastFail}` 本轮为空 → 空串（不是字面占位符）。
     expect(h.delivered.at(-1)!.actions[0]!.tool.args).toEqual({ url: CAPTCHA_URL, note: '' })
     expect(h.runtime.diag().flow?.slots).toEqual({ captchaUrl: CAPTCHA_URL })
 
-    // ④ 取图（工具结果 = 判据）：弹窗拿到图片地址 + robot 地址，本轮没有失败文案。
+    // ③ 取图（fetch 桩）→ 推弹窗 → **回合内挂起**（ask-human：工具在途，等待者注册）。
+    await vi.advanceTimersByTimeAsync(1)
+    expect(h.captchas).toEqual([{ imageUrl: CAPTCHA_IMG, robotUrl: CAPTCHA_URL }])
+    expect(h.runtime.humanWait).toBe(true)
+    expect(prompt.state.concluded).toBe(false)            // 工具在途 → 回合不收束
+    expect(h.delivered).toHaveLength(2)                   // 没有第三次投递
+    expect(h.runtime.diag().flow).toMatchObject({ stepId: 'prompt', phase: 'awaiting-result' })
+
+    // ④ 人工提交**裸码**（弹窗只收图片里的文字）→ 码入 externalValues + 解挂等待者 →
+    //    工具结果 ok → prompt 成功 → answer 动作随**本工具结果** defer 进同一回合。
+    expect(h.runtime.sendCommand('1234')).toBe(true)
+    await vi.advanceTimersByTimeAsync(1)
     const captchaCall = await prompt.pending
     expect(captchaCall.ok).toBe(true)
-    // 取图这一步**不**收束回合（下一步 answer 还要等人工），而是把后续动作 defer 进下一步。
-    expect(prompt.state.concluded).toBe(false)
-    expect(h.captchas).toEqual([{ imageUrl: CAPTCHA_IMG, robotUrl: CAPTCHA_URL }])
-    await vi.advanceTimersByTimeAsync(1)
-
-    // ⑤ 取图成功 → 顺序兜底进 answer → 动作**挂起**（不投递）+ 进人工环节。
-    expect(h.runtime.humanWait).toBe(true)
-    expect(h.delivered).toHaveLength(2)                   // 没有第三次投递
-    expect(h.runtime.diag().flow).toMatchObject({ stepId: 'answer', phase: 'awaiting-human' })
-
-    // ⑥ 人工回码 → resumeHuman → 投出答案动作（`{captcha}` 仍是占位符）。
-    expect(h.runtime.sendCommand('fullme 1234')).toBe(true)
-    await vi.advanceTimersByTimeAsync(1)
+    expect(prompt.state.deferred).toBe(1)                 // answer 动作搭车工具结果
+    expect(h.runtime.humanWait).toBe(false)
     const answer = await startAction(h)
     expect(answer.ruleId).toBe('flow:fullme/answer')
     expect(h.delivered.at(-1)!.actions[0]!.tool.args).toEqual({ cmds: ['halt', 'fullme {captcha}'] })
-    expect(h.runtime.humanWait).toBe(false)
 
-    // ⑦ 命令序列逐条写出：人工值只在发送那一刻出现。
+    // ⑤ 命令序列逐条写出：人工值只在发送那一刻出现。
     expect(h.sent).toContain('halt')
     h.sink().onBoundary('ga')
     await vi.advanceTimersByTimeAsync(1)
     expect(h.sent).toContain('fullme 1234')
 
-    // ⑧ 成功句 → answer 成功 → 顺序兜底进 success（hpbrief）→ 终态。
+    // ⑥ 成功句 → answer 成功 → 顺序兜底进 success（hpbrief）→ 终态。
     h.sink().onLines([ml(FULLME_OK_TEXT, 2)])
     h.sink().onBoundary('ga')
     await answer.pending
@@ -396,31 +402,69 @@ describe('fullme 流程 (提醒行 → fullme → 取图 → 人工回码 → �
     h.runtime.dispose()
   })
 
-  it('答错一次 → 原步内自环: 重新取图 + 弹窗带失败原文 + 重新等人工，重试计数可见', async () => {
+  it('弹窗"中止" → ask-human 等待当场失败 → 流程收束（fail-closed）', async () => {
+    const h = await loggedIn('session-fullme-abort')
+    const request = await toRequest(h)
+    const prompt = await toPrompt(h, request)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(h.captchas).toHaveLength(1)
+    expect(h.runtime.humanWait).toBe(true)
+
+    h.runtime.cancelHumanWait()
+    const result = await prompt.pending
+    expect(result.ok).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+
+    expect(h.runtime.humanWait).toBe(false)
+    expect(h.runtime.diag().flow).toBeNull()
+    expect(h.logs.join('\n')).toContain('[流程] fullme/prompt 失败')
+    // 再提交是普通命令（等人工已退出）—— 队列照收, 不当验证码。
+    expect(h.runtime.sendCommand('1234')).toBe(true)
+    h.runtime.dispose()
+  })
+
+  it('答错一次 → 原步内自环: 重新取图再问 + 弹窗带失败原文 + 新码提交后动作 defer 同回合', async () => {
     const h = await loggedIn('session-fullme-retry')
     const request = await toRequest(h)
     const prompt = await toPrompt(h, request)
-    await prompt.pending
     await vi.advanceTimersByTimeAsync(1)
+    expect(h.captchas).toHaveLength(1)
 
-    // 第一次答错（错码与 `fullme 1` 等价，不占额外一次尝试）
+    // 第一次答错（错码与 `fullme 1` 等价，不占额外一次尝试）。
     await answerWith(h, '1111', 'wrong', 2)
 
     // 重试动作 = 重新取图（同一个 robot 地址，页面自动刷新出新图），弹窗带失败原文。
     const retry = await startAction(h)
     expect(retry.ruleId).toBe('flow:fullme/answer')
     expect(h.delivered.at(-1)!.actions[0]!.tool.args).toEqual({ url: CAPTCHA_URL, note: FULLME_WRONG_TEXT })
-    const retried = await retry.pending
-    expect(retried.ok).toBe(true)
     await vi.advanceTimersByTimeAsync(1)
     expect(h.captchas).toHaveLength(2)
     expect(h.captchas[1]).toEqual({ imageUrl: CAPTCHA_IMG, robotUrl: CAPTCHA_URL, note: FULLME_WRONG_TEXT })
-    // 仍然是同一步、仍在等人工；旧验证码已作废。
-    expect(h.runtime.diag().flow).toMatchObject({ stepId: 'answer', phase: 'awaiting-human', retries: 1 })
+    // 第二次 ask-human 挂起（同一步、同一回合）；旧验证码已作废（clearExternal）。
+    expect(h.runtime.humanWait).toBe(true)
+    expect(h.runtime.diag().flow).toMatchObject({ stepId: 'answer', retries: 1 })
     expect(h.logs.join('\n')).toContain('[流程] fullme/answer 重试 2/3')
 
-    // 第二次答对 → 成功句 → 终态（success 步由顺序兜底进入）
-    await answerWith(h, '2222', 'ok', 3)
+    // 第二次提交裸码 → 解挂第二次等待者 → 挂起的 answer 动作随**第二次工具结果**
+    // defer 进同一回合（工具结果 ok 本身无判据, 被忽略）。
+    expect(h.runtime.sendCommand('2222')).toBe(true)
+    await vi.advanceTimersByTimeAsync(1)
+    const retried = await retry.pending
+    expect(retried.ok).toBe(true)
+    expect(retry.state.deferred).toBe(1)
+    const answer = await startAction(h)
+    expect(answer.ruleId).toBe('flow:fullme/answer')
+    expect(h.delivered.at(-1)!.actions[0]!.tool.args).toEqual({ cmds: ['halt', 'fullme {captcha}'] })
+
+    // halt GA → fullme 2222（发送瞬间插值新码）→ 成功句 → 终态（success 步由顺序兜底进入）。
+    expect(h.sent).toContain('halt')
+    h.sink().onBoundary('ga')
+    await vi.advanceTimersByTimeAsync(1)
+    expect(h.sent).toContain('fullme 2222')
+    h.sink().onLines([ml(FULLME_OK_TEXT, 3)])
+    h.sink().onBoundary('ga')
+    await answer.pending
+    await vi.advanceTimersByTimeAsync(1)
     expect(h.delivered.at(-1)!.actions.map(a => a.ruleId)).toEqual(['flow:fullme/success'])
     h.runtime.dispose()
   })
@@ -429,17 +473,15 @@ describe('fullme 流程 (提醒行 → fullme → 取图 → 人工回码 → �
     const h = await loggedIn('session-fullme-retry-exhausted')
     const request = await toRequest(h)
     const prompt = await toPrompt(h, request)
-    await prompt.pending
     await vi.advanceTimersByTimeAsync(1)
 
-    // 第 1、2 次答错 → 各触发一次重试（重试动作 = 重新取图）
+    // 第 1、2 次答错 → 各触发一次重试（重试动作 = 重新取图再问）。
     for (const [index, code] of ['1111', '2222'].entries()) {
       await answerWith(h, code, 'wrong', 2 + index)
-      const retry = await startAction(h)
-      await retry.pending
+      await startAction(h)                       // 第 index+2 次提问挂起（下轮提交解挂）
       await vi.advanceTimersByTimeAsync(1)
     }
-    // 第 3 次答错 → 次数用尽（`attempts:3` = 总尝试次数，含首次）
+    // 第 3 次答错 → 次数用尽（`attempts:3` = 总尝试次数，含首次）。
     await answerWith(h, '3333', 'wrong', 4)
 
     expect(h.runtime.diag().flow).toBeNull()
@@ -447,27 +489,28 @@ describe('fullme 流程 (提醒行 → fullme → 取图 → 人工回码 → �
     h.runtime.dispose()
   })
 
-  it('3 分钟预算是**一步总计**: 等人工期间计时不停，到点即本轮失败并退出人工环节', async () => {
+  it('等人工期间计时不停: ask-human 兜底超时（175s）先于步预算结算 → 工具失败 → 本轮失败并退出人工环节', async () => {
     const h = await loggedIn('session-fullme-budget')
     const request = await toRequest(h)
     const prompt = await toPrompt(h, request)
-    await prompt.pending
     await vi.advanceTimersByTimeAsync(1)
     expect(h.runtime.humanWait).toBe(true)
 
-    // 用过一半预算 + 答错一次重来：预算**不重置**（还剩 ~90s）。
+    // 用掉一半预算再答错一次重来：预算**不重置**（重试是原步内自环）。
     await vi.advanceTimersByTimeAsync(90_000)
     await answerWith(h, '1111', 'wrong', 2)
-    const retry = await startAction(h)
-    await retry.pending
+    const retry = await startAction(h)             // 第二次提问挂起（waiter 兜底 175s）
     await vi.advanceTimersByTimeAsync(1)
     expect(h.runtime.humanWait).toBe(true)
 
-    // 再过 90s（合计 180s）→ 本步预算耗尽 → 流程失败收束 + 人工环节退出。
-    await vi.advanceTimersByTimeAsync(90_000)
+    // 再过 175s（人工始终没提交）→ ask-human 兜底超时 → 工具结果 ok:false（不走重试）→
+    // 本步失败收束 + 人工环节退出 + 等待者解挂（工具 Promise 不悬挂）。
+    await vi.advanceTimersByTimeAsync(175_000)
+    const retried = await retry.pending
+    expect(retried.ok).toBe(false)
     expect(h.runtime.diag().flow).toBeNull()
     expect(h.runtime.humanWait).toBe(false)
-    expect(h.logs.join('\n')).toContain('人工未在 180000ms 内提交')
+    expect(h.logs.join('\n')).toContain('人工未在 175000ms 内提交')
     h.runtime.dispose()
   })
 })

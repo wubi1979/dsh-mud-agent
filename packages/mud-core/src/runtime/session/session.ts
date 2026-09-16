@@ -65,6 +65,13 @@ const t1Allowed = (mode: MudRuntimeConfig['agentMode']): boolean => mode === 't1
 /** T2 通道允许 (模式 `t2`/`full`): 行批次/控制唤醒进真实 LLM 回合。 */
 const t2Allowed = (mode: MudRuntimeConfig['agentMode']): boolean => mode === 't2' || mode === 'full'
 
+/**
+ * ask-human 验证码等待兜底超时 (固定值, 不暴露给模型): 略小于 fullme 图片有效期
+ * (answer/prompt 步预算 180s), 保证工具结果先于流程计时器结算 —— 等待失败走工具
+ * 判据 (`tool error`) 而不是步超时兜底, 两种路径都能收束但归因更清晰。
+ */
+const CAPTCHA_WAIT_MS = 175_000
+
 
 /**
  * 单个 MUD 会话的运行时。所有字段都是**会话私有** — 不存在跨会话共享的
@@ -127,6 +134,12 @@ export class MudSessionRuntime {
   private awaitingHuman = false
   /** 待人工回填的动作 (动作声明了 `awaitExternal` 占位符; 回填后交 T1 渲染)。 */
   private pendingExternal: ActionRequest[] = []
+  /**
+   * ask-human 挂起的 `mud_captcha` 工具等待者 (对齐官方 `ApprovalService.request`:
+   * 提问发生在**未收束的回合内**, 工具调用保持 in-flight, 人工提交/中止/超时 resolve 或
+   * reject 该 Promise —— 码随**工具结果**回管线, 后续动作 defer 进同一回合)。
+   */
+  private captchaWaiter: { resolve: (code: string) => void; reject: (err: Error) => void } | null = null
   /** 外部占位符值 (`{captcha}` → 人工输入的验证码; 发送瞬间插值)。 */
   private externalValues: Record<string, string> = {}
   private connectCount = 0
@@ -393,7 +406,8 @@ export class MudSessionRuntime {
       onWorldChange: () => { this.noteWorldChange() },
       resolveExternalValues: () => this.externalValues,
       // fullme 流程的解析步（`prompt`）调 `mud_captcha`：工具负责解析（出站围栏 + 取图），
-      // 这里只把结果交给宿主推前台弹窗（`note` = 上一轮答错原文，供人工参考）。
+      // 这里只把结果交给宿主推前台弹窗（`note` = 上一轮答错原文，供人工参考）；
+      // `wait` = ask-human 挂起点：推图后工具不返回，人工提交/中止/超时才带回码。
       captcha: {
         push: (imageUrl, robotUrl, note) => {
           this.sink.captcha?.(this.sessionId, {
@@ -402,6 +416,7 @@ export class MudSessionRuntime {
             ...(note === undefined ? {} : { note }),
           })
         },
+        wait: opts => this.awaitCaptchaSubmit(opts),
       },
       ...(this.config.dangerous === undefined ? {} : { dangerous: this.config.dangerous }),
       ...(this.config.activityTable === undefined ? {} : { activity: this.config.activityTable }),
@@ -462,9 +477,10 @@ export class MudSessionRuntime {
   /**
    * 手动命令 (WebUI/用户): 走队列节流 + 'user' 归属 (不绕过应答桥计数)。
    *
-   * **人工验证码例外**: 等人工期间用户发出的 `fullme <码>` 不直接发出, 而是当作**外部
-   * 占位符值**回填 (`{captcha}`), 然后由 T1 渲染 `fullme {captcha}` 发出 —— fullme 与
-   * 登录一样是规则表声明的 T1 流程, 人工只负责提供那个值 (`doc/ARCHITECTURE.md` §11)。
+   * **人工验证码例外** (§19.3 人工只负责提供值): 等人工期间用户提交的输入不直接发出,
+   * 而是当作**外部占位符值**回填 (`{captcha}`) 并解挂 ask-human 等待者 —— 输入只收
+   * **图片里的文字 (裸码)** (弹窗语义), 兼容 `fullme <码>` 前缀; 随后流程 answer 步
+   * 动作统一包装成 `halt + fullme {captcha}` 发出 (`doc/ARCHITECTURE.md` §11)。
    * @param cmd 原始命令。
    * @param actor 归属 (agent/user/system)。
    * @returns 是否被接受 (人工回填也算接受)。
@@ -473,16 +489,13 @@ export class MudSessionRuntime {
     const trimmed = cmd.trim()
     if (trimmed === '') return false
     if (this.awaitingHuman && actor === 'user') {
-      const match = /^fullme(?:\s+(\S.*))?$/i.exec(trimmed)
-      if (match !== null) {
-        const code = (match[1] ?? '').trim()
-        if (code === '') {
-          this.log('[验证码] 收到空验证码, 继续等人工输入')
-          return true
-        }
-        this.exitHumanWait({ captcha: code })
+      const code = trimmed.replace(/^fullme\s*/i, '').trim()
+      if (code === '') {
+        this.log('[验证码] 收到空验证码, 继续等人工输入')
         return true
       }
+      this.exitHumanWait({ captcha: code })
+      return true
     }
     this.queue.send(trimmed, { actor })
     return true
@@ -503,6 +516,10 @@ export class MudSessionRuntime {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    // ask-human 等待者一并解挂: 会话都没了, 工具 Promise 不能悬挂 (fail-closed)。
+    const waiter = this.captchaWaiter
+    this.captchaWaiter = null
+    if (waiter !== null) waiter.reject(new Error('会话已释放'))
     this.controller.close()
     this.queue.clear()
     this.watchdogs.dispose()
@@ -834,16 +851,15 @@ export class MudSessionRuntime {
   }
 
   /**
-   * 进入人工环节: 暂停全部投递 + 停看门狗 (规则表的 `active()` 里读 `awaitingHuman`),
-   * 把验证码交给宿主 (取图 + 推 UI)。**无超时** —— 人工环节可以无限等待。
-   * @param robotUrl 验证码页面地址 (可能为 null: 规则命中但没抽出 URL)。
-   * @param ruleId 触发规则 id (留痕)。
-   * @param missing 缺失的占位符名 (留痕)。
+   * 进入人工环节: 暂停全部投递 + 停看门狗 (规则表的 `active()` 里读 `awaitingHuman`)。
+   * 取图与弹窗由 `mud_captcha` 工具自己完成; 计时用本步自己的预算 (fullme 图片有效期)。
+   * @param ruleId 触发来源 id (留痕: 流程步命中或 ask-human 工具)。
+   * @param missing 缺失/待回填的占位符名 (留痕)。
    */
   private enterHumanWait(ruleId: string, missing: readonly string[]): void {
     if (this.awaitingHuman) return
     this.awaitingHuman = true
-    this.log(`[验证码] 检测到 ${ruleId}, 等人工输入 (缺 ${missing.map(k => `{${k}}`).join('/')}; ` +
+    this.log(`[验证码] 进入人工环节 (${ruleId}; 缺 ${missing.map(k => `{${k}}`).join('/')}; ` +
       '看门狗暂停, 投递暂停; 计时用本步预算)')
     this.decision({
       actor: 'flow',
@@ -857,11 +873,62 @@ export class MudSessionRuntime {
   }
 
   /**
-   * 人工回填验证码后退出人工环节: 记下外部值 → 恢复看门狗 → 流程回到"等结果" →
-   * 把挂起的动作交给 T1 渲染 (T1 会渲染 `fullme {captcha}`, 占位符在发送瞬间插值)。
+   * **ask-human 挂起点** (`mud_captcha` 工具的 `wait`; 对齐官方 `ApprovalService.request`
+   * —— 提问要求回合开着, 审计对/工具结果都被未收束的回合包住): 注册等待者并进入人工
+   * 环节, 直到人工提交 (resolve)、弹窗中止 (`cancelHumanWait`)、本步预算耗尽 (流程机
+   * 超时 → `syncHumanWait` 解挂) 或回合取消 (signal)。工具侧超时是固定兜底
+   * (`CAPTCHA_WAIT_MS` < 图片有效期 180s), 保证工具结果先于流程计时器结算。
+   * @param opts `signal` = 回合取消信号。
+   * @returns 人工提交的验证码 (裸值)。
+   */
+  private awaitCaptchaSubmit(opts: { signal?: AbortSignal | undefined }): Promise<string> {
+    this.enterHumanWait('mud_captcha', ['captcha'])
+    return new Promise<string>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | null = null
+      let settled = false
+      const finish = (run: () => void): void => {
+        if (settled) return
+        settled = true
+        if (timer !== null) { clearTimeout(timer); timer = null }
+        if (this.captchaWaiter !== null) this.captchaWaiter = null
+        opts.signal?.removeEventListener('abort', onAbort)
+        run()
+      }
+      const onAbort = (): void => finish(() => reject(new Error('回合已取消 (abort)')))
+      this.captchaWaiter = {
+        resolve: code => finish(() => resolve(code)),
+        reject: err => finish(() => reject(err)),
+      }
+      timer = setTimeout(() => finish(() => reject(new Error(
+        `人工未在 ${CAPTCHA_WAIT_MS}ms 内提交验证码 (图片有效期兜底)`))), CAPTCHA_WAIT_MS)
+      opts.signal?.addEventListener('abort', onAbort, { once: true })
+    })
+  }
+
+  /**
+   * 弹窗"中止" → ask-human 等待当场失败 (fail-closed): 工具结果 `ok:false` → 所在步按
+   * 工具判据失败收束 (§19.3 与官方 `cancelled` 同型)。无挂起等待时是空操作。
+   */
+  cancelHumanWait(): void {
+    if (this.captchaWaiter === null) return
+    const waiter = this.captchaWaiter
+    this.captchaWaiter = null
+    this.log('[验证码] 人工中止 → ask-human 等待失败, 流程收束')
+    waiter.reject(new Error('人工中止验证码输入'))
+  }
+
+  /**
+   * 人工提交验证码后退出人工环节 —— **ask-human 收口** (两种形态同一出口):
+   *   - 首次提问 (prompt 步工具挂起中): 有 waiter、无挂起动作 → 只解挂 + 填值。
+   *     工具结果带回回合内 → 流程进 answer → 动作在工具在途窗口内 defer 进**同一回合**
+   *     —— 这里绝不投递、不开新回合 (旧版回合分裂的根源就在这条多余投递);
+   *   - 答错反复 (answer 步 tryRetry 再挂起): 有 waiter、有挂起动作 → 解挂 + 投出,
+   *     投递落在第二次提问的工具在途窗口内 → defer 随其结果进同一回合;
+   *   - 旧装配兜底 (无 waiter): 保留原 standalone 投递路径 (流程机已 resumeHuman)。
    *
-   * 顺序很关键: **先 `flow.resumeHuman()` 再投**（桥闸门只放行 `awaiting-result` 阶段
-   * 声明的命令）；计时器**不重布防**（等人与重试共用本步那一份预算）。
+   * 顺序: **先解挂 waiter** (resolve 是微任务, 工具续跑晚于本同步函数), 再 `resumeHuman`
+   * + 投挂起动作 (此时工具仍在途 → 落 defer 槽; 桥闸门只放行 `awaiting-result` 阶段
+   * 声明的命令); 计时器**不重布防**（等人与重试共用本步那一份预算）。
    *
    * 投递形态 = **动作投递**（无原文可带）：触发这次动作的行要么是命令应答帧（已作为
    * tool result 进过模型），要么在人工环节期间留待决不投 —— 与"帧内命中/结算驱动"
@@ -872,9 +939,12 @@ export class MudSessionRuntime {
     if (!this.awaitingHuman) return
     this.awaitingHuman = false
     this.externalValues = { ...this.externalValues, ...values }
+    const waiter = this.captchaWaiter
+    this.captchaWaiter = null
     const parked = this.pendingExternal
     this.pendingExternal = []
-    this.log(`[验证码] 人工已提交: ${Object.keys(values).map(k => `{${k}}`).join('/')} → 交 T1 发送, 投递与看门狗恢复`)
+    this.log(`[验证码] 人工已提交: ${Object.keys(values).map(k => `{${k}}`).join('/')} → ` +
+      `${waiter === null ? '旧装配路径' : '解挂 ask-human 等待者'}, 挂起动作 ${parked.length} 条, 投递与看门狗恢复`)
     this.decision({
       actor: 'flow',
       flow: 'fullme',
@@ -882,6 +952,7 @@ export class MudSessionRuntime {
       action: 'T1 发送 fullme',
       text: '[流程] fullme: 人工已提交, T1 发送',
     })
+    if (waiter !== null) waiter.resolve(values.captcha ?? '')
     this.flow.resumeHuman()
     const slots = this.flow.slots()
     const names = this.flow.slotNames()
@@ -892,7 +963,7 @@ export class MudSessionRuntime {
         parked.map(entry => fillSlots(entry, slots, names)),
       )
     }
-    this.settle()            // 立即把暂存的动作投出去（standalone 不被 T2 限流压住）
+    this.settle()            // 冲刷暂存动作 + 等人工期间攒下的行（在途窗口内 → defer 进同一回合）
   }
 
   /** 写入连接/重连分隔文本到终端缓冲。 */
@@ -1237,7 +1308,16 @@ export class MudSessionRuntime {
     const stepId = ruleId.slice('flow:'.length).split('/')[1]
     if (stepId === undefined || stepId === '') return
     const hits = this.flow.noteToolResult(stepId, ok)
-    if (hits.length > 0) this.queueFlowActions(hits)
+    if (hits.length > 0) {
+      this.queueFlowActions(hits)
+      // 工具结果驱动的 lined 动作没有帧链 ⑤ 兜底 (待决缓冲不会再有新行): 无行可带时
+      // 把暂存动作转动作投递、就地结算 —— 结算仍在本工具在途窗口内 → 落 defer 槽,
+      // 随本工具结果进同一回合 (判据 A, ask-human 回合内提问的搭车机制)。
+      if (this.pending.length === 0 && this.pendingActions.length > 0) {
+        this.standalone = { text: '', actions: this.pendingActions.splice(0) }
+      }
+      this.settle()
+    }
     this.drainFlowQueue()
   }
 
@@ -1308,6 +1388,10 @@ export class MudSessionRuntime {
           parks.push({ request, framed: false, keys: hit.awaitExternal ?? [] })
           continue
         }
+        // ask-human 已把值带回 (码在 externalValues): 动作照常投, 但流程机停在
+        // `awaiting-human` (enterStep 对 awaitExternal 步一律先置该阶段) → 就地恢复,
+        // 否则桥闸门会拒发本动作声明的命令 (I12)。
+        if ((hit.awaitExternal ?? []).length > 0) this.flow.resumeHuman()
         this.pendingActions.push(request)
         if (hit.anchorAbs > this.consumeTo) this.consumeTo = hit.anchorAbs
       }
@@ -1321,6 +1405,7 @@ export class MudSessionRuntime {
         parks.push({ request, framed: true, keys: hit.awaitExternal ?? [] })
         continue
       }
+      if ((hit.awaitExternal ?? []).length > 0) this.flow.resumeHuman()
       this.deliverStandalone(hit.text, [request])
     }
     // 投递已 staged（此时还没进人工环节，避免"人工暂停"把刚 staged 的动作一起压住）。
@@ -1348,6 +1433,11 @@ export class MudSessionRuntime {
     if (this.flow.state() !== null) return
     this.awaitingHuman = false
     this.pendingExternal = []
+    const waiter = this.captchaWaiter
+    this.captchaWaiter = null
+    // ask-human 等待者一并解挂 (fail-closed): 工具不再无限等 → 结果 ok:false →
+    // 已死的流程判据忽略它, 工具 Promise 不悬挂 (对齐官方 cancelled/unavailable)。
+    if (waiter !== null) waiter.reject(new Error('流程已结束 (验证码等待作废)'))
     this.log('[验证码] 流程已结束 → 退出人工环节 (挂起的动作作废, 投递与看门狗恢复)')
   }
 

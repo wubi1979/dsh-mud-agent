@@ -288,3 +288,10 @@ note: 只追加，不回改历史条目；每次设计变更在文末登记一�
 - `Config.agentEnabled` → `Config.agentMode: 'off' | 't1' | 't2' | 'full'`（缺省 `t1`）：`off` 暂停接入（输出直推终端）/ `t1` 仅确定性管道（规则/流程动作走 T1，其余行仅进终端）/ `t2` 仅真实 LLM（全部行进批次投递，T1 暂存动作丢弃留痕）/ `full` 完整接入；`ctx.mud.setAgentEnabled(bool)` → `setAgentMode(mode)`，`MudConnectionStatus.agentEnabled` → `agentMode`
 - 门控落点（session.ts）：dead-air 布防与断流/流程失败唤醒要求 `t2|full`；settle 的 T1 暂存动作冲刷与原文/动作投递要求 `t1|full`（T2 关闭时批次仅进终端、暂存动作照投）；空回合翻 blank 只要求非 `off`；`shouldConcludeTurn` 仅 `off` 直接拒绝
 - 8 个测试 spec 的 `agentEnabled: true` → `agentMode: 'full'`；§11 Config 全集与看门狗表同步
+
+## v0.7.3（2026-09-17）fullme 人工提问改为 ask-human 同回合挂起（§19.3 / flows/fullme.md）
+- 作者定案：修"回合分裂"——旧机制下 `mud_captcha` 取图即返回，提问后无在途工具 → T1 `finish stop` 收束回合，人工回填只能开新回合。现行对齐官方 `ApprovalService.request` 语义（**提问要求回合开着，回答是工具结果**）：`mud_captcha` 推图后**工具不返回**（在途挂起），人工提交的码作为**工具结果**回管线，`answer` 动作随该结果 defer 进**同一回合**
+- fail-closed 三出口（工具结果 `ok:false` → 所在步失败收束，不悬挂）：① 弹窗"中止" → 新增 `captchaAbort` RPC 全链（`MudCoreService` → `assemble` → `@Remote` → typert 工件 → webui 客户端 → 中止按钮）→ waiter 直接失败结束；② 每次提问的等待兜底 `CAPTCHA_WAIT_MS = 175_000`（`session.ts` 常量，**不给模型看、非 Config 字段**；步预算 180s 仍是硬上界，175s 先结算）；③ 流程结束 / 断线 / 会话释放（等待作废）
+- 答错重试复用 `retry` 步内自环：清 `{captcha}` 旧码（`clearExternal`）→ 投 `retry.action` 再推图**再问一次（第二次挂起）**→ 新码提交后动作随第二次工具结果进同一回合；三次提问 = 三次挂起-解挂，回合始终开着
+- 弹窗只收裸码（`sendCommand` 人工分支兼容 `fullme` 前缀），`halt`/`fullme` 序列仍归流程动作统一声明（§19.3）
+- `prompt` 步 `timeoutMs` 15s → 180s（含等人工）；`runtime-captcha.spec.ts` 按新语义整篇重写（8 例）；§19.2/§19.3 与 flows/fullme.md 同步

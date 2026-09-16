@@ -120,6 +120,12 @@ export class MudRemoteController {
     return value.ok
   }
 
+  /** 中止验证码人工等待 (弹窗"中止"按钮; fail-closed: 所在流程步收束)。 */
+  async captchaAbort(sessionId?: string): Promise<boolean> {
+    const value = await this.call(mud => mud.captchaAbort(sessionId))
+    return value.ok
+  }
+
   /** 刷新验证码 (重新抓取 robot.php 并推新 captcha 事件)。 */
   async captchaRefresh(imageUrl: string, sessionId?: string): Promise<string | null> {
     const value = await this.call(mud => mud.captchaRefresh(imageUrl, sessionId))

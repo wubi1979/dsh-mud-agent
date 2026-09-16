@@ -195,6 +195,16 @@ export class MudRemoteService extends TypertRemoteService {
   // ── RPC: 验证码 / 日志 / 注销 ────────────────────────────────────
 
   /**
+   * 弹窗"中止" → ask-human 验证码等待当场失败 (fail-closed; 无挂起等待时空操作)。
+   * 缺省回落 last-active 会话。
+   */
+  @Remote
+  captchaAbort(sessionId?: string): { ok: boolean } {
+    this.service.captchaAbort(sessionId)
+    return { ok: true }
+  }
+
+  /**
    * 刷新验证码图片 (robotUrlMap 里登记的展示 URL → 取新图 → 推 tuiCaptcha)。
    * @throws 未知图片或取图失败抛错 (原 400/500 语义)。
    */

@@ -28,9 +28,12 @@ export const FULLME_URL_CAPTURE = /(https?:\/\/[^\s]*robot\.php\?filename=[^\s]+
  *   - `request` **无 ok**：本步结果 = 下一步的新文本（`stale` / `prompt` 的 driver 就是它的两种结果），
  *     成功句只属于 `answer` —— **必须正确回码才算通过**；"刚刚用过"句直接中止（无兜底）；
  *   - `stale`（上一轮未完成）**三连发 `fullme 1`** 才能真放弃，以 GA 判定、按**失败收束**收场；
- *   - `prompt` 用 `mud_captcha` 工具取图 + 推前台弹窗，以**工具结果**判定（没有 GA 可判）；
- *   - `answer` 三次答错重来（`retry`；错码与 `fullme 1` 等价，三次错码即"三连放弃"），
- *     `timeoutMs = 180_000` = 图片有效期 = **本步总预算**（等人工 + 重来 + 收结果都算在内）；
+ *   - `prompt` 用 `mud_captcha`（**ask-human 工具**）取图 + 推弹窗并**回合内挂起等人工提交**，
+ *     以**工具结果**判定（没有 GA 可判）；`timeoutMs` 因此放宽到图片有效期（含等人工）；
+ *   - `answer` 三次答错重来（`retry`：先重挂 `mud_captcha` 再问一次、再投本步动作；
+ *     错码与 `fullme 1` 等价，三次错码即"三连放弃"），
+ *     `timeoutMs = 180_000` = 图片有效期 = **本步总预算**（等人工 + 重来 + 收结果都算在内；
+ *     ask-human 首次回码后动作即投——码已在 externalValues，不再走人工槽挂起）；
  *   - `success` 发 `hpbrief` 补状态，`ok:[GA]`、`next` 空 = 终态。
  *
  * 三种收场（取图失败 / 答错 3 次 / 预算耗尽）都让服务端停在当前轮次 → 下一轮先撞 `stale`，
@@ -68,16 +71,19 @@ export const FULLME_FLOW: FlowSpec = {
       id: 'prompt',
       driver: { kind: 'regex', patterns: [FULLME_URL_PATTERN] },
       capture: { captchaUrl: FULLME_URL_CAPTURE },
+      // ask-human: mud_captcha 推图后**回合内挂起等人工提交**，码随工具结果回管线。
       action: { tool: 'mud_captcha', args: { url: '{captchaUrl}', note: '{lastFail}' } },
       ok: [{ kind: 'tool', outcome: 'ok' }],
       fail: [{ kind: 'tool', outcome: 'error' }],
       next: ['answer'],
-      timeoutMs: 15_000,
+      // 本步含等人工（工具兜底超时 175s 先于步预算结算）→ 放宽到图片有效期。
+      timeoutMs: 180_000,
     },
     {
       id: 'answer',
       action: { tool: 'mud_send', args: { cmds: ['halt', 'fullme {captcha}'] } },
-      // 进入即**挂起动作**、进人工环节；`timeoutMs` 同时是人工等待与整步预算。
+      // `awaitExternal` 现在是兜底声明: ask-human 首次回码后码已就位、动作即投（不再挂起）;
+      // 答错重试时槽值被清空 → 本步动作再次挂起, 等第二次提问的工具结果带回新码。
       awaitExternal: ['captcha'],
       ok: [{ kind: 'text', includes: [FULLME_OK_TEXT] }],
       fail: [

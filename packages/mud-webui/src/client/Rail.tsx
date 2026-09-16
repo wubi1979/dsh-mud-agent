@@ -109,7 +109,7 @@ function statusLinesOf(world: {
  *  fullme 验证码对话框 (页面级, 由 /mud/ws captcha 帧驱动)。
  *  数据跟随**最近产出帧的会话** (mudSocket focus session) — 右栏是页面级面板,
  *  没有会话上下文; 日志/游戏 tab 则按各自 sessionId 精确过滤。 */
-export function Rail({ mudSocket, sendCommand, refreshCaptcha, useServers }: PropsRuntime<'sidebar.right.pane.tab'> & InjectFace<MudClientInjected>) {
+export function Rail({ mudSocket, sendCommand, refreshCaptcha, abortCaptcha, useServers }: PropsRuntime<'sidebar.right.pane.tab'> & InjectFace<MudClientInjected>) {
   const view = useSyncExternalStore(
     listener => mudSocket.subscribeView(listener),
     () => mudSocket.getView(),
@@ -136,6 +136,7 @@ export function Rail({ mudSocket, sendCommand, refreshCaptcha, useServers }: Pro
         mudSocket={mudSocket}
         sendCommand={sendCommand}
         refreshCaptcha={refreshCaptcha}
+        abortCaptcha={abortCaptcha}
         sessionId={focusSessionId === '' ? undefined : focusSessionId}
       />
       {/* 决策区: 与状态区各占右侧栏一半; 内容多时自身滚动, 面板高度不被撑高。 */}

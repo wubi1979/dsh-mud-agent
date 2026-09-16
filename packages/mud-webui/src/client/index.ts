@@ -328,6 +328,13 @@ export function apply(ctx: ClientContext): void {
         return null
       }
     },
+    abortCaptcha: async (sessionId) => {
+      try {
+        return await mudRemote.captchaAbort(sessionId)
+      } catch {
+        return false
+      }
+    },
     toggleSidebar: () => { ctx.layout.toggleSidebar() },
   })
 

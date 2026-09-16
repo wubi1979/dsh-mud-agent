@@ -738,6 +738,10 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
       if (runtime === undefined) return false
       return runtime.sendCommand(cmd, 'user')
     },
+    /** 弹窗"中止" → ask-human 验证码等待当场失败 (fail-closed; 无挂起等待时空操作)。 */
+    captchaAbort(sessionId?: string): void {
+      runtimes.get(view.resolve(sessionId))?.cancelHumanWait()
+    },
     readGame(sinceSeq: number): { items: readonly MudGameItem[]; tailSeq: number } {
       return buffers.readGame(sinceSeq)
     },

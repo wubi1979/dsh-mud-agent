@@ -162,6 +162,8 @@ export interface MudCoreService {
   diag(): MudDiag
   /** 发送一条游戏命令到指定会话的连接 (走该会话队列节流)。 */
   sendCommand(cmd: string, sessionId?: string): boolean
+  /** 弹窗"中止" → ask-human 验证码等待当场失败 (fail-closed; 无挂起等待时空操作)。 */
+  captchaAbort(sessionId?: string): void
   /** 读取游戏输出缓冲中 seq > sinceSeq 的条目 (条目自带 sessionId)。 */
   readGame(sinceSeq: number): MudGameRead
   /** 某会话的世界模型快照 (未绑定 = null)。 */

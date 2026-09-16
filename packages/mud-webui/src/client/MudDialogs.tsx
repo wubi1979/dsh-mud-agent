@@ -194,12 +194,14 @@ const NOTE_STYLE: React.CSSProperties = {
  * (替换语义, 全局唯一不叠开) — 新 captcha 事件整体覆盖当前对话框。输入框**只收
  * 图片里的文字 (码)**, 其余一律不做 (§19.3 人工只负责提供值): 提交 → 经
  * /mud/command 送到会话, 由后台人工回填 → 流程 answer 步动作统一包装成
- * `halt + fullme <码>`; 中止 → 仅关闭。
+ * `halt + fullme <码>`; 中止 → 先调 abortCaptcha (fail-closed: 后台等待者
+ * 直接失败, 所在流程步收束) 再关闭弹窗。
  */
-export function CaptchaDialog({ mudSocket, sendCommand, refreshCaptcha, sessionId }: {
+export function CaptchaDialog({ mudSocket, sendCommand, refreshCaptcha, abortCaptcha, sessionId }: {
   mudSocket: MudSocketController
   sendCommand: (cmd: string, sessionId?: string) => Promise<boolean>
   refreshCaptcha: (imageUrl: string, sessionId?: string) => Promise<string | null>
+  abortCaptcha: (sessionId?: string) => Promise<boolean>
   /** 验证码所属会话 (右栏 focus 会话; 缺省 = host 回落最近绑定会话)。 */
   sessionId?: string | undefined
 }) {
@@ -221,6 +223,14 @@ export function CaptchaDialog({ mudSocket, sendCommand, refreshCaptcha, sessionI
   }, [captcha])
 
   const close = (): void => { mudSocket.clearCaptcha() }
+  const [aborting, setAborting] = useState(false)
+  const abort = (): void => {
+    if (aborting) return
+    setAborting(true)
+    void Promise.resolve(abortCaptcha(sessionId))
+      .catch(() => {})
+      .finally(() => { setAborting(false); close() })
+  }
   const submit = (): void => {
     const trimmed = cmd.trim()
     if (trimmed === '') {
@@ -256,7 +266,9 @@ export function CaptchaDialog({ mudSocket, sendCommand, refreshCaptcha, sessionI
       closeLabel="关闭"
       footer={(
         <>
-          <Button variant="outline" onClick={close}>中止</Button>
+          <Button variant="outline" onClick={abort} disabled={aborting}>
+            {aborting ? '中止中…' : '中止'}
+          </Button>
           <Button variant="primary" onClick={submit} disabled={sending}>
             {sending ? '发送中…' : '确认发送'}
           </Button>

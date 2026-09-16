@@ -65,6 +65,8 @@ export interface MudClientInjected {
   setTier: (sessionId: string, tier: MudTier) => Promise<boolean>
   /** Refresh the captcha image (re-fetch robot.php and push a new captcha event). */
   refreshCaptcha: (imageUrl: string, sessionId?: string) => Promise<string | null>
+  /** 中止验证码人工等待 (弹窗"中止"; fail-closed: 所在流程步失败收束)。 */
+  abortCaptcha: (sessionId?: string) => Promise<boolean>
   toggleSidebar: () => void
 }
 

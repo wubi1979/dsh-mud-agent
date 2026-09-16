@@ -284,13 +284,19 @@ export function buildMudTools({
   /** 连接状态读取器: 缺省视为已连接。未连接时发命令类工具快速拒绝 (不入桥)。 */
   isConnected?: () => boolean
   /**
-   * 验证码图片推送（`mud_captcha` 用；缺省 = 只解析不推 UI）。
+   * 验证码 ask-human 通道（`mud_captcha` 用；缺省 = 只解析不推 UI、不挂起）。
    *
-   * 取图与出站围栏在工具里做（`network/captcha.ts` 的 `resolveCaptchaImage`），宿主只把
+   * `push` 取图与出站围栏在工具里做（`network/captcha.ts` 的 `resolveCaptchaImage`），宿主只把
    * 解析好的图片地址变成页面上的对话框；`robotUrl` 供宿主实现"刷新图片"。
    */
   captcha?: {
     push: (imageUrl: string, robotUrl: string, note?: string) => void
+    /**
+     * ask-human 挂起点: 推图后工具调用它**回合内等待**人工提交，resolve 值 = 人工输入
+     * 的验证码；中止/超时/回合取消 reject（工具据此返回 `ok:false`，fail-closed）。
+     * 缺省（未接通道）= 不挂起，人工环节走会话侧人工槽兜底路径。
+     */
+    wait?: (opts: { signal?: AbortSignal | undefined }) => Promise<string>
   }
   /** 危险命令策略表 (缺省 `DEFAULT_DANGEROUS_COMMANDS`; 部署可覆盖)。 */
   dangerous?: readonly DangerousRule[]
@@ -521,16 +527,20 @@ export function buildMudTools({
     },
 
     /**
-     * mud_captcha: **解析 fullme 验证码页面并推前台弹窗**（系统流程工具，不发游戏命令）。
+     * mud_captcha: **ask-human 工具** —— 解析 fullme 验证码页面、推前台弹窗并**回合内
+     * 挂起等人工提交**（系统流程工具，不发游戏命令）。
      *
-     * 由 fullme 流程的 `prompt` 步渲染（`mud_captcha { url:'{captchaUrl}', note:'{lastFail}' }`），
-     * 判据是**工具结果**（`ok`/`error`）而不是 GA：它不经过命令-应答桥（`doc/ARCHITECTURE.md` §11）。
-     * 取图失败返回 `ok:false`（流程据此失败收束，不让人对着坏图干等）；地址围栏在
+     * 对齐官方 `ApprovalService.request` 的提问语义（`@deepseek-ai/dsh-user-approval`）:
+     * 提问要求**回合开着** —— 取图推送后工具 Promise 不返回，人工提交/中止/超时才带回
+     * 结果，码随**工具结果**回管线（后续 answer 动作 defer 进同一回合, 不再分裂回合）。
+     * 等待超时/中止/回合取消都 fail-closed（`ok:false`, 对应官方 `cancelled/unavailable`）;
+     * 判据是**工具结果**（`ok`/`error`）而不是 GA：不经过命令-应答桥（`doc/ARCHITECTURE.md` §11）。
+     * 取图失败同样立即返回 `ok:false`（流程据此失败收束，不让人对着坏图干等）；地址围栏在
      * `resolveCaptchaImage` 里（只允许 pkuxkx.net）。
      */
     mud_captcha: {
       name: 'mud_captcha',
-      description: '解析 fullme 验证码页面并推送到前端对话框（取图 + 校验出站围栏）。url 必须是游戏回显的 robot.php 地址；note 是展示给人工的提示（如上一轮答错原文）。失败返回 ok:false。',
+      description: '解析 fullme 验证码页面并推送到前端对话框（取图 + 校验出站围栏），然后等待人工在对话框提交验证码（挂起直到提交/中止/超时）。url 必须是游戏回显的 robot.php 地址；note 是展示给人工的提示（如上一轮答错原文）。提交成功返回 ok:true（码已交给后台，后续由流程包装发送）；中止或超时返回 ok:false。',
       parameters: {
         url: {
           type: 'string',
@@ -543,7 +553,7 @@ export function buildMudTools({
         },
       },
       output: { schema: OUT_SCHEMA, render: OUT_RENDER },
-      execute: async (args) => {
+      execute: async (args, opts) => {
         const url = String(args.url ?? '').trim()
         if (url === '') return { ok: false, note: '缺少验证码地址 (url)', cmd: '' }
         const rawNote = typeof args.note === 'string' ? args.note.trim() : ''
@@ -551,11 +561,19 @@ export function buildMudTools({
           const imageUrl = await resolveCaptchaImage(url)
           captcha?.push(imageUrl, url, rawNote === '' ? undefined : rawNote)
           log(`[验证码] 已解析并推送图片: ${imageUrl}`)
-          return { ok: true, note: `验证码图片已推送: ${imageUrl}`, cmd: '' }
+          if (captcha?.wait === undefined) {
+            // 旧装配兜底（宿主未接 ask-human 通道）: 只推图即返回，人工环节仍由
+            // 会话侧的人工槽路径收口（answer 步 awaitExternal 挂起 → 回填 → 投递）。
+            return { ok: true, note: `验证码图片已推送: ${imageUrl} (等待人工输入)`, cmd: '' }
+          }
+          // ask-human: 回合内挂起等人工提交（超时/中止/回合取消 → fail-closed）。
+          const code = await captcha.wait({ signal: opts?.signal })
+          log(`[验证码] 人工已提交验证码 (${code.length} 字符)`)
+          return { ok: true, note: `人工已提交验证码: ${code} (后台将包装为 halt + fullme 发送)`, cmd: '' }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)
-          log(`[验证码] 取图失败: ${message}`)
-          return { ok: false, note: `取图失败: ${message}`, cmd: '' }
+          log(`[验证码] 等待人工失败: ${message}`)
+          return { ok: false, note: `等待人工验证码失败: ${message}`, cmd: '' }
         }
       },
     },
