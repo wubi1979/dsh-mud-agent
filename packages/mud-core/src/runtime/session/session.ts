@@ -125,6 +125,8 @@ export class MudSessionRuntime {
   /** 外部占位符值 (`{captcha}` → 人工输入的验证码; 发送瞬间插值)。 */
   private externalValues: Record<string, string> = {}
   private connectCount = 0
+  /** 是否已投过空回合 starter (仅无内容会话首连发一次; 遮投递↔落事件窗口)。 */
+  private starterSent = false
   private latestWorld: MudWorldSnapshot | null = null
   private toolCache: MudTools | null = null
   private disposed = false
@@ -633,6 +635,11 @@ export class MudSessionRuntime {
     // 投递通道状态随连接作废: defer 槽里的消息属于上一连接的局面, 不再投出。
     this.channel.reset()
     this.clearHoldTimer()
+    // 首连即翻会话 blank (连接点 UX): 新会话在首个 turn/start 前官方不渲染会话体,
+    // 而旧路径要等第一批游戏输出走完 帧装配→感知→投递 整条链才开回合 —— 明显慢于
+    // 数据到达。**仅无内容会话** (session.seq === 0) 才发空回合; 已有历史的会话
+    // blank 已翻 (DSH 回到历史会话自动渲染), 再发只是多余的 finish stop。
+    void this.deliverStarterTurn()
   }
 
   private onSocketClose(): void {
@@ -1383,5 +1390,40 @@ export class MudSessionRuntime {
     agent.followup(ownedGameMessage(`${CONTROL_PREFIX}${context}`, 't2', this.sessionId))
     // 控制消息也算一次 T2 投递：紧随其后的批次要等最小间隔（避免"刚唤醒又喂"）。
     this.channel.markT2()
+  }
+
+  /**
+   * 空回合翻 blank (连接点 UX; 控制消息 lane=t1) —— **仅无内容会话**。
+   *
+   * 为什么存在: 官方会话体在首个 `turn/start` 前不渲染 (blank), 而 turn 旧路径要等
+   * 第一批游戏输出走完 帧装配(无 GA 兜底 2s)→感知→T2 投递 才开 —— 页面点完连接后
+   * 长时间停在 blank 页。连接一建立就确保 agent 解析 (官方惰性路径, 新会话此前没有
+   * agent) 并投一条**无动作的 T1 控制消息**: T1 无动作 → `finish stop`, 回合立即
+   * 开合, turn/start 翻 blank —— 不依赖真实 LLM (暂停时也能翻页), 不污染游戏投递
+   * 账本 (不记 T2 时刻)。
+   *
+   * 触发条件 (与官方 blank 判定同源): 仅 `session.seq === 0` (事件流为空) 的新会话。
+   * 已有历史的会话 blank 已翻, DSH 回到历史会话自动渲染, 再发纯属多余的空回合;
+   * `starterSent` 防本 runtime 重复 (starter 落事件后 seq > 0, 天然幂等, 此布尔只
+   * 遮住"投递与落事件之间"的窗口)。失败回落: agent 解析不到 → 静默放弃, 后续批次
+   * 走观察窗冲刷的既有路径翻 blank (慢但可达)。
+   */
+  private async deliverStarterTurn(): Promise<void> {
+    if (this.disposed || !this.config.agentEnabled) return
+    if (this.conn.id === null) return
+    if (this.starterSent || !(this.sink.sessionEmpty?.(this.sessionId) ?? false)) return
+    let agent = this.sink.agentOf(this.sessionId)
+    if (agent === undefined) agent = await (this.sink.resolveAgent?.(this.sessionId) ?? Promise.resolve(undefined))
+    if (agent === undefined || this.disposed || this.conn.id === null) return
+    if (this.awaitingHuman) return
+    if (!(this.sink.agentReady?.(this.sessionId) ?? true)) return
+    this.starterSent = true
+    this.decision({
+      actor: 'router',
+      eventType: 'blank-starter',
+      action: '空回合',
+      text: '[启动] 连接建立 → 空回合翻会话 blank (无内容会话)',
+    })
+    this.channel.send(agent, ownedGameMessage(`${CONTROL_PREFIX}连接已建立 (空回合: 翻转会话 blank)`, 't1', this.sessionId))
   }
 }

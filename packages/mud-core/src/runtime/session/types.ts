@@ -117,6 +117,24 @@ export interface MudRuntimeSink {
    */
   agentOf(sessionId: string): Agent | undefined
   /**
+   * 可选: **确保**该会话的 agent 已解析 (官方 `sessionController.resolveAgent`
+   * 路径 — 惰性创建/恢复; 已 live 则立即返回)。连接建立时用于"空回合翻 blank":
+   * 新会话在首条用户消息前 agent 不存在, 必须经官方路径补一次解析。
+   * @param sessionId 官方会话 id。
+   * @returns 解析到的 live agent; 官方控制器不可用/解析失败 = undefined
+   *   (调用方回落观察窗冲刷路径, 不自行创建 agent)。
+   */
+  resolveAgent?(sessionId: string): Promise<Agent | undefined>
+  /**
+   * 可选: 该会话是否**无内容** (官方 blank 判定同源: attached `session.seq === 0`,
+   * 事件流为空)。用于"空回合翻 blank"的触发条件 —— 只有新建无内容会话才需要
+   * 空回合; 已有历史的会话 blank 已翻 (官方回到历史会话自动渲染), 再发纯属
+   * 多余的 finish stop 回合。查不到会话/实现缺失 = false (保守不发)。
+   * @param sessionId 官方会话 id。
+   * @returns 会话事件流是否为空。
+   */
+  sessionEmpty?(sessionId: string): boolean
+  /**
    * 可选: 该会话的 agent **装配**是否就绪 (preset 模式下 = 官方 composition 已是
    * `mud-player`)。缺省视为就绪。
    *

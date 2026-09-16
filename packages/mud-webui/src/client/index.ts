@@ -44,7 +44,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import type { SidebarRightTabDefinition } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
-import { MudStateController } from './mud-state.ts'
+import { MudStateController, IDLE_CONN } from './mud-state.ts'
 import { MudSocketController } from './mud-socket.ts'
 import { MudRemoteController } from './mud-remote.ts'
 import { MudSidebar, type MudClientInjected } from './MudSidebar.tsx'
@@ -53,8 +53,8 @@ import { LogView } from './LogView.tsx'
 import { Rail } from './Rail.tsx'
 import xtermCss from './xterm.css?inline'
 
-/** 必需服务: slots 注册 + layout/sessions 动作 + 右栏 tab 注册表/控制器。 */
-export const inject = ['slots', 'layout', 'sessions', 'workspaces', 'sidebarRightTabs', 'sidebarRight']
+/** 必需服务: slots 注册 + layout/sessions 动作 + 右栏 tab 注册表/控制器 + remote (typert 客户端, mount 前必须已加载)。 */
+export const inject = ['slots', 'layout', 'sessions', 'workspaces', 'sidebarRightTabs', 'sidebarRight', 'remote']
 
 /** 注入 xterm 基础样式 (bundle 内联 CSS 文本, 插件生命周期内一次性)。 */
 function ensureXtermCss(): void {
@@ -109,19 +109,39 @@ function openMudRail(ctx: ClientContext): boolean {
 export function apply(ctx: ClientContext): void {
   ensureXtermCss()
 
-  // RPC 面 (官方 typert 客户端): mount 后接入流消费; 失败只记不抛 (页面仍可
-  // 渲染名单, RPC 侧调用各自报未挂载错误)。
+  // RPC 面 (官方 typert 客户端): mount 后接入流消费。失败退避重试 (覆盖 connection/
+  // typert 服务晚就绪的暂态时序); 重试穷尽后把真实原因写到侧栏状态行 (conn.error),
+  // 不用开控制台也能看到为什么"尚未挂载"。
   const mudRemote = new MudRemoteController()
   // Roster + per-session connection controller: one observable source shared by
   // every registration through the inject hooks compartment.
   const mud = new MudStateController(mudRemote)
   // One shared MUD stream consumer per page: game/log/decision/world push.
   const mudSocket = new MudSocketController()
-  void mudRemote.mount(ctx).then(namespace => {
-    mudSocket.start(namespace)
-  }).catch((err: unknown) => {
-    console.warn('[mud] remote mount 失败:', err)
-  })
+  const MOUNT_CONN_LABEL = 'MUD RPC'
+  const mountWithRetry = (attempt = 0): void => {
+    void mudRemote.mount(ctx).then(namespace => {
+      // 挂载成功复位此前显示的挂载错误 (按 label 标记识别, 不碰正常连接状态)。
+      if (mud.getSnapshot().conn.label === MOUNT_CONN_LABEL) mud.setConn(IDLE_CONN)
+      mudSocket.start(namespace)
+    }).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error('[mud] remote mount 失败:', err)
+      if (attempt >= 3) {
+        mud.setConn({
+          state: 'error',
+          serverId: null,
+          userId: null,
+          sessionId: null,
+          label: MOUNT_CONN_LABEL,
+          error: `remote 挂载失败: ${message}`,
+        })
+        return
+      }
+      setTimeout(() => mountWithRetry(attempt + 1), 2000 * 2 ** attempt)
+    })
+  }
+  mountWithRetry()
 
   /**
    * 声明"该官方会话是 MUD 账号会话" (host 据此装配工具/提示/选路)。

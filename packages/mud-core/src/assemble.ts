@@ -375,6 +375,37 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
 
   const sink: MudRuntimeSink = {
     agentOf: (sessionId) => agentOf(sessionId),
+    // 确保解析 (官方惰性路径): 新会话在首条用户消息前 agent 不存在, 连接建立时的
+    // "空回合翻 blank" 需要它。走官方 sessionController.resolveAgent (创建/恢复/
+    // 去重并发), 不自行 ctx.agents.create。失败回落 undefined (观察窗冲刷路径照旧)。
+    resolveAgent: async (sessionId) => {
+      const live = agentOf(sessionId)
+      if (live !== undefined) return live
+      try {
+        const sc = ctx.get('sessionController') as
+          | { agents?: { resolveAgent?: (id: SessionId) => Promise<{ agent?: Agent; error?: unknown }> } }
+          | undefined
+        const resolver = sc?.agents?.resolveAgent
+        if (resolver === undefined) return undefined
+        const result = await resolver(sessionId as SessionId)
+        return result.agent
+      } catch {
+        return undefined
+      }
+    },
+    // 会话是否无内容 (官方 blank 判定同源): attached session.seq === 0 = 事件流为空。
+    // 查不到会话 (registry 不可用/形状漂移) → false 保守不发, 旧观察窗路径仍能翻页。
+    sessionEmpty: (sessionId) => {
+      try {
+        const registry = ctx.get('sessions') as
+          | { get?: (id: SessionId) => { seq?: number } | undefined }
+          | undefined
+        const session = registry?.get?.(sessionId as SessionId)
+        return session !== undefined && session.seq === 0
+      } catch {
+        return false
+      }
+    },
     // preset 模式下"agent 存在"不等于"可以投递": 官方 composition 就绪前投递会跑在
     // 旧组装上并让会话永久锁定。就绪判定看 `capabilityReady` 标志 —— preset 挂载成功
     // 与"回落宿主侧装配"都会置位 (见其声明处的说明)。

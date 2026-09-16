@@ -16,8 +16,8 @@ import { createMudCore, type MudAgentConfig } from './assemble.ts'
 /** 插件名。 */
 export const name = 'mud-core'
 
-/** 必需服务: agents 注册表 (只读解析会话的 live agent — 不创建/不 dispose)。 */
-export const inject = ['agents']
+/** 必需服务: agents 注册表 (只读解析会话的 live agent — 不创建/不 dispose) + typert 注册表 (自持注册生成工件, 见 assemble 的 typert 块)。 */
+export const inject = ['agents', 'typert']
 
 export type { MudAgentConfig }
 export type { MudWorldSnapshot }

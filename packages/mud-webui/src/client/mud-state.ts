@@ -82,8 +82,8 @@ export interface MudServersSnapshot {
 /** localStorage key for the roster (servers + active target only). */
 const STORAGE_KEY = 'dsh.mud.servers.v1'
 
-/** Idle connection info (default). */
-const IDLE_CONN: MudConnInfo = {
+/** Idle connection info (default; mount 错误复位也复用它). */
+export const IDLE_CONN: MudConnInfo = {
   state: 'idle',
   serverId: null,
   userId: null,
