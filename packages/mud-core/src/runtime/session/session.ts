@@ -30,7 +30,7 @@ import { placeholderValues, redactCredential, redactSecrets, type SessionCredent
 import { ConnectionRuntime } from './connection-runtime.ts'
 import { DeliveryChannel } from './delivery-channel.ts'
 import { textOfLines, type MudLine } from '../../services/network/ansi.ts'
-import { StateService } from './state.ts'
+import { StateService } from './state-track.ts'
 import { createWorld, worldSnapshot, type WorldModel } from '../../shared/world.ts'
 import { CONTROL_PREFIX } from '../../perceive/types.ts'
 import type { PerceptionRule } from '../../perceive/types.ts'

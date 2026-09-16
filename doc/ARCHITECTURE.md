@@ -47,4 +47,4 @@
 | 当前状态 / 待决事项 / 风险 | §17–§18 | — |
 | 追溯历史决策 | history/、CHANGELOG | —（history 不作实现依据） |
 
-**当前状态**：v0.4.0 W5 已落地大半（`runtime/flow/flows.ts` + `runtime/flow/flow.ts`，全包 333 例全绿）；未落地：`pendingEntry` 端到端用例、`hpbrief` 应答折叠进 world —— 明细见 §17–§18，**此处之外不写状态摘要**。
+**当前状态**：一律以 [§17–§18](architecture/17-18-roadmap.md) 为准（交付切片表 + 未决/已定清单）；本页不维护状态摘要。
