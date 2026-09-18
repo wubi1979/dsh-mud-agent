@@ -11,7 +11,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { MudLine } from '../src/services/network/ansi.ts'
-import { FrameSplitter, type MudFrame } from '../src/runtime/session/frame-splitter.ts'
+import { FrameSplitter, type MudFrame } from '../src/runtime/session/adjudicator.ts'
 
 /** MudLine 构造 (测试用; abs 手工分配)。 */
 function ml(text: string, abs = 0): MudLine {

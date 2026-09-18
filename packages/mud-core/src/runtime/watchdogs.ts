@@ -16,10 +16,10 @@
  *   - `touch()` —— **活动事件**（收到游戏输出）：活跃的看门狗**重置窗口**（"N 毫秒无
  *     事件"里的 N 因活动而重新计时），不活跃的停表。
  *
- * **边界**（避免"什么都塞进管理器"）：分帧器的装配阀计时器（`autoFlushMs`，v0.6.0 静默窗
- * 降级为网络装配粒度，留在 `FrameSplitter`）与 holdDelivery 兜底（`hold`）**不属于**看门狗
- * —— 它们属于一次投递事务的生命周期，留在
- * `MudSessionRuntime`；传输层的空闲/断线探测属于 telnet 层，同样不在这里。
+ * **边界**（避免"什么都塞进管理器"）：行流装配阀计时器（`autoFlushMs`，v0.6.0 静默窗
+ * 降级为网络装配粒度，v0.9 W7.1 起随分帧器留在 `SessionAdjudicator`）与 holdDelivery 兜底
+ * （`hold`）、投递重试（settle）计时**不属于**看门狗 —— 它们属于一次投递/帧事务的生命
+ * 周期，同在 `SessionAdjudicator`；传输层的空闲/断线探测属于 telnet 层，同样不在这里。
  * @module @deepseek-ai/dsh-mud-core/runtime/watchdogs
  */
 

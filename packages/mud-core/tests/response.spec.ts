@@ -17,7 +17,7 @@ import {
   type BoundaryKind,
   type ReplyOptions,
 } from '../src/runtime/session/bridge.ts'
-import { FrameSplitter } from '../src/runtime/session/frame-splitter.ts'
+import { FrameSplitter } from '../src/runtime/session/adjudicator.ts'
 
 /** MudLine 构造 (测试用; abs 手工分配)。 */
 function ml(text: string, abs = 0): MudLine {

@@ -13,9 +13,10 @@
  *   - **网络连接只接入消息**: MudConnectionManager 只认 host/port, 不认识会话;
  *     绑定方向是唯一的 会话 → 连接 (`runtime.connectionId`)。
  *
- * 消息流 (v0.6.0 分帧器化; 见 `doc/ARCHITECTURE.md` §3–§8):
- *   文本块 (telnet `parsed`) → 分帧器 FrameSplitter (唯一边界裁决者: GA/EOR 八成 +
- *     武装判据十成切帧, 内存阀兜底; 300ms 静默降级为网络装配粒度, 非消费边界)
+ * 消息流 (v0.9 W7.1 裁决器化; 见 `doc/ARCHITECTURE.md` §3–§8):
+ *   文本块 (telnet `parsed`) / GA·EOR 边界 → 行流裁决器 SessionAdjudicator (唯一入口:
+ *     行流缓冲 + 武装标记切帧 + 五站消费链, GA/EOR 八成 + 武装判据十成切帧, 内存阀兜底;
+ *     300ms 静默降级为网络装配粒度, 非消费边界)
  *     → 帧提交消费链 (§8.2, 固定次序单遍): ① 状态折叠落库 → ② 规则触发 (动作/direct-exec)
  *       → ③ 事务结算 (B 桥, resolve 等待者) → ④ 流程判据 (唤醒/打断/排队) → ⑤ 投递视图
  *        有命中 → 原文投递消息 (原文 + 动作, lane=t1); 无命中 → 批次 (lane=t2)

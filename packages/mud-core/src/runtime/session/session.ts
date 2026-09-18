@@ -1,9 +1,11 @@
 /**
  * dsh-mud-core — 会话运行时 (MudSessionRuntime), host half.
  *
- * **一个 MUD 会话 = 一个 DSH 会话**。本类持有该会话的全部游戏侧状态:
- * 连接绑定 (session → connection, 方向单向)、感知折叠、观察窗、命令-应答桥、
- * 命令队列、WorldModel、recall 缓冲、登录看门狗与断流计时。
+ * **一个 MUD 会话 = 一个 DSH 会话**。本类是该会话的**壳**: 连接绑定 (session →
+ * connection, 方向单向)、WorldModel、人工环节 (fullme 验证码的挂起/回填/等待者)、
+ * 命令队列与看门狗; 行流/元事件入口、五站消费链与投递记账/节拍在裁决器
+ * (`adjudicator.ts`, v0.9 W7.1) — 本类只经 deps 回调向其暴露 sink/queue/state 等
+ * 出口与人工状态。
  *
  * 生命周期分工 (对齐 dsh 官方路径):
  *   - **会话与 agent 由官方拥有** — 会话由页面经官方 `sessions.create` 建立,
@@ -20,37 +22,27 @@
 
 import { CommandQueue } from './queue.ts'
 import { buildMudTools, type MudTools } from '../../agents/tools.ts'
-import { evaluateToolCall } from '../../services/gate/policy.ts'
 import { buildGateRules, type GateRules } from '../../services/gate/rules.ts'
 import { ownedGameMessage } from '../../agents/lane.ts'
 import { CommandResponseController } from './bridge.ts'
-import { FrameSplitter, type MudFrame } from './frame-splitter.ts'
 import { lineCriteriaPattern } from '../../services/matcher/criteria.ts'
 import { placeholderValues, redactCredential, redactSecrets, type SessionCredentials } from '../credentials.ts'
 import { ConnectionRuntime } from './connection-runtime.ts'
 import { DeliveryChannel } from './delivery-channel.ts'
-import { textOfLines, type MudLine } from '../../services/network/ansi.ts'
+import type { MudLine } from '../../services/network/ansi.ts'
 import { StateService } from './state-track.ts'
 import { createWorld, worldSnapshot, type WorldModel } from '../../shared/world.ts'
 import { CONTROL_PREFIX } from '../../perceive/types.ts'
 import type { PerceptionRule } from '../../perceive/types.ts'
-import { PerceptionEngine, type EngineHit } from '../../perceive/engine.ts'
-import { splitDelivery } from '../../perceive/split.ts'
+import { PerceptionEngine } from '../../perceive/engine.ts'
 import { MudConnectionManager } from '../../services/network/manager.ts'
 import { WatchdogTable } from '../watchdogs.ts'
 import { FlowRuntime } from '../flow/flow.ts'
-import type { FlowActionHit } from '../flow/flow-types.ts'
 import { defaultFlows } from '../flow/flows/index.ts'
 import type { MudWorldSnapshot } from '../../shell/remote-types.ts'
+import { SessionAdjudicator, t2Allowed } from './adjudicator.ts'
 import {
-  actionOf,
-  EMPTY_COMMANDS,
   fillSlots,
-  MAX_INJECT_TAIL_CHARS,
-  MAX_INJECT_TAIL_LINES,
-  MAX_PARKED_LINES,
-  MAX_SETTLE_LINES,
-  parseDeliveryCallId,
   type ActionRequest,
   type CommandActor,
   type MudDecisionRecord,
@@ -59,11 +51,6 @@ import {
   type MudSessionDiag,
   type MudSessionStatus,
 } from './types.ts'
-
-/** T1 通道允许 (模式 `t1`/`full`): 规则/流程驱动的确定性动作走 agent 管道。 */
-const t1Allowed = (mode: MudRuntimeConfig['agentMode']): boolean => mode === 't1' || mode === 'full'
-/** T2 通道允许 (模式 `t2`/`full`): 行批次/控制唤醒进真实 LLM 回合。 */
-const t2Allowed = (mode: MudRuntimeConfig['agentMode']): boolean => mode === 't2' || mode === 'full'
 
 /**
  * ask-human 验证码等待兜底超时 (固定值, 不暴露给模型): 略小于 fullme 图片有效期
@@ -86,36 +73,11 @@ export class MudSessionRuntime {
   private readonly world: WorldModel = createWorld()
   private readonly state: StateService
   private readonly controller: CommandResponseController
-  /** v0.6.0 S3: 边界裁决唯一出口。 */
-  private readonly splitter: FrameSplitter
   private readonly queue: CommandQueue
   /** L1 行级感知引擎 (每会话一实例; 多行状态在本实例内持久)。 */
   private readonly engine: PerceptionEngine
-  /** L2 待决行 (未投递的文本块行 = 单流切分的 segment 缓冲)。 */
-  private readonly pending: MudLine[] = []
-  /**
-   * 待投递的**动作请求** (规则命中 / 流程步动作；v0.4.0 起取代命中队列+回合记录)。
-   * 随下一条投递消息一起走 (`source.actions`)，T1 据此渲染 tool-call (`doc/ARCHITECTURE.md` §7)。
-   */
-  private pendingActions: ActionRequest[] = []
   /** 投递通道 (工具在途/defer 槽/投递账本/T2 时刻; 编排留在本类, 机制归通道)。 */
   private readonly channel: DeliveryChannel
-  /**
-   * 动作投递队列 (暂存的"无行可带"动作消息): 帧内命中 / 人工回填后的答案等 ——
-   * 它们的锚点行不在待决缓冲里，需要自己一条消息投出去。
-   */
-  private standalone: { text: string; actions: ActionRequest[] } | null = null
-  /** 已消费边界 (最后一次带动作命中的锚点 abs; -1 = 无)。 */
-  private consumeTo = -1
-  private settleTimer: ReturnType<typeof setTimeout> | null = null
-  private holdTimer: ReturnType<typeof setTimeout> | null = null
-  /** §8.5: 当前由流程布防同步来的分帧器武装标记 id (flow-arm:*; 全量替换同步)。 */
-  private readonly flowMarkerIds = new Set<string>()
-  /** §8.3: 在途 until 事务的武装标记 id (tx-*; 帧标记路由 —— 只有它们结算桥)。 */
-  private readonly untilMarkerIds = new Set<string>()
-  private readonly recallLines: { text: string; abs: number }[] = []
-  /** 已投递给模型的最大行 abs (交付水位): recall 只回看其后的行, 保证 session 不重复。 */
-  private deliveredAbs = -1
   private worldTimer: ReturnType<typeof setTimeout> | null = null
   /**
    * 唤醒类看门狗 (断流) —— 起停条件声明在构造器里, 运行时只在固定的状态变化点调用
@@ -152,10 +114,14 @@ export class MudSessionRuntime {
   private readonly gateRules: GateRules
   /** 最近一次 connect/agent/连接失败 (diag)。 */
   lastError: string | null = null
-  /** 缺陷计数 (不变量 I9): 命中未渲染 / 遗留段丢弃 / hold 超时释放。 */
-  private readonly counters = { hitsDropped: 0, carryDropped: 0, holdReleases: 0 }
   /** §8.5: 打断规则武装清单 (声明了 `interrupts` 的行判据事件规则; 常驻标记, 重连重挂)。 */
   private readonly interruptMarkers: readonly { id: string; pattern: RegExp }[]
+  /**
+   * 行流裁决器 (v0.9 W7.1): 行流/元事件唯一入口 + 五站消费链 + 投递记账 + 投递节拍。
+   * 分帧器 (FrameSplitter) 已并入其内; 人工交互状态 (awaitingHuman/externalValues)
+   * 归本壳, 经 deps 回调只读写。
+   */
+  private readonly adjudicator: SessionAdjudicator
 
   constructor(
     sessionId: string,
@@ -189,7 +155,7 @@ export class MudSessionRuntime {
       // 数据面透传 (感知域): 文本/行/边界/GMCP 由会话处理。
       onText: (text) => { this.feedRaw(text) },
       onLines: (lines) => { this.onTextBlock(lines) },
-      onBoundary: (kind) => { this.splitter.boundary(kind) },
+      onBoundary: (kind) => { this.adjudicator.boundary(kind) },
       onGmcp: (pkg, payload) => {
         this.state.onGmcp(pkg, payload)
         // GMCP 是权威登录信号 (置信度 1.0) → 走世界变化统一入口。
@@ -219,15 +185,9 @@ export class MudSessionRuntime {
       onLog: (text) => this.debug('network', text),
       defaultTimeoutMs: config.bridgeTimeoutMs,
       declaredTimeoutMs: config.bridgeDeclaredTimeoutMs,
-      // 桥结算 → 流程判定 (GA / 超时 / 断开; §19.3)。结算驱动的判定可能直接产出下一步动作
-      // （顺序兜底后继，如 mxp 成功后立刻发 look）→ 与 `offer` 同一条投递路径。
+      // 桥结算 → 裁决器 (§19.3): 结算驱动的流程判定 + 排队动作出队 (GA / 超时 / 断开)。
       // `cmds` = 被这次结算关掉的命令：流程据此做**按命令的归属比对**（§19.3）。
-      onSettle: (kind, text, cmds) => {
-        const hits = this.flow.noteSettle(kind, text, cmds)
-        if (hits.length > 0) this.queueFlowActions(hits)
-        // 结算可能让流程到达终态（如终态步的 GA）→ 排队的动作此时出队投递。
-        this.drainFlowQueue()
-      },
+      onSettle: (kind, text, cmds) => { this.adjudicator.onBridgeSettle(kind, text, cmds) },
       // 挂起期闸门 + 结算归属 (I12/§19.3)：只有"本步声明的那条命令"能通过；
       // 流程挂起期间的第二条应答请求被拒绝并留痕。
       canSend: (cmd) => {
@@ -235,24 +195,12 @@ export class MudSessionRuntime {
         this.log(`[缺陷] 流程挂起期间收到第二条应答请求 (${cmd}) → 已拒绝`)
         return false
       },
-      // v0.6.0 S3c: until 武装标记 → 分帧器注册; 分帧器命中后回调 settleUntilFromSplitter。
-      // untilMarkerIds 记录在途标记 id —— 帧标记路由只认它们 (流程/打断标记也是
-      // 'armed' 帧, 但不走桥结算, 见 onFrameCommitted)。
-      onUntilArm: (markerId, pattern) => {
-        this.untilMarkerIds.add(markerId)
-        this.splitter.arm({ id: markerId, pattern, once: true })
-      },
-      onUntilDisarm: (markerId) => {
-        this.untilMarkerIds.delete(markerId)
-        this.splitter.disarm(markerId)
-      },
+      // v0.6.0 S3c: until 武装标记 → 裁决器注册; 裁决器命中后回调 settleUntilFromSplitter。
+      // untilMarkerIds (裁决器内) 记录在途标记 id —— 帧标记路由只认它们 (流程/打断
+      // 标记也是 'armed' 帧, 但不走桥结算, 见裁决器五站链站③)。
+      onUntilArm: (markerId, pattern) => { this.adjudicator.armUntilMarker(markerId, pattern) },
+      onUntilDisarm: (markerId) => { this.adjudicator.disarmUntilMarker(markerId) },
     })
-    // v0.6.0 S3: 分帧器 = 唯一边界裁决者 + 网络装配层。静默窗 (bridgeSilenceMs) 降级为
-    // **网络装配粒度** (§8.7): 无标记到达时到点提交 valve 帧兜底走消费链; 消费边界只认
-    // 标记 (GA/EOR/武装判据), 不再有静默/超时"伪边界"。
-    this.splitter = new FrameSplitter({ autoFlushMs: this.config.bridgeSilenceMs, onLog: (t) => this.debug('perception', t) })
-    this.splitter.onFrame = (frame) => this.onFrameCommitted(frame)
-    this.armInterruptRules()
     this.queue = new CommandQueue({
       minInterval: config.commandIntervalMs,
       onSend: (cmd, meta) => { this.onQueueSend(cmd, meta) },
@@ -303,14 +251,16 @@ export class MudSessionRuntime {
           text: context,
         })
         // 失败也可能来自流程自己的计时器（不经过 offer/noteSettle）→ 这里补一次出队。
-        this.drainFlowQueue()
+        this.adjudicator.drainFlowQueue()
         this.requestAgent('流程失败', `${context} — 请判断是重试、换做法还是告知用户。`)
       },
       // 流程日志里的命令文本一律脱敏（密码/验证码不落日志；实测踩过一次明文泄漏）。
       mask: (text) => { return redactSecrets(text, this.conn.credentials?.pass, this.externalValues) },
       // §8.5 武装集同步: 流程布防 (入口 driver / 步 ok·fail / 分支进入判据) 注册为
-      // 分帧器武装标记 —— 命中 → 帧立即提交 → 消费链运行 → 唤醒/推进当场发生。
-      onArmSync: (markers) => { this.syncFlowMarkers(markers) },
+      // 裁决器武装标记 —— 命中 → 帧立即提交 → 消费链运行 → 唤醒/推进当场发生。
+      // 构造期 flow.armEntries() 即触发, 此时裁决器尚未建立 → 可选链吞掉, 由
+      // 构造器末尾 flow.syncArming() 全量重放补上。
+      onArmSync: (markers) => { this.adjudicator?.syncFlowMarkers(markers) },
       // 流程实例状态变化 → 重评估看门狗（dead-air 的启动条件含"无活跃流程"；§11），
       // 并兜住"流程自己结束了但人工环节还挂着"（人工预算超时 / 打断 / 断线都会走这里）。
       onTransition: () => {
@@ -322,6 +272,38 @@ export class MudSessionRuntime {
         for (const key of keys) delete this.externalValues[key]
       },
     })
+    // 行流裁决器 (v0.9 W7.1): 五站消费链 / 投递记账 / 投递节拍上移, 分帧器并入其内。
+    // 人工交互状态与出口副作用留在壳, 经 deps 回调读写。
+    this.adjudicator = new SessionAdjudicator({
+      sessionId: this.sessionId,
+      config: this.config,
+      engine: this.engine,
+      controller: this.controller,
+      flow: this.flow,
+      channel: this.channel,
+      queue: this.queue,
+      gateRules: this.gateRules,
+      state: this.state,
+      tools: () => this.tools(),
+      interruptMarkers: this.interruptMarkers,
+      agentOf: () => this.sink.agentOf(this.sessionId),
+      agentReady: () => this.sink.agentReady?.(this.sessionId) ?? true,
+      isAwaitingHuman: () => this.awaitingHuman,
+      hasConnection: () => this.conn.id !== null,
+      missingExternalValues: (keys) => keys.filter(key => this.externalValues[key] === undefined),
+      parkForHuman: (request, keys) => {
+        // 同类动作只保留最新一条 (重复提示不堆叠)。
+        this.pendingExternal = this.pendingExternal.filter(queued => queued.ruleId !== request.ruleId)
+        this.pendingExternal.push(request)
+        this.enterHumanWait(request.ruleId, keys)
+      },
+      log: (text) => { this.log(text) },
+      debug: (channel, text) => { this.debug(channel, text) },
+      decision: (record) => { this.decision(record) },
+      onWorldChange: () => { this.noteWorldChange() },
+    })
+    // flow 构造期的 onArmSync 因裁决器未建被可选链吞掉 → 这里全量重放入口布防。
+    this.flow.syncArming()
   }
 
   // ── 对外状态 ───────────────────────────────────────────
@@ -375,17 +357,7 @@ export class MudSessionRuntime {
    * @returns 未投递行的纯文本 (可能为空)。
    */
   recall(count: number): string[] {
-    return this.recallLines
-      .filter(entry => entry.abs > this.deliveredAbs)
-      .slice(-count)
-      .map(entry => entry.text)
-  }
-
-  /** 记录一批行已交付给模型 (交付水位前移; 只增不减)。 */
-  private noteDelivered(lines: readonly { abs: number }[]): void {
-    for (const line of lines) {
-      if (line.abs > this.deliveredAbs) this.deliveredAbs = line.abs
-    }
+    return this.adjudicator.recall(count)
   }
 
   /** 本会话的工具集 (闭包绑定本会话的队列/桥/world/凭据)。 */
@@ -508,7 +480,7 @@ export class MudSessionRuntime {
    */
   onAgentReady(): void {
     if (this.disposed) return
-    this.settle()
+    this.adjudicator.settle()
     this.noteWorldChange()
   }
 
@@ -524,33 +496,27 @@ export class MudSessionRuntime {
     this.queue.clear()
     this.watchdogs.dispose()
     this.conn.close()
-    for (const timer of [this.settleTimer, this.worldTimer, this.holdTimer]) {
-      if (timer !== null) clearTimeout(timer)
-    }
-    this.settleTimer = null
     this.worldTimer = null
-    this.holdTimer = null
-    this.pending.length = 0
-    this.pendingActions = []
-    this.standalone = null
+    this.adjudicator.dispose()
     this.channel.reset()
     this.flow.dispose()
   }
 
   /** 诊断: 待决/流程/缺陷计数/人工环节 (不变量 I9 的观测面)。 */
   diag(): MudSessionDiag {
+    const metrics = this.adjudicator.metrics()
     return {
       sessionId: this.sessionId,
       connectionId: this.conn.id,
       connected: this.connected,
-      pending: this.pending.length,
-      actionsPending: this.pendingActions.length,
+      pending: metrics.pending,
+      actionsPending: metrics.actionsPending,
       flow: this.flow.state(),
-      recall: this.recallLines.length,
+      recall: metrics.recall,
       agent: this.sink.agentOf(this.sessionId) !== undefined,
       awaitingHuman: this.awaitingHuman,
       lastError: this.lastError,
-      counters: { ...this.counters },
+      counters: metrics.counters,
     }
   }
 
@@ -639,30 +605,19 @@ export class MudSessionRuntime {
     this.state.patch({ sent_name: false, sent_pass: false }, 'lifecycle')
     this.watchdogs.resetCounts()
     this.noteWorldChange()
-    // 传输断裂 = 感知上下文作废: 清多行半匹配 + 重连复位应答桥/分帧器与投递缓冲。
-    // 分帧器的开放帧与武装标记同属上一连接的行对象, 必须一起清 (§8.8: 重连后宿主须调 reset()）。
+    // 传输断裂 = 感知上下文作废: 清多行半匹配 + 重连复位应答桥/行流裁决器与投递缓冲。
+    // 裁决器内的行流缓冲 (开放帧+武装标记) 与 until 标记集/投递记账/交付水位一并复位,
+    // 打断规则常驻标记重挂 (§8.8: 重连后宿主须调 reset)。
     this.engine.reset()
     this.controller.reset()
-    this.splitter.reset()
-    // 分帧器标记随 reset 全清: until 标记集作废; 流程武装布防与打断规则重挂 (§8.5)。
-    this.untilMarkerIds.clear()
+    this.adjudicator.resetForReconnect()
     this.flow.syncArming()
-    this.armInterruptRules()
-    this.pending.length = 0
-    this.pendingActions = []
-    this.standalone = null
-    this.consumeTo = -1
-    // 行号 (abs) 由**每连接一个**解析器分配 → 重连后从 0 起: 交付水位与回看缓冲必须
-    // 一起清, 否则新行 (abs 小) 会被旧水位全部滤掉 (recall 永远为空)。
-    this.deliveredAbs = -1
-    this.recallLines.length = 0
     // 人工环节 (验证码) 属上一连接的上下文: 挂起的命中与外部值一并作废。
     this.awaitingHuman = false
     this.pendingExternal = []
     this.externalValues = {}
     // 投递通道状态随连接作废: defer 槽里的消息属于上一连接的局面, 不再投出。
     this.channel.reset()
-    this.clearHoldTimer()
     // 首连即翻会话 blank (连接点 UX): 新会话在首个 turn/start 前官方不渲染会话体,
     // 而旧路径要等第一批游戏输出走完 帧装配→感知→投递 整条链才开回合 —— 明显慢于
     // 数据到达。**仅无内容会话** (session.seq === 0) 才发空回合; 已有历史的会话
@@ -674,18 +629,9 @@ export class MudSessionRuntime {
     this.controller.close()
     this.queue.clear()
     // 断线: 未投出的行与半截捕获失去上下文 (多行状态随连接作废), 丢弃并记日志。
-    this.clearHoldTimer()
-    if (this.settleTimer !== null) { clearTimeout(this.settleTimer); this.settleTimer = null }
-    if (this.pending.length > 0) {
-      this.log(`[感知] 待决 ${this.pending.length} 行随断线丢弃 (感知上下文作废)`)
-      this.pending.length = 0
-    }
-    this.pendingActions = []
-    this.standalone = null
-    this.consumeTo = -1
+    // 裁决器收尾: hold/结算计时清除 + 待决行丢弃留痕 + 行流缓冲/武装标记复位重挂。
+    this.adjudicator.abortForDisconnect()
     this.engine.reset()
-    this.splitter.reset()
-    this.armInterruptRules()
     // 断线 = 唤醒类看门狗全部停表 (`active()` 里的连接门已不满足); 流程实例随连接作废。
     this.watchdogs.reevaluate()
     this.flow.noteDisconnect()   // → 复位到只留入口 → armEntries → onArmSync 重挂流程标记
@@ -693,162 +639,7 @@ export class MudSessionRuntime {
     this.pushWorld()
   }
 
-  // ── 直接执行类命中 (无状态、无需返回的触发) ─────────────
-
-  /**
-   * 执行本块的直接执行类命中 (`ActionSpec.direct`, 见 `doc/ARCHITECTURE.md` §7)。
-   *
-   * 语义 = "类似 state 桶": 命中行已折叠 (不进 agent), 动作由**运行时自己执行** ——
-   * `mud_send` 入队即走 (不等应答, 否则回复文本会变成无主的帧内容), `world_patch` 直接
-   * 落库。归属 actor `system`: 不是模型的动作, 因此**不受档位可见性约束**; 危险命令硬边界
-   * 照旧生效 (`ask` 没有审批通道 → 等同拒绝, §10)。
-   *
-   * 人工环节 (等验证码) 期间不执行: 那段时间会话整体暂停 (§11)。
-   * @param hits 本块直接执行类命中。
-   */
-  private runDirectHits(hits: readonly EngineHit[]): void {
-    if (this.awaitingHuman || this.conn.id === null) return
-    const tools = this.tools()
-    const mudTools = new Set(Object.keys(tools))
-    for (const hit of hits) {
-      const call = hit.action.tool
-      if (call === undefined) {
-        this.sink.log(this.sessionId, `[缺陷] 直接执行动作没有工具调用: ${hit.ruleId}`)
-        continue
-      }
-      const tool = tools[call.name]
-      if (tool === undefined) {
-        this.sink.log(this.sessionId, `[缺陷] 直接执行动作引用了未知工具 ${call.name} (${hit.ruleId})`)
-        continue
-      }
-      const verdict = evaluateToolCall({
-        name: call.name,
-        args: call.args,
-        // `full` = 只看危险命令硬边界: 直接执行动作不经过模型档位 (actor system)。
-        tier: 'full',
-        rules: this.gateRules,
-        loginFlow: false,
-        loginCommands: EMPTY_COMMANDS,
-        mudTools,
-      })
-      if (verdict.kind !== 'allow') {
-        this.sink.log(this.sessionId,
-          `[规则] 直接执行被拒 (${verdict.kind === 'deny' ? '硬边界' : '需批准'}): ${hit.ruleId} → ${call.name} — ${verdict.reason}`)
-        continue
-      }
-      const argsText = JSON.stringify(call.args ?? {})
-      this.log(`[规则] ${hit.ruleId} → 直接执行 ${call.name} ${argsText}`)
-      this.decision({
-        actor: 'rule',
-        eventType: 'direct-exec',
-        ruleId: hit.ruleId,
-        action: '直接执行',
-        result: `${call.name} ${argsText}`,
-        text: `[规则] ${hit.ruleId} → 直接执行 ${call.name}`,
-      })
-      // 发完即走: 结果只用于留痕 (没有回合可以承载应答文本)。
-      void Promise.resolve(tool.execute({ ...call.args }, { fireAndForget: true }))
-        .then((result) => {
-          if (!result.ok) this.log(`[规则] ${hit.ruleId} 直接执行未成功: ${result.note}`)
-        })
-        .catch((err: unknown) => {
-          this.log(`[规则] ${hit.ruleId} 直接执行异常: ${err instanceof Error ? err.message : String(err)}`)
-        })
-    }
-  }
-
   // ── 人工环节 (fullme 验证码) ───────────────────────────
-
-  /**
-   * 检出"待人工"命中并挂起: 动作声明了 `awaitExternal` 且占位符尚无值 → 挂起该命中并进入
-   * 人工环节 (暂停投递 + 停看门狗)。
-   *
-   * 取图与弹窗不在这里做：fullme 流程的 `prompt` 步用 `mud_captcha` 工具完成
-   * (`doc/ARCHITECTURE.md` §11 清单 6)；这里只负责"挂起 + 计时 + 收人工值"。
-   *
-   * **不负责投递其余命中**: 返回值交给调用方决定去向 —— 帧内分支的命中已入待渲染队列,
-   * 这里再入队就会把同一条命中渲染两次。
-   * @param hits 本块带动作的命中。
-   * @returns 不需要外部值、可直接渲染的命中 (调用方负责入队)。
-   */
-  private parkExternalHits(hits: readonly EngineHit[]): EngineHit[] {
-    const ready: EngineHit[] = []
-    for (const hit of hits) {
-      const needed = hit.action.awaitExternal
-      const unresolved = needed === undefined
-        ? []
-        : needed.filter(key => this.externalValues[key] === undefined)
-      if (unresolved.length === 0) {
-        ready.push(hit)
-        continue
-      }
-      // 同类动作只保留最新一条 (重复提示不堆叠)。
-      this.pendingExternal = this.pendingExternal.filter(queued => queued.ruleId !== hit.ruleId)
-      this.pendingExternal.push(actionOf(hit.ruleId, hit.action))
-      this.enterHumanWait(hit.ruleId, unresolved)
-    }
-    return ready
-  }
-
-  // ── 打断与排队 (I14 / §19.4) ───────────────────────────
-
-  /**
-   * 规则动作的**打断准入**: 有流程实例挂起时, 声明了 `interrupts` 的规则参与打断/排队。
-   *
-   * - 未声明 `interrupts`（缺省）: 既不打断也不排队 —— 命中的动作照常投递
-   *   （`direct` 动作本来就直发；需要桥的动作在流程挂起期由闸门拒绝并留痕）。
-   * - 档位够（`interrupts > flow.priority`）: **打断** —— 挂起的工具调用当场结算为
-   *   `interrupted`（不悬挂、不静默）、流程复位（只留入口）、流程声明的 `onInterrupt`
-   *   直发、本规则动作照常投递（走官方工具路径）。
-   * - 档位不够: **排队** —— 动作不入本批投递，等流程结束（终态/失败/打断）后立即执行。
-   * @param hits 本块可直接渲染的命中（已经过 `parkExternalHits`）。
-   * @param lines 本块的行（取锚点行文本当投递原文）。
-   * @param framed 本块是否属于命令应答帧（排队动作的投递路径用）。
-   * @returns 现在就该投递的命中。
-   */
-  private admitRuleHits(hits: readonly EngineHit[], lines: readonly MudLine[], framed: boolean): EngineHit[] {
-    if (hits.length === 0) return []
-    const admitted: EngineHit[] = []
-    for (const hit of hits) {
-      const interrupts = hit.action.interrupts
-      if (interrupts === undefined) {
-        admitted.push(hit)
-        continue
-      }
-      const anchor = lines.find(line => line.abs === hit.anchorAbs)
-      const outcome = this.flow.interrupt({
-        ruleId: hit.ruleId,
-        interrupts,
-        text: anchor?.text ?? textOfLines(lines).trim(),
-        action: { ...(hit.action.tool === undefined ? {} : { tool: hit.action.tool }), output: hit.action.output },
-        anchorAbs: hit.anchorAbs,
-        framed,
-      })
-      if (outcome.kind === 'queued') continue
-      if (outcome.kind === 'interrupted') {
-        // ① onInterrupt 直发（actor system, 不入桥）② 挂起的应答请求当场结算为 interrupted。
-        for (const cmd of outcome.onInterrupt) this.queue.send(cmd, { actor: 'system' })
-        const settled = this.controller.interruptInFlight(`[流程打断] ${hit.ruleId} (interrupts=${interrupts})`)
-        this.debug('perception', `[流程] 打断已结算挂起请求 ${settled} 条`)
-      }
-      admitted.push(hit)
-    }
-    return admitted
-  }
-
-  /**
-   * 流程结束（终态/失败/打断）后投递**排队动作**（`§19.4`：声明了 `interrupts` 但档位
-   * 不够 → 排队 → 流程结束后立即执行）。流程仍在挂起中则继续等。
-   */
-  private drainFlowQueue(): void {
-    if (this.flow.state() !== null || !this.flow.hasQueuedActions()) return
-    const queued = this.flow.drainQueuedActions()
-    if (queued.length === 0) return
-    this.debug('perception', `[流程] 排队动作出队投递 ${queued.length} 条`)
-    for (const request of queued) {
-      this.deliverStandalone(request.text, [actionOf(request.ruleId, request.action)])
-    }
-  }
 
   /**
    * 进入人工环节: 暂停全部投递 + 停看门狗 (规则表的 `active()` 里读 `awaitingHuman`)。
@@ -958,12 +749,12 @@ export class MudSessionRuntime {
     const names = this.flow.slotNames()
     this.noteWorldChange()   // 看门狗恢复
     if (parked.length > 0) {
-      this.deliverStandalone(
+      this.adjudicator.deliverStandalone(
         `[系统] 人工已提交验证码 (${parked.map(entry => entry.ruleId).join('/')})`,
         parked.map(entry => fillSlots(entry, slots, names)),
       )
     }
-    this.settle()            // 冲刷暂存动作 + 等人工期间攒下的行（在途窗口内 → defer 进同一回合）
+    this.adjudicator.settle()  // 冲刷暂存动作 + 等人工期间攒下的行（在途窗口内 → defer 进同一回合）
   }
 
   /** 写入连接/重连分隔文本到终端缓冲。 */
@@ -988,275 +779,16 @@ export class MudSessionRuntime {
   }
 
   /**
-   * L1+L2 入口 (v0.6.0 S3 重组): telnet 'parsed' 粒度的入站行**只进分帧器** (网络装配)。
-   *
-   * 消费链五站 (§8.2: ①状态折叠 → ②规则触发 → ③事务结算 → ④流程判据 → ⑤残余记账/投递)
-   * 全部搬到**帧提交点** `onFrameCommitted` 单遍执行 —— 分帧器是唯一的边界裁决者,
+   * L1+L2 入口 (v0.9 W7.1 重组): telnet 'parsed' 粒度的入站行**只进行流裁决器** (行流
+   * 缓冲 + 网络装配)。消费链五站 (§8.2: ①状态折叠 → ②规则触发 → ③事务结算 → ④流程判据
+   * → ⑤残余记账/投递) 全部在裁决器的**帧提交点**单遍执行 —— 裁决器是唯一的边界裁决者,
    * 静默/超时不是边界 (§8.7 删除), 本方法不再有任何判定/投递逻辑。
    */
   private onTextBlock(lines: MudLine[]): void {
     if (lines.length === 0) return
     // 活动事件: 活跃看门狗重置窗口 (网络到达粒度 —— 断流看"最后一次游戏输出", 先于帧装配)。
     this.watchdogs.touch()
-    this.splitter.feedLines(lines)
-  }
-
-  /**
-   * v0.6.0 S3: **帧提交点 = 消费链唯一入口** (§8.2)。分帧器每提交一帧, 五站按固定
-   * 次序单遍过链; I5/I6 (每行恰投一次、一投递点 ≤ 一条消息) 由链的单遍结构保证,
-   * 不再靠结算分支纪律。
-   */
-  private onFrameCommitted(frame: MudFrame): void {
-    const lines = frame.lines
-    // 帧归属取样 (§8.3 帧并集判据): "提交时点是否在事务窗口内"。必须在 ③ 之前 ——
-    // GA/EOR 结算会翻转 inFlight。
-    const inFrame = this.controller.inFlight()
-    // ① 状态折叠 → world 落库。
-    const result = lines.length > 0 ? this.engine.feed(lines) : null
-    if (result !== null) {
-      for (const hit of result.stateHits) {
-        if (hit.data) this.state.patch(hit.data, 'percept')
-      }
-      // 本帧折叠可能翻转 `logged_in` (state 规则) → 重评估看门狗起停 (见 watchdogs.ts)。
-      if (result.stateHits.length > 0) this.noteWorldChange()
-    }
-    // ② 规则触发 → 动作/direct-exec: 直接执行类先跑 (命中行已折叠, 不进投递);
-    //    其余命中 park (待人工) / admit (打断准入, I14/§19.4)。
-    if (result !== null && result.directHits.length > 0) this.runDirectHits(result.directHits)
-    const parkedRuleHits = result !== null ? this.parkExternalHits(result.hits) : []
-    const readyRuleHits = this.admitRuleHits(parkedRuleHits, lines, inFrame)
-    // ③ 事务结算 → resolve 等待者: 行先入桥 (响应 = 事务窗口期间提交帧的并集, §8.3),
-    //    再按帧标记路由结算 —— GA/EOR 主边界; armed 帧只有**在途 until 事务**的标记
-    //    (tx-*) 才结算桥, 流程/打断标记 (flow-arm:*/rule-int:*) 只负责提交帧走链。
-    this.controller.feedLines(lines)
-    if (frame.marker === 'ga' || frame.marker === 'eor') this.controller.boundaryReceived(frame.marker)
-    else if (frame.marker === 'armed' && frame.markerId !== undefined && this.untilMarkerIds.has(frame.markerId)) {
-      this.controller.settleUntilFromSplitter(frame.markerId)
-    }
-    // ④ 流程判据 → 唤醒/打断/排队 (与静态规则同帧行; inFrame 用 ③ 前取样值)。
-    const flowHits = lines.length > 0 ? this.flow.offer(lines, inFrame) : []
-    if (flowHits.length > 0) this.queueFlowActions(flowHits)
-    // 结算 (onSettle) / 判据命中可能让流程到达终态 → 排队的动作此时出队投递。
-    this.drainFlowQueue()
-    // ⑤ 残余记账 → 投递视图 (批次/recall): 只记**可能投递给模型**的行 —— 折叠行
-    //    (state 入库 / 直接执行) 已被处理过, `mud_recall` 不再倒出模型本看不到的原文。
-    if (result !== null) {
-      for (const line of lines) {
-        if (result.foldedAbs.has(line.abs)) continue
-        this.recallLines.push({ text: line.text, abs: line.abs })
-        if (this.recallLines.length > 200) this.recallLines.shift()
-      }
-    }
-    if (inFrame) {
-      // 帧内 (I5/I6): 帧行不进待决 → 走桥 (工具应答帧并集), **不进投递**; 命中不丢:
-      // 当场**动作投递** (工具应答与游戏输出同源进 L1, 见 §4)。
-      if (readyRuleHits.length > 0) {
-        this.deliverStandalone(
-          textOfLines(lines).trim(),
-          readyRuleHits.map(hit => actionOf(hit.ruleId, hit.action)),
-        )
-      }
-      this.noteDelivered(lines)
-    } else {
-      // 无主帧: 动作随本帧原文在一次原文投递里走 (行序与消费边界不变)。
-      const requests = readyRuleHits.map(hit => actionOf(hit.ruleId, hit.action))
-      if (requests.length > 0) this.pendingActions.push(...requests)
-      if (result !== null && result.consumeTo > this.consumeTo) this.consumeTo = result.consumeTo
-      for (const line of lines) {
-        if (result !== null && !result.foldedAbs.has(line.abs)) this.pending.push(line)
-      }
-    }
-    this.debug('perception',
-      `[感知] 帧消费 ${lines.length} 行 (${frame.marker}${frame.markerId !== undefined ? `:${frame.markerId}` : ''}, ` +
-      `${inFrame ? '帧内' : '无主'}, 折叠 ${result?.foldedAbs.size ?? 0}, 规则命中 ${readyRuleHits.length}, ` +
-      `流程动作 ${flowHits.length}, 待决 ${this.pending.length})`)
-    // hold 门 (holdDelivery 投递原子性): GA/EOR 是权威边界, 无条件结算 (沿用旧 onBoundary
-    // 语义); armed/valve 帧尊重捕获 hold —— 半截捕获留待决, 等捕获完成 (后续帧合并投出)
-    // 或超时释放。
-    if (frame.marker !== 'ga' && frame.marker !== 'eor' && (result?.holding ?? false)) {
-      this.armHoldTimeout()
-      this.debug('perception', '[感知] holdDelivery: 多行捕获未完成, 本帧暂不投递')
-      return
-    }
-    this.clearHoldTimer()
-    this.settle()
-  }
-
-  /**
-   * §8.5 武装集同步 (FlowRuntime.onArmSync): 把流程布防的行判据全量替换进分帧器 ——
-   * 全量替换而非增量, 天然兼容重连 (splitter.reset() 清空后一次重挂) 与布防收缩。
-   * `arm()` 的"arming 即测"处理换步时判据已命中开放帧行的情况 (当场提交, 重入安全)。
-   */
-  private syncFlowMarkers(markers: readonly { id: string; pattern: RegExp }[]): void {
-    for (const id of this.flowMarkerIds) this.splitter.disarm(id)
-    this.flowMarkerIds.clear()
-    for (const marker of markers) {
-      this.splitter.arm({ id: marker.id, pattern: marker.pattern, once: false })
-      this.flowMarkerIds.add(marker.id)
-    }
-  }
-
-  /** §8.5: 重挂打断规则常驻标记 (构造后与每次 splitter.reset() 后调用)。 */
-  private armInterruptRules(): void {
-    for (const marker of this.interruptMarkers) {
-      this.splitter.arm({ id: marker.id, pattern: marker.pattern, once: false })
-    }
-  }
-
-  /**
-   * 站⑤ 投递重试定时 (T2 限流差额等): 只重试**投递**, 不切帧 —— 消费边界只认标记
-   * (§8.2/§8.7), 这不是消费边界。
-   */
-  private scheduleSettle(delayMs: number): void {
-    if (this.settleTimer !== null) clearTimeout(this.settleTimer)
-    this.settleTimer = setTimeout(() => { this.settleTimer = null; this.settle() }, delayMs)
-  }
-
-  /**
-   * 站⑤ 投递 (`doc/ARCHITECTURE.md` §5; v0.6.0 S3 后 = 帧提交链的末站, 不再自造边界):
-   *   有动作请求 → 动作消息 = `abs <= consumeTo` 的行 (带原文) + 动作请求;
-   *   无动作请求 → 整段作为**批次** (T2) 并按预算裁剪。
-   * 每次投递最多一条消息 (I6); 每条行恰好投出一次、顺序不变 (I5)。
-   * 调用方: 帧提交点 (onFrameCommitted) / deliverStandalone / hold 释放 / T2 限流重试。
-   */
-  private settle(): void {
-    if (this.settleTimer !== null) { clearTimeout(this.settleTimer); this.settleTimer = null }
-    const standalone = this.standalone
-    if (this.pending.length === 0) {
-      // 没有待决行: 暂存的动作消息就地投出 (帧内命中 / 人工回填后的答案)。
-      if (standalone !== null) {
-        if (t1Allowed(this.config.agentMode)) this.flushStandalone()
-        else {
-          this.standalone = null
-          this.debug('perception', '[感知] T1 已关闭, 丢弃 1 条暂存动作')
-        }
-      }
-      return
-    }
-    if (this.config.agentMode === 'off') {
-      this.debug('perception', `[感知] agent 未接入, ${this.pending.length} 行仅进终端`)
-      this.pending.length = 0
-      this.consumeTo = -1
-      this.pendingActions = []
-      this.standalone = null
-      return
-    }
-    const agent = this.sink.agentOf(this.sessionId)
-    if (this.awaitingHuman) {
-      // **人工环节: 暂停全部投递** (验证码只能人工处理): 行留待决, 模型看不到提示也就
-      // 不会自己去答; 人工回填后 (exitHumanWait) 立即冲刷。无超时, 仍受待决上限约束。
-      if (this.pending.length > MAX_PARKED_LINES) {
-        const dropped = this.pending.splice(0, this.pending.length - MAX_PARKED_LINES)
-        this.counters.carryDropped += dropped.length
-        this.sink.log(this.sessionId, `[验证码] 等待人工期间待决行超限丢弃 ${dropped.length} 行`)
-      }
-      this.debug('perception',
-        `[感知] 人工环节 (等验证码): ${this.pending.length} 行留待决, 不投递`)
-      return
-    }
-    const ready = agent !== undefined && (this.sink.agentReady?.(this.sessionId) ?? true)
-    if (!ready) {
-      // 无 live agent (官方尚未 materialize / 已 dispose), 或 agent 已在但**装配未就绪**
-      // (preset 模式下官方 composition 还没切到 mud-player): 保留待决行, 等
-      // onAgentReady 冲刷 —— 见 sink.agentReady 的说明。
-      if (this.pending.length > MAX_PARKED_LINES) {
-        const dropped = this.pending.splice(0, this.pending.length - MAX_PARKED_LINES)
-        this.counters.carryDropped += dropped.length
-        this.sink.log(this.sessionId, `[感知] 无 live agent: 待决行超限丢弃 ${dropped.length} 行`)
-      }
-      this.debug('perception',
-        `[感知] 会话 agent ${agent === undefined ? '不存在' : '装配未就绪'}, ${this.pending.length} 行留待决 (等官方 agent 就绪)`)
-      return
-    }
-    // T1 关闭 (模式 `t2`): 暂存动作不走 agent 管道, 在 `splitDelivery` 前丢弃 ——
-    // 否则动作会混进 T2 批次/原文一起喂给 LLM。仅留痕, 不影响待决行去向。
-    if (!t1Allowed(this.config.agentMode) && this.pendingActions.length > 0) {
-      const droppedActions = this.pendingActions.length
-      this.pendingActions = []
-      this.standalone = null
-      this.debug('perception', `[感知] T1 已关闭, 丢弃 ${droppedActions} 条暂存动作`)
-    }
-    const { reflex: reflexLines, carry } = splitDelivery(this.pending, this.consumeTo)
-    if (reflexLines.length > 0 && this.pendingActions.length > 0) {
-      const actions = this.pendingActions
-      this.pendingActions = []
-      this.pending.length = 0
-      this.pending.push(...carry)
-      this.consumeTo = -1
-      const text = textOfLines(reflexLines).trim()
-      if (text === '') return
-      this.debug('perception',
-        `[感知] 原文投递 ${reflexLines.length} 行 + ${actions.length} 动作 (` +
-        `agent ${agent.status}, 遗留 ${carry.length} 行)`)
-      this.noteDelivered(reflexLines)
-      this.deliver(agent, text, actions, 'T1 原文投递')
-      return
-    }
-    // **T2 关闭** (模式 `t1`): 行批次只进终端, 不喂真实 LLM; 暂存动作 (T1 口径) 照投。
-    if (!t2Allowed(this.config.agentMode)) {
-      if (standalone !== null) this.flushStandalone()
-      this.debug('perception', `[感知] T2 已关闭, ${this.pending.length} 行仅进终端`)
-      this.pending.length = 0
-      this.consumeTo = -1
-      return
-    }
-    // **T2 投递限流**（作者定案 2026-09-13）：距上次 T2 投递不足最小间隔 ⇒ 本批**不投**，
-    // 行留在待决、把结算定时器延到差额到点。两个效果：① T2 不会被喂得太勤（回合开启频率被压住）；
-    // ② 多个小批次天然合并成一个大批次（信息更全、回合更少）。
-    // **只压 T2 批次**：上面的 T1 动作投递（规则/流程步）与 `standalone`/控制消息都不受影响 ——
-    // T1 是系统流程，不能被"给模型限速"的闸压住。
-    const t2Gap = this.config.t2DeliverIntervalMs ?? 0
-    const sinceT2 = this.channel.sinceT2()
-    // 待决达上限 (MAX_SETTLE_LINES) 时旁路限流立即投 —— 防止"限流永远压着积压"。
-    if (t2Gap > 0 && sinceT2 < t2Gap && this.pending.length < MAX_SETTLE_LINES) {
-      // 动作投递（standalone）不受 T2 限流：它与 T1 同口径，被压住会让"重试重新取图"
-      // 这类动作等不到人工环节开始就挂住（而且人工环节会暂停投递）。
-      if (standalone !== null) this.flushStandalone()
-      this.debug('perception',
-        `[感知] T2 投递限流: 距上次 ${sinceT2}ms < ${t2Gap}ms → ${this.pending.length} 行留待决, 延后 ${t2Gap - sinceT2}ms`)
-      this.scheduleSettle(t2Gap - sinceT2)
-      return
-    }
-    const batchLines = this.pending.splice(0)
-    this.consumeTo = -1
-    // 交付水位按**实际投出的行**记账 (裁剪后), 这样被裁掉的行仍然可以被下次 recall 读到。
-    const deliveredLines = this.trimObservation(batchLines)
-    const text = textOfLines(deliveredLines).trim()
-    // 本段没有动作请求, 但可能有"暂存的动作消息"(帧内命中): 先投它, 再投批次。
-    if (standalone !== null) this.flushStandalone()
-    if (text === '') return
-    this.noteDelivered(deliveredLines)
-    this.debug('perception',
-      `[感知] 批次投递 ${batchLines.length} 行 (agent ${agent.status}, 队列 ${agent.inbox.nextTurn.length} 条)`)
-    this.channel.send(agent, ownedGameMessage(text, 't2', this.sessionId))
-    // 记下这次 T2 投递的时刻（下一次批次要等 `t2DeliverIntervalMs`）；defer 也算"喂过了"。
-    this.channel.markT2()
-    this.decision({
-      actor: 'router',
-      eventType: 'feed-classify',
-      action: 'T2 推理注入',
-      result: `${text.length} 字符, 无动作`,
-      text: '[路由] T2 推理 → 真实 LLM',
-    })
-  }
-
-  /** 投递一条 T1 动作消息 (原文 + 动作请求; T1 据此渲染 tool-call)。 */
-  private deliver(
-    agent: { followup: (message: ReturnType<typeof ownedGameMessage>) => void; status?: string },
-    text: string,
-    actions: readonly ActionRequest[],
-    reason: string,
-  ): void {
-    const delivery = this.channel.nextId()
-    this.channel.rememberDelivery(delivery, actions)
-    this.channel.send(agent, ownedGameMessage(text, 't1', this.sessionId, { actions, delivery }))
-    this.decision({
-      actor: 'router',
-      eventType: 'feed-classify',
-      action: reason,
-      result: `${text.length} 字符, ${actions.length} 动作 (${actions.map(a => a.ruleId).join(',')})`,
-      text: `[路由] ${reason} → T1`,
-    })
+    this.adjudicator.feedLines(lines)
   }
 
   // ── 投递通道：官方 `deferContext` / `followup`（§19.6.2） ──────────
@@ -1274,17 +806,7 @@ export class MudSessionRuntime {
    * @returns 是否应当 `concludeTurn()`。
    */
   shouldConcludeTurn(callId: string): boolean {
-    if (this.config.agentMode === 'off') return false
-    const parsed = parseDeliveryCallId(callId)
-    if (parsed === null) return false
-    const count = this.channel.actionCount(parsed.delivery)
-    if (count === undefined || parsed.index !== count - 1) return false
-    if (this.channel.deferCount > 0) return false
-    if (this.pendingActions.length > 0) return false
-    if (this.standalone !== null) return false
-    if (this.flow.hasQueuedActions()) return false
-    if (this.flow.state() !== null) return false
-    return true
+    return this.adjudicator.shouldConcludeTurn(callId)
   }
 
   /**
@@ -1297,28 +819,7 @@ export class MudSessionRuntime {
    * @param ok 工具结果是否成功。
    */
   noteToolResult(callId: string, ok: boolean): void {
-    const parsed = parseDeliveryCallId(callId)
-    if (parsed === null) return
-    // 记账：该投递的一条动作已收到结果（无论成败）。减到 0 = 收齐，交给下一次
-    // `rememberDelivery` 按完成驱逐；这里**先不删**——同一次工具调用里 `shouldConcludeTurn`
-    // 还要读账本 size 判"最后一条动作"。
-    this.channel.recordResult(parsed.delivery)
-    const ruleId = this.channel.actionRule(parsed.delivery, parsed.index)
-    if (ruleId === undefined || !ruleId.startsWith('flow:')) return
-    const stepId = ruleId.slice('flow:'.length).split('/')[1]
-    if (stepId === undefined || stepId === '') return
-    const hits = this.flow.noteToolResult(stepId, ok)
-    if (hits.length > 0) {
-      this.queueFlowActions(hits)
-      // 工具结果驱动的 lined 动作没有帧链 ⑤ 兜底 (待决缓冲不会再有新行): 无行可带时
-      // 把暂存动作转动作投递、就地结算 —— 结算仍在本工具在途窗口内 → 落 defer 槽,
-      // 随本工具结果进同一回合 (判据 A, ask-human 回合内提问的搭车机制)。
-      if (this.pending.length === 0 && this.pendingActions.length > 0) {
-        this.standalone = { text: '', actions: this.pendingActions.splice(0) }
-      }
-      this.settle()
-    }
-    this.drainFlowQueue()
+    this.adjudicator.noteToolResult(callId, ok)
   }
 
   // ── 投递通道委托 (MudDeliveryChannel 接口; `agents/mount.ts` §19.6.2) ──
@@ -1334,92 +835,6 @@ export class MudSessionRuntime {
   /** 取走 defer 槽（包装器在结果提交前逐条 `exec.deferContext`）。 */
   takeDeferredDeliveries(): ReturnType<typeof ownedGameMessage>[] {
     return this.channel.takeDeferred()
-  }
-
-  /**
-   * 动作投递 (无原文可带 —— 帧行已作为工具结果投过, 或压根没有行): 帧内命中 / 人工回填后的答案。
-   * 暂存到下一次结算点统一投出（保证同一时刻只有一条投递在飞, I6）。
-   */
-  private deliverStandalone(text: string, actions: readonly ActionRequest[]): void {
-    if (actions.length === 0) return
-    if (this.standalone === null) this.standalone = { text, actions: [...actions] }
-    else this.standalone.actions.push(...actions)
-    this.settle()
-  }
-
-  /** 把暂存的动作消息投出。 */
-  private flushStandalone(): void {
-    const pending = this.standalone
-    if (pending === null) return
-    this.standalone = null
-    const agent = this.sink.agentOf(this.sessionId)
-    if (agent === undefined) {
-      // 无 live agent: 动作留待 onAgentReady 冲刷 (与待决行同一策略)。
-      this.standalone = pending
-      return
-    }
-    const text = pending.text.trim() === '' ? '[系统] 流程动作' : pending.text
-    this.debug('perception', `[感知] 动作投递 ${pending.actions.length} 动作 (无原文: 帧内命中 / 人工回填 / 结算驱动)`)
-    this.deliver(agent, text, pending.actions, 'T1 动作投递')
-  }
-
-  /**
-   * 流程步动作 → 投递（帧内走动作投递；无主块随原文走原文投递）。
-   *
-   * **待人工的动作先挂起**（`doc/ARCHITECTURE.md` §19.3）：`awaitExternal` 的动作（占位符尚无
-   * 值）**不投递**，存进人工槽、等人工回填后由 `exitHumanWait` 投出 —— 顺序是"先人工值、
-   * 后投递"，与绑定 GA 的"先投递后唤醒"相反。挂起一律排在**本轮投递之后**：重试时"先投
-   * 重新取图动作、再挂起答案动作"，投递不能被人工环节的暂停吃掉。
-   *
-   * 动作参数先按**流程实例槽**插值（`{captchaUrl}` / `{lastFail}`）；`{captcha}` 等外部值
-   * 留到发送瞬间。
-   */
-  private queueFlowActions(hits: readonly FlowActionHit[]): void {
-    if (hits.length === 0) return
-    const slots = this.flow.slots()
-    const names = this.flow.slotNames()
-    const parks: { request: ActionRequest; framed: boolean; keys: readonly string[] }[] = []
-    const framed = hits.filter(hit => hit.framed)
-    const lined = hits.filter(hit => !hit.framed)
-    if (lined.length > 0) {
-      for (const hit of lined) {
-        const request = fillSlots(actionOf(hit.ruleId, { output: hit.output, tool: hit.tool }), slots, names)
-        if (this.needsHuman(hit.awaitExternal)) {
-          parks.push({ request, framed: false, keys: hit.awaitExternal ?? [] })
-          continue
-        }
-        // ask-human 已把值带回 (码在 externalValues): 动作照常投, 但流程机停在
-        // `awaiting-human` (enterStep 对 awaitExternal 步一律先置该阶段) → 就地恢复,
-        // 否则桥闸门会拒发本动作声明的命令 (I12)。
-        if ((hit.awaitExternal ?? []).length > 0) this.flow.resumeHuman()
-        this.pendingActions.push(request)
-        if (hit.anchorAbs > this.consumeTo) this.consumeTo = hit.anchorAbs
-      }
-      // 流程动作也要走投递 (无主帧已在消费链站⑤里进 pending); 帧链外的调用方
-      // (人工回填等) 用装配粒度兜底重试。
-      this.scheduleSettle(this.config.bridgeSilenceMs)
-    }
-    for (const hit of framed) {
-      const request = fillSlots(actionOf(hit.ruleId, { output: hit.output, tool: hit.tool }), slots, names)
-      if (this.needsHuman(hit.awaitExternal)) {
-        parks.push({ request, framed: true, keys: hit.awaitExternal ?? [] })
-        continue
-      }
-      if ((hit.awaitExternal ?? []).length > 0) this.flow.resumeHuman()
-      this.deliverStandalone(hit.text, [request])
-    }
-    // 投递已 staged（此时还没进人工环节，避免"人工暂停"把刚 staged 的动作一起压住）。
-    for (const park of parks) {
-      // 同类动作只保留最新一条（重复重试不堆叠）。
-      this.pendingExternal = this.pendingExternal.filter(queued => queued.ruleId !== park.request.ruleId)
-      this.pendingExternal.push(park.request)
-      this.enterHumanWait(park.request.ruleId, park.keys)
-    }
-  }
-
-  /** 该动作是否需要人工补值（`awaitExternal` 声明且占位符尚无值）。 */
-  private needsHuman(keys: readonly string[] | undefined): boolean {
-    return keys !== undefined && keys.some(key => this.externalValues[key] === undefined)
   }
 
   /**
@@ -1439,47 +854,6 @@ export class MudSessionRuntime {
     // 已死的流程判据忽略它, 工具 Promise 不悬挂 (对齐官方 cancelled/unavailable)。
     if (waiter !== null) waiter.reject(new Error('流程已结束 (验证码等待作废)'))
     this.log('[验证码] 流程已结束 → 退出人工环节 (挂起的动作作废, 投递与看门狗恢复)')
-  }
-
-  /** holdDelivery 兜底: 捕获长期不完成 → 释放结算 (按无动作投出批次)。 */
-  private armHoldTimeout(): void {
-    this.clearHoldTimer()
-    this.holdTimer = setTimeout(() => {
-      this.holdTimer = null
-      if (this.disposed) return
-      this.counters.holdReleases += 1
-      this.debug('perception',
-        `[感知] holdDelivery 超时释放 (${this.pending.length} 行, 捕获未完成) → 按无动作结算`)
-      this.settle()
-    }, this.config.holdTimeoutMs)
-  }
-
-  /** 清除 hold 计时器。 */
-  private clearHoldTimer(): void {
-    if (this.holdTimer !== null) {
-      clearTimeout(this.holdTimer)
-      this.holdTimer = null
-    }
-  }
-
-  /** 注入文本裁剪 (deliver.tail 过渡实现): 超限时返回"摘要头 + 末 N 行"。 */
-  private trimObservation(lines: readonly MudLine[]): MudLine[] {
-    if (
-      lines.length <= MAX_INJECT_TAIL_LINES
-      && lines.reduce((acc, l) => acc + l.text.length, 0) <= MAX_INJECT_TAIL_CHARS
-    ) {
-      return lines as MudLine[]
-    }
-    const tail = lines.slice(-MAX_INJECT_TAIL_LINES)
-    const header: MudLine = {
-      text: `[观察窗截断] 共 ${lines.length} 行, 保留末 ${tail.length} 行`,
-      raw: `[观察窗截断] 共 ${lines.length} 行`,
-      style: [],
-      abs: -1,
-      time: Date.now(),
-      isPrompt: false,
-    }
-    return [header, ...tail]
   }
 
   // ── 世界变化入口 / 登录流程收尾 / 程序唤醒 ─────────────
