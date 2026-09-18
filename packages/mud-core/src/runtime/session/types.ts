@@ -15,6 +15,7 @@ import type { OwnedAction } from '../../agents/lane.ts'
 import type { MudUiItem, MudWorldSnapshot } from '../../shell/remote-types.ts'
 import type { FlowState } from '../flow/flow-types.ts'
 import type { FlowSpec } from '../flow/flow-spec.ts'
+import type { WindowDiag } from './inflight.ts'
 
 /** 一条待投递的动作请求 (与投递消息 `source.actions` 同形; §7)。 */
 export type ActionRequest = OwnedAction
@@ -279,6 +280,8 @@ export interface MudSessionDiag {
   actionsPending: number
   /** 活跃流程状态 (null = 空闲; §19: arming/挂起/打断/排队)。 */
   flow: FlowState | null
+  /** 在途窗口表诊断 (W7.2 §2.9 取代旧桥活动表: 在途窗口/排队/人工等待/结局计数)。 */
+  windows: WindowDiag
   /** 是否正在等**人工**验证码 (fullme): 等待期间投递与看门狗都暂停。 */
   awaitingHuman: boolean
   /** recall 缓冲行数。 */

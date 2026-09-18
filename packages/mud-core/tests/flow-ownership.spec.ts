@@ -1,13 +1,15 @@
 /**
- * dsh-mud-core — **桥结算归属：按命令比对**（`doc/ARCHITECTURE.md` §19.3）。
+ * dsh-mud-core — **结算归属（W7.2）**：单步的命令-应答配对移交在途窗口
+ * （`doc/PLAN.md` §4；取代旧桥的"按命令比对"归属）。
  *
- * 归属判据从"布尔标记（本步有命令在途）"升级为"按命令比对"：
- * 桥在结算时报告**被这次结算关掉的命令**（`onSettle(kind, text, cmds)`），流程用它与本步
- * **放行过的命令集合**（`allowBridgeRequest` / `noteOwnCommandWritten` 记录）做交集判定。
+ * 旧模型：桥结算时报告"被关掉的命令"，流程与放行过的命令集做交集 —— 一条 GA 归属
+ * 哪个命令要靠比对推断。W7.2 把配对**结构性前移**：每步的命令在**各自的在途窗口**内
+ * 结算（官方工具顺序执行 ⇒ 同时至多一个窗口），窗口结果按 `stepId` 回到
+ * `noteToolResult` —— "别的命令的结算串掉本步"在结构上不可能发生，本文件钉住这一机制：
  *
- * 为什么：一个步骤可以发多条命令（序列动作，如 fullme 的 `['halt','fullme {captcha}']`）。
- * 布尔标记只能回答"本步有命令在途"，分不清"这条 GA 是哪条命令的" → 别的命令的 GA 会
- * 串结算本步。本用例直接驱动 `FlowRuntime` 钉住这条规则。
+ *   - `windowSpecFor(cmd)`：只有**本步声明的命令**（插值后）才拿到判据覆盖 —— 归属
+ *     即注册路径，别的命令根本进不了本步的窗口；
+ *   - `noteToolResult(stepId, …)`：stepId 不匹配（上一步的迟到结果等）→ 忽略并留痕。
  */
 
 import { describe, expect, it } from 'vitest'
@@ -37,7 +39,7 @@ function ml(text: string, abs: number): MudLine {
   return { text, raw: text, style: [], abs, time: Date.now(), isPrompt: false }
 }
 
-function runtime(logs: string[] = [], mask?: (text: string) => string): FlowRuntime {
+function runtime(logs: string[] = []): FlowRuntime {
   return new FlowRuntime({
     flows: [TEST_FLOW],
     world: () => ({ flags: {} }) as never,
@@ -45,46 +47,38 @@ function runtime(logs: string[] = [], mask?: (text: string) => string): FlowRunt
     patch: () => {},
     direct: () => {},
     notifyFail: () => {},
-    ...(mask === undefined ? {} : { mask }),
   })
 }
 
-/** 激活流程并停在 `start`（命令已放行，等待结算）。 */
+/** 激活流程并停在 `start`（等待工具结果推进）。 */
 function armed(runtime: FlowRuntime): void {
   runtime.offer([ml('你盘膝坐下，开始打坐。', 0)], false)
   expect(runtime.state()).toMatchObject({ flowId: 'test', stepId: 'start', phase: 'awaiting-result' })
-  expect(runtime.allowBridgeRequest('dazuo 10')).toBe(true)
 }
 
-describe('桥结算归属 (按命令比对)', () => {
-  it('本步放行过的命令 → 结算生效（GA 判据命中 → 进入后继分支）', () => {
+describe('结算归属 (W7.2: 配对移交在途窗口)', () => {
+  it('本步的命令 → windowSpecFor 返回判据覆盖 (gaOutcome ok)', () => {
     const logs: string[] = []
     const flow = runtime(logs)
     armed(flow)
 
-    const hits = flow.noteSettle('ga', '', ['dazuo 10'])
-    expect(flow.state()).toMatchObject({ flowId: 'test', stepId: 'start', phase: 'awaiting-branch' })
-    expect(hits).toEqual([])
-    // 分支阶段等 done 的驱动句；再来一次同命令的 GA 已被消费 → 不再结算。
-    expect(flow.noteSettle('ga', '', ['dazuo 10'])).toEqual([])
+    // ok:[{kind:'ga'}] → 关窗结局 ok; 无行判据、无 boundary/timeout 覆盖。
+    expect(flow.windowSpecFor('dazuo 10')).toEqual({ gaOutcome: 'ok' })
     flow.dispose()
   })
 
-  it('**别的命令**的结算 → 拒绝并点名（不上一条命令的 GA 结算本步）', () => {
+  it('**别的命令** → windowSpecFor 返回 null (归属即注册路径, 结构上排除串结算)', () => {
     const logs: string[] = []
     const flow = runtime(logs)
     armed(flow)
 
-    expect(flow.noteSettle('ga', '', ['lian sword'])).toEqual([])
-    expect(flow.state()).toMatchObject({ stepId: 'start', phase: 'awaiting-result' })
-    expect(logs.join('\n')).toContain('不是本步命令的结算: "lian sword"')
-    // 本步自己的命令仍然有效（拒绝不消费归属）。
-    expect(flow.noteSettle('ga', '', ['dazuo 10'])).toEqual([])
-    expect(flow.state()).toMatchObject({ phase: 'awaiting-branch' })
+    expect(flow.windowSpecFor('lian sword')).toBeNull()
+    // 拒绝不消费归属: 本步命令仍然有效。
+    expect(flow.windowSpecFor('dazuo 10')).toEqual({ gaOutcome: 'ok' })
     flow.dispose()
   })
 
-  it('序列：一次请求里的多条命令，任一条属于本步即算本步的结算', () => {
+  it('序列动作: 一次注册的多条命令逐条比对, 任一条属于本步即拿到判据', () => {
     const seriesFlow: FlowSpec = {
       ...TEST_FLOW,
       steps: [
@@ -98,51 +92,94 @@ describe('桥结算归属 (按命令比对)', () => {
         { id: 'done', driver: { kind: 'text', includes: ['你站了起来'] } },
       ],
     }
-    const logs: string[] = []
     const flow = new FlowRuntime({
       flows: [seriesFlow],
       world: () => ({ flags: {} }) as never,
-      log: text => { logs.push(text) },
+      log: () => {},
       patch: () => {},
       direct: () => {},
       notifyFail: () => {},
     })
     flow.offer([ml('你盘膝坐下，开始打坐。', 0)], false)
-    expect(flow.allowBridgeRequest('halt')).toBe(true)
-    expect(flow.allowBridgeRequest('dazuo 10')).toBe(true)
-
-    // 桥报告"这次结算关掉的是这两条"（一次请求两命令的形态）。
-    expect(flow.noteSettle('ga', '', ['halt', 'dazuo 10'])).toEqual([])
-    expect(flow.state()).toMatchObject({ stepId: 'start', phase: 'awaiting-branch' })
+    expect(flow.windowSpecFor('halt')).toEqual({ gaOutcome: 'ok' })
+    expect(flow.windowSpecFor('dazuo 10')).toEqual({ gaOutcome: 'ok' })
+    // 序列整体比对: 同长度逐条一致才算本步的窗口。
+    expect(flow.windowSpecFor(['halt', 'dazuo 10'])).toEqual({ gaOutcome: 'ok' })
+    expect(flow.windowSpecFor(['halt', 'lian sword'])).toBeNull()
     flow.dispose()
   })
 
-  it('缺省 cmds（旧调用）→ 退化为"本步放行过命令"（兼容）', () => {
+  it('GA 关窗 (settled=ga, outcome ok) → 推进到后继 done; 同窗口不会二次结算', () => {
     const logs: string[] = []
     const flow = runtime(logs)
     armed(flow)
 
-    expect(flow.noteSettle('ga')).toEqual([])
-    expect(flow.state()).toMatchObject({ phase: 'awaiting-branch' })
-
-    // 未放行任何命令的步（没有 active 流程时）→ 任何结算都不结算流程。
-    const idle = runtime([])
-    expect(idle.noteSettle('ga', '', ['whatever'])).toEqual([])
-    expect(idle.state()).toBeNull()
-    idle.dispose()
+    const hits = flow.noteToolResult('start', 'ok', 'ga')
+    expect(flow.state()).toMatchObject({ flowId: 'test', stepId: 'done' })
+    expect(hits).toEqual([])
+    // 上一步窗口的结局不会结算新进入的步骤 (done 在等自己的 driver 句)。
+    flow.noteToolResult('start', 'ok', 'ga')
+    expect(flow.state()).toMatchObject({ flowId: 'test', stepId: 'done' })
     flow.dispose()
   })
 
-  it('日志里的命令文本先过 mask（密码/验证码不落日志）', () => {
+  it('stepId 不匹配的迟到结果 → 忽略并留痕 (不推进任何步骤)', () => {
     const logs: string[] = []
-    // 模拟运行时的脱敏接线：把密码替换成 ***。
-    const flow = runtime(logs, text => text.split('Xiunyu123').join('***'))
+    const flow = runtime(logs)
     armed(flow)
 
-    expect(flow.noteSettle('ga', '', ['Xiunyu123'])).toEqual([])
-    const out = logs.join('\n')
-    expect(out).toContain('不是本步命令的结算: "***"')
-    expect(out).not.toContain('Xiunyu123')
+    expect(flow.noteToolResult('other-step', 'ok', 'ga')).toEqual([])
+    expect(flow.state()).toMatchObject({ flowId: 'test', stepId: 'start', phase: 'awaiting-result' })
+    flow.dispose()
+  })
+
+  it('非 awaiting-result 阶段 (分支等待) → windowSpecFor 返回 null', () => {
+    const logs: string[] = []
+    const flow = runtime(logs)
+    armed(flow)
+    flow.noteToolResult('start', 'ok', 'ga')
+    expect(flow.state()).toMatchObject({ flowId: 'test', stepId: 'done' })
+
+    // done 在等 driver 句, 没有命令在途 → 任何命令都拿不到判据。
+    expect(flow.windowSpecFor('dazuo 10')).toBeNull()
+    flow.dispose()
+  })
+
+  it('无活动流程 → noteToolResult 忽略, windowSpecFor 返回 null', () => {
+    const idle = runtime([])
+    expect(idle.noteToolResult('start', 'ok', 'ga')).toEqual([])
+    expect(idle.windowSpecFor('dazuo 10')).toBeNull()
+    expect(idle.state()).toBeNull()
+    idle.dispose()
+  })
+
+  it('插值: 期望命令按流程槽插值后比对 ({captcha} 由注册方传值)', () => {
+    const captchaFlow: FlowSpec = {
+      ...TEST_FLOW,
+      steps: [
+        {
+          id: 'start',
+          driver: { kind: 'text', includes: ['你盘膝坐下'] },
+          action: { tool: 'mud_send', args: { cmd: 'fullme {captcha}' } },
+          ok: [{ kind: 'ga' }],
+          next: ['done'],
+        },
+        { id: 'done', driver: { kind: 'text', includes: ['你站了起来'] } },
+      ],
+    }
+    const flow = new FlowRuntime({
+      flows: [captchaFlow],
+      world: () => ({ flags: {} }) as never,
+      log: () => {},
+      patch: () => {},
+      direct: () => {},
+      notifyFail: () => {},
+    })
+    flow.offer([ml('你盘膝坐下，开始打坐。', 0)], false)
+    // 插值后一致 → 本步的窗口; 占位符未填 (原样) 或值不对 → null。
+    expect(flow.windowSpecFor('fullme 1234', { captcha: '1234' })).toEqual({ gaOutcome: 'ok' })
+    expect(flow.windowSpecFor('fullme {captcha}', { captcha: '1234' })).toBeNull()
+    expect(flow.windowSpecFor('fullme 9999', { captcha: '1234' })).toBeNull()
     flow.dispose()
   })
 })

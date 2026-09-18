@@ -1,378 +1,308 @@
 /**
- * dsh-mud-core — 命令-应答桥 (CommandResponseController) 单元测试 (v0.6.0)。
+ * dsh-mud-core — 在途窗口表 (InflightWindowTable) 单元测试 (W7.2)。
  *
- * 覆盖命令-应答桥 (`doc/architecture/07-08-t1-bridge.md` §8.3/§8.4) 的全部结算路径。
- * harness 的接线与 session 完全同构 (§8.8 测试对齐):
- *   - until 判据上收**分帧器武装标记** (confirmSent → arm; 命中 → settleUntilFromSplitter);
- *   - 桥只吃**分帧器提交的帧** (响应 = 事务窗口期间提交帧的并集), 不自造边界;
- *   - 静默/超时不是边界 (v0.6.0 删除): 未声明 → GA/EOR 帧结算; 超限 → 放弃 (timeout,
- *     帧不动、判据保持武装, 回放不进 reply)。
+ * 取代旧命令-应答桥 (CommandResponseController) 的 response.spec。机制对照
+ * `doc/PLAN.md` §2/§2.3/§2.8:
+ *   - 注册 → pump 发送 (meta.replyId/noGate 穿透) → 宿主 confirmSent 武装 →
+ *     判据命中 (win- 标记路由) / N-GA 关窗 / 超时 / abort / 断线 → 结算 (I4 必有结局);
+ *   - 结算优先级: 判据命中 > 窗口关闭 (N-GA) > 超时 > 断线;
+ *   - 直发延后 (§2.8): 窗口开启 ⇒ 队列 gate 压住非豁免直发 (noGate/halt 豁免)。
+ *
+ * 裁决器站③的接线 (feedLines / boundary / settleCriteria) 在测试里按宿主身份直调 ——
+ * 与生产 `SessionAdjudicator.adjudicate()` 的三行路由一致。
  */
 
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import type { MudLine } from '../src/services/network/ansi.ts'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  CommandResponseController,
+  InflightWindowTable,
   ABANDON_TEXT,
-  type BoundaryKind,
-  type ReplyOptions,
-} from '../src/runtime/session/bridge.ts'
-import { FrameSplitter } from '../src/runtime/session/adjudicator.ts'
+  ABORT_TEXT,
+  type WindowResult,
+} from '../src/runtime/session/inflight.ts'
+import { CommandQueue } from '../src/runtime/session/queue.ts'
+import type { MudLine } from '../src/services/network/ansi.ts'
 
-/** MudLine 构造 (测试用; abs 手工分配)。 */
-function ml(text: string, abs = 0): MudLine {
-  return { text, raw: text, style: [], abs, time: 0, isPrompt: false }
+function ml(text: string): MudLine {
+  return { text, raw: text, style: [], abs: 0, time: Date.now(), isPrompt: false }
 }
 
-/**
- * 测试宿主: 桥 × 分帧器按 session 的真实接线组装。
- * `feed` = telnet 'parsed' 粒度喂行; `boundary` = telnet 'boundary' 事件。
- */
-function harness(splitterOpts: { maxFrameLines?: number } = {}) {
-  const sent: { cmd: string; meta: { replyId?: string } }[] = []
-  const boundaries: BoundaryKind[] = []
-  const splitter = new FrameSplitter({ autoFlushMs: 0, ...splitterOpts })
-  const controller = new CommandResponseController({
-    send: (cmd, meta) => { sent.push({ cmd, meta }) },
-    onBoundary: (kind) => { boundaries.push(kind) },
-    // v0.6.0 S3c: until 武装标记 → 分帧器注册 (session 同款接线)。
-    onUntilArm: (markerId, pattern) => { splitter.arm({ id: markerId, pattern, once: true }) },
-    onUntilDisarm: (markerId) => { splitter.disarm(markerId) },
-  })
-  // 帧提交 → 桥消费 (帧并集) + 标记路由 — 与 session.onFrameCommitted 相同。
-  splitter.onFrame = (frame) => {
-    controller.feedLines(frame.lines)
-    if (frame.marker === 'ga' || frame.marker === 'eor') controller.boundaryReceived(frame.marker)
-    else if (frame.marker === 'armed' && frame.markerId !== undefined) controller.settleUntilFromSplitter(frame.markerId)
-  }
-  return {
-    controller,
-    splitter,
-    sent,
-    boundaries,
-    feed: (lines: MudLine[]) => { splitter.feedLines(lines) },
-    boundary: (kind: BoundaryKind) => { splitter.boundary(kind) },
-  }
+/** 宿主接线采样 (send/armed/disarmed/gate/logs)。 */
+interface Harness {
+  windows: InflightWindowTable
+  sent: { cmd: string; meta: { replyId?: string; noGate?: boolean; priority?: 'halt' | 'high' | 'normal' | 'low' } }[]
+  armed: { id: string; pattern: string | RegExp }[]
+  disarmed: string[]
+  gates: boolean[]
+  logs: string[]
 }
 
-/** 已发送且尚未 confirm 的 replyId (按命令文字查找)。 */
-function replyIdOf(sent: { cmd: string; meta: { replyId?: string } }[], cmd: string): string | undefined {
-  const item = sent.find(s => s.cmd === cmd)
-  return item?.meta.replyId
+function makeTable(opts: { defaultTimeoutMs?: number } = {}): Harness {
+  const h: Harness = { sent: [], armed: [], disarmed: [], gates: [], logs: [] } as never
+  h.windows = new InflightWindowTable({
+    send: (cmd, meta) => { h.sent.push({ cmd, meta }) },
+    onArm: (id, pattern) => { h.armed.push({ id, pattern }) },
+    onDisarm: (id) => { h.disarmed.push(id) },
+    onGate: (active) => { h.gates.push(active) },
+    onLog: (text) => { h.logs.push(text) },
+    ...(opts.defaultTimeoutMs !== undefined ? { defaultTimeoutMs: opts.defaultTimeoutMs } : {}),
+  })
+  return h
 }
 
-describe('CommandResponseController', () => {
-  beforeEach(() => {
-    vi.useFakeTimers()
-  })
-  afterEach(() => {
-    vi.useRealTimers()
+describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('窗口型: 注册→发送(replyId/noGate)→confirmSent→GA 关窗 = 成功 (窗口行 = 工具结果)', async () => {
+    const h = makeTable()
+    const p = h.windows.register({ cmds: ['look'], label: 'mud_look' })
+    expect(h.sent).toEqual([{ cmd: 'look', meta: { replyId: 'w1', noGate: true } }])
+    expect(h.gates).toEqual([true])   // 窗口开启 → 直发延后 gate (§2.8)
+    h.windows.confirmSent('w1')
+    h.windows.feedLines([ml('北大街 - 北大侠客行'), ml('这里明显的出口是 south。')])
+    h.windows.boundary('ga')
+    const r: WindowResult = await p
+    expect(r.ok).toBe(true)
+    expect(r.cmd).toBe('look')
+    expect(r.settled).toBe('ga')
+    expect(r.outcome).toBe('ok')
+    expect(r.text).toContain('北大街')
+    // 排空后 gate 放行。
+    expect(h.gates.at(-1)).toBe(false)
   })
 
-  it('未声明: GA 边界结算 (ok=true, settled=ga, 文本=帧并集)', async () => {
-    const h = harness()
-    const p = h.controller.sendAndAwait('look')
-    const id = replyIdOf(h.sent, 'look')
-    expect(id).toBeTruthy()
-    h.controller.confirmSent(id)
-    h.feed([ml('北大街 - 北大侠客行')])
-    h.feed([ml('  这里明显的出口是 south 和 east。')])
-    h.boundary('ga')
-    const reply = await p
-    expect(reply.ok).toBe(true)
-    expect(reply.settled).toBe('ga')
-    expect(reply.cmd).toBe('look')
-    expect(reply.text).toBe('北大街 - 北大侠客行\n  这里明显的出口是 south 和 east。')
-    expect(reply.lines.map(l => l.text)).toEqual(['北大街 - 北大侠客行', '  这里明显的出口是 south 和 east。'])
+  it('sending 期 feedLines: 队列节流窗口里提交的帧同属本窗口 (§8.3 帧归属取样)', async () => {
+    const h = makeTable()
+    const p = h.windows.register({ cmds: ['look'] })
+    // 还没 confirmSent (sending): 提前到达的帧也归属本窗口。
+    h.windows.feedLines([ml('提前到达的行')])
+    h.windows.confirmSent('w1')
+    h.windows.boundary('ga')
+    const r = await p
+    expect(r.text).toContain('提前到达的行')
   })
 
-  it('未声明: EOR 边界结算', async () => {
-    const h = harness()
-    const p = h.controller.sendAndAwait('hp')
-    h.controller.confirmSent(replyIdOf(h.sent, 'hp'))
-    h.feed([ml('气血 100/100')])
-    h.boundary('eor')
-    const reply = await p
-    expect(reply.settled).toBe('eor')
-    expect(reply.ok).toBe(true)
-  })
-
-  it('声明 until: GA 不结算 (跨帧累积), 武装标记命中即 until 结算', async () => {
-    const h = harness()
-    const p = h.controller.sendAndAwait('fullme', {
-      until: { regex: '[0-9]{4}', timeout: 300 },
-    } satisfies ReplyOptions)
-    h.controller.confirmSent(replyIdOf(h.sent, 'fullme'))
-    // 第一帧: 未命中 → GA 帧不结算 (§8.3 十成判据优先)。
-    h.feed([ml('请回答如下验证码:')])
-    h.boundary('ga')
+  it('N-GA 边界: gaCount 2 需两次 GA 才关窗', async () => {
+    const h = makeTable()
+    const p = h.windows.register({ cmds: ['follow x'], gaCount: 2 })
+    h.windows.confirmSent('w1')
+    h.windows.boundary('ga')
     let settled = false
-    p.then(() => { settled = true })
+    void p.then(() => { settled = true })
+    await vi.advanceTimersByTimeAsync(1)
     expect(settled).toBe(false)
-    // 第二帧: 命中武装标记 → until 结算; 响应 = 两帧并集。
-    h.feed([ml('验证码: 8456')])
-    const reply = await p
-    expect(reply.settled).toBe('until')
-    expect(reply.ok).toBe(true)
-    expect(reply.text).toBe('请回答如下验证码:\n验证码: 8456')
+    h.windows.boundary('ga')
+    await expect(p).resolves.toMatchObject({ ok: true, settled: 'ga', outcome: 'ok' })
   })
 
-  it('P1-2: until 锚定整行正则跨帧命中 (分帧器逐行测试)', async () => {
-    const h = harness()
-    const p = h.controller.sendAndAwait('dz', {
-      until: { regex: '^你将运转于全身经脉间的内息收回丹田，深深吸了口气，站了起来。$', timeout: 60 },
-    })
-    h.controller.confirmSent(replyIdOf(h.sent, 'dz'))
-    // 第一帧: 受理行 (锚定正则不命中, GA 不结算)。
-    h.feed([ml('你盘膝坐下，默运太极神功，一股内息自丹田引出……')])
-    h.boundary('ga')
-    let settled = false
-    p.then(() => { settled = true })
-    expect(settled).toBe(false)
-    // 完成句到达 (无 GA) → 分帧器逐行测命中 → 立即 until 结算。
-    h.feed([ml('你只觉内息在带脉内回荡……')])
-    h.feed([ml('你将运转于全身经脉间的内息收回丹田，深深吸了口气，站了起来。')])
-    const reply = await p
-    expect(reply.settled).toBe('until')
-    expect(reply.ok).toBe(true)
-  })
-
-  it('放弃 (timeout): resolve {ok:false, text=放弃文案, lines=[]}; 帧不动 (回放不进 reply)', async () => {
-    const h = harness()
-    const p = h.controller.sendAndAwait('dz', { timeout: 50 })
-    h.controller.confirmSent(replyIdOf(h.sent, 'dz'))
-    h.feed([ml('你开始打坐'), ml('你一无所获。')])
-    await vi.advanceTimersByTimeAsync(60)
-    const reply = await p
-    expect(reply.settled).toBe('timeout')
-    expect(reply.ok).toBe(false)
-    expect(reply.text).toBe(ABANDON_TEXT)
-    expect(reply.lines).toEqual([])
-  })
-
-  it('连续 3 次超时 → 第 3 次 promise reject (DSH 失败终态)', async () => {
-    const h = harness()
-    const run = (cmd: string) => {
-      const p = h.controller.sendAndAwait(cmd, {
-        until: { regex: '永不命中', timeout: 50 },
-        timeout: 50,
-      })
-      h.controller.confirmSent(replyIdOf(h.sent, cmd))
-      return p
-    }
-    const p1 = run('a')
-    await vi.advanceTimersByTimeAsync(60)
-    expect((await p1).settled).toBe('timeout')
-    const p2 = run('b')
-    await vi.advanceTimersByTimeAsync(60)
-    expect((await p2).settled).toBe('timeout')
-    const p3 = run('c')
-    const rejection = p3.then(() => null, (e: Error) => e)  // 提前挂 catch: 防 unhandled
-    await vi.advanceTimersByTimeAsync(60)
-    const err = await rejection
-    expect(err).toBeInstanceOf(Error)
-    expect((err as Error).message).toMatch(/连续 3 次应答超时/)
-  })
-
-  it('成功结算复位连续超时计数', async () => {
-    const h = harness()
-    const timeoutRun = (cmd: string) => {
-      const p = h.controller.sendAndAwait(cmd, { timeout: 40 })
-      h.controller.confirmSent(replyIdOf(h.sent, cmd))
-      return p
-    }
-    const p1 = timeoutRun('a')
-    await vi.advanceTimersByTimeAsync(50)
-    expect((await p1).settled).toBe('timeout')   // 计数 1
-    const okRun = h.controller.sendAndAwait('ok')
-    h.controller.confirmSent(replyIdOf(h.sent, 'ok'))
-    h.boundary('ga')                              // GA 帧结算 → 计数复位
-    expect((await okRun).settled).toBe('ga')
-    const p2 = timeoutRun('b')                    // 计数从 1 重新计
-    await vi.advanceTimersByTimeAsync(50)
-    expect((await p2).settled).toBe('timeout')   // 未达上限, 正常 resolve
-  })
-
-  it('abort 后无主: 行不入桥, 边界转发 onBoundary', async () => {
-    const h = harness()
-    const ac = new AbortController()
-    const pa = h.controller.sendAndAwait('busy', { signal: ac.signal })
-    h.controller.confirmSent(replyIdOf(h.sent, 'busy'))
-    h.feed([ml('忙碌中...')])
-    ac.abort() // 中止 → settle abort (优雅, 不悬挂)
-    expect((await pa).settled).toBe('abort')
-    // 无在途请求: 行不入桥, GA 帧转发 onBoundary (投递归 L2 消费链)。
-    h.feed([ml('北大街')])
-    h.boundary('ga')
-    expect(h.controller.inFlight()).toBe(false)
-    expect(h.boundaries).toEqual(['ga'])
-  })
-
-  it('无主: 无主行不登记 (投递归 L2), 无主边界转发 onBoundary', () => {
-    const h = harness()
-    h.feed([ml('无主一行')])
-    expect(h.controller.inFlight()).toBe(false)
-    h.boundary('ga')
-    expect(h.boundaries).toEqual(['ga'])
-  })
-
-  it('一步一帧: A 武装期间 B 不发送, A 结算后才 pump B', async () => {
-    const h = harness()
-    const pa = h.controller.sendAndAwait('look')
-    const pb = h.controller.sendAndAwait('hp')
-    expect(h.sent.length).toBe(1)  // 仅 A 出队
-    h.controller.confirmSent(replyIdOf(h.sent, 'look'))
-    expect(h.sent.length).toBe(1)  // B 仍未发送
-    h.feed([ml('北大街')])
-    h.boundary('ga')  // A 结算 → pump B
-    await pa
-    expect(h.sent.map(s => s.cmd)).toEqual(['look', 'hp'])
-    expect(h.sent[1].meta.replyId).toBeTruthy()
-    h.controller.confirmSent(replyIdOf(h.sent, 'hp'))
-    h.boundary('eor')
-    expect((await pb).settled).toBe('eor')
-  })
-
-  it('武装前 (sending 窗) 提交的帧归本事务, 且不会漏进下一帧', async () => {
-    const h = harness()
-    const p = h.controller.sendAndAwait('look')
-    // 队列节流窗口: 已调用 sendAndAwait、还没真实写出 socket —— 窗口期间提交的帧同属本事务 (§8.3)。
-    h.feed([ml('>')])
-    h.controller.confirmSent(replyIdOf(h.sent, 'look'))
-    h.feed([ml('北大街')])
-    h.boundary('ga')
-    const reply = await p
-    expect(reply.lines.map(l => l.text)).toEqual(['>', '北大街'])
-    expect(reply.text).toBe('>\n北大街')
-
-    // 下一条命令的帧里绝不能出现上一帧的行 (实测 bug: look 的应答混进了旧行/MXP 文本)。
-    const p2 = h.controller.sendAndAwait('inventory')
-    h.controller.confirmSent(replyIdOf(h.sent, 'inventory'))
-    h.feed([ml('你身上带着:')])
-    h.boundary('ga')
-    const reply2 = await p2
-    expect(reply2.lines.map(l => l.text)).toEqual(['你身上带着:'])
-  })
-
-  it('abort 信号: 优雅结算 (settled=abort), 不悬挂', async () => {
-    const h = harness()
-    const ac = new AbortController()
-    const p = h.controller.sendAndAwait('look', { signal: ac.signal })
-    h.controller.confirmSent(replyIdOf(h.sent, 'look'))
-    ac.abort()
-    const reply = await p
-    expect(reply.settled).toBe('abort')
-    expect(reply.ok).toBe(false)
-    // abort 后在途清空; 之后到达的行不再归属任何请求 (投递归 L2)。
-    h.feed([ml('迟到')])
-    expect(h.controller.inFlight()).toBe(false)
-  })
-
-  it('abort 于调用前: settled=abort 且不发命令 (信号已预先中止)', async () => {
-    const h = harness()
-    const ac = new AbortController()
-    ac.abort()  // 先中止: sendAndAwait 应直接弹回, 不注册、不发送
-    const p = h.controller.sendAndAwait('look', { signal: ac.signal })
-    const reply = await p
-    expect(reply.settled).toBe('abort')
-    expect(h.sent.length).toBe(0)
-  })
-
-  it('close (断线): 在途请求 reject', async () => {
-    const h = harness()
-    const p = h.controller.sendAndAwait('look')
-    h.controller.confirmSent(replyIdOf(h.sent, 'look'))
-    h.controller.close()
-    await expect(p).rejects.toThrow(/连接已断开/)
-    // 关闭后新请求直接 reject。
-    await expect(h.controller.sendAndAwait('hp')).rejects.toThrow(/已关闭/)
-  })
-
-  it('P0-1: close (断线) 后 reset() 重开 → 新请求可正常结算 (重连复用)', async () => {
-    const h = harness()
-    const p1 = h.controller.sendAndAwait('look')
-    h.controller.confirmSent(replyIdOf(h.sent, 'look'))
-    h.controller.close()
-    await expect(p1).rejects.toThrow(/连接已断开/)
-    await expect(h.controller.sendAndAwait('hp')).rejects.toThrow(/已关闭/)
-
-    h.controller.reset()  // connect 事件重开控制器 (close 为终止语义, 必须 reset)。
-    const p2 = h.controller.sendAndAwait('north')
-    h.controller.confirmSent(replyIdOf(h.sent, 'north'))
-    h.feed([ml('北大街')])
-    h.boundary('ga')
-    const reply = await p2
-    expect(reply.ok).toBe(true)
-    expect(reply.settled).toBe('ga')
-  })
-
-  it('P0-2: sendFailed 回执 → 在途 sending 请求 reject (发送失败), 桥恢复可用', async () => {
-    const h = harness()
-    const p = h.controller.sendAndAwait('look')
-    const id = replyIdOf(h.sent, 'look')
-    expect(id).toBeTruthy()
-    // 宿主写 socket 失败: 回执 settle error → 工具 throw (回合 error)。
-    const rejection = p.then(() => null, (e: Error) => e)  // 提前挂 catch: 防 unhandled
-    h.controller.sendFailed(id, '写 socket 失败: look')
-    const err = await rejection
-    expect(err).toBeInstanceOf(Error)
-    expect((err as Error).message).toMatch(/写 socket 失败/)
-    // 桥恢复: 后续请求正常结算 (pump 已续跑)。
-    const p2 = h.controller.sendAndAwait('hp')
-    h.controller.confirmSent(replyIdOf(h.sent, 'hp'))
-    h.feed([ml('气血 100/100')])
-    h.boundary('eor')
-    expect((await p2).settled).toBe('eor')
-  })
-
-  it('P0-2: pump 发送守卫 — 超窗未 confirmSent 武装 → settle error (防 sending 死锁)', async () => {
-    const h = harness()
-    const p = h.controller.sendAndAwait('look', { timeout: 50 })
-    expect(replyIdOf(h.sent, 'look')).toBeTruthy()
-    // 宿主不 confirmSent: 守卫兜底 settle error。
-    const rejection = p.then(() => 'resolved', (e: Error) => e)
-    await vi.advanceTimersByTimeAsync(60)
-    const err = await rejection
-    expect(err).toBeInstanceOf(Error)
-    expect((err as Error).message).toMatch(/发送后未确认武装/)
-    // pump 恢复: 后续请求照常结算。
-    const p2 = h.controller.sendAndAwait('hp')
-    h.controller.confirmSent(replyIdOf(h.sent, 'hp'))
-    h.boundary('ga')
-    expect((await p2).settled).toBe('ga')
-  })
-
-  it('序列命令: 逐条发送同 replyId, confirmSent 幂等', async () => {
-    const h = harness()
-    const p = h.controller.sendAndAwait(['', 'look'])  // 序列里的空命令成员 (允许; 语义由调用方定)
+  it('命令序列: 同一 replyId 逐条穿透, 缺省 gaCount = 命令条数', async () => {
+    const h = makeTable()
+    const p = h.windows.register({ cmds: ['', 'look'] })
     expect(h.sent.map(s => s.cmd)).toEqual(['', 'look'])
-    const id = replyIdOf(h.sent, 'look')
-    expect(id).toBeDefined()
-    h.controller.confirmSent(id)
-    h.controller.confirmSent(id)   // 幂等: 第二次无操作
-    h.feed([ml('北大街')])
-    h.boundary('ga')
-    const reply = await p
-    expect(reply.cmd).toBe('命令序列')
-    expect(reply.settled).toBe('ga')
+    expect(h.sent.every(s => s.meta.replyId === 'w1' && s.meta.noGate === true)).toBe(true)
+    h.windows.confirmSent('w1')
+    h.windows.boundary('ga')
+    let settled = false
+    void p.then(() => { settled = true })
+    await vi.advanceTimersByTimeAsync(1)
+    expect(settled).toBe(false)   // gaCount 缺省 2, 第一次 GA 不关窗
+    h.windows.boundary('ga')
+    await expect(p).resolves.toMatchObject({ ok: true, cmd: '命令序列' })
   })
 
-  it('sendFireForget: 不入应答机制, 直发', async () => {
-    const h = harness()
-    h.controller.sendFireForget('north', { priority: 'high' })
-    expect(h.sent.map(s => s.cmd)).toEqual(['north'])
-    expect(h.sent[0].meta).toEqual({ priority: 'high' })  // 无 replyId
+  it('判据型: confirmSent 武装 win-<n>:ok/:fail; 命中 → until 结算 + hitText + 标记注销', async () => {
+    const h = makeTable()
+    const p = h.windows.register({ cmds: ['dz'], criteria: { ok: /站了起来/, fail: /你无法/ } })
+    h.windows.confirmSent('w1')
+    expect(h.armed).toEqual([
+      { id: 'win-1:ok', pattern: /站了起来/ },
+      { id: 'win-1:fail', pattern: /你无法/ },
+    ])
+    h.windows.settleCriteria('win-1:ok', '你站了起来')
+    const r = await p
+    expect(r).toMatchObject({ ok: true, settled: 'until', outcome: 'ok', hitText: '你站了起来' })
+    // 任何结算都注销两标记 (不留脏标记)。
+    expect(h.disarmed).toEqual(['win-1:ok', 'win-1:fail'])
   })
 
-  it('inFlight: 注册/武装/空态判定 (宿主观察窗推迟依据)', async () => {
-    const h = harness()
-    expect(h.controller.inFlight()).toBe(false)
-    const p = h.controller.sendAndAwait('look')
-    expect(h.controller.inFlight()).toBe(true)   // 已发送待武装
-    h.controller.confirmSent(replyIdOf(h.sent, 'look'))
-    expect(h.controller.inFlight()).toBe(true)   // 武装等待
-    h.boundary('ga')
+  it('fail 判据命中 → ok:false / outcome fail (hitText 供流程 {lastFail} 槽)', async () => {
+    const h = makeTable()
+    const p = h.windows.register({ cmds: ['fullme 1234'], criteria: { fail: /验证码不对/ } })
+    h.windows.confirmSent('w1')
+    h.windows.settleCriteria('win-1:fail', '你的验证码不对。')
+    await expect(p).resolves.toMatchObject({ ok: false, settled: 'until', outcome: 'fail', hitText: '你的验证码不对。' })
+  })
+
+  it('判据型 GA 关窗未命中 → 失败 ("判据未等到")', async () => {
+    const h = makeTable()
+    const p = h.windows.register({ cmds: ['dz'], criteria: { ok: /站了起来/ } })
+    h.windows.confirmSent('w1')
+    h.windows.boundary('ga')
+    await expect(p).resolves.toMatchObject({
+      ok: false, settled: 'ga', outcome: 'fail', text: '判据未等到 (窗口在 GA 边界关闭)',
+    })
+  })
+
+  it('settleCriteria: 非 win- 标记 / 非本窗 id → 无操作 (自过滤)', async () => {
+    const h = makeTable()
+    const p = h.windows.register({ cmds: ['dz'], criteria: { ok: /站了起来/ } })
+    h.windows.confirmSent('w1')
+    h.windows.settleCriteria('rule-int:xyz')   // 非 win- 标记
+    h.windows.settleCriteria('win-9:ok')       // id 不匹配
+    let settled = false
+    void p.then(() => { settled = true })
+    await vi.advanceTimersByTimeAsync(1)
+    expect(settled).toBe(false)
+    h.windows.settleCriteria('win-1:ok', '你站了起来')
+    await expect(p).resolves.toMatchObject({ ok: true })
+  })
+
+  it('超时: 放弃 resolve ABANDON_TEXT (窗口行不随结果返回); 连续 3 次 → reject', async () => {
+    const h = makeTable()
+    const p1 = h.windows.register({ cmds: ['a'], timeoutMs: 50 })
+    h.windows.confirmSent('w1')
+    await vi.advanceTimersByTimeAsync(51)
+    await expect(p1).resolves.toMatchObject({ ok: false, text: ABANDON_TEXT, settled: 'timeout', outcome: 'fail' })
+    // 连续放弃计数: 非超时结算前累计; 第 3 次 → reject (DSH 失败终态)。
+    const p2 = h.windows.register({ cmds: ['b'], timeoutMs: 50 })
+    h.windows.confirmSent('w2')
+    await vi.advanceTimersByTimeAsync(51)
+    await expect(p2).resolves.toMatchObject({ settled: 'timeout' })
+    const p3 = h.windows.register({ cmds: ['c'], timeoutMs: 50 })
+    h.windows.confirmSent('w3')
+    await vi.advanceTimersByTimeAsync(51)
+    await expect(p3).rejects.toThrow(/连续 3 次应答超时/)
+  })
+
+  it('非超时结算复位连续放弃计数', async () => {
+    const h = makeTable()
+    const p1 = h.windows.register({ cmds: ['a'], timeoutMs: 50 })
+    h.windows.confirmSent('w1')
+    await vi.advanceTimersByTimeAsync(51)
+    await p1
+    const p2 = h.windows.register({ cmds: ['b'] })
+    h.windows.confirmSent('w2')
+    h.windows.boundary('ga')   // 非超时结算 → 计数复位
+    await p2
+    const p3 = h.windows.register({ cmds: ['c'], timeoutMs: 50 })
+    h.windows.confirmSent('w3')
+    await vi.advanceTimersByTimeAsync(51)
+    await expect(p3).resolves.toMatchObject({ settled: 'timeout' })   // 只放弃 1 次, 不 reject
+  })
+
+  it('abort: 注册前已中止 → 不发送直接结算; 在途中止 → 优雅结算 (窗口行保留)', async () => {
+    const h = makeTable()
+    const preAborted = new AbortController()
+    preAborted.abort()
+    const p1 = h.windows.register({ cmds: ['look'], signal: preAborted.signal })
+    await expect(p1).resolves.toMatchObject({ ok: false, settled: 'abort', text: ABORT_TEXT })
+    expect(h.sent).toHaveLength(0)   // 不发命令
+
+    const ac = new AbortController()
+    const p2 = h.windows.register({ cmds: ['look'], signal: ac.signal })
+    h.windows.confirmSent('w1')
+    h.windows.feedLines([ml('部分应答')])
+    ac.abort()
+    const r = await p2
+    expect(r.settled).toBe('abort')
+    expect(r.lines.map(l => l.text)).toEqual(['部分应答'])
+  })
+
+  it('断线 close(): 在途 reject (error) → 表终止 (register reject); reset() 重开', async () => {
+    const h = makeTable()
+    const p1 = h.windows.register({ cmds: ['look'] })
+    h.windows.close()
+    await expect(p1).rejects.toThrow(/连接已断开/)
+    await expect(h.windows.register({ cmds: ['look'] })).rejects.toThrow(/已关闭/)
+    // 重连复位: 终止语义解除, 窗口 id 序号延续 (w2)。
+    h.windows.reset()
+    const p2 = h.windows.register({ cmds: ['look'] })
+    h.windows.confirmSent('w2')
+    h.windows.boundary('ga')
+    await expect(p2).resolves.toMatchObject({ ok: true })
+  })
+
+  it('sendFailed → error 结算 (pump 恢复, gate 放行)', async () => {
+    const h = makeTable()
+    const p = h.windows.register({ cmds: ['look'] })
+    h.windows.sendFailed('w1', '写 socket 失败: look')
+    await expect(p).rejects.toThrow('写 socket 失败')
+    expect(h.gates.at(-1)).toBe(false)
+  })
+
+  it('发送守卫: confirmSent 迟迟不调 → defaultTimeoutMs 后 error 结算 (防 sending 死锁)', async () => {
+    const h = makeTable({ defaultTimeoutMs: 1000 })
+    const p = h.windows.register({ cmds: ['look'] })
+    await vi.advanceTimersByTimeAsync(1001)
+    await expect(p).rejects.toThrow(/未确认武装/)
+  })
+
+  it('interrupt(): 在途+排队全部结算 interrupted; gate 释放; 表继续可用', async () => {
+    const h = makeTable()
+    const p1 = h.windows.register({ cmds: ['a'] })
+    const p2 = h.windows.register({ cmds: ['b'] })   // live 在途 → 排队
+    const n = h.windows.interrupt('[流程打断] test')
+    expect(n).toBe(2)
+    await expect(p1).resolves.toMatchObject({ ok: false, settled: 'interrupted', text: '[流程打断] test' })
+    await expect(p2).resolves.toMatchObject({ ok: false, settled: 'interrupted' })
+    expect(h.gates.at(-1)).toBe(false)
+    // 批量结算不泄漏下一个窗口 (旧桥 interruptInFlight 的缺陷, 此处钉住): 打断后
+    // 注册的新窗口正常走完。
+    const p3 = h.windows.register({ cmds: ['c'] })
+    expect(h.sent.filter(s => s.cmd === 'c')).toHaveLength(1)
+    h.windows.confirmSent('w3')
+    h.windows.boundary('ga')
+    await expect(p3).resolves.toMatchObject({ ok: true })
+  })
+
+  it('diag/hasOpen: 在途窗口 / 人工等待 / 结局计数 (§2.9 取代旧桥活动表)', async () => {
+    const h = makeTable()
+    expect(h.windows.hasOpen()).toBe(false)
+    const p = h.windows.register({ cmds: ['look'], label: 'mud_look' })
+    expect(h.windows.hasOpen()).toBe(true)
+    h.windows.beginHuman('mud_captcha')
+    let d = h.windows.diag()
+    expect(d.open).toMatchObject({ tool: 'mud_look', criteria: null, gaCount: 1, gaSeen: 0, status: 'sending' })
+    expect(d.human).toMatchObject({ label: 'mud_captcha' })
+    h.windows.endHuman()
+    expect(h.windows.diag().human).toBeNull()
+    h.windows.confirmSent('w1')
+    expect(h.windows.diag().open!.status).toBe('armed')
+    h.windows.boundary('ga')
     await p
-    expect(h.controller.inFlight()).toBe(false)
+    d = h.windows.diag()
+    expect(d.open).toBeNull()
+    expect(d.pending).toBe(0)
+    expect(d.counters).toMatchObject({ ok: 1 })
+  })
+
+  it('§2.8 直发延后: 窗口开启期间普通直发被压住, noGate/halt 豁免, 结算后放行', async () => {
+    // 集成用例: CommandQueue + InflightWindowTable (生产 session.ts 的接线同款)。
+    const sentToSocket: string[] = []
+    const queue = new CommandQueue({ minInterval: 0, onSend: (cmd) => { sentToSocket.push(cmd) } })
+    const windows = new InflightWindowTable({
+      send: (cmd, meta) => { queue.send(cmd, { ...meta }) },
+      onArm: () => {},
+      onDisarm: () => {},
+      onGate: (active) => { queue.setGate(active) },
+    })
+    const p = windows.register({ cmds: ['follow x'] })
+    await vi.advanceTimersByTimeAsync(5)   // pump → 队列 (noGate 豁免) → 写 socket
+    windows.confirmSent('w1')
+    expect(sentToSocket).toEqual(['follow x'])
+    // 窗口开启期间: 普通直发被 gate 压住。
+    queue.send('hp')
+    queue.send('look')
+    await vi.advanceTimersByTimeAsync(50)
+    expect(sentToSocket).toEqual(['follow x'])
+    // halt 豁免 (打断命令必须走得出去, §2.8)。
+    queue.send('halt', { priority: 'halt' })
+    await vi.advanceTimersByTimeAsync(5)
+    expect(sentToSocket).toEqual(['follow x', 'halt'])
+    // 结算 → gate 放行, 压住的直发按到达序发出 (GA 计数不再被直发应答污染)。
+    windows.boundary('ga')
+    await p
+    await vi.advanceTimersByTimeAsync(50)
+    expect(sentToSocket).toEqual(['follow x', 'halt', 'hp', 'look'])
   })
 })

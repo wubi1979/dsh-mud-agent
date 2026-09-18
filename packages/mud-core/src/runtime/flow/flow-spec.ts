@@ -90,6 +90,11 @@ export interface FlowStep {
   retry?: { attempts: number; on?: readonly ('driver' | 'fail')[]; action?: FlowAction }
   /** 本步超时毫秒（缺省取 `FlowSpec.timeoutMs`）。 */
   timeoutMs?: number
+  /**
+   * **N-GA 边界**（W7.2 §2.2; 在途窗口覆盖声明）：本步动作的在途窗口在第 N 个
+   * GA/EOR 后兜底关窗（覆盖工具内置声明; 缺省 = 命令条数）。须为 >=1 整数。
+   */
+  boundary?: number
   /** 被打断时要先发的直发命令（如练功的 halt）。 */
   onInterrupt?: readonly string[]
 }
@@ -225,6 +230,10 @@ export function validateFlows(flows: readonly FlowSpec[]): string[] {
         if (retry.action === undefined && step.action === undefined) {
           errors.push(`${where}: retry 需要本步有 action 或声明 retry.action`)
         }
+      }
+      // N-GA 边界 (W7.2): 在途窗口兜底关窗声明。
+      if (step.boundary !== undefined && (!Number.isInteger(step.boundary) || step.boundary < 1)) {
+        errors.push(`${where}: boundary 必须是 >= 1 的整数 (N-GA 兜底关窗)`)
       }
       // 动作参数的占位符必须在已知集合里（拼错占位符会在发送时才炸 → 注册期就拦下）。
       for (const raw of actionStrings(step.action)) {

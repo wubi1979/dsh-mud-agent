@@ -208,7 +208,7 @@ describe('收束判据 (判据 B: 最后一条动作 + 流程空闲)', () => {
 
     h.sink().onLines([ml('需要动作的行', 0)])
     h.sink().onBoundary('ga')                  // d1（1 动作）
-    h.runtime.noteToolResult('mud-d1-0', true) // d1 结果已回 → 完成
+    h.runtime.noteToolResult('mud-d1-0', 'ok') // d1 结果已回 → 完成
     h.sink().onLines([ml('需要动作的行', 1)])
     h.sink().onBoundary('ga')                  // d2 进入 → 逐出已完成的 d1
     expect(h.runtime.shouldConcludeTurn('mud-d1-0')).toBe(false) // 已逐出

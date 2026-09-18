@@ -1,0 +1,463 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.11 [39m[90mD:/Code/dsh-mud-agent/packages/mud-core[39m
+
+ [32m✓[39m tests/ansi.spec.ts [2m([22m[2m29 tests[22m[2m)[22m[32m 129[2mms[22m[39m
+ [32m✓[39m tests/permission.spec.ts [2m([22m[2m27 tests[22m[2m)[22m[32m 161[2mms[22m[39m
+ [32m✓[39m tests/execution.spec.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 459[2mms[22m[39m
+ [32m✓[39m tests/runtime-defer.spec.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 89[2mms[22m[39m
+ [32m✓[39m tests/runtime-captcha.spec.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 140[2mms[22m[39m
+ [31m❯[39m tests/flow-login.spec.ts [2m([22m[2m9 tests[22m[2m | [22m[31m5 failed[39m[2m)[22m[32m 124[2mms[22m[39m
+     [32m✓[39m 注册期校验通过; 命令集由流程表派生 (权限判据用, 含空命令)[32m 6[2mms[22m[39m
+     [32m✓[39m 规则表里不再有 login:* 事件规则 (登录 = 流程步骤, 不重复声明)[32m 0[2mms[22m[39m
+     [32m✓[39m 声明期错误即报错 (ok/fail 判据互斥; 登录流程自身合法)[32m 1[2mms[22m[39m
+     [32m✓[39m 四步图: name→pass→[replace|success], replace→success; 终态 success 发空命令[32m 2[2mms[22m[39m
+[31m     [31m×[31m 名字 → 密码 → 成功句 → 空命令收尾, 全程走流程[39m[32m 86[2mms[22m[39m
+[31m     [31m×[31m 可选分支: 同名在线确认句 → replace 步发 y → 直接等成功句进 success[39m[32m 7[2mms[22m[39m
+[31m     [31m×[31m 超时收束: 发完 {name} 却等不到任何提示行 → 本步超时失败, 不静默[39m[32m 9[2mms[22m[39m
+[31m     [31m×[31m 失败路径: 命中 fail 判据 → 流程失败收束 (复位到只留入口)[39m[32m 4[2mms[22m[39m
+[31m     [31m×[31m GA 归属: 上一条命令的 GA 不会唤醒下一步声明的 GA 判据[39m[32m 7[2mms[22m[39m
+ [32m✓[39m tests/telnet.spec.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 756[2mms[22m[39m
+     [33m[2m✓[22m[39m 横幅 + 无换行的登录提示在同一块到达: 连接保持期间即刷出为 parsed 行 [33m 355[2mms[22m[39m
+     [33m[2m✓[22m[39m SB 载荷超过上限: 丢弃至下一个 IAC SE, 之后文本恢复可见 [33m 318[2mms[22m[39m
+ [32m✓[39m tests/runtime-delivery.spec.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 82[2mms[22m[39m
+ [31m❯[39m tests/flow-interrupt.spec.ts [2m([22m[2m8 tests[22m[2m | [22m[31m3 failed[39m[2m)[22m[32m 127[2mms[22m[39m
+[31m     [31m×[31m 分支阶段也计时: 步成功后后继 driver 永不到达 → 等待后继判据超时 (不静默)[39m[32m 90[2mms[22m[39m
+     [32m✓[39m 档位够 → 打断: 挂起结算为 interrupted + 流程复位 + onInterrupt 直发 + 事件动作投递[32m 7[2mms[22m[39m
+[31m     [31m×[31m 档位不够 → 排队: 当时不投递, 流程结束后立即出队投递[39m[32m 6[2mms[22m[39m
+     [32m✓[39m 未声明 interrupts → 不打断也不排队 (照常投递)[32m 4[2mms[22m[39m
+     [32m✓[39m 空闲时 rules 的 interrupts 不生效 (无流程 → 正常投递)[32m 3[2mms[22m[39m
+     [32m✓[39m login = 1000: 战斗类打断了登录 → 只能排队 (用户定案: login 不可打断)[32m 6[2mms[22m[39m
+[31m     [31m×[31m 被打断的序列命令不再发剩下几条 (半截序列不发出)[39m[32m 5[2mms[22m[39m
+     [32m✓[39m 流程超时失败收束时, 排队动作也会出队投递 (计时器路径)[32m 3[2mms[22m[39m
+[90mstdout[2m | tests/loop-sim-login.spec.ts[2m > [22m[2m官方 loop 模拟器: login 流程的回合/步骤账目[2m > [22m[2m真行为 (defer + conclude): 1 个回合 / 3 次模型请求
+[22m[39m
+[sim] 轨迹:
+t1s0 turn/start
+t1s1 step/start claim=1 lane=t1
+t1s1 request T1 → mud_send
+t1s1 tool/call mud_send {"cmd":"{name}"}
+t1s1 tool/error mud_send: ga
+t1s1 step/end null (工具续步)
+t1s2 step/start claim=1 lane=t1
+t1s2 request T1 → mud_send
+t1s2 tool/call mud_send {"cmd":"{pass}"}
+t1s2 tool/error mud_send: ga
+t1s2 step/end null (工具续步)
+t1s3 step/start claim=1 lane=t1
+t1s3 request T1 → mud_send
+t1s3 tool/call mud_send {"cmd":""}
+t1s3 step/end completed (concludeTurn)
+t1s3 turn/end completed
+[sim] 统计: {"turns":1,"steps":3,"modelCalls":3,"t1Calls":3,"t2Calls":0,"toolCalls":3,"emptySteps":0,"deferred":2,"concludedTurns":1}
+
+ [32m✓[39m tests/loop-sim-login.spec.ts [2m([22m[2m1 test[22m[2m)[22m[32m 88[2mms[22m[39m
+ [32m✓[39m tests/log-service.spec.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 76[2mms[22m[39m
+ [31m❯[39m tests/preset-agent.spec.ts [2m([22m[2m15 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[32m 71[2mms[22m[39m
+     [32m✓[39m 插件名固定 (Loader 行标识)[32m 3[2mms[22m[39m
+     [32m✓[39m 组装期注册每个工具声明 + 三段提示 (skills/commands/tier)[32m 10[2mms[22m[39m
+     [32m✓[39m 工具执行按调用方 agent 解析到该会话工具集 (共享组装 + per-session 状态)[32m 6[2mms[22m[39m
+     [32m✓[39m 工具执行接投递通道: 进出工具调用 → defer 槽 → 成功时收束 (preset 路径同样接线)[32m 4[2mms[22m[39m
+     [32m✓[39m 工具失败时只 defer、不收束 (判据 C)[32m 4[2mms[22m[39m
+     [32m✓[39m 未绑定会话 / 无 agent 上下文 → 可读拒绝, 不执行任何会话工具[32m 4[2mms[22m[39m
+     [32m✓[39m 宿主服务缺失 (mud 未装配) 时注册照常, 执行给可读拒绝[32m 4[2mms[22m[39m
+     [32m✓[39m 提示文本按 agent 求值; 无 agent 上下文时不抛错[32m 4[2mms[22m[39m
+     [32m✓[39m 是**完整组装** (standard 的行都在), 且恰好追加一行 mud-agent[32m 2[2mms[22m[39m
+     [32m✓[39m 我们的行用相对路径指向 lib/agents/preset.js (行内不写死盘符)[32m 1[2mms[22m[39m
+     [32m✓[39m preset.yml 提供展示元数据 (选择器显示名/描述)[32m 0[2mms[22m[39m
+     [32m✓[39m preset.yml 的标量里不出现裸 ": " (YAML 会把它当嵌套映射, 展示名整份丢失)[32m 1[2mms[22m[39m
+[31m     [31m×[31m 与 standard 逐行一致, 只多一行 mud-agent[39m[32m 24[2mms[22m[39m
+     [32m✓[39m preset 根与 preset id 都声明在本包 patch 里 (profile patch 保持空)[32m 0[2mms[22m[39m
+     [32m✓[39m mud-core 只作为 insert 行出现 (它由本层插入, 不能被同行层的 patch 当目标)[32m 1[2mms[22m[39m
+(node:9644) PromiseRejectionHandledWarning: Promise rejection was handled asynchronously (rejection id: 1)
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:9644) PromiseRejectionHandledWarning: Promise rejection was handled asynchronously (rejection id: 5)
+ [32m✓[39m tests/runtime-direct-action.spec.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 75[2mms[22m[39m
+ [32m✓[39m tests/response.spec.ts [2m([22m[2m17 tests[22m[2m)[22m[32m 52[2mms[22m[39m
+ [32m✓[39m tests/match-service.spec.ts [2m([22m[2m32 tests[22m[2m)[22m[32m 42[2mms[22m[39m
+ [31m❯[39m tests/runtime-watchdog.spec.ts [2m([22m[2m5 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[32m 53[2mms[22m[39m
+     [32m✓[39m 登录完成 (world_patch 翻转 logged_in) 后断流计时会布防并唤醒 agent[32m 24[2mms[22m[39m
+     [32m✓[39m 未登录时不布防断流 (登录看门狗负责那一段)[32m 3[2mms[22m[39m
+     [32m✓[39m 登录完成会清掉登录看门狗 (不再刷"登录卡住")[32m 2[2mms[22m[39m
+     [32m✓[39m 未连接时不布防断流 (没有局面可决策)[32m 2[2mms[22m[39m
+[31m     [31m×[31m 活跃流程期间不布防断流; 流程收束后才布防[39m[32m 20[2mms[22m[39m
+ [32m✓[39m tests/tools.spec.ts [2m([22m[2m26 tests[22m[2m)[22m[32m 34[2mms[22m[39m
+ [32m✓[39m tests/t1-adapter.spec.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 28[2mms[22m[39m
+ [32m✓[39m tests/watchdogs.spec.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 24[2mms[22m[39m
+ [32m✓[39m tests/mud-persona.spec.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 24[2mms[22m[39m
+ [32m✓[39m tests/flow-fullme.spec.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 24[2mms[22m[39m
+ [32m✓[39m tests/multiline.spec.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+ [32m✓[39m tests/rule-coverage.spec.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 23[2mms[22m[39m
+ [31m❯[39m tests/flow-ownership.spec.ts [2m([22m[2m8 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[32m 34[2mms[22m[39m
+     [32m✓[39m 本步的命令 → windowSpecFor 返回判据覆盖 (gaOutcome ok)[32m 9[2mms[22m[39m
+     [32m✓[39m **别的命令** → windowSpecFor 返回 null (归属即注册路径, 结构上排除串结算)[32m 1[2mms[22m[39m
+     [32m✓[39m 序列动作: 一次注册的多条命令逐条比对, 任一条属于本步即拿到判据[32m 1[2mms[22m[39m
+[31m     [31m×[31m GA 关窗 (settled=ga, outcome ok) → 推进到后继 done; 同窗口不会二次结算[39m[32m 14[2mms[22m[39m
+     [32m✓[39m stepId 不匹配的迟到结果 → 忽略并留痕 (不推进任何步骤)[32m 1[2mms[22m[39m
+[31m     [31m×[31m 非 awaiting-result 阶段 (分支等待) → windowSpecFor 返回 null[39m[32m 2[2mms[22m[39m
+     [32m✓[39m 无活动流程 → noteToolResult 忽略, windowSpecFor 返回 null[32m 1[2mms[22m[39m
+     [32m✓[39m 插值: 期望命令按流程槽插值后比对 ({captcha} 由注册方传值)[32m 1[2mms[22m[39m
+ [32m✓[39m tests/captcha.spec.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m tests/perception.spec.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m tests/world.spec.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m tests/commands.spec.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m tests/buffers.spec.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m tests/frame-splitter.spec.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 12 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/flow-interrupt.spec.ts[2m > [22m打断与排队 (§19.4)[2m > [22m分支阶段也计时: 步成功后后继 driver 永不到达 → 等待后继判据超时 (不静默)
+[31m[1mAssertionError[22m: expected { flowId: 'practice', …(8) } to match object { flowId: 'practice', …(2) }
+(6 matching properties omitted from actual)[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[2m    "flowId": "practice",[22m
+[32m-   "phase": "awaiting-branch",[39m
+[31m+   "phase": "awaiting-result",[39m
+[2m    "stepId": "start",[22m
+[2m  }[22m
+
+[36m [2m❯[22m tests/flow-interrupt.spec.ts:[2m222:35[22m[39m
+    [90m220|[39m     [35mawait[39m first[33m.[39mpending
+    [90m221|[39m     [35mawait[39m vi[33m.[39m[34madvanceTimersByTimeAsync[39m([34m1[39m)
+    [90m222|[39m     expect(h.runtime.diag().flow).toMatchObject({ flowId: 'practice', …
+    [90m   |[39m                                   [31m^[39m
+    [90m223|[39m
+    [90m224|[39m     [90m// 分支阶段计时器到点（窗口 = 该步 timeoutMs ?? 流程 timeoutMs）→ 超时失败收束。[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/12]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/flow-interrupt.spec.ts[2m > [22m打断与排队 (§19.4)[2m > [22m档位不够 → 排队: 当时不投递, 流程结束后立即出队投递
+[31m[1mAssertionError[22m: expected { flowId: 'practice', …(8) } to match object { flowId: 'practice', …(2) }
+(6 matching properties omitted from actual)[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[2m    "flowId": "practice",[22m
+[32m-   "phase": "awaiting-branch",[39m
+[31m+   "phase": "awaiting-result",[39m
+[2m    "stepId": "start",[22m
+[2m  }[22m
+
+[36m [2m❯[22m tests/flow-interrupt.spec.ts:[2m274:35[22m[39m
+    [90m272|[39m     h[33m.[39m[34msink[39m()[33m.[39m[34monBoundary[39m([32m'ga'[39m)
+    [90m273|[39m     [35mawait[39m vi[33m.[39m[34madvanceTimersByTimeAsync[39m([34m1[39m)
+    [90m274|[39m     expect(h.runtime.diag().flow).toMatchObject({ flowId: 'practice', …
+    [90m   |[39m                                   [31m^[39m
+    [90m275|[39m     expect(h.delivered.some(msg => msg.actions.some(a => a.ruleId === …
+    [90m276|[39m     [34mexpect[39m(([35mawait[39m first[33m.[39mpending)[33m.[39mok)[33m.[39m[34mtoBe[39m([35mtrue[39m)
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/12]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/flow-interrupt.spec.ts[2m > [22m打断与排队 (§19.4)[2m > [22m被打断的序列命令不再发剩下几条 (半截序列不发出)
+[31m[1mAssertionError[22m: expected [ 'lian sword', 'look', 'halt' ] to not include 'look'[39m
+[36m [2m❯[22m tests/flow-interrupt.spec.ts:[2m375:24[22m[39m
+    [90m373|[39m     [34mexpect[39m(reply[33m.[39msettled)[33m.[39m[34mtoBe[39m([32m'interrupted'[39m)
+    [90m374|[39m     [35mawait[39m vi[33m.[39m[34madvanceTimersByTimeAsync[39m([34m1[39m)
+    [90m375|[39m     [34mexpect[39m(h[33m.[39msent)[33m.[39mnot[33m.[39m[34mtoContain[39m([32m'look'[39m)
+    [90m   |[39m                        [31m^[39m
+    [90m376|[39m     h[33m.[39mruntime[33m.[39m[34mdispose[39m()
+    [90m377|[39m   })
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/12]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/flow-login.spec.ts[2m > [22m登录流程端到端 (流程表 → T1 动作 → 桥挂起 → 判据唤醒)[2m > [22m名字 → 密码 → 成功句 → 空命令收尾, 全程走流程
+[31m[1mAssertionError[22m: expected { flowId: 'login', …(8) } to be null[39m
+
+[32m- Expected:[39m
+null
+
+[31m+ Received:[39m
+{
+  "armed": [],
+  "deadline": 1789711344421,
+  "flowId": "login",
+  "pendingActions": 0,
+  "pendingEntry": 0,
+  "phase": "awaiting-result",
+  "retries": 0,
+  "slots": {},
+  "stepId": "success",
+}
+
+[36m [2m❯[22m tests/flow-login.spec.ts:[2m253:35[22m[39m
+    [90m251|[39m     [35mawait[39m third[33m.[39mpending
+    [90m252|[39m     vi[33m.[39m[34madvanceTimersByTime[39m([34m1[39m)
+    [90m253|[39m     [34mexpect[39m(h[33m.[39mruntime[33m.[39m[34mdiag[39m()[33m.[39mflow)[33m.[39m[34mtoBeNull[39m()
+    [90m   |[39m                                   [31m^[39m
+    [90m254|[39m     [34mexpect[39m(h[33m.[39mlogs[33m.[39m[34mjoin[39m([32m'\n'[39m))[33m.[39m[34mtoContain[39m([32m'[流程] login 完成（终态）'[39m)
+    [90m255|[39m     h[33m.[39mruntime[33m.[39m[34mdispose[39m()
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/12]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/flow-login.spec.ts[2m > [22m登录流程端到端 (流程表 → T1 动作 → 桥挂起 → 判据唤醒)[2m > [22m可选分支: 同名在线确认句 → replace 步发 y → 直接等成功句进 success
+[31m[1mAssertionError[22m: expected { flowId: 'login', …(8) } to be null[39m
+
+[32m- Expected:[39m
+null
+
+[31m+ Received:[39m
+{
+  "armed": [],
+  "deadline": 1789711344508,
+  "flowId": "login",
+  "pendingActions": 0,
+  "pendingEntry": 0,
+  "phase": "awaiting-result",
+  "retries": 0,
+  "slots": {},
+  "stepId": "success",
+}
+
+[36m [2m❯[22m tests/flow-login.spec.ts:[2m299:35[22m[39m
+    [90m297|[39m     [35mawait[39m fourth[33m.[39mpending
+    [90m298|[39m     vi[33m.[39m[34madvanceTimersByTime[39m([34m1[39m)
+    [90m299|[39m     [34mexpect[39m(h[33m.[39mruntime[33m.[39m[34mdiag[39m()[33m.[39mflow)[33m.[39m[34mtoBeNull[39m()
+    [90m   |[39m                                   [31m^[39m
+    [90m300|[39m     [34mexpect[39m(h[33m.[39mlogs[33m.[39m[34mjoin[39m([32m'\n'[39m))[33m.[39m[34mtoContain[39m([32m'[流程] login 完成（终态）'[39m)
+    [90m301|[39m     h[33m.[39mruntime[33m.[39m[34mdispose[39m()
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/12]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/flow-login.spec.ts[2m > [22m登录流程端到端 (流程表 → T1 动作 → 桥挂起 → 判据唤醒)[2m > [22m超时收束: 发完 {name} 却等不到任何提示行 → 本步超时失败, 不静默
+[31m[1mAssertionError[22m: expected '[执行] 命令队列就绪 (最小间隔 0ms)\n[SYS] 连接 exam…' to contain '本步未声明 GA 判据'[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 本步未声明 GA 判据[39m
+[31m+ [执行] 命令队列就绪 (最小间隔 0ms)[39m
+[31m+ [SYS] 连接 example.invalid:8081 (tester)[39m
+[31m+ [SYS] 已连接[39m
+[31m+ [流程] login 激活 (入口 name: 您的英文名字：)[39m
+[31m+ [流程] login 进入步骤 name[39m
+[31m+ [工具] mud_send → {name}[39m
+[31m+ [发送] tester[39m
+
+[36m [2m❯[22m tests/flow-login.spec.ts:[2m323:31[22m[39m
+    [90m321|[39m     vi[33m.[39m[34madvanceTimersByTime[39m([34m1[39m)
+    [90m322|[39m     expect(h.runtime.diag().flow).toMatchObject({ flowId: 'login', ste…
+    [90m323|[39m     [34mexpect[39m(h[33m.[39mlogs[33m.[39m[34mjoin[39m([32m'\n'[39m))[33m.[39m[34mtoContain[39m([32m'本步未声明 GA 判据'[39m)
+    [90m   |[39m                               [31m^[39m
+    [90m324|[39m
+    [90m325|[39m     [90m// 本步计时器（30s）到点 → 流程超时失败收束（I4: 没有"静默等下去"）。[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/12]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/flow-login.spec.ts[2m > [22m登录流程端到端 (流程表 → T1 动作 → 桥挂起 → 判据唤醒)[2m > [22m失败路径: 命中 fail 判据 → 流程失败收束 (复位到只留入口)
+[31m[1mAssertionError[22m: expected { flowId: 'login', …(8) } to be null[39m
+
+[32m- Expected:[39m
+null
+
+[31m+ Received:[39m
+{
+  "armed": [
+    "branch:pass",
+  ],
+  "deadline": 1789711369519,
+  "flowId": "login",
+  "pendingActions": 0,
+  "pendingEntry": 0,
+  "phase": "awaiting-result",
+  "retries": 0,
+  "slots": {},
+  "stepId": "name",
+}
+
+[36m [2m❯[22m tests/flow-login.spec.ts:[2m350:35[22m[39m
+    [90m348|[39m     vi[33m.[39m[34madvanceTimersByTime[39m([34m1[39m)
+    [90m349|[39m
+    [90m350|[39m     [34mexpect[39m(h[33m.[39mruntime[33m.[39m[34mdiag[39m()[33m.[39mflow)[33m.[39m[34mtoBeNull[39m()
+    [90m   |[39m                                   [31m^[39m
+    [90m351|[39m     [34mexpect[39m(h[33m.[39mlogs[33m.[39m[34mjoin[39m([32m'\n'[39m))[33m.[39m[34mtoContain[39m([32m'[流程] login/name 失败'[39m)
+    [90m352|[39m     [90m// 复位后只留入口: 同一个名字提示再次出现会重新激活流程。[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/12]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/flow-login.spec.ts[2m > [22m登录流程端到端 (流程表 → T1 动作 → 桥挂起 → 判据唤醒)[2m > [22mGA 归属: 上一条命令的 GA 不会唤醒下一步声明的 GA 判据
+[31m[1mAssertionError[22m: expected '[执行] 命令队列就绪 (最小间隔 0ms)\n[SYS] 连接 exam…' to contain '不是本步命令的结算: "***"'[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 不是本步命令的结算: "***"[39m
+[31m+ [执行] 命令队列就绪 (最小间隔 0ms)[39m
+[31m+ [SYS] 连接 example.invalid:8081 (tester)[39m
+[31m+ [SYS] 已连接[39m
+[31m+ [流程] login 激活 (入口 name: 您的英文名字：)[39m
+[31m+ [流程] login 进入步骤 name[39m
+[31m+ [工具] mud_send → {name}[39m
+[31m+ [发送] tester[39m
+[31m+ [流程] 命中后继 pass 的进入判据 → 唤醒 name = 成功 (分支 pass; 行: 此ID档案已存在，请输入密码：)[39m
+[31m+ [流程] login 进入步骤 pass[39m
+[31m+ [工具] mud_send → {pass}[39m
+[31m+ [发送] ***[39m
+[31m+ [流程] 命中后继 success 的进入判据 → 唤醒 pass = 成功 (分支 success; 行: 目前权限：(player))[39m
+[31m+ [流程] login 进入步骤 success[39m
+
+[36m [2m❯[22m tests/flow-login.spec.ts:[2m386:31[22m[39m
+    [90m384|[39m     [90m// 且命令文本先过脱敏（密码落成 ***，用户名照旧可读）。[39m
+    [90m385|[39m     [34mexpect[39m(h[33m.[39mruntime[33m.[39m[34mdiag[39m()[33m.[39mflow)[33m.[39m[34mtoMatchObject[39m({ stepId[33m:[39m [32m'success'[39m })
+    [90m386|[39m     [34mexpect[39m(h[33m.[39mlogs[33m.[39m[34mjoin[39m([32m'\n'[39m))[33m.[39m[34mtoContain[39m([32m'不是本步命令的结算: "***"'[39m)
+    [90m   |[39m                               [31m^[39m
+    [90m387|[39m     [90m// 同理：name 步发完 {name} 后，它的 GA 在 pass 步到达时也被按命令比对挡掉。[39m
+    [90m388|[39m     [34mexpect[39m(h[33m.[39mlogs[33m.[39m[34mjoin[39m([32m'\n'[39m))[33m.[39m[34mtoContain[39m([32m'不是本步命令的结算: "tester"'[39m)
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/12]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/flow-ownership.spec.ts[2m > [22m结算归属 (W7.2: 配对移交在途窗口)[2m > [22mGA 关窗 (settled=ga, outcome ok) → 推进到后继 done; 同窗口不会二次结算
+[31m[1mAssertionError[22m: expected { flowId: 'test', …(8) } to match object { flowId: 'test', stepId: 'done' }
+(7 matching properties omitted from actual)[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[2m    "flowId": "test",[22m
+[32m-   "stepId": "done",[39m
+[31m+   "stepId": "start",[39m
+[2m  }[22m
+
+[36m [2m❯[22m tests/flow-ownership.spec.ts:[2m118:26[22m[39m
+    [90m116|[39m
+    [90m117|[39m     [35mconst[39m hits [33m=[39m flow[33m.[39m[34mnoteToolResult[39m([32m'start'[39m[33m,[39m [32m'ok'[39m[33m,[39m [32m'ga'[39m)
+    [90m118|[39m     expect(flow.state()).toMatchObject({ flowId: 'test', stepId: 'done…
+    [90m   |[39m                          [31m^[39m
+    [90m119|[39m     [34mexpect[39m(hits)[33m.[39m[34mtoEqual[39m([])
+    [90m120|[39m     [90m// 上一步窗口的结局不会结算新进入的步骤 (done 在等自己的 driver 句)。[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/12]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/flow-ownership.spec.ts[2m > [22m结算归属 (W7.2: 配对移交在途窗口)[2m > [22m非 awaiting-result 阶段 (分支等待) → windowSpecFor 返回 null
+[31m[1mAssertionError[22m: expected { flowId: 'test', …(8) } to match object { flowId: 'test', stepId: 'done' }
+(7 matching properties omitted from actual)[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[2m    "flowId": "test",[22m
+[32m-   "stepId": "done",[39m
+[31m+   "stepId": "start",[39m
+[2m  }[22m
+
+[36m [2m❯[22m tests/flow-ownership.spec.ts:[2m141:26[22m[39m
+    [90m139|[39m     [34marmed[39m(flow)
+    [90m140|[39m     flow[33m.[39m[34mnoteToolResult[39m([32m'start'[39m[33m,[39m [32m'ok'[39m[33m,[39m [32m'ga'[39m)
+    [90m141|[39m     expect(flow.state()).toMatchObject({ flowId: 'test', stepId: 'done…
+    [90m   |[39m                          [31m^[39m
+    [90m142|[39m
+    [90m143|[39m     [90m// done 在等 driver 句, 没有命令在途 → 任何命令都拿不到判据。[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/12]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/preset-agent.spec.ts[2m > [22mpreset 副本与 harness standard 的一致性 (本机存在检出时启用)[2m > [22m与 standard 逐行一致, 只多一行 mud-agent
+[31m[1mAssertionError[22m: expected [ 'workflow-worker-thread', …(1) ] to deeply equal [ 'mud-agent' ][39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  [[22m
+[31m+   "workflow-worker-thread",[39m
+[2m    "mud-agent",[22m
+[2m  ][22m
+
+[36m [2m❯[22m tests/preset-agent.spec.ts:[2m321:19[22m[39m
+    [90m319|[39m
+    [90m320|[39m     [35mconst[39m extra [33m=[39m [[33m...[39mours[33m.[39m[34mkeys[39m()][33m.[39m[34mfilter[39m(id [33m=>[39m [33m![39mstandard[33m.[39m[34mhas[39m(id))
+    [90m321|[39m     [34mexpect[39m(extra)[33m.[39m[34mtoEqual[39m([[32m'mud-agent'[39m])
+    [90m   |[39m                   [31m^[39m
+    [90m322|[39m
+    [90m323|[39m     [35mconst[39m missing [33m=[39m [[33m...[39mstandard[33m.[39m[34mkeys[39m()][33m.[39m[34mfilter[39m(id [33m=>[39m [33m![39mours[33m.[39m[34mhas[39m(id))
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/12]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/runtime-watchdog.spec.ts[2m > [22mMudSessionRuntime 看门狗 (世界变化 → 重评估)[2m > [22m活跃流程期间不布防断流; 流程收束后才布防
+[31m[1mAssertionError[22m: expected { flowId: 'probe', …(8) } to be null[39m
+
+[32m- Expected:[39m
+null
+
+[31m+ Received:[39m
+{
+  "armed": [],
+  "deadline": 1789711371559,
+  "flowId": "probe",
+  "pendingActions": 0,
+  "pendingEntry": 0,
+  "phase": "awaiting-result",
+  "retries": 0,
+  "slots": {},
+  "stepId": "only",
+}
+
+[36m [2m❯[22m tests/runtime-watchdog.spec.ts:[2m211:33[22m[39m
+    [90m209|[39m     [90m// 流程收束（ok 命中、无后继 = 终态）→ 重新布防 → 窗口到点再唤醒。[39m
+    [90m210|[39m     captured[33m.[39msink[33m![39m[33m.[39m[34monLines[39m([[34mml[39m([32m'结束'[39m[33m,[39m [34m1[39m)])
+    [90m211|[39m     [34mexpect[39m(runtime[33m.[39m[34mdiag[39m()[33m.[39mflow)[33m.[39m[34mtoBeNull[39m()
+    [90m   |[39m                                 [31m^[39m
+    [90m212|[39m     vi[33m.[39m[34madvanceTimersByTime[39m([34m1_000[39m)
+    [90m213|[39m     [34mexpect[39m([34mdeadAir[39m())[33m.[39m[34mtoBeGreaterThan[39m([34m1[39m)
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/12]⎯[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯[39m[1m[41m Unhandled Errors [49m[22m[31m⎯⎯⎯⎯⎯⎯[39m
+[31m[1m
+Vitest caught 2 unhandled errors during the test run.
+This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.[22m[39m
+
+[31m⎯⎯⎯⎯[39m[1m[41m Unhandled Rejection [49m[22m[31m⎯⎯⎯⎯⎯[39m
+[31m[1mError[22m: 连续 3 次应答超时 (边界未命中), 回合失败终止[39m
+[36m [2m❯[22m InflightWindowTable.settle src/runtime/session/inflight.ts:[2m550:18[22m[39m
+    [90m548|[39m       [35mif[39m ([35mthis[39m[33m.[39mconsecutiveTimeouts [33m>=[39m limit) {
+    [90m549|[39m         [35mthis[39m[33m.[39mconsecutiveTimeouts [33m=[39m [34m0[39m
+    [90m550|[39m         w[33m.[39m[34mreject[39m([35mnew[39m [33mError[39m([32m`连续 [39m[36m${[39mlimit[36m}[39m[32m 次应答超时 (边界未命中), 回合失败终止`[39m))
+    [90m   |[39m                  [31m^[39m
+    [90m551|[39m         [35mreturn[39m
+    [90m552|[39m       }
+[90m [2m❯[22m src/runtime/session/inflight.ts:[2m606:37[22m[39m
+[90m [2m❯[22m callTimer ../../node_modules/.pnpm/vitest@4.1.11_@types+node@2_ce86b98085f7f83d1deb85a80c83342e/node_modules/vitest/dist/chunks/test.DNmyFkvJ.js:[2m1773:25[22m[39m
+[90m [2m❯[22m doTickInner ../../node_modules/.pnpm/vitest@4.1.11_@types+node@2_ce86b98085f7f83d1deb85a80c83342e/node_modules/vitest/dist/chunks/test.DNmyFkvJ.js:[2m2444:30[22m[39m
+[90m [2m❯[22m doTick ../../node_modules/.pnpm/vitest@4.1.11_@types+node@2_ce86b98085f7f83d1deb85a80c83342e/node_modules/vitest/dist/chunks/test.DNmyFkvJ.js:[2m2525:21[22m[39m
+[90m [2m❯[22m Immediate.<anonymous> ../../node_modules/.pnpm/vitest@4.1.11_@types+node@2_ce86b98085f7f83d1deb85a80c83342e/node_modules/vitest/dist/chunks/test.DNmyFkvJ.js:[2m2546:34[22m[39m
+[90m [2m❯[22m processImmediate node:internal/timers:[2m574:21[22m[39m
+
+[31mThis error originated in "[1mtests/response.spec.ts[22m" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.[39m
+[31mThe latest test that might've caused the error is "[1m超时: 放弃 resolve ABANDON_TEXT (窗口行不随结果返回); 连续 3 次 → reject[22m". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.[39m
+
+[31m⎯⎯⎯⎯[39m[1m[41m Unhandled Rejection [49m[22m[31m⎯⎯⎯⎯⎯[39m
+[31m[1mError[22m: 命令已入队但发送后未确认武装 (look)[39m
+[36m [2m❯[22m InflightWindowTable.settle src/runtime/session/inflight.ts:[2m541:16[22m[39m
+    [90m539|[39m     [35mif[39m (kind [33m===[39m [32m'error'[39m) {
+    [90m540|[39m       [35mthis[39m[33m.[39mcounters[33m.[39merror [33m+=[39m [34m1[39m
+    [90m541|[39m       w[33m.[39m[34mreject[39m([35mnew[39m [33mError[39m(errorMessage [33m??[39m [32m`窗口未结算 (连接已断开): [39m[36m${[39mw[33m.[39mcmd[36m}[39m[32m`[39m))
+    [90m   |[39m                [31m^[39m
+    [90m542|[39m       [35mreturn[39m
+    [90m543|[39m     }
+[90m [2m❯[22m src/runtime/session/inflight.ts:[2m512:14[22m[39m
+[90m [2m❯[22m callTimer ../../node_modules/.pnpm/vitest@4.1.11_@types+node@2_ce86b98085f7f83d1deb85a80c83342e/node_modules/vitest/dist/chunks/test.DNmyFkvJ.js:[2m1773:25[22m[39m
+[90m [2m❯[22m doTickInner ../../node_modules/.pnpm/vitest@4.1.11_@types+node@2_ce86b98085f7f83d1deb85a80c83342e/node_modules/vitest/dist/chunks/test.DNmyFkvJ.js:[2m2444:30[22m[39m
+[90m [2m❯[22m doTick ../../node_modules/.pnpm/vitest@4.1.11_@types+node@2_ce86b98085f7f83d1deb85a80c83342e/node_modules/vitest/dist/chunks/test.DNmyFkvJ.js:[2m2525:21[22m[39m
+[90m [2m❯[22m Immediate.<anonymous> ../../node_modules/.pnpm/vitest@4.1.11_@types+node@2_ce86b98085f7f83d1deb85a80c83342e/node_modules/vitest/dist/chunks/test.DNmyFkvJ.js:[2m2546:34[22m[39m
+[90m [2m❯[22m processImmediate node:internal/timers:[2m574:21[22m[39m
+
+[31mThis error originated in "[1mtests/response.spec.ts[22m" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.[39m
+[31mThe latest test that might've caused the error is "[1m发送守卫: confirmSent 迟迟不调 → defaultTimeoutMs 后 error 结算 (防 sending 死锁)[22m". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.[39m
+[31m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[39m
+
+
+[2m Test Files [22m [1m[31m5 failed[39m[22m[2m | [22m[1m[32m25 passed[39m[22m[90m (30)[39m
+[2m      Tests [22m [1m[31m12 failed[39m[22m[2m | [22m[1m[32m323 passed[39m[22m[90m (335)[39m
+[2m     Errors [22m [1m[31m2 errors[39m[22m
+[2m   Start at [22m 14:02:17
+[2m   Duration [22m 3.53s[2m (transform 3.05s, setup 0ms, import 7.03s, tests 2.80s, environment 6ms)[22m
+

@@ -18,7 +18,7 @@ export interface FlowActionHit {
   tool: { name: string; args: Record<string, unknown> }
   /** 触发本动作的行（原文；帧内到达时用于动作投递的文本）。 */
   text: string
-  /** 触发行的 abs（非帧路径下与 consumeTo 对齐）。 */
+  /** 触发行 abs（非帧路径下与 consumeTo 对齐）。 */
   anchorAbs: number
   /** 本动作是否来自命令应答帧（帧行不进待决缓冲 → 需要动作投递）。 */
   framed: boolean
@@ -26,8 +26,22 @@ export interface FlowActionHit {
   awaitExternal?: readonly string[]
 }
 
-/** 桥结算结果（`CommandResponseController` 的结算种类）。 */
-export type FlowSettleKind = 'ga' | 'eor' | 'until' | 'timeout' | 'abort' | 'interrupted' | 'error'
+/**
+ * 流程步的**在途窗口声明覆盖**（W7.2 §4; `FlowRuntime.windowSpecFor` 返回）。
+ *
+ * 单步的命令-应答配对**移交在途窗口**（取代命令-应答桥）: 流程步动作 tool 在途时,
+ * 本步 ok/fail 判据随窗口注册（动态）, 命中经 `noteToolResult` 判定推进。
+ */
+export interface FlowWindowSpec {
+  /** 行判据（本步 ok/fail 首个行判据经 `lineCriteriaPattern` 编译; 无行判据 = 无）。 */
+  criteria?: { ok?: RegExp; fail?: RegExp }
+  /** N-GA 兜底关窗（step.boundary 覆盖工具内置声明; 缺省 = 命令条数）。 */
+  gaCount?: number
+  /** 关窗结局覆盖（ok/fail 含 ga 判据时声明; 缺省: 有判据 = fail, 无 = ok）。 */
+  gaOutcome?: 'ok' | 'fail'
+  /** 放弃计时覆盖（step.timeoutMs 覆盖工具内置）。 */
+  timeoutMs?: number
+}
 
 /** 一条已布防的判据。 */
 export interface ArmedMatch {

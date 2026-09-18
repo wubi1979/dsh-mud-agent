@@ -18,12 +18,13 @@
  *     行流缓冲 + 武装标记切帧 + 五站消费链, GA/EOR 八成 + 武装判据十成切帧, 内存阀兜底;
  *     300ms 静默降级为网络装配粒度, 非消费边界)
  *     → 帧提交消费链 (§8.2, 固定次序单遍): ① 状态折叠落库 → ② 规则触发 (动作/direct-exec)
- *       → ③ 事务结算 (B 桥, resolve 等待者) → ④ 流程判据 (唤醒/打断/排队) → ⑤ 投递视图
+ *       → ③ 在途结算 (在途窗口表, W7.2: 帧并集 + GA/EOR 关窗 + win- 判据标记路由)
+ *       → ④ 流程判据 (唤醒/打断/排队) → ⑤ 投递视图
  *        有命中 → 原文投递消息 (原文 + 动作, lane=t1); 无命中 → 批次 (lane=t2)
  *     → 该会话 agent.followup(mud-owned 消息) → 官方 loop
  *     → agent/request (agent 作用域 + prepend): 仅 lane=t1 拦截为 mud-t1
  *     → L4 T1 动作渲染器按动作请求渲染 tool-call → 工具调用 (mud_*)
- *     → sendAndAwait 挂起 → 帧并集结算 (B 桥) → tool result 续步
+ *     → 在途窗口注册挂起 → 窗口结算 (判据命中 / N-GA 关窗) → tool result 续步
  *
  * 单面 (web face) 架构: 本包是统一 host 引擎, 唯一外壳为浏览器 WebUI
  *   (mud-webui)。终端/日志/决策帧走独立 `/mud/ws` 高吞吐通道 (条目自带

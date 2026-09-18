@@ -18,10 +18,10 @@
  *     发 `IAC DONT COMPRESS2`、把未消费尾部按明文重放 — 最多显示乱码,
  *     连接继续可用, 不再自损坏点起静默黑屏。
  *
- * 边界事件 (R4, 命令-应答桥层依赖): GA(249) / EOR(239) 是协议级"一段文字
+ * 边界事件 (R4, 在途窗口层依赖): GA(249) / EOR(239) 是协议级"一段文字
  * 发送完毕"标志 (pkuxkx 每条命令回复末尾 1 个 GA, 紧随提示符之后)。telnet
- * 层把它们作为显式 boundary 事件抛出 (专供 CommandResponseController 结算
- * 应答帧); 同时保留 GA 刷出逻辑 (无换行尾行立即刷成完整行)。
+ * 层把它们作为显式 boundary 事件抛出 (专供在途窗口表 N-GA 计数关窗);
+ * 同时保留 GA 刷出逻辑 (无换行尾行立即刷成完整行)。
  *
  * 协议加固 (R2, 对齐 Mudlet MAX_TELNET_SUBNEGOTIATION_LENGTH): 子协商
  * 载荷超过上限时进入丢弃模式 — 内存有界、丢弃到下一个 IAC SE 后自愈,
@@ -280,7 +280,7 @@ export class TelnetClient extends EventEmitter {
         // R4 边界标志: GA(249) / EOR(239) = "一段完整文字已发送完毕"。pkuxkx
         // 每条命令回复末尾 1 个 GA、登录提示后亦有 (2026-09-10 探针抓包);
         // EOR 为 RFC 885 等价标志 (Mudlet 同当提交边界)。作为显式 boundary
-        // 事件抛出 (CommandResponseController 据此结算应答帧); 并把滞留的
+        // 事件抛出 (在途窗口表据此做 N-GA 计数关窗); 并把滞留的
         // 无换行尾行立即刷成完整行 (提示符行属于帧内容, 不丢行)。
         // R2-7: 用 flushLine 而非 flush — 跨 GA/静默的延续颜色不丢
         // (样式游标只在断线等会话边界复位)。

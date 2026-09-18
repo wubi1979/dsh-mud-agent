@@ -11,13 +11,13 @@
  *        → 帧提交 (commit) → 五站链 (站序严格不变 — 禁止重排):
  *            ① state 折叠 → state 落库
  *            ② event 规则 → direct-exec 直发 / park 待人工 / admit 打断准入
- *            ③ 事务结算   → 桥 (帧并集 + GA/EOR/until 标记路由)
+ *            ③ 在途结算   → 在途窗口表 (帧并集 + GA/EOR 关窗 + win- 判据标记路由)
  *            ④ 流程判据   → 唤醒/打断/排队
  *            ⑤ 残余记账   → 投递视图 (批次/recall) + 投递节拍 (settle)
  * ```
  *
- * **帧归属取样契约**: `inFrame` ("提交时点是否在事务窗口内", §8.3 帧并集判据) 必须
- * 在站③之前取样 —— GA/EOR 结算会翻转 `controller.inFlight()`; 站④使用③前取样值。
+ * **帧归属取样契约**: `inFrame` ("提交时点是否在在途窗口内", §2.3 帧并集判据) 必须
+ * 在站③之前取样 —— GA/EOR 关窗结算会翻转 `windows.hasOpen()`; 站④使用③前取样值。
  *
  * 不变量: I5 每行恰被认领一次 (折叠/直发/抓取/投递); I6 一个结算点 ≤ 一条投递消息
  * (standalone 先于批次); I7 多行状态机 (engine 求值器); I8 计时器全归本类 (settle
@@ -39,7 +39,7 @@ import type { MudLine } from '../../services/network/ansi.ts'
 import { textOfLines } from '../../services/network/ansi.ts'
 import { PerceptionEngine, type EngineHit } from '../../perceive/engine.ts'
 import { splitDelivery } from '../../perceive/split.ts'
-import { CommandResponseController, type ReplySettle } from './bridge.ts'
+import { InflightWindowTable, type ReplySettle } from './inflight.ts'
 import { DeliveryChannel } from './delivery-channel.ts'
 import { CommandQueue } from './queue.ts'
 import { StateService } from './state-track.ts'
@@ -83,7 +83,7 @@ export interface MudFrame {
 
 /** 武装标记声明 (§8.1 判据)。 */
 export interface ArmedMarkerSpec {
-  /** 标记 id (调用方提供, 用于对账与注销; 如 `tx-r12` / 流程步判据 id)。 */
+  /** 标记 id (调用方提供, 用于对账与注销; 如 `win-3:ok` / 流程步判据 id)。 */
   id: string
   /** 判据: 锚定整行正则 (逐行测, P1-2 语义)。 */
   pattern: string | RegExp
@@ -278,8 +278,8 @@ export interface AdjudicatorDeps {
   config: MudRuntimeConfig
   /** L1 行级感知引擎 (多行状态机宿主; 站①②求值器)。 */
   engine: PerceptionEngine
-  /** 命令-应答桥 (站③事务结算; W7.2 由在途窗口取代)。 */
-  controller: CommandResponseController
+  /** 在途窗口表 (站③在途结算; W7.2 取代命令-应答桥)。 */
+  windows: InflightWindowTable
   /** 流程运行时 (站④判据求值 + 排队/打断判定)。 */
   flow: FlowRuntime
   /** 投递通道 (defer 槽/账本/T2 时刻; 分投器 W7.3 前的机制层)。 */
@@ -343,8 +343,6 @@ export class SessionAdjudicator {
   private holdTimer: ReturnType<typeof setTimeout> | null = null
   /** §8.5: 当前由流程布防同步来的武装标记 id (flow-arm:*; 全量替换同步)。 */
   private readonly flowMarkerIds = new Set<string>()
-  /** §8.3: 在途 until 事务的武装标记 id (tx-*; 帧标记路由 —— 只有它们结算桥)。 */
-  private readonly untilMarkerIds = new Set<string>()
   private readonly recallLines: { text: string; abs: number }[] = []
   /** 已投递给模型的最大行 abs (交付水位): recall 只回看其后的行, 保证 session 不重复。 */
   private deliveredAbs = -1
@@ -390,15 +388,13 @@ export class SessionAdjudicator {
     }
   }
 
-  /** 桥 until 武装标记注册 (confirmSent 武装后)。 */
-  armUntilMarker(markerId: string, pattern: string | RegExp): void {
-    this.untilMarkerIds.add(markerId)
+  /** win- 武装标记注册 (窗口 confirmSent 武装后; §2 判据武装)。 */
+  armWindowMarker(markerId: string, pattern: string | RegExp): void {
     this.splitter.arm({ id: markerId, pattern, once: true })
   }
 
-  /** 桥结算注销 until 标记 (任何结算都注销, timeout/abort/error 后不能留脏标记)。 */
-  disarmUntilMarker(markerId: string): void {
-    this.untilMarkerIds.delete(markerId)
+  /** 窗口结算注销 win- 标记 (任何结算都注销, timeout/abort/error 后不能留脏标记)。 */
+  disarmWindowMarker(markerId: string): void {
     this.splitter.disarm(markerId)
   }
 
@@ -417,9 +413,9 @@ export class SessionAdjudicator {
    */
   private adjudicate(frame: MudFrame): void {
     const lines = frame.lines
-    // 帧归属取样 (§8.3 帧并集判据): "提交时点是否在事务窗口内"。必须在 ③ 之前 ——
-    // GA/EOR 结算会翻转 inFlight。
-    const inFrame = this.deps.controller.inFlight()
+    // 帧归属取样 (§2.3 帧并集判据): "提交时点是否在在途窗口内"。必须在 ③ 之前 ——
+    // GA/EOR 关窗结算会翻转 hasOpen()。
+    const inFrame = this.deps.windows.hasOpen()
     // ① 状态折叠 → world 落库。
     const result = lines.length > 0 ? this.deps.engine.feed(lines) : null
     if (result !== null) {
@@ -434,13 +430,13 @@ export class SessionAdjudicator {
     if (result !== null && result.directHits.length > 0) this.runDirectHits(result.directHits)
     const parkedRuleHits = result !== null ? this.parkExternalHits(result.hits) : []
     const readyRuleHits = this.admitRuleHits(parkedRuleHits, lines, inFrame)
-    // ③ 事务结算 → resolve 等待者: 行先入桥 (响应 = 事务窗口期间提交帧的并集, §8.3),
-    //    再按帧标记路由结算 —— GA/EOR 主边界; armed 帧只有**在途 until 事务**的标记
-    //    (tx-*) 才结算桥, 流程/打断标记 (flow-arm:*/rule-int:*) 只负责提交帧走链。
-    this.deps.controller.feedLines(lines)
-    if (frame.marker === 'ga' || frame.marker === 'eor') this.deps.controller.boundaryReceived(frame.marker)
-    else if (frame.marker === 'armed' && frame.markerId !== undefined && this.untilMarkerIds.has(frame.markerId)) {
-      this.deps.controller.settleUntilFromSplitter(frame.markerId)
+    // ③ 在途结算 (W7.2): 行先入窗口表 (响应 = 在途窗口期间提交帧的并集, §2.3), 再按
+    //    帧标记路由结算 —— GA/EOR 主边界关窗; armed 帧只有窗口判据标记 (win-*) 才结算
+    //    窗口, 流程/打断标记 (flow-arm:*/rule-int:*) 只负责提交帧走链 (表内自解析 id)。
+    this.deps.windows.feedLines(lines)
+    if (frame.marker === 'ga' || frame.marker === 'eor') this.deps.windows.boundary(frame.marker)
+    else if (frame.marker === 'armed' && frame.markerId !== undefined) {
+      this.deps.windows.settleCriteria(frame.markerId, frame.lines.at(-1)?.text)
     }
     // ④ 流程判据 → 唤醒/打断/排队 (与静态规则同帧行; inFrame 用 ③ 前取样值)。
     const flowHits = lines.length > 0 ? this.deps.flow.offer(lines, inFrame) : []
@@ -457,7 +453,7 @@ export class SessionAdjudicator {
       }
     }
     if (inFrame) {
-      // 帧内 (I5/I6): 帧行不进待决 → 走桥 (工具应答帧并集), **不进投递**; 命中不丢:
+      // 帧内 (I5/I6): 帧行不进待决 → 走在途窗口 (工具应答帧并集), **不进投递**; 命中不丢:
       // 当场**动作投递** (工具应答与游戏输出同源进 L1, 见 §4)。
       if (readyRuleHits.length > 0) {
         this.deliverStandalone(
@@ -582,7 +578,7 @@ export class SessionAdjudicator {
    * 规则动作的**打断准入**: 有流程实例挂起时, 声明了 `interrupts` 的规则参与打断/排队。
    *
    * - 未声明 `interrupts`（缺省）: 既不打断也不排队 —— 命中的动作照常投递
-   *   （`direct` 动作本来就直发；需要桥的动作在流程挂起期由闸门拒绝并留痕）。
+   *   （`direct` 动作本来就直发；发命令工具的应答等待在各自在途窗口内, 与流程实例无关）。
    * - 档位够（`interrupts > flow.priority`）: **打断** —— 挂起的工具调用当场结算为
    *   `interrupted`（不悬挂、不静默）、流程复位（只留入口）、流程声明的 `onInterrupt`
    *   直发、本规则动作照常投递（走官方工具路径）。
@@ -608,10 +604,11 @@ export class SessionAdjudicator {
       })
       if (outcome.kind === 'queued') continue
       if (outcome.kind === 'interrupted') {
-        // ① onInterrupt 直发（actor system, 不入桥）② 挂起的应答请求当场结算为 interrupted。
+        // ① 在途窗口当场结算为 interrupted (gate 随结算放行) ② onInterrupt 直发
+        // (actor system; §2.8 打断时序: 先结算释放 gate, halt 直发不被直发延后压住)。
+        const settled = this.deps.windows.interrupt(`[流程打断] ${hit.ruleId} (interrupts=${interrupts})`)
         for (const cmd of outcome.onInterrupt) this.deps.queue.send(cmd, { actor: 'system' })
-        const settled = this.deps.controller.interruptInFlight(`[流程打断] ${hit.ruleId} (interrupts=${interrupts})`)
-        this.deps.debug('perception', `[流程] 打断已结算挂起请求 ${settled} 条`)
+        this.deps.debug('perception', `[流程] 打断已结算在途窗口 ${settled} 个`)
       }
       admitted.push(hit)
     }
@@ -647,7 +644,7 @@ export class SessionAdjudicator {
         }
         // ask-human 已把值带回 (码在 externalValues): 动作照常投, 但流程机停在
         // `awaiting-human` (enterStep 对 awaitExternal 步一律先置该阶段) → 就地恢复,
-        // 否则桥闸门会拒发本动作声明的命令 (I12)。
+        // 否则本步动作声明的命令发不出、在途窗口等不到结果 (§19.3)。
         if ((hit.awaitExternal ?? []).length > 0) this.deps.flow.resumeHuman()
         this.pendingActions.push(request)
         if (hit.anchorAbs > this.consumeTo) this.consumeTo = hit.anchorAbs
@@ -689,14 +686,6 @@ export class SessionAdjudicator {
     for (const request of queued) {
       this.deliverStandalone(request.text, [actionOf(request.ruleId, request.action)])
     }
-  }
-
-  /** 桥结算通知 (§19.3): 结算驱动的流程判定 + 排队动作出队。 */
-  onBridgeSettle(kind: ReplySettle, text: string, cmds: readonly string[]): void {
-    const hits = this.deps.flow.noteSettle(kind, text, cmds)
-    if (hits.length > 0) this.queueFlowActions(hits)
-    // 结算可能让流程到达终态（如终态步的 GA）→ 排队的动作此时出队投递。
-    this.drainFlowQueue()
   }
 
   // ── 站⑤: 投递记账与节拍 ───────────────────────────────
@@ -947,13 +936,14 @@ export class SessionAdjudicator {
   // ── 工具结果 / 回合收束 (投递通道判定面) ────────────────
 
   /**
-   * **工具结果 → 流程机**（官方工具结果喂回流程；§19.1 的 `tool` 判据）。
+   * **工具结果 → 流程机**（W7.2 §4: 在途窗口结算与纯工具判据的统一入口）。
    *
    * 只有本插件确定性 call-id（`mud-<delivery>-<index>`）能定位到投递与动作，
    * 进而定位到流程步骤（动作 `ruleId` = `flow:<flowId>/<stepId>`）；T2 自己发起的调用
-   * 解析失败 ⇒ 什么都不做。
+   * 解析失败 ⇒ 什么都不做。结算方式/结局/命中行由工具结果携带（窗口结算在
+   * `WindowResult` 上，随工具返回透传）。
    */
-  noteToolResult(callId: string, ok: boolean): void {
+  noteToolResult(callId: string, outcome: 'ok' | 'fail' | 'error', settled?: ReplySettle, hitText?: string): void {
     const parsed = parseDeliveryCallId(callId)
     if (parsed === null) return
     // 记账：该投递的一条动作已收到结果（无论成败）。减到 0 = 收齐，交给下一次
@@ -964,7 +954,7 @@ export class SessionAdjudicator {
     if (ruleId === undefined || !ruleId.startsWith('flow:')) return
     const stepId = ruleId.slice('flow:'.length).split('/')[1]
     if (stepId === undefined || stepId === '') return
-    const hits = this.deps.flow.noteToolResult(stepId, ok)
+    const hits = this.deps.flow.noteToolResult(stepId, outcome, settled, hitText)
     if (hits.length > 0) {
       this.queueFlowActions(hits)
       // 工具结果驱动的 lined 动作没有帧链 ⑤ 兜底 (待决缓冲不会再有新行): 无行可带时
@@ -1004,16 +994,16 @@ export class SessionAdjudicator {
   // ── 生命周期 (由壳在连接事件/释放时驱动) ────────────────
 
   /**
-   * 重连复位 (socket connect): 行流缓冲与武装标记随连接作废 (until 标记集清空,
-   * 打断规则重挂); 投递记账 (待决/动作/暂存/消费边界/交付水位/回看缓冲) 一并复位;
-   * hold 计时清除。**行号 (abs) 由每连接一个解析器分配 → 重连后从 0 起**: 交付水位
-   * 与回看缓冲必须一起清, 否则新行 (abs 小) 会被旧水位全部滤掉 (recall 永远为空)。
+   * 重连复位 (socket connect): 行流缓冲与武装标记随连接作废 (win- 标记由窗口表
+   * settle 的 onDisarm 同步注销, 打断规则重挂); 投递记账 (待决/动作/暂存/消费边界/
+   * 交付水位/回看缓冲) 一并复位; hold 计时清除。**行号 (abs) 由每连接一个解析器
+   * 分配 → 重连后从 0 起**: 交付水位与回看缓冲必须一起清, 否则新行 (abs 小) 会被
+   * 旧水位全部滤掉 (recall 永远为空)。
    */
   resetForReconnect(): void {
     this.splitter.reset()
-    // 分帧器标记随 reset 全清: until 标记集作废; 打断规则重挂 (流程武装布防由壳在
-    // 本调用之后 flow.syncArming() 重挂)。
-    this.untilMarkerIds.clear()
+    // 分帧器标记随 reset 全清 (在途窗口表由壳先调 windows.reset()); 打断规则重挂
+    // (流程武装布防由壳在本调用之后 flow.syncArming() 重挂)。
     this.armInterruptRules()
     this.pending.length = 0
     this.pendingActions = []

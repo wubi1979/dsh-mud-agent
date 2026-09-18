@@ -31,6 +31,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { vi } from 'vitest'
 import { TriggerLlmAdapter } from '../src/agents/t1.ts'
 import type { MudSessionRuntime } from '../src/runtime/session/session.ts'
+import type { ReplySettle } from '../src/runtime/session/inflight.ts'
 
 /** 一条轨迹记录（诊断/断言用：turn/step/认领/请求/工具/收束）。 */
 export interface SimTrace {
@@ -271,6 +272,10 @@ export class LoopSim {
     let result: Record<string, unknown>
     try {
       result = await tool.execute(args, {}) as Record<string, unknown>
+      // 流程判定要在"工具仍算在途"时做（W7.2: `noteToolResult` 驱动单步推进 —— 生产
+      // 包装器 `runWithDeliveryChannel` 的接线, 缺了它流程步永远等不到工具结果）。
+      const r = result as { ok?: boolean; outcome?: 'ok' | 'fail' | 'error'; settled?: ReplySettle; hitText?: string }
+      this.runtime.noteToolResult(call.id, r.outcome ?? (r.ok === true ? 'ok' : 'error'), r.settled, r.hitText)
     } finally {
       this.runtime.endToolCall()
     }

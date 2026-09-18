@@ -14,6 +14,10 @@
  *   ok   是否成功入队
  *   note 结果说明 (工具层校验失败时的拒绝原因)
  *   cmd  实际发出的命令 (空 = 未发出)
+ * 发命令类工具 (W7.2 在途窗口, §17 W7.2) 另带结算字段:
+ *   settled 结算方式 (ga/until/timeout/abort/interrupted/error)
+ *   outcome 结算结局 (ok/fail/error; 流程机单步推进判据)
+ *   hitText 判据命中行原文 (until 结算; 流程 {lastFail} 槽源)
  * @module @deepseek-ai/dsh-mud-core/agents/tools
  */
 
@@ -24,7 +28,7 @@ import {
 } from '../shared/commands.ts'
 import { resolveCaptchaImage } from '../services/network/captcha.ts'
 import { MOVE_ALIASES, MOVE_DIRS, STATUS_CMDS } from '../shared/game.ts'
-import type { MudReply, ReplyOptions, ReplySettle } from '../runtime/session/bridge.ts'
+import type { ReplySettle, WindowCriteria, WindowRequest, WindowResult } from '../runtime/session/inflight.ts'
 import type { SessionCredentials } from '../runtime/credentials.ts'
 import { applyPatch, worldSnapshot, type WorldModel } from '../shared/world.ts'
 
@@ -33,9 +37,13 @@ export interface MudToolResult {
   ok: boolean
   note: string
   cmd: string
-  /** 桥结算方式 (命令-应答桥返回结果的工具设置; 见 OUT_RENDER — 桥超时/中止
+  /** 在途窗口结算方式 (发命令工具; 见 OUT_RENDER — 窗口超时/中止
    *  是"成功结果携带错误文本", 与工具层校验拒绝区分, 不加 "工具拒绝:" 前缀)。 */
   settled?: ReplySettle
+  /** 结算结局 (窗口判据/关窗; ok/fail/error; 未结算不带 — 流程机单步推进判据)。 */
+  outcome?: 'ok' | 'fail' | 'error'
+  /** 判据命中行原文 (until 结算; 流程 {lastFail} 槽源)。 */
+  hitText?: string
 }
 
 // ── 会话登录凭据 (明文最小暴露面) ──────────────
@@ -79,8 +87,9 @@ export function interpolateExternal(
 /**
  * 一条"活动"声明 (`doc/ARCHITECTURE.md` §8 活动表): 慢命令的完成句锚定 + 声明超时。
  *
- * 长程命令 (打坐/静坐/睡觉 …) 受理后长时间无 GA 也无 prompt, 只有完成句; 桥按 GA 主
- * 边界结算的话会一直等声明超时。活动表把这些**数据化**: 命令首词 → 完成句正则 + 超时,
+ * 长程命令 (打坐/静坐/睡觉 …) 受理后长时间无 GA 也无 prompt, 只有完成句; 窗口按 GA
+ * 主边界关窗的话会一直等超时。活动表把这些**数据化**: 命令首词 → 完成句正则 + 超时
+ * (mud_send 未显式声明判据时自动附为窗口 ok 判据),
  * 部署可用 `Config.activityTable` 整体覆盖 (改一条命令的完成句不再改代码)。
  */
 export interface ActivityEntry {
@@ -90,7 +99,7 @@ export interface ActivityEntry {
   commands: readonly string[]
   /** 完成句锚定正则 (到达即结算; 跨帧累积)。 */
   until: string
-  /** 声明超时毫秒 (缺省由桥的 `declaredTimeoutMs` 决定)。 */
+  /** 声明超时毫秒 (缺省由窗口的 `declaredTimeoutMs` (120s) 决定)。 */
   timeoutMs?: number
   /** 一句说明 (抓包依据, 供维护者)。 */
   note?: string
@@ -137,11 +146,11 @@ export function activityFor(
 
 /**
  * 输出 schema (所有工具一致)。
- * `settled` 可选: 命令-应答桥的结算语义 (ga/eor/timeout/abort…), 见
- * `doc/ARCHITECTURE.md` §8。工具层校验拒绝 (未连接/危险命令) 不带该字段 —
+ * `settled` 可选: 在途窗口的结算语义 (ga/until/timeout/abort…), 见
+ * `doc/PLAN.md` §2。工具层校验拒绝 (未连接/危险命令) 不带该字段 —
  * 缺省即"未结算"。声明为 optional 是必需的: `additionalProperties: false`
  * 下漏声明会让**成功**的调用报 `value.settled is not a declared property`
- * (工具实际已执行, 却回给模型一条失败帧)。
+ * (工具实际已执行, 却回给模型一条失败帧)。`outcome`/`hitText` 同理。
  */
 export const OUT_SCHEMA = {
   type: 'object',
@@ -151,6 +160,8 @@ export const OUT_SCHEMA = {
     note: { type: 'string', required: true },
     cmd: { type: 'string', required: true },
     settled: { type: 'string' },
+    outcome: { type: 'string' },
+    hitText: { type: 'string' },
   },
 } as const satisfies ValueSchemaSpec
 
@@ -159,7 +170,7 @@ export type MudOutputSchema = typeof OUT_SCHEMA
 
 const OUT_RENDER = (_args: unknown, value: MudToolResult): ContentBlock[] => [{
   type: 'text',
-  // 桥结算结果 (timeout/abort) 的 note 即应答帧文本: 它属于"桥的失败语义", 不是
+  // 窗口结算结果 (timeout/abort) 的 note 即应答帧文本: 它属于"窗口的失败语义", 不是
   // 工具层校验拒绝 —— 加 "工具拒绝:" 前缀会污染模型可见文本且混淆归因。
   // 仅工具层校验拒绝 (settled 未定义) 加前缀。
   text: value.ok || value.settled ? value.note : `工具拒绝: ${value.note}`,
@@ -189,9 +200,9 @@ export interface MudTool {
     render: (args: unknown, value: MudToolResult) => ContentBlock[]
   }
   /**
-   * 同步或异步 (装配 sendAndAwait 走命令-应答桥时为异步)。
+   * 同步或异步 (装配 registerWindow 走在途窗口时为异步)。
    * @param args 模型/规则给的参数。
-   * @param opts 调用方上下文 (`signal` = 回合取消信号, 转发给桥; 见 §8)。
+   * @param opts 调用方上下文 (`signal` = 回合取消信号, 转发给在途窗口; 见 §2)。
    */
   execute: (args: Record<string, unknown>, opts?: MudToolCallOptions) => MudToolResult | Promise<MudToolResult>
 }
@@ -199,12 +210,12 @@ export interface MudTool {
 /** 一次工具调用的调用方上下文 (来自官方 `ToolRunContext`)。 */
 export interface MudToolCallOptions {
   /**
-   * 回合取消信号: 转发给命令-应答桥 (`ReplyOptions.signal`)。回合被取消/超时时,
-   * 在途等待优雅结算为 `settled='abort'` 而不是干等超时 (§8)。
+   * 回合取消信号: 转发给在途窗口 (`WindowRequest.signal`)。回合被取消/超时时,
+   * 在途等待优雅结算为 `settled='abort'` 而不是干等超时 (§2.1)。
    */
   signal?: AbortSignal
   /**
-   * 发完即走 (不等应答): `mud_send` 只把命令**入队**, 不武装应答桥。
+   * 发完即走 (不等应答): `mud_send` 只把命令**入队**, 不注册在途窗口。
    *
    * 用于**直接执行类动作** (`ActionSpec.direct`): 运行时替规则执行命令时没有"回合"
    * 可以承载应答, 等应答会把回复文本变成无主的帧内容 (谁都不需要它)。
@@ -244,9 +255,12 @@ export type MudTools = Record<string, MudTool>
 /**
  * 构建工具集。
  * @param opts.send (cmd) => void 命令入队 (宿主接 CommandQueue; 未装配
- *   sendAndAwait 时的兜底路径)。
- * @param opts.sendAndAwait (cmd, opts) => Promise<MudReply> 命令-应答桥
- *   (`doc/ARCHITECTURE.md` §8): 挂起等待真实应答, note = 应答文本。
+ *   registerWindow 时的兜底直发路径)。
+ * @param opts.registerWindow (spec) => Promise<WindowResult> 在途窗口
+ *   (`doc/PLAN.md` §2, W7.2 取代命令-应答桥): 注册窗口挂起等待结算, note = 窗口行
+ *   文本 (T1/T2 同形, 查询工具直接拿到应答内容)。
+ * @param opts.humanWindow 人工等待诊断通道 (mud_captcha 挂起段 begin/end 包裹;
+ *   进在途窗口表 diag 的人工等待条目, 仅诊断不参与 gate)。
  * @param opts.log  (text) => void 活动日志 (WebUI 决策通道)。
  * @param opts.recall (n) => string[] **尚未投递**的最近 n 行游戏输出 (mud_recall/mud_state)。
  * @param opts.flowControl 触发器组开关/状态 (mud_flow_*; M4 落地前缺省不可用)。
@@ -254,7 +268,8 @@ export type MudTools = Record<string, MudTool>
  */
 export function buildMudTools({
   send = () => {},
-  sendAndAwait,
+  registerWindow,
+  humanWindow,
   log = () => {},
   recall = () => [],
   flowControl,
@@ -268,7 +283,10 @@ export function buildMudTools({
   activity = DEFAULT_ACTIVITY_TABLE,
 }: {
   send?: (cmd: string) => void
-  sendAndAwait?: (cmd: string | string[], opts?: ReplyOptions) => Promise<MudReply>
+  /** 在途窗口注册 (W7.2): 发命令工具统一走此路径 await 结算; 缺省 = 兜底直发。 */
+  registerWindow?: (spec: WindowRequest) => Promise<WindowResult>
+  /** 人工等待诊断 (mud_captcha 挂起段 begin/end 包裹; 缺省不记)。 */
+  humanWindow?: { begin(label: string): void; end(): void }
   log?: (text: string) => void
   recall?: (count: number) => string[]
   flowControl?: {
@@ -312,6 +330,21 @@ export function buildMudTools({
       ? { ok: false, note: '未连接游戏服务器, 命令未发送 (请先在游戏页点「连接」)', cmd: '' }
       : null
   )
+  /**
+   * 发命令类工具的统一窗口路径 (§2.4 T1/T2 同形): 注册窗口 → await 结算 → 结果透传。
+   * WindowResult 已含全部结算语义映射 (timeout = ABANDON_TEXT 放弃文案), 工具层直取。
+   */
+  const viaWindow = async (spec: WindowRequest): Promise<MudToolResult> => {
+    const r = await registerWindow!(spec)
+    return {
+      ok: r.ok,
+      note: r.text,
+      cmd: r.cmd,
+      settled: r.settled,
+      ...(r.outcome !== undefined ? { outcome: r.outcome } : {}),
+      ...(r.hitText !== undefined ? { hitText: r.hitText } : {}),
+    }
+  }
   return {
     /** 移动: 只接受合法方向 (全名或别名), 非法方向拒绝。 */
     mud_move: {
@@ -332,8 +365,9 @@ export function buildMudTools({
         const refused = offline()
         if (refused !== null) return refused
         log(`[工具] mud_move → ${dir}`)
-        if (sendAndAwait) {
-          return sendAndAwait(dir, { ...(opts?.signal === undefined ? {} : { signal: opts.signal }) }).then(reply => ({ ok: reply.ok, note: reply.text, cmd: dir, settled: reply.settled }))
+        if (registerWindow) {
+          // 窗口型 (§2.3): 无判据, 1 GA 关窗 = 成功, 窗口内行 = 工具结果 (T1/T2 同形)。
+          return viaWindow({ cmd: dir, gaCount: 1, label: 'mud_move', ...(opts?.signal !== undefined ? { signal: opts.signal } : {}) })
         }
         send(dir)
         return { ok: true, note: `向 ${dir} 移动`, cmd: dir }
@@ -360,8 +394,8 @@ export function buildMudTools({
         const refused = offline()
         if (refused !== null) return refused
         log(`[工具] mud_look → ${cmd}`)
-        if (sendAndAwait) {
-          return sendAndAwait(cmd, { ...(opts?.signal === undefined ? {} : { signal: opts.signal }) }).then(reply => ({ ok: reply.ok, note: reply.text, cmd, settled: reply.settled }))
+        if (registerWindow) {
+          return viaWindow({ cmd, gaCount: 1, label: 'mud_look', ...(opts?.signal !== undefined ? { signal: opts.signal } : {}) })
         }
         send(cmd)
         return { ok: true, note: cmd, cmd }
@@ -389,8 +423,8 @@ export function buildMudTools({
         const refused = offline()
         if (refused !== null) return refused
         log(`[工具] mud_status → ${cmd}`)
-        if (sendAndAwait) {
-          return sendAndAwait(cmd, { ...(opts?.signal === undefined ? {} : { signal: opts.signal }) }).then(reply => ({ ok: reply.ok, note: reply.text, cmd, settled: reply.settled }))
+        if (registerWindow) {
+          return viaWindow({ cmd, gaCount: 1, label: 'mud_status', ...(opts?.signal !== undefined ? { signal: opts.signal } : {}) })
         }
         send(cmd)
         return { ok: true, note: cmd, cmd }
@@ -418,7 +452,7 @@ export function buildMudTools({
         until: {
           type: 'object',
           additionalProperties: true,
-          description: '可选: 声明应答结算边界 (规则动作使用)。当声明的正则命中应答文本时结算 (跨帧累积; 慢命令如 dz/fullme), 缺省 GA/EOR 主边界结算 (八成)',
+          description: '可选: 声明应答结算判据 (规则动作使用)。声明的正则命中应答文本即结算 (跨帧累积; 慢命令如 dz/fullme), 缺省 GA 主边界关窗结算',
         },
       },
       output: { schema: OUT_SCHEMA, render: OUT_RENDER },
@@ -429,22 +463,23 @@ export function buildMudTools({
         )
         const refused = offline()
         if (refused !== null) return refused
-        // 声明边界 (规则动作可传): args.until = { regex, timeout? }。
+        // 声明判据 (规则动作可传): args.until = { regex, timeout? } → ok 判据 (命中 =
+        // 成功结算, §2.3 判据型)。非法正则回退无判据 (窗口型, GA 关窗)。
         const untilRaw = args.until as { regex?: unknown; timeout?: unknown } | undefined
-        let replyOpts: ReplyOptions | undefined =
-          untilRaw && typeof untilRaw.regex === 'string'
-            ? (typeof untilRaw.timeout === 'number'
-              ? { until: { regex: untilRaw.regex, timeout: untilRaw.timeout } }
-              : { until: { regex: untilRaw.regex } })
-            : undefined
-        // 回合取消信号: 与声明边界合并后统一传给桥 (缺省无信号 = 不取消)。
-        const bridgeOpts = (): ReplyOptions | undefined => (
-          opts?.signal === undefined
-            ? replyOpts
-            : { ...(replyOpts ?? {}), signal: opts.signal }
-        )
-        // 命令序列 (P2-2): 每条命令独立等待自己的 GA (各自独立应答帧), 逐条串行
-        // 结算 — 旧实现同 replyId 逐条穿透, 第一个 GA 即结算全序列, 后续 GA 落观察窗。
+        let criteria: WindowCriteria | undefined
+        let timeoutMs: number | undefined
+        if (untilRaw && typeof untilRaw.regex === 'string') {
+          try {
+            criteria = { ok: new RegExp(untilRaw.regex) }
+          } catch {
+            criteria = undefined
+          }
+          if (typeof untilRaw.timeout === 'number') timeoutMs = untilRaw.timeout
+        }
+        // 回合取消信号: 随窗口注册传入 (取消 → 优雅结算 settled='abort')。
+        const signal = opts?.signal
+        // 命令序列: **单窗一次注册** (序列 = 同一窗口, 每命令至少 1 个 GA → 缺省
+        // gaCount = 条数; W7.2 取代旧桥逐条串行结算)。
         const series = Array.isArray(args.cmds) ? args.cmds.map((c) => String(c)) : null
         if (series && series.length > 0) {
           for (const c of series) {
@@ -453,23 +488,17 @@ export function buildMudTools({
             }
           }
           log(`[工具] mud_send 序列 → ${series.length} 条命令`)
-          if (sendAndAwait && opts?.fireAndForget !== true) {
-            let lastText = ''
-            let lastOk = true
-            for (const c of series) {
-              const wiredC = wire(c)
-              const reply = await sendAndAwait(wiredC, bridgeOpts())
-              lastText = reply.text
-              lastOk = lastOk && reply.ok
-              // 被打断/中止 = **本步已作废**: 序列里剩下的命令不再发出
-              // （否则会留下"半截序列", 例如 fullme 的 `halt` 之后仍发出答案）。
-              if (reply.settled === 'interrupted' || reply.settled === 'abort') {
-                return { ok: false, note: reply.text, cmd: '命令序列', settled: reply.settled }
-              }
-            }
-            return { ok: lastOk, note: lastText, cmd: '命令序列', settled: 'ga' }
+          if (registerWindow && opts?.fireAndForget !== true) {
+            // interrupted/abort 由窗口结算原样透传 (ok:false), 序列天然不再续发。
+            return viaWindow({
+              cmd: series.map(wire),
+              ...(criteria !== undefined ? { criteria } : {}),
+              ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+              label: 'mud_send',
+              ...(signal !== undefined ? { signal } : {}),
+            })
           }
-          // 无 sendAndAwait 或发完即走: 直发 (不入桥)。
+          // 无 registerWindow 或发完即走: 直发 (不注册窗口)。
           for (const c of series) send(wire(c))
           return { ok: true, note: '命令序列', cmd: '' }
         }
@@ -482,20 +511,22 @@ export function buildMudTools({
           return { ok: false, note: `安全禁用命令, 拒绝发送: ${cmd}`, cmd: '' }
         }
         const wiredCmd = wire(cmd)
-        // §8 活动表: 慢命令 (打坐/静坐/睡觉 …) 未显式声明 until 时自动附带完成句锚定 —
-        // 完成句上收为分帧器武装标记, 命中即提交帧并由桥结算, 不依赖初始 GA 即结算。
+        // §8 活动表: 慢命令 (打坐/静坐/睡觉 …) 未显式声明判据时自动附带完成句锚定 —
+        // 完成句作为窗口 ok 判据注册 (命中即结算), 不依赖 GA (dz/sleep 无 GA 无 prompt)。
         const activityEntry = activityFor(cmd, activity)
-        if (activityEntry !== null && !replyOpts) {
-          replyOpts = {
-            until: {
-              regex: activityEntry.until,
-              ...(activityEntry.timeoutMs === undefined ? {} : { timeout: activityEntry.timeoutMs }),
-            },
-          }
+        if (activityEntry !== null && criteria === undefined) {
+          criteria = { ok: new RegExp(activityEntry.until) }
+          if (activityEntry.timeoutMs !== undefined) timeoutMs = activityEntry.timeoutMs
         }
         log(`[工具] mud_send → ${cmd}`)
-        if (sendAndAwait && opts?.fireAndForget !== true) {
-          return sendAndAwait(wiredCmd, bridgeOpts()).then(reply => ({ ok: reply.ok, note: reply.text, cmd, settled: reply.settled }))
+        if (registerWindow && opts?.fireAndForget !== true) {
+          return viaWindow({
+            cmd: wiredCmd,
+            ...(criteria !== undefined ? { criteria } : {}),
+            ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+            label: 'mud_send',
+            ...(signal !== undefined ? { signal } : {}),
+          })
         }
         send(wiredCmd)
         return { ok: true, note: cmd, cmd }
@@ -557,6 +588,9 @@ export function buildMudTools({
         const url = String(args.url ?? '').trim()
         if (url === '') return { ok: false, note: '缺少验证码地址 (url)', cmd: '' }
         const rawNote = typeof args.note === 'string' ? args.note.trim() : ''
+        // 人工等待进窗口诊断 (§2.9): begin/end 配对包住整个挂起段 (幂等; 仅 diag,
+        // 不参与 gate/hasOpen — W7.2 验证码统一进在途窗口机制)。
+        humanWindow?.begin('mud_captcha')
         try {
           const imageUrl = await resolveCaptchaImage(url)
           captcha?.push(imageUrl, url, rawNote === '' ? undefined : rawNote)
@@ -574,6 +608,8 @@ export function buildMudTools({
           const message = err instanceof Error ? err.message : String(err)
           log(`[验证码] 等待人工失败: ${message}`)
           return { ok: false, note: `等待人工验证码失败: ${message}`, cmd: '' }
+        } finally {
+          humanWindow?.end()
         }
       },
     },

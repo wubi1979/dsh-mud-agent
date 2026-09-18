@@ -24,7 +24,7 @@ import { CommandQueue } from './queue.ts'
 import { buildMudTools, type MudTools } from '../../agents/tools.ts'
 import { buildGateRules, type GateRules } from '../../services/gate/rules.ts'
 import { ownedGameMessage } from '../../agents/lane.ts'
-import { CommandResponseController } from './bridge.ts'
+import { InflightWindowTable, type ReplySettle } from './inflight.ts'
 import { lineCriteriaPattern } from '../../services/matcher/criteria.ts'
 import { placeholderValues, redactCredential, redactSecrets, type SessionCredentials } from '../credentials.ts'
 import { ConnectionRuntime } from './connection-runtime.ts'
@@ -72,7 +72,7 @@ export class MudSessionRuntime {
   private readonly conn: ConnectionRuntime
   private readonly world: WorldModel = createWorld()
   private readonly state: StateService
-  private readonly controller: CommandResponseController
+  private readonly windows: InflightWindowTable
   private readonly queue: CommandQueue
   /** L1 行级感知引擎 (每会话一实例; 多行状态在本实例内持久)。 */
   private readonly engine: PerceptionEngine
@@ -180,26 +180,16 @@ export class MudSessionRuntime {
       holdRuleIds: perception.holdRuleIds,
     })
     this.state = new StateService({ world: this.world, onChanged: () => { this.pushWorld() } })
-    this.controller = new CommandResponseController({
+    // 在途窗口表 (W7.2): 命令-应答桥的后继。注册/结算/N-GA 关窗/超时/断线都在表内,
+    // 宿主只接四条线: 发送 (经队列节流)、win- 标记武装/注销 (转裁决器)、直发延后 gate。
+    this.windows = new InflightWindowTable({
       send: (cmd, meta) => { this.queue.send(cmd, { ...meta }) },
+      onArm: (markerId, pattern) => { this.adjudicator?.armWindowMarker(markerId, pattern) },
+      onDisarm: (markerId) => { this.adjudicator?.disarmWindowMarker(markerId) },
+      onGate: (active) => { this.queue.setGate(active) },
       onLog: (text) => this.debug('network', text),
       defaultTimeoutMs: config.bridgeTimeoutMs,
       declaredTimeoutMs: config.bridgeDeclaredTimeoutMs,
-      // 桥结算 → 裁决器 (§19.3): 结算驱动的流程判定 + 排队动作出队 (GA / 超时 / 断开)。
-      // `cmds` = 被这次结算关掉的命令：流程据此做**按命令的归属比对**（§19.3）。
-      onSettle: (kind, text, cmds) => { this.adjudicator.onBridgeSettle(kind, text, cmds) },
-      // 挂起期闸门 + 结算归属 (I12/§19.3)：只有"本步声明的那条命令"能通过；
-      // 流程挂起期间的第二条应答请求被拒绝并留痕。
-      canSend: (cmd) => {
-        if (this.flow.allowBridgeRequest(cmd, placeholderValues(this.conn.credentials, this.externalValues))) return true
-        this.log(`[缺陷] 流程挂起期间收到第二条应答请求 (${cmd}) → 已拒绝`)
-        return false
-      },
-      // v0.6.0 S3c: until 武装标记 → 裁决器注册; 裁决器命中后回调 settleUntilFromSplitter。
-      // untilMarkerIds (裁决器内) 记录在途标记 id —— 帧标记路由只认它们 (流程/打断
-      // 标记也是 'armed' 帧, 但不走桥结算, 见裁决器五站链站③)。
-      onUntilArm: (markerId, pattern) => { this.adjudicator.armUntilMarker(markerId, pattern) },
-      onUntilDisarm: (markerId) => { this.adjudicator.disarmUntilMarker(markerId) },
     })
     this.queue = new CommandQueue({
       minInterval: config.commandIntervalMs,
@@ -250,7 +240,7 @@ export class MudSessionRuntime {
           result: context,
           text: context,
         })
-        // 失败也可能来自流程自己的计时器（不经过 offer/noteSettle）→ 这里补一次出队。
+        // 失败也可能来自流程自己的计时器（不经过 offer/noteToolResult）→ 这里补一次出队。
         this.adjudicator.drainFlowQueue()
         this.requestAgent('流程失败', `${context} — 请判断是重试、换做法还是告知用户。`)
       },
@@ -278,7 +268,7 @@ export class MudSessionRuntime {
       sessionId: this.sessionId,
       config: this.config,
       engine: this.engine,
-      controller: this.controller,
+      windows: this.windows,
       flow: this.flow,
       channel: this.channel,
       queue: this.queue,
@@ -360,17 +350,45 @@ export class MudSessionRuntime {
     return this.adjudicator.recall(count)
   }
 
-  /** 本会话的工具集 (闭包绑定本会话的队列/桥/world/凭据)。 */
+  /** 本会话的工具集 (闭包绑定本会话的队列/在途窗口/world/凭据)。 */
   tools(): MudTools {
     if (this.toolCache !== null) return this.toolCache
     this.toolCache = buildMudTools({
       send: (cmd) => { this.queue.send(cmd) },
-      sendAndAwait: (cmd, opts) => this.controller.sendAndAwait(cmd, opts),
+      // 在途窗口注册 (W7.2): 工具自带声明 (criteria/gaCount/timeoutMs) 与流程表覆盖
+      // (windowSpecFor) 在此合并。命令文本的凭据/外部值插值已在工具层 (tools.ts wire())
+      // registerWindow 之前完成, 这里不做二次插值 —— values 只供 windowSpecFor 做命令比对。
+      registerWindow: (request) => {
+        const values = placeholderValues(this.conn.credentials, this.externalValues)
+        const override = this.flow.windowSpecFor(request.cmd, values)
+        return this.windows.register({
+          cmds: Array.isArray(request.cmd) ? [...request.cmd] : [request.cmd],
+          ...(override === null
+            ? {
+              ...(request.criteria !== undefined ? { criteria: request.criteria } : {}),
+              ...(request.gaCount !== undefined ? { gaCount: request.gaCount } : {}),
+              ...(request.timeoutMs !== undefined ? { timeoutMs: request.timeoutMs } : {}),
+            }
+            : {
+              ...(override.criteria !== undefined ? { criteria: override.criteria } : {}),
+              ...(override.gaCount !== undefined ? { gaCount: override.gaCount } : {}),
+              ...(override.gaOutcome !== undefined ? { gaOutcome: override.gaOutcome } : {}),
+              ...(override.timeoutMs !== undefined ? { timeoutMs: override.timeoutMs } : {}),
+            }),
+          ...(request.label !== undefined ? { label: request.label } : {}),
+          ...(request.signal !== undefined ? { signal: request.signal } : {}),
+        })
+      },
+      // 人工等待诊断通道 (mud_captcha ask-human 挂起段): 进窗口表 diag, 仅诊断不参与 gate。
+      humanWindow: {
+        begin: (label) => { this.windows.beginHuman(label) },
+        end: () => { this.windows.endHuman() },
+      },
       log: (t) => this.log(t),
       recall: (count) => this.recall(count),
       world: this.world,
       resolveCredentials: () => this.conn.credentials ?? undefined,
-      // 未连接时工具快速拒绝 (不入桥): agent 提前被唤醒也不会把命令塞进队列
+      // 未连接时工具快速拒绝 (不注册窗口): agent 提前被唤醒也不会把命令塞进队列
       // 换来一串 "写 socket 失败"。
       isConnected: () => this.connectionState === 'connected',
       // 工具改写世界 (典型: login:done 规则渲染的 world_patch {logged_in:true}) 后
@@ -447,7 +465,8 @@ export class MudSessionRuntime {
   }
 
   /**
-   * 手动命令 (WebUI/用户): 走队列节流 + 'user' 归属 (不绕过应答桥计数)。
+   * 手动命令 (WebUI/用户): 走队列节流 + 'user' 归属 (直发命令受在途窗口直发延后
+   * gate 约束, §2.8 —— 不绕过窗口的 N-GA 计数)。
    *
    * **人工验证码例外** (§19.3 人工只负责提供值): 等人工期间用户提交的输入不直接发出,
    * 而是当作**外部占位符值**回填 (`{captcha}`) 并解挂 ask-human 等待者 —— 输入只收
@@ -484,7 +503,7 @@ export class MudSessionRuntime {
     this.noteWorldChange()
   }
 
-  /** 释放本会话运行时: 关连接、清定时器、停队列、关桥。 */
+  /** 释放本会话运行时: 关连接、清定时器、停队列、关在途窗口表。 */
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
@@ -492,7 +511,7 @@ export class MudSessionRuntime {
     const waiter = this.captchaWaiter
     this.captchaWaiter = null
     if (waiter !== null) waiter.reject(new Error('会话已释放'))
-    this.controller.close()
+    this.windows.close()
     this.queue.clear()
     this.watchdogs.dispose()
     this.conn.close()
@@ -502,7 +521,7 @@ export class MudSessionRuntime {
     this.flow.dispose()
   }
 
-  /** 诊断: 待决/流程/缺陷计数/人工环节 (不变量 I9 的观测面)。 */
+  /** 诊断: 待决/流程/在途窗口/缺陷计数/人工环节 (不变量 I4/I9 的观测面)。 */
   diag(): MudSessionDiag {
     const metrics = this.adjudicator.metrics()
     return {
@@ -512,6 +531,7 @@ export class MudSessionRuntime {
       pending: metrics.pending,
       actionsPending: metrics.actionsPending,
       flow: this.flow.state(),
+      windows: this.windows.diag(),
       recall: metrics.recall,
       agent: this.sink.agentOf(this.sessionId) !== undefined,
       awaitingHuman: this.awaitingHuman,
@@ -571,7 +591,7 @@ export class MudSessionRuntime {
     return sent
   }
 
-  /** 队列 onSend: 真实写 socket 后武装应答桥 (失败回执, 防 sending 死锁)。 */
+  /** 队列 onSend: 真实写 socket 后确认在途窗口武装 (失败回执, 防 sending 死锁)。 */
   private onQueueSend(cmd: string, meta: { actor?: CommandActor; replyId?: string }): void {
     let sent = false
     try {
@@ -580,11 +600,11 @@ export class MudSessionRuntime {
       this.log(`[发送] 写 socket 异常: ${err instanceof Error ? err.message : String(err)}`)
     }
     if (sent && meta.replyId !== undefined) {
-      // 帧内容全部由控制器自己累积 (含队列节流窗口里到达的行): 宿主不再另存"帧首"
-      // 再并回来 —— 那会让同一批行同时留在本帧与下一帧 (实测旧行混进 look 的应答)。
-      this.controller.confirmSent(meta.replyId)
+      // 窗口行由窗口表自己累积 (feedLines; 含队列节流窗口里提交的帧): 宿主只回执
+      // "真实写出" —— 计时与 win- 标记武装都从这一刻开始。
+      this.windows.confirmSent(meta.replyId)
     } else if (meta.replyId !== undefined) {
-      this.controller.sendFailed(meta.replyId, `写 socket 失败: ${cmd === '' ? '<空行>' : cmd}`)
+      this.windows.sendFailed(meta.replyId, `写 socket 失败: ${cmd === '' ? '<空行>' : cmd}`)
     }
   }
 
@@ -605,11 +625,11 @@ export class MudSessionRuntime {
     this.state.patch({ sent_name: false, sent_pass: false }, 'lifecycle')
     this.watchdogs.resetCounts()
     this.noteWorldChange()
-    // 传输断裂 = 感知上下文作废: 清多行半匹配 + 重连复位应答桥/行流裁决器与投递缓冲。
-    // 裁决器内的行流缓冲 (开放帧+武装标记) 与 until 标记集/投递记账/交付水位一并复位,
+    // 传输断裂 = 感知上下文作废: 清多行半匹配 + 重连复位在途窗口表/行流裁决器与投递缓冲。
+    // 裁决器内的行流缓冲 (开放帧+武装标记) 与投递记账/交付水位一并复位,
     // 打断规则常驻标记重挂 (§8.8: 重连后宿主须调 reset)。
     this.engine.reset()
-    this.controller.reset()
+    this.windows.reset()
     this.adjudicator.resetForReconnect()
     this.flow.syncArming()
     // 人工环节 (验证码) 属上一连接的上下文: 挂起的命中与外部值一并作废。
@@ -626,7 +646,7 @@ export class MudSessionRuntime {
   }
 
   private onSocketClose(): void {
-    this.controller.close()
+    this.windows.close()
     this.queue.clear()
     // 断线: 未投出的行与半截捕获失去上下文 (多行状态随连接作废), 丢弃并记日志。
     // 裁决器收尾: hold/结算计时清除 + 待决行丢弃留痕 + 行流缓冲/武装标记复位重挂。
@@ -718,8 +738,8 @@ export class MudSessionRuntime {
    *   - 旧装配兜底 (无 waiter): 保留原 standalone 投递路径 (流程机已 resumeHuman)。
    *
    * 顺序: **先解挂 waiter** (resolve 是微任务, 工具续跑晚于本同步函数), 再 `resumeHuman`
-   * + 投挂起动作 (此时工具仍在途 → 落 defer 槽; 桥闸门只放行 `awaiting-result` 阶段
-   * 声明的命令); 计时器**不重布防**（等人与重试共用本步那一份预算）。
+   * + 投挂起动作 (此时工具仍在途 → 落 defer 槽; halt 优先级豁免直发延后 gate, §2.8);
+   * 计时器**不重布防**（等人与重试共用本步那一份预算）。
    *
    * 投递形态 = **动作投递**（无原文可带）：触发这次动作的行要么是命令应答帧（已作为
    * tool result 进过模型），要么在人工环节期间留待决不投 —— 与"帧内命中/结算驱动"
@@ -816,10 +836,12 @@ export class MudSessionRuntime {
    * 进而定位到流程步骤（动作 `ruleId` = `flow:<flowId>/<stepId>`）；T2 自己发起的调用
    * 解析失败 ⇒ 什么都不做。
    * @param callId 本次工具调用 id。
-   * @param ok 工具结果是否成功。
+   * @param outcome 工具结算结局 (ok/fail/error)。
+   * @param settled 在途窗口结算方式 (发命令工具携带; 纯校验拒绝 = undefined)。
+   * @param hitText 判据命中行原文 (until 结算; 流程 `{lastFail}` 槽源)。
    */
-  noteToolResult(callId: string, ok: boolean): void {
-    this.adjudicator.noteToolResult(callId, ok)
+  noteToolResult(callId: string, outcome: 'ok' | 'fail' | 'error', settled?: ReplySettle, hitText?: string): void {
+    this.adjudicator.noteToolResult(callId, outcome, settled, hitText)
   }
 
   // ── 投递通道委托 (MudDeliveryChannel 接口; `agents/mount.ts` §19.6.2) ──

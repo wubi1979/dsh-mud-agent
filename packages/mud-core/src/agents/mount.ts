@@ -21,6 +21,7 @@ import { PERSONA_PREFIX_SECTION, PERSONA_SUFFIX_SECTION } from '@deepseek-ai/dsh
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import type { MudTools, MudToolResult } from './tools.ts'
+import type { ReplySettle } from '../runtime/session/inflight.ts'
 import type { ownedGameMessage } from './lane.ts'
 
 /** agent 系统提示区段 (skills/commands/tier; 人设见 `attachMudPersona`)。 */
@@ -98,9 +99,11 @@ export interface MudDeliveryChannel {
    * GA 可判，靠工具结果是成功还是失败收尾。运行时会用 call-id 解析出步骤 id，
    * 只接受**当前步**的结果（T2 自己发起的调用解析失败 → 忽略）。
    * @param callId 本次工具调用 id（`mud-<delivery>-<index>`）。
-   * @param ok 工具结果是否成功。
+   * @param outcome 工具结算结局 (ok/fail/error)。
+   * @param settled 在途窗口结算方式 (发命令工具携带; 纯校验拒绝 = undefined)。
+   * @param hitText 判据命中行原文 (until 结算; 流程 `{lastFail}` 槽源)。
    */
-  noteToolResult?: (callId: string, ok: boolean) => void
+  noteToolResult?: (callId: string, outcome: 'ok' | 'fail' | 'error', settled?: ReplySettle, hitText?: string) => void
   /** 取走本步待随结果进下一步的投递（顺序保持）。 */
   takeDeferredDeliveries: () => ReturnType<typeof ownedGameMessage>[]
   /** 本调用能否收束当前回合。 */
@@ -137,7 +140,7 @@ export async function runWithDeliveryChannel(input: {
   try {
     result = await run()
     // 流程判定要在"工具仍算在途"时做（判据 A）：判定产出的投递随本结果进下一步。
-    channel.noteToolResult?.(callId, result.ok)
+    channel.noteToolResult?.(callId, result.outcome ?? (result.ok ? 'ok' : 'error'), result.settled, result.hitText)
   } finally {
     channel.endToolCall()
   }
@@ -181,7 +184,7 @@ export function attachMudTools(
         // 调用留痕必须在执行前: 决策日志要反映因果序 (执行期间的 [工具]/[发送]/[流程] 结算
         // 都先于"调用"落日志会倒挂, 实测踩过)。执行抛错时该次调用同样要留痕。
         onTool?.(tool.name, args as Record<string, unknown>)
-        // 官方的回合取消信号转发给桥: 回合取消时在途等待不再干等超时 (§8)。
+        // 官方的回合取消信号转发给在途窗口: 回合取消时在途等待优雅结算, 不干等超时 (§2.1)。
         // 投递通道接线（§19.6.2）：defer / 收束判据都在这一个 helper 里（两条路径共用）。
         const result = await runWithDeliveryChannel({
           ...(channel === undefined ? {} : { channel }),
