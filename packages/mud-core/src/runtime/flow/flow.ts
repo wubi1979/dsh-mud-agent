@@ -2,9 +2,10 @@
  * dsh-mud-core — 流程运行时 (flow runtime), `doc/ARCHITECTURE.md` §19。
  *
  * 一条流程 = 显式的步骤图（`runtime/flow/flows/` 声明）。本类持有**每会话**的流程实例状态:
- *   - **arming 集**：当前开着的判据（本步 driver(重试) + 条件分支后继的进入判据）；
- *   - **挂起**：命令发出后等结果（实现上就是在途窗口, `doc/PLAN.md` §2 / W7.2 ——
- *     单步的命令-应答配对移交窗口, ok/fail 判据经 `windowSpecFor` 随窗口注册）；
+ *   - **arming 集**：当前开着的**行判据**（本步 driver(重试) + 本步 ok/fail 行判据 +
+ *     条件分支后继的进入判据；GA/tool 判据不经 arming）；
+ *   - **挂起**：命令发出后等结果（实现上就是在途窗口, §8.3 / W7.2 ——
+ *     GA 判据经 `windowSpecFor` 随窗口结算, 行判据走 arming）；
  *   - **判定**：工具结果（窗口结算 / tool 判据）/ 行判据命中 / 超时 → 成功 / 失败（三态，无静默）；
  *   - **推进**：成功 → 条件分支优先（同批行内），否则顺序兜底；无后继 = 终态 ⇒ 流程成功结束；
  *   - **打断**：规则 `interrupts > flow.priority` 时可打断（在途窗口结算为 interrupted → 复位）；
@@ -54,7 +55,7 @@ export class FlowRuntime {
      */
     slots: Record<string, string>
   } | null = null
-  /** 当前 arming 判据（行判据; W7.2 起只含 driver(重试) 与分支后继 —— 单步 ok/fail 随窗口注册）。 */
+  /** 当前 arming 判据（行判据; W7.2 起含本步 driver(重试) + 本步 ok/fail 行判据 + 条件分支后继 —— GA/tool 判据不经 arming, 随窗口/工具结果结算）。 */
   private armed: ArmedMatch[] = []
   private matcher: TriggerMatchService<ActionSpec> | null = null
   /** 空闲入口匹配器（活跃期间仍用于记录其它流程入口 → pending entry）。 */
@@ -131,7 +132,7 @@ export class FlowRuntime {
     return [...names]
   }
 
-  /** 是否**挂起中**（桥上不允许第二条应答请求；I12 闸门）。 */
+  /** 是否**挂起中**（在途窗口未结算、流程等待结果/人工的阶段）。 */
   suspended(): boolean {
     return this.active !== null && this.active.phase !== 'awaiting-branch'
   }
@@ -265,12 +266,17 @@ export class FlowRuntime {
 
   /**
    * **窗口声明覆盖**（W7.2 §4; 壳装配在 `registerWindow` 入口调用）：流程步动作 tool
-   * 在途时, 本步 ok/fail 判据随窗口注册（单步的命令-应答配对移交窗口）。
+   * 在途时, 本步的**命令绑定判据**（GA/N-GA/放弃计时）随窗口注册（单步的命令-应答配对
+   * 移交窗口）。
+   *
+   * **行判据不在此移交**（§8.5/§19.3 判据分流）：text/regex 判据由 `armOwnJudgements`
+   * 常驻布防（帧文本先到、GA 后到是常态，窗口要等命令写出后才武装）；这里只给
+   * **命令绑定**的三项：`boundary`→gaCount、GA 判据→gaOutcome、`timeoutMs`。
+   * 工具自带的判据/超时（活动表 `until` 等）由壳做**字段级合并**保留（未覆盖即沿用），
+   * 因此本方法未声明的字段不影响工具声明。
    *
    * 仅当**当前步在等结果**且 `cmd` 与本步声明的命令（插值后）一致时返回覆盖 ——
-   * 序列按位等长比对、单体按 includes；返回内容：判据 = 本步首个行判据 ok/fail 经
-   * `lineCriteriaPattern` 编译、`boundary` 覆盖 gaCount、ok/fail 含 ga 判据 → gaOutcome、
-   * timeoutMs = step 覆盖。否则返回 null（工具用自带声明）。
+   * 序列按位等长比对、单体按 includes；否则返回 null（工具用自带声明）。
    * @param cmd 工具实际要发的命令（单体或序列; 已插值）。
    * @param values 占位符值（与本步声明比对用）。
    */
@@ -286,20 +292,9 @@ export class FlowRuntime {
       : expected.includes(given[0] ?? '')
     if (!matches) return null
     const step = this.active.step
-    const okLine = (step.ok ?? []).find(isLineMatch)
-    const failLine = (step.fail ?? []).find(isLineMatch)
-    const okPattern = okLine === undefined ? null : lineCriteriaPattern(okLine)
-    const failPattern = failLine === undefined ? null : lineCriteriaPattern(failLine)
-    const criteria = okPattern === null && failPattern === null
-      ? undefined
-      : {
-        ...(okPattern === null ? {} : { ok: okPattern }),
-        ...(failPattern === null ? {} : { fail: failPattern }),
-      }
     const gaFail = (step.fail ?? []).some(match => match.kind === 'ga')
     const gaOk = (step.ok ?? []).some(match => match.kind === 'ga')
     return {
-      ...(criteria !== undefined ? { criteria } : {}),
       ...(step.boundary !== undefined ? { gaCount: step.boundary } : {}),
       ...(gaFail ? { gaOutcome: 'fail' as const } : gaOk ? { gaOutcome: 'ok' as const } : {}),
       ...(step.timeoutMs !== undefined ? { timeoutMs: step.timeoutMs } : {}),
@@ -653,15 +648,32 @@ export class FlowRuntime {
   private pendingFlow: FlowSpec | undefined
 
   /**
-   * 布防本步 arming + 条件分支后继的进入判据。W7.2 起本步 ok/fail 判据不再在此 arm：
-   * 行判据/GA 判据经 `windowSpecFor` 随在途窗口注册（win- 标记），工具结果经
-   * `noteToolResult` 判定 —— arming 只留本步 driver 的重试布防与条件分支。
+   * 布防本步 arming：本步 driver 的**重试**判据 + 本步 ok/fail 的**行判据**（text/regex）
+   * + 条件分支后继的进入判据。
+   *
+   * **判据分流（§8.5 / §19.3）**：
+   *   - **行判据**（text/regex）走 arming 路径 —— 帧文本**先到、GA 后到**是常态，判据行
+   *     不能等窗口（窗口要等工具真正执行、命令写出后才武装，`win-` 标记在 `confirmSent`
+   *     才挂）；命中 → 帧立即提交 → 本步判定当场发生；
+   *   - **GA 判据**经窗口关窗结算（`windowSpecFor` 的 `gaOutcome` + `boundary`），
+   *     工具结果回到 `noteToolResult`；
+   *   - **tool 判据**由工具结果判定（`noteToolResult`，不经窗口）。
+   * 任何来源都只判定**一次**（同一步骤的判据集互斥由装配期校验保证，I13）。
    */
   private armOwnJudgements(step: FlowStep): void {
     const armed: ArmedMatch[] = []
     let order = 0
     if (step.driver !== undefined && step.retry !== undefined) {
       armed.push({ role: 'driver', match: step.driver, order: order++, label: `retry:${step.id}` })
+    }
+    // 失败判据先于成功判据（同类内按声明顺序取首；fail/ok 互斥由装配期校验保证）。
+    for (const match of step.fail ?? []) {
+      if (!isLineMatch(match)) continue
+      armed.push({ role: 'fail', match, order: order++, label: `fail:${step.id}` })
+    }
+    for (const match of step.ok ?? []) {
+      if (!isLineMatch(match)) continue
+      armed.push({ role: 'ok', match, order: order++, label: `ok:${step.id}` })
     }
     this.setArmed(armed)
     // 条件分支后继：进入判据一起 arm（同批行不漏）。

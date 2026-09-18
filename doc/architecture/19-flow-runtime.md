@@ -231,7 +231,7 @@ ok:[GA] ∧ fail:[GA] → **注册期报错**（互斥）
 - 槽的生命周期本来就被限制在**一次工具调用之内**（在途期间入槽、该调用的包装器结束时取走），不存在"残留到下一步"的可能，因此不需要任何显式清槽。
 
 **实现落点（三处，已落地）**：
-1. `agents/mount.ts`：新增 **`MudDeliveryChannel`** 接口（`beginToolCall`/`endToolCall`/`takeDeferredDeliveries`/`shouldConcludeTurn`）；`attachMudTools(..., channel?)` 的工具包装器在 `execute` 前后 begin/end，结果提交前 `for (msg of takeDeferredDeliveries()) exec.deferContext(msg)`，并在 `result.ok && shouldConcludeTurn(callId)` 时 `exec.concludeTurn()`。
+1. `agents/mount.ts`：新增 **`MudDeliveryChannel`** 接口（`beginToolCall`/`endToolCall`/`takeDeferredDeliveries`/`shouldConcludeTurn`）；`attachMudTools(..., channel?)` 的工具包装器在 `execute` 前后 begin/end，结果提交前 `for (msg of takeDeferredDeliveries()) exec.deferContext(msg)`（`exec.deferContext` = 官方 `inject` 原语的工具侧投递入口，I2），并在 `result.ok && shouldConcludeTurn(callId)` 时 `exec.concludeTurn()`。
 2. `runtime/session/session.ts`：实现该接口 —— `inFlightTools` 计数、`deferSlot` 槽、`deliverySizes`（每条投递的动作数）、`parseDeliveryCallId`（`mud-<delivery>-<index>`；**T2 自己的调用 id 解析失败 ⇒ 永不可收束**）、`shouldConcludeTurn`（判据 B 四项条件）；投递统一走 `sendDelivery`（在途 ⇒ 槽，否则 `followup`）；断线/释放时清槽与计数。**两条装配路径都必须接**：宿主路径（`attachMudTools(..., channel)`）与 preset 路径（`agents/preset.ts` 经 `MudAgentKit.channel(sessionId)`）共用 `runWithDeliveryChannel`。
 3. `agents/tools.ts` 与 `tests/loop-sim.ts` 的**工具语义不变**：工具保持纯净（defer 由包装器统一做）；模拟器改为**仿真官方包装器**（见 §13.6），因此 `loop-sim-login.spec.ts` 测的是真行为。
 

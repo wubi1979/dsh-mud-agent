@@ -2,7 +2,7 @@
  * dsh-mud-core — 在途窗口表 (InflightWindowTable), host half. 会话层。
  *
  * 命令-应答桥 (CommandResponseController) 的 W7.2 后继 (§17 W7.2 "桥 → 在途窗口";
- * 设计见 `doc/PLAN.md` §2): 把 "发命令工具调用 → 应答" 建模为一次 **在途窗口** ——
+ * 设计见 §8.3): 把 "发命令工具调用 → 应答" 建模为一次 **在途窗口** ——
  *
  * ```
  *   tool.execute(cmd)
@@ -34,9 +34,9 @@
  *
  * 与旧桥的差异 (机制替换, 外壳语义不变):
  *   - 事务帧标记 (tx-*) 消失: 判据归属即 win- 标记, 不再需要帧配对;
- *   - 挂起期请求闸门 (canSend/I12) 删除: 单在途保证被官方工具顺序执行取代 (§2.6);
- *   - 队列级直发延后取代帧配对防污染 (§2.8);
- *   - 活动表改为 `diag()` (§2.9): 实时可见"哪个窗口在等什么、等了多久" + 结局计数。
+ *   - 挂起期请求闸门 (canSend/I12 旧口径) 删除: 单在途保证被官方缺省独占调度取代 (§8.3/I11);
+ *   - 队列级直发延后取代帧配对防污染 (§8.3 直发延后 gate / I12);
+ *   - 活动表改为 `diag()` (§8.3): 实时可见"哪个窗口在等什么、等了多久" + 结局计数。
  * @module @deepseek-ai/dsh-mud-core/runtime/session/inflight
  */
 
@@ -577,7 +577,7 @@ export class InflightWindowTable {
           text: w.text,
           lines: w.lines,
           settled: 'until',
-          outcome: untilOutcome,
+          outcome: ok ? 'ok' : 'fail',
           ...(hitText !== undefined ? { hitText } : {}),
         })
         return

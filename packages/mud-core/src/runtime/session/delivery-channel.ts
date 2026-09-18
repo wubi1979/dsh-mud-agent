@@ -19,12 +19,6 @@ type OwnedMessage = ReturnType<typeof ownedGameMessage>
 
 export interface DeliveryChannelOptions {
   debug: (text: string) => void
-  /**
-   * 可选: followup 前的投递钩子 (lane selection 预写, 见 sink.preDeliver)。
-   * 只挂 followup 分支 —— defer 槽消息随工具结果进**同一回合的下一步**, 该步的
-   * selection 已由上一步 pre-step 写好, 无预热窗口问题。
-   */
-  preDeliver?: ((message: OwnedMessage) => void) | undefined
 }
 
 /** 投递账本条目 (per 投递消息)。 */
@@ -88,9 +82,7 @@ export class DeliveryChannel {
       this.opts.debug(`[感知] 投递改为 defer (工具在途 ${this.inFlight}): 随本结果进下一步`)
       return
     }
-    // followup 前预写 lane selection: turn=1 step=1 的 assemble 快照必须已看到本
-    // 投递的 lane (pre-step 写入发生在 assemble 之后, 首回合没有预热窗口)。
-    this.opts.preDeliver?.(message)
+    // followup 前无需预热 (W7.3): lane 选路在 agent/request 上拦截, 与请求时序无关。
     agent.followup(message)
   }
 

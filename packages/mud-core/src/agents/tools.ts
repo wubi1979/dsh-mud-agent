@@ -147,7 +147,7 @@ export function activityFor(
 /**
  * 输出 schema (所有工具一致)。
  * `settled` 可选: 在途窗口的结算语义 (ga/until/timeout/abort…), 见
- * `doc/PLAN.md` §2。工具层校验拒绝 (未连接/危险命令) 不带该字段 —
+ * §8.3/§8.4。工具层校验拒绝 (未连接/危险命令) 不带该字段 —
  * 缺省即"未结算"。声明为 optional 是必需的: `additionalProperties: false`
  * 下漏声明会让**成功**的调用报 `value.settled is not a declared property`
  * (工具实际已执行, 却回给模型一条失败帧)。`outcome`/`hitText` 同理。
@@ -257,7 +257,7 @@ export type MudTools = Record<string, MudTool>
  * @param opts.send (cmd) => void 命令入队 (宿主接 CommandQueue; 未装配
  *   registerWindow 时的兜底直发路径)。
  * @param opts.registerWindow (spec) => Promise<WindowResult> 在途窗口
- *   (`doc/PLAN.md` §2, W7.2 取代命令-应答桥): 注册窗口挂起等待结算, note = 窗口行
+ *   (§8.3, W7.2 取代命令-应答桥): 注册窗口挂起等待结算, note = 窗口行
  *   文本 (T1/T2 同形, 查询工具直接拿到应答内容)。
  * @param opts.humanWindow 人工等待诊断通道 (mud_captcha 挂起段 begin/end 包裹;
  *   进在途窗口表 diag 的人工等待条目, 仅诊断不参与 gate)。

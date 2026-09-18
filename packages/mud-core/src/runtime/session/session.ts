@@ -25,7 +25,6 @@ import { buildMudTools, type MudTools } from '../../agents/tools.ts'
 import { buildGateRules, type GateRules } from '../../services/gate/rules.ts'
 import { ownedGameMessage } from '../../agents/lane.ts'
 import { InflightWindowTable, type ReplySettle } from './inflight.ts'
-import { lineCriteriaPattern } from '../../services/matcher/criteria.ts'
 import { placeholderValues, redactCredential, redactSecrets, type SessionCredentials } from '../credentials.ts'
 import { ConnectionRuntime } from './connection-runtime.ts'
 import { DeliveryChannel } from './delivery-channel.ts'
@@ -34,7 +33,6 @@ import { StateService } from './state-track.ts'
 import { createWorld, worldSnapshot, type WorldModel } from '../../shared/world.ts'
 import { CONTROL_PREFIX } from '../../perceive/types.ts'
 import type { PerceptionRule } from '../../perceive/types.ts'
-import { PerceptionEngine } from '../../perceive/engine.ts'
 import { MudConnectionManager } from '../../services/network/manager.ts'
 import { WatchdogTable } from '../watchdogs.ts'
 import { FlowRuntime } from '../flow/flow.ts'
@@ -74,8 +72,6 @@ export class MudSessionRuntime {
   private readonly state: StateService
   private readonly windows: InflightWindowTable
   private readonly queue: CommandQueue
-  /** L1 行级感知引擎 (每会话一实例; 多行状态在本实例内持久)。 */
-  private readonly engine: PerceptionEngine
   /** 投递通道 (工具在途/defer 槽/投递账本/T2 时刻; 编排留在本类, 机制归通道)。 */
   private readonly channel: DeliveryChannel
   private worldTimer: ReturnType<typeof setTimeout> | null = null
@@ -114,8 +110,6 @@ export class MudSessionRuntime {
   private readonly gateRules: GateRules
   /** 最近一次 connect/agent/连接失败 (diag)。 */
   lastError: string | null = null
-  /** §8.5: 打断规则武装清单 (声明了 `interrupts` 的行判据事件规则; 常驻标记, 重连重挂)。 */
-  private readonly interruptMarkers: readonly { id: string; pattern: RegExp }[]
   /**
    * 行流裁决器 (v0.9 W7.1): 行流/元事件唯一入口 + 五站消费链 + 投递记账 + 投递节拍。
    * 分帧器 (FrameSplitter) 已并入其内; 人工交互状态 (awaitingHuman/externalValues)
@@ -137,13 +131,6 @@ export class MudSessionRuntime {
   ) {
     this.sessionId = sessionId
     this.config = config
-    // §8.5: 打断规则武装 —— 声明了 `interrupts` 的事件规则注册为常驻分帧器标记,
-    // 命中 → 帧立即提交 → 链站②打断/排队当场发生 (无 GA 的服务端推送行不再等帧)。
-    this.interruptMarkers = perception.eventRules.flatMap(rule => {
-      if (rule.action?.interrupts === undefined) return []
-      const pattern = lineCriteriaPattern(rule.match)
-      return pattern === null ? [] : [{ id: `rule-int:${rule.id}`, pattern }]
-    })
     this.gateRules = buildGateRules(config.dangerous !== undefined ? { dangerous: config.dangerous } : undefined)
     this.sink = sink
     this.conn = new ConnectionRuntime({
@@ -169,15 +156,6 @@ export class MudSessionRuntime {
     })
     this.channel = new DeliveryChannel({
       debug: (text) => this.debug('perception', text),
-      // followup 前预写 lane selection (turn=1 step=1 无预热窗口, 见 sink.preDeliver)。
-      preDeliver: this.sink.preDeliver === undefined
-        ? undefined
-        : (message) => { this.sink.preDeliver?.(this.sessionId, message) },
-    })
-    this.engine = new PerceptionEngine({
-      stateRules: perception.stateRules,
-      eventRules: perception.eventRules,
-      holdRuleIds: perception.holdRuleIds,
     })
     this.state = new StateService({ world: this.world, onChanged: () => { this.pushWorld() } })
     // 在途窗口表 (W7.2): 命令-应答桥的后继。注册/结算/N-GA 关窗/超时/断线都在表内,
@@ -249,7 +227,7 @@ export class MudSessionRuntime {
       // §8.5 武装集同步: 流程布防 (入口 driver / 步 ok·fail / 分支进入判据) 注册为
       // 裁决器武装标记 —— 命中 → 帧立即提交 → 消费链运行 → 唤醒/推进当场发生。
       // 构造期 flow.armEntries() 即触发, 此时裁决器尚未建立 → 可选链吞掉, 由
-      // 构造器末尾 flow.syncArming() 全量重放补上。
+      // 裁决器 register() 末尾的 syncArming() 全量重放补上 (W7.3 唯一注册入口)。
       onArmSync: (markers) => { this.adjudicator?.syncFlowMarkers(markers) },
       // 流程实例状态变化 → 重评估看门狗（dead-air 的启动条件含"无活跃流程"；§11），
       // 并兜住"流程自己结束了但人工环节还挂着"（人工预算超时 / 打断 / 断线都会走这里）。
@@ -263,19 +241,23 @@ export class MudSessionRuntime {
       },
     })
     // 行流裁决器 (v0.9 W7.1): 五站消费链 / 投递记账 / 投递节拍上移, 分帧器并入其内。
-    // 人工交互状态与出口副作用留在壳, 经 deps 回调读写。
+    // 人工交互状态与出口副作用留在壳, 经 deps 回调读写。触发规则经 registration
+    // 在裁决器构造器内 register() 一次性注册 (§1.2 唯一注册入口)。
     this.adjudicator = new SessionAdjudicator({
       sessionId: this.sessionId,
       config: this.config,
-      engine: this.engine,
       windows: this.windows,
       flow: this.flow,
       channel: this.channel,
       queue: this.queue,
-      gateRules: this.gateRules,
       state: this.state,
       tools: () => this.tools(),
-      interruptMarkers: this.interruptMarkers,
+      registration: {
+        stateRules: perception.stateRules,
+        eventRules: perception.eventRules,
+        holdRuleIds: perception.holdRuleIds,
+        gateRules: this.gateRules,
+      },
       agentOf: () => this.sink.agentOf(this.sessionId),
       agentReady: () => this.sink.agentReady?.(this.sessionId) ?? true,
       isAwaitingHuman: () => this.awaitingHuman,
@@ -292,7 +274,9 @@ export class MudSessionRuntime {
       decision: (record) => { this.decision(record) },
       onWorldChange: () => { this.noteWorldChange() },
     })
-    // flow 构造期的 onArmSync 因裁决器未建被可选链吞掉 → 这里全量重放入口布防。
+    // flow 构造期与裁决器 register() 内部的两次 syncArming 都在 `this.adjudicator`
+    // 赋值完成前触发, 被可选链吞掉 → 赋值完成后这里全量重放一次 (幂等, 补上入口布防;
+    // 重连/断线路径则由 resetForReconnect/abortForDisconnect 内的 register() 直接生效)。
     this.flow.syncArming()
   }
 
@@ -625,13 +609,11 @@ export class MudSessionRuntime {
     this.state.patch({ sent_name: false, sent_pass: false }, 'lifecycle')
     this.watchdogs.resetCounts()
     this.noteWorldChange()
-    // 传输断裂 = 感知上下文作废: 清多行半匹配 + 重连复位在途窗口表/行流裁决器与投递缓冲。
-    // 裁决器内的行流缓冲 (开放帧+武装标记) 与投递记账/交付水位一并复位,
-    // 打断规则常驻标记重挂 (§8.8: 重连后宿主须调 reset)。
-    this.engine.reset()
+    // 传输断裂 = 感知上下文作废: 重连复位在途窗口表/行流裁决器与投递缓冲。裁决器内的
+    // 行流缓冲 (开放帧+武装标记) 与投递记账/交付水位一并复位, 引擎重建 + 打断标记重挂
+    // + flow arming 重放全在 register() 一次完成 (§1.2: W7.3 取代旧散点补刀)。
     this.windows.reset()
     this.adjudicator.resetForReconnect()
-    this.flow.syncArming()
     // 人工环节 (验证码) 属上一连接的上下文: 挂起的命中与外部值一并作废。
     this.awaitingHuman = false
     this.pendingExternal = []
@@ -651,7 +633,6 @@ export class MudSessionRuntime {
     // 断线: 未投出的行与半截捕获失去上下文 (多行状态随连接作废), 丢弃并记日志。
     // 裁决器收尾: hold/结算计时清除 + 待决行丢弃留痕 + 行流缓冲/武装标记复位重挂。
     this.adjudicator.abortForDisconnect()
-    this.engine.reset()
     // 断线 = 唤醒类看门狗全部停表 (`active()` 里的连接门已不满足); 流程实例随连接作废。
     this.watchdogs.reevaluate()
     this.flow.noteDisconnect()   // → 复位到只留入口 → armEntries → onArmSync 重挂流程标记

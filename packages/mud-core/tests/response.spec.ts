@@ -2,11 +2,11 @@
  * dsh-mud-core — 在途窗口表 (InflightWindowTable) 单元测试 (W7.2)。
  *
  * 取代旧命令-应答桥 (CommandResponseController) 的 response.spec。机制对照
- * `doc/PLAN.md` §2/§2.3/§2.8:
+ * `doc/architecture/07-08-t1-bridge.md` §8.3/§8.4:
  *   - 注册 → pump 发送 (meta.replyId/noGate 穿透) → 宿主 confirmSent 武装 →
  *     判据命中 (win- 标记路由) / N-GA 关窗 / 超时 / abort / 断线 → 结算 (I4 必有结局);
  *   - 结算优先级: 判据命中 > 窗口关闭 (N-GA) > 超时 > 断线;
- *   - 直发延后 (§2.8): 窗口开启 ⇒ 队列 gate 压住非豁免直发 (noGate/halt 豁免)。
+ *   - 直发延后 (§8.3/I12): 窗口开启 ⇒ 队列 gate 压住非豁免直发 (noGate/halt 豁免)。
  *
  * 裁决器站③的接线 (feedLines / boundary / settleCriteria) 在测试里按宿主身份直调 ——
  * 与生产 `SessionAdjudicator.adjudicate()` 的三行路由一致。

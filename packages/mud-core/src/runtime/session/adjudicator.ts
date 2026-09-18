@@ -37,6 +37,8 @@ import { evaluateToolCall } from '../../services/gate/policy.ts'
 import type { GateRules } from '../../services/gate/rules.ts'
 import type { MudLine } from '../../services/network/ansi.ts'
 import { textOfLines } from '../../services/network/ansi.ts'
+import { lineCriteriaPattern } from '../../services/matcher/criteria.ts'
+import type { PerceptionRule } from '../../perceive/types.ts'
 import { PerceptionEngine, type EngineHit } from '../../perceive/engine.ts'
 import { splitDelivery } from '../../perceive/split.ts'
 import { InflightWindowTable, type ReplySettle } from './inflight.ts'
@@ -270,30 +272,47 @@ function testRe(re: RegExp, text: string): boolean {
 
 // ── 裁决器 ─────────────────────────────────────────────
 
+/**
+ * 触发规则注册声明 (v0.9 W7.3 唯一注册入口, §8.5/§8.8 注册表)。
+ *
+ * 全部触发规则只经 `SessionAdjudicator.register()` 进裁决器 —— ① state 桶 /
+ * ② event 桶 (含 direct:true 直发与 interrupts 打断档位) 在此投影为感知引擎与
+ * 打断常驻标记, direct 门禁规则在此落位, ④ flow arming 经 `flow.syncArming()`
+ * 全量重放 (onArmSync → syncFlowMarkers); ③ 在途窗口与 ⑤ 批次投递参数分别走
+ * 窗口表动态注册与 `deps.config`, 不在声明内。**重连 reset → register() 重挂
+ * 一次** (打断标记 + flow arming + 引擎重建), 替换旧实现的散点补刀。
+ */
+export interface AdjudicatorRegistration {
+  /** ① state 桶 (命中折叠进 world, 不进 agent)。 */
+  stateRules: readonly PerceptionRule[]
+  /** ② event 桶 (含 direct:true 直发 / interrupts 打断档位 / awaitExternal 人工挂起)。 */
+  eventRules: readonly PerceptionRule[]
+  /** holdDelivery 规则 id 集 (投递原子性判据)。 */
+  holdRuleIds: ReadonlySet<string>
+  /** direct 出口的门禁规则 (direct-exec 判定; 类别②的执行体参数, §7)。 */
+  gateRules: GateRules
+}
+
 /** 裁决器依赖 (壳注入; 人工交互状态与出口副作用留在壳, 经回调读写)。 */
 export interface AdjudicatorDeps {
   /** 官方会话 id (投递消息 lane 归属)。 */
   sessionId: string
   /** 运行时配置 (agentMode / t2DeliverIntervalMs / bridgeSilenceMs / holdTimeoutMs)。 */
   config: MudRuntimeConfig
-  /** L1 行级感知引擎 (多行状态机宿主; 站①②求值器)。 */
-  engine: PerceptionEngine
   /** 在途窗口表 (站③在途结算; W7.2 取代命令-应答桥)。 */
   windows: InflightWindowTable
-  /** 流程运行时 (站④判据求值 + 排队/打断判定)。 */
+  /** 流程运行时 (站④判据求值 + 排队/打断判定; arming 变化经 onArmSync 通知本类)。 */
   flow: FlowRuntime
   /** 投递通道 (defer 槽/账本/T2 时刻; 分投器 W7.3 前的机制层)。 */
   channel: DeliveryChannel
   /** 命令队列 (direct 直发 / 打断 onInterrupt)。 */
   queue: CommandQueue
-  /** 门禁注入规则 (direct-exec 判定)。 */
-  gateRules: GateRules
   /** 感知状态服务 (站① state 折叠落库)。 */
   state: StateService
   /** 会话工具集 (direct-exec 执行体; 惰性取, 壳持缓存)。 */
   tools: () => MudTools
-  /** 打断规则武装清单 (声明了 `interrupts` 的事件规则; 常驻标记, 构造与行流复位后重挂)。 */
-  interruptMarkers: readonly { id: string; pattern: RegExp }[]
+  /** 触发规则注册声明 (构造时经 `register()` 注册; 重连/断线后 `register()` 重挂)。 */
+  registration: AdjudicatorRegistration
   /** 该会话当前 live agent (只读解析)。 */
   agentOf: () => Agent | undefined
   /** agent 装配是否就绪 (缺省就绪语义在壳实现)。 */
@@ -325,6 +344,14 @@ export class SessionAdjudicator {
   private readonly deps: AdjudicatorDeps
   /** 行流缓冲半区 (开放帧 + 武装标记 + 内存阀/装配阀)。 */
   private readonly splitter: FrameSplitter
+  /** 触发规则注册声明 (register 幂等重挂的依据; §1.2 唯一注册入口)。 */
+  private registration!: AdjudicatorRegistration
+  /** L1 行级感知引擎 (register 投影; 多行状态机宿主; 站①②求值器)。 */
+  private engine!: PerceptionEngine
+  /** direct 出口的门禁规则 (registration.gateRules)。 */
+  private gateRules!: GateRules
+  /** 已挂的打断常驻标记 id (register 重挂时先清旧, 幂等)。 */
+  private interruptMarkerIds: string[] = []
   /** L2 待决行 (未投递的文本块行 = 单流切分的 segment 缓冲)。 */
   private readonly pending: MudLine[] = []
   /**
@@ -359,7 +386,52 @@ export class SessionAdjudicator {
       onLog: (t) => deps.debug('perception', t),
     })
     this.splitter.onFrame = (frame) => this.adjudicate(frame)
-    this.armInterruptRules()
+    // 触发规则注册 (唯一入口): state/event 桶投影 + 打断常驻标记 + flow arming 重放。
+    this.register(deps.registration)
+  }
+
+  // ── 注册 (触发规则唯一入口; §1.2) ───────────────────────
+
+  /**
+   * **注册全部触发规则** (§8.5/§8.8; v0.9 W7.3 收口)。
+   *
+   * - ① state 桶 / ② event 桶 → 新建 PerceptionEngine 投影 (多行状态机随实例重建 =
+   *   复位, I8);
+   * - ②' 打断常驻标记: 从 event 桶派生 `interrupts` 规则 (先清旧再挂, register 幂等);
+   * - direct 门禁规则落位 (站② direct-exec 判定用);
+   * - ④ flow arming: `flow.syncArming()` 全量重放 → onArmSync → `syncFlowMarkers`
+   *   (流程布防的订阅接线由壳在 flow 构造时建立, 这里只驱动重放)。
+   *
+   * **重连 reset → register() 重挂一次**: 构造、`resetForReconnect()`、
+   * `abortForDisconnect()` 三处都走本方法, 替换旧实现的散点补刀。注意 register 会
+   * 清空行流缓冲外的全部规则态 —— 调用方须保证此时开放帧已复位 (重挂路径先
+   * `splitter.reset()`), 否则"arming 即测"会当场提交开放帧残留行。
+   */
+  register(reg: AdjudicatorRegistration): void {
+    this.registration = reg
+    this.gateRules = reg.gateRules
+    // ①② 规则投影: 每会话一个引擎实例 (I8); 重建 = 多行状态复位 (重连/断线语义)。
+    this.engine = new PerceptionEngine({
+      stateRules: reg.stateRules,
+      eventRules: reg.eventRules,
+      holdRuleIds: reg.holdRuleIds,
+    })
+    // ②' 打断常驻标记: 声明了 interrupts 的事件规则 → 行流武装 (命中 → 帧立即提交,
+    // 站②打断/排队当场发生)。register 幂等: 先清旧标记再重挂。
+    for (const id of this.interruptMarkerIds) this.splitter.disarm(id)
+    this.interruptMarkerIds = []
+    for (const rule of reg.eventRules) {
+      if (rule.action?.interrupts === undefined) continue
+      const pattern = lineCriteriaPattern(rule.match)
+      if (pattern === null) continue
+      const id = `rule-int:${rule.id}`
+      this.splitter.arm({ id, pattern, once: false })
+      this.interruptMarkerIds.push(id)
+    }
+    // ④ flow arming 全量重放 (幂等): 本调用若发生在壳构造器内, 回调时 `壳.adjudicator`
+    // 尚未赋值, onArmSync 被可选链吞掉 (由壳构造器末尾的 syncArming 补上); 重连/断线
+    // 重挂路径 (resetForReconnect/abortForDisconnect) 时壳已就绪, 这里直接生效。
+    this.deps.flow.syncArming()
   }
 
   // ── 入口 (行流 + 元事件) ───────────────────────────────
@@ -398,13 +470,6 @@ export class SessionAdjudicator {
     this.splitter.disarm(markerId)
   }
 
-  /** §8.5: 重挂打断规则常驻标记 (构造后与每次行流复位后调用)。 */
-  private armInterruptRules(): void {
-    for (const marker of this.deps.interruptMarkers) {
-      this.splitter.arm({ id: marker.id, pattern: marker.pattern, once: false })
-    }
-  }
-
   // ── 五站消费链 (站序严格不变 — 禁止重排) ────────────────
 
   /**
@@ -417,7 +482,7 @@ export class SessionAdjudicator {
     // GA/EOR 关窗结算会翻转 hasOpen()。
     const inFrame = this.deps.windows.hasOpen()
     // ① 状态折叠 → world 落库。
-    const result = lines.length > 0 ? this.deps.engine.feed(lines) : null
+    const result = lines.length > 0 ? this.engine.feed(lines) : null
     if (result !== null) {
       for (const hit of result.stateHits) {
         if (hit.data) this.deps.state.patch(hit.data, 'percept')
@@ -519,7 +584,7 @@ export class SessionAdjudicator {
         args: call.args,
         // `full` = 只看危险命令硬边界: 直接执行动作不经过模型档位 (actor system)。
         tier: 'full',
-        rules: this.deps.gateRules,
+        rules: this.gateRules,
         loginFlow: false,
         loginCommands: EMPTY_COMMANDS,
         mudTools,
@@ -1002,9 +1067,9 @@ export class SessionAdjudicator {
    */
   resetForReconnect(): void {
     this.splitter.reset()
-    // 分帧器标记随 reset 全清 (在途窗口表由壳先调 windows.reset()); 打断规则重挂
-    // (流程武装布防由壳在本调用之后 flow.syncArming() 重挂)。
-    this.armInterruptRules()
+    // 标记随 reset 全清 (在途窗口表由壳先调 windows.reset()); register() 重挂一次:
+    // 引擎重建 + 打断标记 + flow arming (§1.2 唯一注册入口, 取代旧散点补刀)。
+    this.register(this.registration)
     this.pending.length = 0
     this.pendingActions = []
     this.standalone = null
@@ -1029,7 +1094,9 @@ export class SessionAdjudicator {
     this.standalone = null
     this.consumeTo = -1
     this.splitter.reset()
-    this.armInterruptRules()
+    // register() 重挂一次 (§1.2 唯一注册入口): 引擎重建 + 打断标记 + flow arming。
+    // 壳随后 flow.noteDisconnect() 触发 onArmSync 收缩布防, 最终态一致。
+    this.register(this.registration)
   }
 
   /** 释放: 清结算/hold 计时与投递记账 (行流缓冲随 GC, 与旧壳 dispose 同语义)。 */

@@ -33,6 +33,7 @@
 | §14、§16 | [history/14-16-absorbed-deleted.md](history/14-16-absorbed-deleted.md)（**archived**） | 历史吸收表、删除清单；不作实现依据 |
 | §15 | [CHANGELOG.md](CHANGELOG.md) | 变更记录（只追加） |
 | 附录 A/B | [appendices/official-and-capture.md](appendices/official-and-capture.md) | 官方机制文件锚点、抓包事实 |
+| — | [PLAN.md](PLAN.md) | **新计划起草区**：新计划先在此起草成型，实施后同步正式章节 + CHANGELOG，再清空/归档；不承载已落地事实（已收官方案归档 `history/`） |
 
 ## 任务索引
 

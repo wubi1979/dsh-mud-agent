@@ -11,12 +11,12 @@ impl: packages/mud-core/src/perceive/
 
 | 项 | 设计 |
 |---|---|
-| 实例 | **每会话一个** `PerceptionEngine`（消灭进程级匹配器单例，I8）；`reset()` 于连接重建/切换 |
+| 实例 | **每会话一个** `PerceptionEngine`（消灭进程级匹配器单例，I8）；`reset()` 于连接重建/切换。**v0.9 W7.3**：实例由行流裁决器 `register(registration)` 投影创建（注册收口，§8.8），重连/断线 reset 后经 register 重挂一次 |
 | 输入 | 行序列（来自文本块的行化结果，含工具应答行——与游戏输出同源） |
 | 状态 | 多行状态机**持久**（跨文本块、跨窗口连续）；不再有"镜像克隆式判类" |
 | 输出 | `feed(lines) → { hits: Hit[], consumeTo: number }`；`consumeTo` = 最后一次命中锚点在本批行内的位置 |
 | state 桶 | 同一层内完成预匹配折叠 → `world`；折叠行**不参与**消费边界计算 |
-| **流程判据（v0.4.0）** | 同一批行在喂给静态规则的同时，也喂给**流程运行时的 arming 集**（动态判据，来自当前步：本步 ok/fail + 直接后继 driver，§19.2）；命中即唤醒/分支/打断。**流程判据只在流程激活期存在**，不写进静态规则表（不与 trigger 重复） |
+| **流程判据（v0.4.0；v0.9 W7.1 起经裁决器）** | 流程激活期的动态**行判据**（本步 driver(重试) + 本步 ok/fail 的 text/regex 判据 + 条件分支后继 driver，§19.2）**作为武装标记注册进裁决器标记表**（§8.5，与 §19 的 arming 集是同一张表），随帧提交在消费链站④运行 → 唤醒/分支/打断（§8.2）。本步 ok/fail 里的 **GA/tool 判据不经 arming**（GA 随在途窗口关窗结算、tool 由工具结果判定，§19.3）。**流程判据只在流程激活期存在**，不写进静态规则表（不与 trigger 重复） |
 | holdDelivery | 声明 `holdDelivery` 的多行规则**捕获未完成**时，本块不投递（半截事务不给真实 LLM）。状态持久后此机制跨窗口有效；超时由 `holdTimeoutMs` 兜底释放（规则级开关，I6） |
 
 **多行规则的写法约束（血泪）**：`multiline: true` 时 `match.patterns` 的每一条都是**有序条件**（`buildMultiConds`），而一行只能推进一个条件（`stepMulti`）—— 所以**单行提示必须写成一条正则**，写成两条就永远凑不齐（例：登录的"赶出去/取而代之"确认提问，实录为一行）。真要两条条件，第二条必须落在**后续行**。同理，单条件多行规则永远不会 `holding`（种子命中即完成，`multiStates` 为空），`holdDelivery` 对它不生效。
@@ -47,6 +47,7 @@ segment = 遗留段 ++ 本文本块的行
 - **前导上下文**（动作之前的行）归 T1 投递消息体：它 precede 该动作，属该次动作的上下文。
 - **投递消息携带原文**（决定：携带）：转录完整 → 后续 T2 回合的上下文不缺；**T1 只按动作请求渲染 tool-call，忽略文本**（§7），而 T2 拿到同一条消息能自行决定（I15）。
 - **投递形态（作者定名 2026-09-13）**：**原文投递** = 消息体带原文（上面的 `segment[0..consumeTo]`）+ 动作请求；**动作投递** = 无原文可带，只投动作请求 —— 适用帧内命中、人工回填、结算驱动、排队出队。日志与决策栏一律用这两个名字（旧称"反射消息 / 帧内独立投递"）。
+- **I6 口径（v0.9 W7.3 对齐）**："一个结算点 ≤ 一条投递消息"中的**结算点 = 帧提交点**（§8.2 消费链站⑤投递视图）；standalone（帧内命中 / 人工回填 / 结算驱动 / 排队出队）是**独立投递点**（动作投递），与结算点投递物理合流**不算违反 I6**。
 - **投递通道（与形态正交）**：`followup`（无工具在途 → 正常开新回合）vs `defer`（有工具在途 → 动作随本回合结果进下一步），判据见 §19.6.2；形态解决"带不带原文"，通道解决"什么时候进模型"。
 - **批次裁剪**（唯一裁剪职责）：按 token/行/字节预算裁剪，只影响 T2 可见文本，不影响 T1。
 - **遗留段有界**：≤ 128 行 / 16KB；超限丢最旧 + error 日志 + diag 计数（I9）。
@@ -60,14 +61,21 @@ segment = 遗留段 ++ 本文本块的行
 
 ## §6 L3 选路
 
-- `agent/pre-step`（agent 作用域）：记录**本回合**的 lane —— 取该回合认领消息里第一条 `mud-owned` 的 lane；同一回合的后续步（工具续步）沿用。**v0.4.0**：流程的下一步动作也是**新投递**（§19.3），所以每步都能从"本步认领到的动作消息"取到 lane=t1；某一步没有新认领消息时沿用本回合 lane（不会误换）。
-- `agent/request`（agent 作用域 + **`{ prepend: true }`**）：`lane=t1` → `{provider:'mud-t1', model:'t1-local'}`；其余（`t2` / 无 lane）→ **原样返回**（T2 基线，I3）。
+> **v0.9 W7.3（2026-09-18）回归本节声明的 `agent/request` 拦截设计**：v0.6.x 曾一度改为 `ModelSelectionRef` 预写方案（`presetLaneSelection` 在 `agent/pre-step` 直接改写会话模型选择），该变更**未登记 CHANGELOG**，且踩了下面"会话模型污染"的坑（预写后 `next()` 已是占位配置，还原记忆无接缝点）。W7.3 删 `presetLaneSelection` / `ModelSelectionRef` / `trySelectionRef`，回到本节原写的 `agent/request` + `{prepend:true}` 拦截 + `realModel` 记忆还原方案；`agent/pre-step` 只负责记 lane 与广播，不再写模型选择。
+
+- `agent/pre-step`（agent 作用域）：只做两件事 —— ① 记录**本回合**的 lane（取该回合认领消息里第一条 `mud-owned` 的 lane；同一回合的后续步沿用本回合 lane，不会误换）；② `onLane` 广播当前 lane 给限速闸门（`installOwnedLaneRouting` 的 `onLane` → 闸门的 `currentLane`）。**v0.4.0**：流程的下一步动作也是**新投递**（§19.3），所以每步都能从"本步认领到的动作消息"取到 lane=t1；某一步没有新认领消息时沿用本回合 lane。
+- `agent/request`（agent 作用域 + **`{ prepend: true }`** async waterfall）：在 `await next()` **之后**调 `resolveLaneConfig(requested, next)` 决定最终配置：
+  - `lane=t1` → `{provider:'mud-t1', model:'t1-local'}`（剥 `reasoningEffort`；若 `next()` 仍是真实配置——即首请求尚未被污染——顺手把 `next()` 入 `realModel` 记忆）；
+  - 非 t1 且非占位 → 原样放行 + 更新 `realModel` 记忆；
+  - 非 t1 收到 T1 占位 + 有记忆 → spread `requested` 只覆写 `provider`/`model`/`reasoningEffort`（保留 `temperature`/`maxTokens`/`stop`），`restored:true`；
+  - 占位 + 无记忆 → 保守放行；
+  - 空 `provider`/`model` 不更新记忆。
 - **为什么必须 prepend**：官方 per-session 模型选择（`installModelSelection`，setup 期注册，早于本插件）会无条件写回会话模型；Cordis waterfall 中**先注册者最后拍板**，不抢最外层则 T1 被覆盖回真实 LLM（历史上表现为每 2s 一次 `agent/request` 而无任何 `[t1]` 输出）。
-- **会话模型污染的防御（实测 bug）**：官方侧会把一次请求**实际生效**的 provider/model 记成会话的模型选择。于是首次把某回合拦成 `mud-t1` 之后，同一回合的下一步 `next()` 就已是 `mud-t1/t1-local`，**非 T1 回合也会打到本地模拟 provider**（症状：断流唤醒投出的批次被 T1 适配器按"选路异常"收束，真实 LLM 永不参与）。因此选路里维护一份"会话真实模型"记忆（最近一次非占位配置），并在**非 T1 回合收到 T1 占位时还原**它；用户手动换模型后 `next()` 给的是新模型 → 照原样放行并更新记忆，不覆盖用户选择。纯判定集中在 `resolveLaneConfig`（可单测），每次还原都留痕。
+- **会话模型污染的防御（实测 bug）**：官方侧会把一次请求**实际生效**的 provider/model 记成会话的模型选择。于是首次把某回合拦成 `mud-t1` 之后，同一回合的下一步 `next()` 就已是 `mud-t1/t1-local`，**非 T1 回合也会打到本地模拟 provider**（症状：断流唤醒投出的批次被 T1 适配器按"选路异常"收束，真实 LLM 永不参与）。因此选路里维护一份"会话真实模型"记忆（最近一次非占位配置），并在**非 T1 回合收到 T1 占位时还原**它；用户手动换模型后 `next()` 给的是新模型 → 照原样放行并更新记忆，不覆盖用户选择。纯判定集中在 `resolveLaneConfig`（可单测，见 `tests/lane-routing.spec.ts`），每次还原都留痕。
 - **门控**：`preset === 'mud-player'`（§9）优先；预设机制不可用时回退为"会话已绑定 MUD"（v8 行为）。
 - **禁止**：用 `sessionController.selectModel` 切 lane —— 它会 `agentDefaultModel.saveSelection` **持久改写部署级默认模型**（并每次追加持久事件 + 触发模型切换通知）。
 - **相邻工具调用限速**（`Config.toolCallIntervalMs`，缺省 1000ms；0 = 关闭）：在 `tools/pre-execute` 闸门里对 **T2 通道**的 MUD 工具调用等待到间隔满足再放行（不拒绝、不丢调用）。队列的 `commandIntervalMs` 只管写 socket 的间隔，管不住模型连续发起工具调用的节奏 —— 实测 T2 决策速度远快于服务端处理（"服务器有点反应不过来"）。
-  - **豁免按通道判定，不按登录态**（作者定案 2026-09-13，实现期修正）：`currentLane() === 't1'`（规则动作 / 流程步动作）**一律不等**；系统流程（登录中 / 等人工，`loginFlow()`）也不等。原实现只按 `loginFlow()` 豁免 —— **登录一完成就 false**，于是 T1 的规则动作与流程步动作（例如 fullme 的答案）会被无谓推迟 1 秒。通道读数由选路侧在 `agent/pre-step` 广播（`installOwnedLaneRouting` 的 `onLane` → 闸门的 `currentLane`）。
+  - **豁免按通道判定，不按登录态**（作者定案 2026-09-13；**v0.9 W7.3 修复接线**：原 `installOwnedLaneRouting` 的 `onLane` 与闸门的 `currentLane` 均未接，T1 免限速是死代码 → 改为 `onLane` 广播写入闭包 `let lane`，闸门读 `currentLane: () => lane`）：`currentLane() === 't1'`（规则动作 / 流程步动作）**一律不等**；系统流程（登录中 / 等人工，`loginFlow()`）也不等。原实现只按 `loginFlow()` 豁免 —— **登录一完成就 false**，于是 T1 的规则动作与流程步动作（例如 fullme 的答案）会被无谓推迟 1 秒。
   - 非本插件工具不介入；等待期间响应 `exec.signal`（回合取消 → 直接拒绝本次调用）。
 - **T2 投递限流**（`Config.t2DeliverIntervalMs`，缺省 **2000ms**；0 = 关闭）：**给真实模型喂输入的节奏**也压一道 —— 距上次 T2 投递不足最小间隔时，本批**不投**（行留待决，结算定时器延到差额到点）。
   - 与 `toolCallIntervalMs` 分工：后者压"每次工具调用"，这里压"**多久被喂一次**"（T2 每次行动都必须先收到一条投递），并天然把多个小批次**合并成大批次**。
