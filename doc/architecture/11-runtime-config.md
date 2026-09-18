@@ -22,7 +22,7 @@ note: §11 的流程声明部分（login / fullme 流程表）在 doc/flows/ 下
   - **`login-stall` 删除（v0.4.0）**：登录不再靠"看门狗把 agent 叫起来猜"，而是**流程步骤的 timeout** —— 每步到点即判定**超时**（I4 的三态之一），流程失败收束并留痕（§19）。"登录卡住"从"唤醒 T2 猜原因"变成"流程给出明确失败"。
   - **停止 = 条件不成立**：断线（连接门失效）、登录完成（`loggedIn` 翻转）、agent 释放（agent 门失效）、`dispose()`（表整体释放）都会自动停表 —— 因此不需要为每条路径各写一遍"清定时器"（这正是实测踩过的坑：登录完成不布防、断线后仍空转）。
   - **状态变化点**（唯一的重评估入口，全部幂等）：连接建立/关闭、GMCP、感知 state 折叠、`world_patch` 工具（`buildMudTools.onWorldChange`）、`onAgentReady`、**流程实例状态变化**（`FlowRuntime.opts.onTransition`：进入某步/收束/失败/复位）、`dispose`。多调无害 —— `reevaluate()` 不重置窗口，只有 `touch()`（收到游戏输出）才重置。
-  - **边界（避免"什么都塞进管理器"）**：分帧器的装配阀计时器（v0.6.0 静默窗降级为网络装配粒度 `autoFlushMs`，留在 `FrameSplitter`，§8.7）与 holdDelivery 兜底（`holdTimer`）**不属于看门狗** —— 它们属于一次投递事务的生命周期，留在 runtime；传输层空闲/断线探测属 telnet 层。看门狗表只装"到点唤醒 agent"这一类。
+  - **边界（避免"什么都塞进管理器"）**：裁决器的装配阀计时器（v0.6.0 静默窗降级为网络装配粒度 `autoFlushMs`，§8.7；v0.9 W7.1 分帧器并入裁决器，留在 `SessionAdjudicator`）与 holdDelivery 兜底 / 投递重试计时（同在裁决器）**不属于看门狗** —— 它们属于一次投递/帧事务的生命周期；传输层空闲/断线探测属 telnet 层。看门狗表只装"到点唤醒 agent"这一类。
 - **工具离线行为**：未连接时发命令类工具**本地快速拒绝**（不入队列、不进桥），返回可读原因。
 - **删除用户 / 删除服务器 = 归档配套会话 + 删日志**（两条官方/插件动作配套执行）：
   - **归档（官方路径）**：`IWorkspaces.archiveSession(sessionId)` —— 官方没有"删除会话"，归档是它的替代语义：会话进入 registry 全局归档集，从所有分组/搜索界面隐藏，**会话文件与 workspace 记账槽位保留**（`api/workspace-controller/src/client/service.ts:114`、命令实现 `api/workspace-controller/src/commands.ts:153`）；归档当前会话时 harness 自己把选择清成新会话视图（`client/ui-workspace/src/client/navigation.ts:242`）。会话存在（live 或持久化）才能归档，名单里的失效 id 归档失败只忽略。

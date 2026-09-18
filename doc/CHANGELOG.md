@@ -295,3 +295,8 @@ note: 只追加，不回改历史条目；每次设计变更在文末登记一�
 - 答错重试复用 `retry` 步内自环：清 `{captcha}` 旧码（`clearExternal`）→ 投 `retry.action` 再推图**再问一次（第二次挂起）**→ 新码提交后动作随第二次工具结果进同一回合；三次提问 = 三次挂起-解挂，回合始终开着
 - 弹窗只收裸码（`sendCommand` 人工分支兼容 `fullme` 前缀），`halt`/`fullme` 序列仍归流程动作统一声明（§19.3）
 - `prompt` 步 `timeoutMs` 15s → 180s（含等人工）；`runtime-captcha.spec.ts` 按新语义整篇重写（8 例）；§19.2/§19.3 与 flows/fullme.md 同步
+
+## v0.7.4（2026-09-18，补）W7.1 文档同步：分帧器表述收敛为行流裁决器
+- W7.1（裁决器抽出 + 分帧器行流化，等价迁移）落地：`frame-splitter.ts` 退役并入 `runtime/session/adjudicator.ts`（`SessionAdjudicator`，行流 + 元事件入口 + 五站消费链 + 记账 + 投递节拍），架构文档中"分帧器"作为现役主体的表述全部同步（6 个章节文件）：§2 术语表"帧"条目与 §3 架构图（00-core）、§5 结算点与装配阀（04-06）、§8 章标题/§8.0 定位/§8.5 arming 集/§8.8 实现映射表（07-08，原 `frame-splitter.ts` 行改指 `adjudicator.ts`）、§12 单元测试对象（12-13，spec 改指 adjudicator 导出）、§19.2 arming 集落点（19-flow）、§11 看门狗边界（11-runtime-config，hold/settle 计时同在裁决器）
+- **帧机制表述保留**：W7.1 为等价迁移，行流缓冲/切帧/帧标记/帧并集/内存阀在裁决器内原样存在（`FrameSplitter` 类并入保留），文档同步保留；§4–§8 整章重写（行流裁决器与在途窗口叙述）按 PLAN 属 W7.3
+- 历史记录不改：CHANGELOG 历史条目、`doc/history/`（archived）、`doc/PLAN.md`（方案记录）
