@@ -346,3 +346,17 @@ note: 只追加，不回改历史条目；每次设计变更在文末登记一�
 - ③ **保持原名原符号**：`inflight.ts`/`InflightWindowTable`（§8.3）仅随迁至 `agent/`；adjudicator 整体迁移不拆（分帧已并入，W7.1）；`credentials.ts` 过渡文件放消费方旁 `session/`
 - ④ **引用面随迁**：package.json exports `./preset-agent` → `lib/session/preset.js`（presets/mud-player/agent.cordis.yml 与 `preset-agent.spec.ts` 守卫断言同步）；tests 全部深路径 import 改指新位置；正式章节 impl front-matter 与路径字样随迁（§0/§7–§10/§11/§17–§18/§19/flows/login/fullme；§17 表尾登记 W8 行）
 - 验证（agent 实测）：`tsc --noEmit` EXIT=0；vitest 全包 **31 文件 / 345 例全绿**（= 基线，0 新增红例）；文件级循环 import 为零（DFS 全 54 文件可证）
+
+## v0.9.4（2026-09-19，补）同步上游 typert strict codec `create()` 工厂契约（修复 webui remote mount 全挂）
+- 上游 harness（commit `e459e32637` "materialize generated schemas on first use"）把 strict codec 契约从 `{ mode, typeSymbol, schema }` 改为 `{ mode, typeSymbol, create: () => TypertSchema }`（registry `validateCodec` 强制 `create()` 工厂）；本仓库旧生成器（npm `@deepseek-ai/dsh-typert-generator@0.1.5-rc.2`）仍 emit `schema:` 形态 → 页面 `ctx.remote.$mount(TYPERT_REMOTE)` 全部 descriptor 被拒（`strict codec has no create() factory`），remote mount 失败 → `/mud/*` RPC 全部不可用（侧栏报"无法连接网路"）
+- ① **协议镜像同步**：`packages/typert-protocol`（镜像 harness packages/typert/protocol）`TypertCodec` strict 分支 `schema: TypertSchema` → `create: () => TypertSchema`，镜像 version `0.1.5-rc.2` → `0.1.6-alpha.1`
+- ② **生成器升级**：mud-core devDep `@deepseek-ai/dsh-typert-generator` `^0.1.5-rc.2` → `0.1.6-alpha.2`（npm 上已发布新契约 emit 的最低版本）；重跑 `gen:typert`，`typert.host.js`/`typert.remote-client.js` 全量改 emit `create:` 形态（schemas 行同步 `{ name, create }`）
+- ③ 业务代码零改动（mud-core src 不直接消费 codec 形态；harness 侧 lazy materialize 对调用方透明）
+- 验证（agent 实测）：`typert-protocol`/`mud-core`/`mud-webui` `tsc` 全部 EXIT=0；mud-core vitest 全包 31 文件 / 345 例全绿；产物 grep 确认 `schema:` 零残留
+
+## v0.9.5（2026-09-19，补）preset 移除 workflow-worker-thread 行（上游已删除该插件包）
+- 症状：`[装配] preset mud-player 装配失败 (preset "mud-player" failed to mount: row "workflow-worker-thread" names a plugin that cannot be resolved: @deepseek-ai/dsh-workflow-worker-thread)` → 回落宿主侧装配
+- 根因：副本里 `workflow-worker-thread` 行是 6a98c13 起"有意新增、standard 尚未同步"的插入行；但上游 harness commit `35af8698c2`（"fix(workflow): execute orchestration in the sandboxed PTC runtime"）已**删除** `packages/workflow/workflow-worker-thread` 整个包（编排改走沙箱化 PTC runtime，`workflow-ptc` 行仍在），该行从此永远无法 resolve
+- ① `presets/mud-player/agent.cordis.yml` 删除 `workflow-worker-thread` 行（`provider: spawn` 的编排由 `workflow-ptc` 承担，功能不丢）
+- ② `preset-agent.spec.ts` 守卫断言同步：extra 只放行 `mud-agent` 一行，并留痕删除缘由
+- 验证（agent 实测）：vitest 全包 31 文件 / 345 例全绿（守卫逐行比对通过：副本与 standard 现仅差 mud-agent 一行）

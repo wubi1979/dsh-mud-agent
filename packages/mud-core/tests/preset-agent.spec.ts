@@ -319,9 +319,10 @@ describe('preset 副本与 harness standard 的一致性 (本机存在检出时�
     const ours = rowBlocks(readFileSync(OURS, 'utf8'))
 
     const extra = [...ours.keys()].filter(id => !standard.has(id))
-    // 只多两行: mud-agent (本插件的 MUD 会话行) + workflow-worker-thread (6a98c13 起
-    // 副本有意新增的插入行, harness standard 尚未同步)。
-    expect(extra).toEqual(['workflow-worker-thread', 'mud-agent'])
+    // 只多一行: mud-agent (本插件的 MUD 会话行)。曾有意多带的 workflow-worker-thread
+    // 已删除 —— 上游 35af8698c2 起删除了该插件包 (编排改走沙箱化 PTC runtime),
+    // 保留该行会让 preset 挂载报 "cannot be resolved" 并回落宿主侧装配。
+    expect(extra).toEqual(['mud-agent'])
 
     const missing = [...standard.keys()].filter(id => !ours.has(id))
     expect(missing, '副本缺少 standard 的行').toEqual([])

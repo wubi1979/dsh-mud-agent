@@ -412,9 +412,9 @@ describe('登录流程端到端 (流程表 → T1 动作 → 桥挂起 → 判�
     // 工具结果解析出的 stepId 不是当前步 → 点名忽略（日志只含 stepId, 不含命令文本,
     // 密码/用户名不会出现在日志里）。
     expect(h.runtime.diag().flow).toMatchObject({ stepId: 'success' })
-    expect(h.logs.join('\n')).toContain('工具结果（不是本步的: pass, 忽略）')
+    expect(h.logs.join('\n')).toContain('工具结果属于步骤 pass（非当前步 success）: 不作本步结算判据')
     // 同理：name 步发完 {name} 后，它的 GA 在 pass 步到达时也按 stepId 归属挡掉。
-    expect(h.logs.join('\n')).toContain('工具结果（不是本步的: name, 忽略）')
+    expect(h.logs.join('\n')).toContain('工具结果属于步骤 name（非当前步 pass）: 不作本步结算判据')
     expect(h.logs.join('\n')).not.toContain('secret')
     h.runtime.dispose()
   })

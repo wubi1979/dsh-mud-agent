@@ -192,7 +192,9 @@ export class FlowRuntime {
     const hits: FlowActionHit[] = []
     if (this.disposed || this.active === null) return hits
     if (this.active.step.id !== stepId) {
-      this.debug(`工具结果（不是本步的: ${stepId}, 忽略）`)
+      // 措辞注意：这里只是"不作本步结算判据"，动作投递已随该结果正常带过（defer 语义），
+      // 不是丢弃 —— 曾因写成"忽略"被误读为投递丢失（2026-09-19 日志走查）。
+      this.debug(`工具结果属于步骤 ${stepId}（非当前步 ${this.active.step.id}）: 不作本步结算判据`)
       return hits
     }
     if (settled === 'interrupted') {

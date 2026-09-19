@@ -18,8 +18,8 @@ export const FULLME_WRONG_TEXT = '好像什么都没有发生，但是又好像�
 export const FULLME_COOLDOWN_PATTERN = /^你刚刚用过这个命令不久，还要[^。]*才能再用。/
 /** 验证码页面地址（应答帧内回显）。 */
 export const FULLME_URL_PATTERN = /^https?:\/\/[^\s]*robot\.php\?filename=[^\s]+/
-/** 验证码地址抽取（`capture` 槽用；捕获组 1 = 地址）。 */
-export const FULLME_URL_CAPTURE = /(https?:\/\/[^\s]*robot\.php\?filename=[^\s]+)/
+/** 验证码地址抽取（`capture` 槽用；捕获组 1 = 地址；字符类排除反引号——游戏原文用 `` `URL` `` 包裹时防其混入槽值）。 */
+export const FULLME_URL_CAPTURE = /(https?:\/\/[^\s`]*robot\.php\?filename=[^\s`]+)/
 
 /**
  * fullme 流程（五步；作者 2026-09-13 逐条审定）。
