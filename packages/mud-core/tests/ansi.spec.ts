@@ -8,9 +8,9 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { AnsiStreamParser, stripAnsi, isPromptText, type MudLine } from '../src/services/network/ansi.ts'
-import { Perceptor, TriggerMatchService } from '../src/services/matcher/matcher.ts'
-import { createMatchContext } from '../src/services/matcher/types.ts'
+import { AnsiStreamParser, stripAnsi, isPromptText, type MudLine } from '../src/network/ansi.ts'
+import { Perceptor, TriggerMatchService } from '../src/perceive/matcher.ts'
+import { createMatchContext } from '../src/perceive/types.ts'
 
 function toRows(lines: { text: string; raw: string; style: MudLine['style'] }[]): MudLine[] {
   return lines.map((l, i) => ({

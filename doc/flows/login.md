@@ -2,8 +2,8 @@
 sections: [11]
 status: active
 deps: ["§19", "§1", "§7", "§8"]
-impl: packages/mud-core/src/runtime/flow/flows.ts
-note: login 流程声明的设计事实源；实现跟随 runtime/flow/flows.ts 的 LOGIN_FLOW，机制见 §19
+impl: packages/mud-core/src/flow/flows/index.ts
+note: login 流程声明的设计事实源；实现跟随 flow/flows/index.ts 的 LOGIN_FLOW，机制见 §19
 ---
 
 # login 流程（声明）

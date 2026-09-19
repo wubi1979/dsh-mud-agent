@@ -27,7 +27,7 @@ export type {
   MudCoreService,
   MudDiag,
   MudGameRead,
-} from './service.ts'
+} from './shell/service.ts'
 export { MudRemoteService, type MudRemoteServiceInternals } from './shell/mud-remote-service.ts'
 
 // 会话事件契约: 宿主消费会话内命令 (外壳命令走 HTTP /mud/command, 带 sessionId)。

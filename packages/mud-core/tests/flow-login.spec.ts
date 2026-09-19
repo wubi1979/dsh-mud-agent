@@ -19,12 +19,12 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import defaultPerceptionRules from '../src/perceive/rules.ts'
 import {
   LOGIN_FLOW, defaultFlows, flowCommands, validateFlows,
-} from '../src/runtime/flow/flows/index.ts'
-import { runWithDeliveryChannel } from '../src/agents/mount.ts'
-import { MudSessionRuntime } from '../src/runtime/session/session.ts'
-import type { MudRuntimeConfig, MudRuntimeSink } from '../src/runtime/session/types.ts'
-import type { MudConnectionManager, MudConnectionSink } from '../src/services/network/manager.ts'
-import type { MudLine } from '../src/services/network/ansi.ts'
+} from '../src/flow/flows/index.ts'
+import { runWithDeliveryChannel } from '../src/session/mount.ts'
+import { MudSessionRuntime } from '../src/session/session.ts'
+import type { MudRuntimeConfig, MudRuntimeSink } from '../src/session/types.ts'
+import type { MudConnectionManager, MudConnectionSink } from '../src/network/manager.ts'
+import type { MudLine } from '../src/network/ansi.ts'
 
 const NAME_PROMPT = '您的英文名字：'
 const PASS_PROMPT = '此ID档案已存在，请输入密码：'

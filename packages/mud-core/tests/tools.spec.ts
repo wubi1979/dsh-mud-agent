@@ -5,12 +5,11 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import {
-  buildMudTools, DEFAULT_ACTIVITY_TABLE, OUT_SCHEMA, type MudTools,
-} from '../src/agents/tools.ts'
-import { MOVE_ALIASES, MOVE_DIRS, STATUS_CMDS } from '../src/shared/game.ts'
-import type { WindowRequest, WindowResult } from '../src/runtime/session/inflight.ts'
-import { createWorld } from '../src/shared/world.ts'
+import { buildMudTools, DEFAULT_ACTIVITY_TABLE } from '../src/agent/tools-build.ts'
+import { OUT_SCHEMA, type MudTools } from '../src/agent/tools-schema.ts'
+import { MOVE_ALIASES, MOVE_DIRS, STATUS_CMDS } from '../src/world/game.ts'
+import type { WindowRequest, WindowResult } from '../src/agent/inflight.ts'
+import { createWorld } from '../src/world/state.ts'
 
 function makeTools(): { tools: MudTools; sent: string[]; logs: string[] } {
   const sent: string[] = []

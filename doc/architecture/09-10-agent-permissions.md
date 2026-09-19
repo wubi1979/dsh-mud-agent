@@ -2,7 +2,7 @@
 sections: [9, 10]
 status: active
 deps: ["§1", "§3"]
-impl: packages/mud-core/src/agents/preset.ts + services/gate/
+impl: packages/mud-core/src/session/preset.ts + agent/gate/
 ---
 
 ## §9 agent 装配面：preset 化（旁路 A）
@@ -19,10 +19,10 @@ impl: packages/mud-core/src/agents/preset.ts + services/gate/
 
 **设计**：
 
-1. `agents/preset.ts`（agent 平面插件行）：从 `ctx.get('mud').agentKit()` 取工具/人设/命令/skills，
+1. `session/preset.ts`（agent 平面插件行）：从 `ctx.get('mud').agentKit()` 取工具/人设/命令/skills，
    `ctx.tools.register(...)` + `systemPrompt.section(...)`；技能目录变化用**动态文本提供者**
    （`text: () => kit.skillsText()`，v8 已采用）而非 dispose/重注册。
-2. `presets/mud-player/`：`preset.yml` + `agent.cordis.yml`（单行指向 `lib/agents/preset.js`）。
+2. `presets/mud-player/`：`preset.yml` + `agent.cordis.yml`（单行指向 `lib/session/preset.js`）。
 3. `package.json`：`exports` 增 `./preset-agent`；`files` 增 `presets`。
 4. 页面：`sessions.create({ agentPreset: 'mud-player' })`（依赖 harness client 透传）。
 5. profile patch：`agent-presets` 行追加 `roots: [{path: 'file:///…/mud-core/presets', trust: user}]`。
@@ -39,9 +39,9 @@ impl: packages/mud-core/src/agents/preset.ts + services/gate/
 
 | 项 | 落点 |
 |---|---|
-| preset 行（能力面） | `agents/preset.ts`：无 `inject`（宿主服务一律 `ctx.get`，挂载审计友好）；组装期注册全部工具声明 + **三段提示**（skills/tier/commands） |
-| 会话人设（两条路径共有，**在 agent 作用域替换官方人设槽**） | `agents/mount.ts#attachMudPersona`：往 `deployment:persona-prefix` 写 MUD 人设、把 `deployment:persona-suffix` 置空，由宿主在 `attachPolicy` 里调用。**为什么不放 preset 行**：会话人设已有主人（部署 `personaPrefix` 与 standard 的 `persona` 行），自建区段只会并列（模型同时被告知"你是编码 agent"和"你是 MUD 玩家"），而**同名**替换在 preset 作用域会与 standard 行撞名抛错 —— 官方 `systemPrompt` 的作用域链是"最近作用域胜出"，per-agent 覆盖只能经 `agent.ctx` 注册。`tests/mud-persona.spec.ts` 用真实注册表复现 preset → agent 两级作用域并断言渲染结果里只剩 MUD 人设 |
-| 组合文件 | `presets/mud-player/agent.cordis.yml`：**整份 `standard` 组装 + 我们的 `mud-agent` 行**（该行 `name: '../../lib/agents/preset.js'` —— **相对路径**，以 `.` 开头按 preset 目录解析）；`preset.yml`（展示名/描述） |
+| preset 行（能力面） | `session/preset.ts`：无 `inject`（宿主服务一律 `ctx.get`，挂载审计友好）；组装期注册全部工具声明 + **三段提示**（skills/tier/commands） |
+| 会话人设（两条路径共有，**在 agent 作用域替换官方人设槽**） | `session/mount.ts#attachMudPersona`：往 `deployment:persona-prefix` 写 MUD 人设、把 `deployment:persona-suffix` 置空，由宿主在 `attachPolicy` 里调用。**为什么不放 preset 行**：会话人设已有主人（部署 `personaPrefix` 与 standard 的 `persona` 行），自建区段只会并列（模型同时被告知"你是编码 agent"和"你是 MUD 玩家"），而**同名**替换在 preset 作用域会与 standard 行撞名抛错 —— 官方 `systemPrompt` 的作用域链是"最近作用域胜出"，per-agent 覆盖只能经 `agent.ctx` 注册。`tests/mud-persona.spec.ts` 用真实注册表复现 preset → agent 两级作用域并断言渲染结果里只剩 MUD 人设 |
+| 组合文件 | `presets/mud-player/agent.cordis.yml`：**整份 `standard` 组装 + 我们的 `mud-agent` 行**（该行 `name: '../../lib/session/preset.js'` —— **相对路径**，以 `.` 开头按 preset 目录解析）；`preset.yml`（展示名/描述） |
 | 包出口 | `package.json`：`exports["./preset-agent"]` + `files` 增 `presets` |
 | 会话侧数据源 | `ctx.mud.agentKit()`：`{ prompt, tools(sessionId), tierNote(sessionId), noteToolCall(sessionId,…) }` —— 共享组装与 per-session 状态（队列/桥/world/凭据）之间的唯一接法：工具声明共享，执行体按调用方 `agent.id` 解析 |
 | 宿主装配路径 | `Config.agentPreset` 非空 = preset 路径：`attachToAgent` 只装**策略面**（选路 + 权限闸门 + 人设槽覆盖），能力面交给 preset；装配失败（服务缺失 / `agent-preset/not-found` / 会话已锁定）→ 日志留痕 + **回落宿主侧装配**（`mountHostCapability`：按档注册工具 + 提示区段） |
@@ -114,14 +114,14 @@ impl: packages/mud-core/src/agents/preset.ts + services/gate/
 
 | 项 | 落点 |
 |---|---|
-| 档位表（可见工具集 + 外围能力） | `services/gate/tiers.ts`：`MUD_TIER_SPECS`、`visibleTools`、`MUD_TIER_NAMES`（`observe`/`operate`/`full`），完全档外围能力 `FULL_CAPABILITIES` |
-| 危险命令策略表 | `shared/commands.ts`：`DEFAULT_DANGEROUS_COMMANDS`（`deny`：suicide/passwd；`ask`：abandon/steal/kill/drop/quit）+ `commandHead`/`dangerousRuleFor`/`deniedCommands`；`Config.dangerousCommands` 整体替换 |
-| 纯判定（强制层唯一判据） | `services/gate/policy.ts`：`evaluateToolCall`（非 MUD 工具放行 → 档位可见性 → 逐条命令：登录/人工流程豁免 → 危险表 deny/ask → 只读档 deny）、`commandsOfToolCall`（命令派生由 `services/gate/rules.ts` 的 `buildGateRules` 注入） |
-| 强制执行点 | `services/gate/tool-gate.ts`：`installMudToolGate` 装官方 `tools/pre-execute`（不 `next()` 即短路）；带 agent 身份判据与 `[权限] …` 留痕 |
-| 可见性层 | `agents/mount.ts` 的 `attachMudTools(..., visible)` 按档注册；档位切换时 `capability.onChange` → 先释放再重挂（模型看到的工具列表 = 该档能力） |
-| 状态与查询 | `services/gate/capability.ts`：会话事件 `mud/capability`（log-only）+ 官方会话投影 `mudCapabilities`（host-only，`stateVersion: 1`）；API `ctx.mud.capability.{names,defaultTier,current,resolve,optionOf,options,capabilities,set,ensure,onChange}`（形状对齐 `permissionPresets`）；HTTP `GET/POST /mud/capability`；`/mud/status` 每行带 `tier` |
+| 档位表（可见工具集 + 外围能力） | `agent/gate/tiers.ts`：`MUD_TIER_SPECS`、`visibleTools`、`MUD_TIER_NAMES`（`observe`/`operate`/`full`），完全档外围能力 `FULL_CAPABILITIES` |
+| 危险命令策略表 | `agent/commands.ts`：`DEFAULT_DANGEROUS_COMMANDS`（`deny`：suicide/passwd；`ask`：abandon/steal/kill/drop/quit）+ `commandHead`/`dangerousRuleFor`/`deniedCommands`；`Config.dangerousCommands` 整体替换 |
+| 纯判定（强制层唯一判据） | `agent/gate/policy.ts`：`evaluateToolCall`（非 MUD 工具放行 → 档位可见性 → 逐条命令：登录/人工流程豁免 → 危险表 deny/ask → 只读档 deny）、`commandsOfToolCall`（命令派生由 `agent/gate/rules.ts` 的 `buildGateRules` 注入） |
+| 强制执行点 | `agent/gate/tool-gate.ts`：`installMudToolGate` 装官方 `tools/pre-execute`（不 `next()` 即短路）；带 agent 身份判据与 `[权限] …` 留痕 |
+| 可见性层 | `session/mount.ts` 的 `attachMudTools(..., visible)` 按档注册；档位切换时 `capability.onChange` → 先释放再重挂（模型看到的工具列表 = 该档能力） |
+| 状态与查询 | `agent/gate/capability.ts`：会话事件 `mud/capability`（log-only）+ 官方会话投影 `mudCapabilities`（host-only，`stateVersion: 1`）；API `ctx.mud.capability.{names,defaultTier,current,resolve,optionOf,options,capabilities,set,ensure,onChange}`（形状对齐 `permissionPresets`）；HTTP `GET/POST /mud/capability`；`/mud/status` 每行带 `tier` |
 | 零发送通路 | 新工具 `mud_state`（world 快照 + 最近输出 + 连接态，不碰 socket）、`mud_recall`（尚未投递的输出）、`mud_help`（命令语法按需查询：不带 topic = 分类 + id 索引, topic = 分类/命令 id 给出完整语法）、`mud_captcha`（fullme 取图 + 推前台弹窗；出站围栏）；只读档工具集 = 这几个 + T1 动作通道（`mud_send`/`world_patch`，强制层约束）。**命令目录注入策略**：系统提示只放 `commandsIndexForAgent()` 的索引（分类 + 命令 id，约 10 行），70+ 条完整语法由 `mud_help` 按需取 |
-| 模型可见的档位说明 | `services/gate/tiers.ts` 的 `mudTierNote(tier)` → 系统提示区段 `mud-tier`（动态提供者，档位切换即时生效；补偿偏差 1） |
+| 模型可见的档位说明 | `agent/gate/tiers.ts` 的 `mudTierNote(tier)` → 系统提示区段 `mud-tier`（动态提供者，档位切换即时生效；补偿偏差 1） |
 | 页面入口 | 用户行 ⋯ 菜单三档选择（当前档带 `●`），右栏状态区显示 `权限: …` |
 
 **两处与本文档原设计的偏差（已记入 §18）**：

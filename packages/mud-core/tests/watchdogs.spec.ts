@@ -7,7 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { WatchdogTable, type WatchdogSpec } from '../src/runtime/watchdogs.ts'
+import { WatchdogTable, type WatchdogSpec } from '../src/session/watchdogs.ts'
 
 /** 可切换的假条件 + 记录触发。 */
 function makeSpec(overrides: Partial<WatchdogSpec> & { id: string }): {

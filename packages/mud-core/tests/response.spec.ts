@@ -18,9 +18,9 @@ import {
   ABANDON_TEXT,
   ABORT_TEXT,
   type WindowResult,
-} from '../src/runtime/session/inflight.ts'
-import { CommandQueue } from '../src/runtime/session/queue.ts'
-import type { MudLine } from '../src/services/network/ansi.ts'
+} from '../src/agent/inflight.ts'
+import { CommandQueue } from '../src/agent/queue.ts'
+import type { MudLine } from '../src/network/ansi.ts'
 
 function ml(text: string): MudLine {
   return { text, raw: text, style: [], abs: 0, time: Date.now(), isPrompt: false }

@@ -33,44 +33,44 @@
  * @module @deepseek-ai/dsh-mud-core/assemble
  */
 
-import { MudConnectionManager } from './services/network/manager.ts'
-import { MudSessionRuntime } from './runtime/session/session.ts'
+import { MudConnectionManager } from './network/manager.ts'
+import { MudSessionRuntime } from './session/session.ts'
 import {
   DEFAULT_T2_DELIVER_INTERVAL_MS,
   type MudDecisionRecord,
   type MudRuntimeConfig,
   type MudRuntimeSink,
-} from './runtime/session/types.ts'
-import { SkillService } from './agents/skills.ts'
-import type { ActivityEntry } from './agents/tools.ts'
-import { commandsIndexForAgent } from './shared/commands.ts'
+} from './session/types.ts'
+import { SkillService } from './agent/skills.ts'
+import type { ActivityEntry } from './agent/tools-build.ts'
+import { commandsIndexForAgent } from './agent/commands.ts'
 import defaultPerceptionRules from './perceive/rules.ts'
 import { splitPerceptionRules } from './perceive/engine.ts'
-import { flowCommands, defaultFlows } from './runtime/flow/flows/index.ts'
+import { flowCommands, defaultFlows } from './flow/flows/index.ts'
 import {
   attachMudPersona, attachMudPrompt, attachMudTools,
-} from './agents/mount.ts'
+} from './session/mount.ts'
 import {
   installOwnedLaneRouting, registerTriggerProvider,
   type OwnedLane, type TriggerProvider,
-} from './agents/lane.ts'
-import { installMudToolGate } from './services/gate/tool-gate.ts'
-import { buildGateRules } from './services/gate/rules.ts'
-import type { DangerousRule } from './shared/commands.ts'
-import { registerMudCapability, resolveMudTier, type MudCapabilityApi } from './services/gate/capability.ts'
-import { visibleTools, mudTierNote } from './services/gate/tiers.ts'
+} from './deliver/lane.ts'
+import { installMudToolGate } from './agent/gate/tool-gate.ts'
+import { buildGateRules } from './agent/gate/rules.ts'
+import type { DangerousRule } from './agent/commands.ts'
+import { registerMudCapability, resolveMudTier, type MudCapabilityApi } from './agent/gate/capability.ts'
+import { visibleTools, mudTierNote } from './agent/gate/tiers.ts'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { Context } from '@deepseek-ai/cordis'
 import { join } from 'node:path'
-import { MudLogService, purgeSessionLogs, resolveLogDir } from './services/log/log-service.ts'
+import { MudLogService, purgeSessionLogs, resolveLogDir } from './log/log-service.ts'
 import { MudFeedHub } from './shell/streams.ts'
 import { GlobalBuffers } from './shell/global-buffers.ts'
 import { MudRemoteService, SessionView } from './shell/mud-remote-service.ts'
 import type { MudGameItem, MudWorldSnapshot } from './shell/remote-types.ts'
 import type {
   MudAgentKit, MudConnectOptions, MudConnectionStatus, MudCoreService, MudDiag,
-} from './service.ts'
+} from './shell/service.ts'
 
 /** MUD 核心部署配置 (cordis.yml 行 config; 默认值在 bundle patch, 账户在 profile patch)。 */
 export interface MudAgentConfig {
@@ -126,7 +126,7 @@ export interface MudAgentConfig {
   /**
    * 官方 agent preset id (`doc/ARCHITECTURE.md` §9)。非空 = **preset 装配路径**:
    * MUD 会话在首个回合前由 `ctx.agentPresets.select(agent, '<id>')` 切到该 preset
-   * (能力面由 preset 行提供, 见 `src/agents/preset.ts`), 宿主只保留策略面 (选路/权限
+   * (能力面由 preset 行提供, 见 `src/session/preset.ts`), 宿主只保留策略面 (选路/权限
    * 闸门)。缺省空串 = **宿主侧装配** (回退门; preset 未就绪或部署未配置时使用)。
    */
   agentPreset?: string
@@ -326,8 +326,8 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
 
   // ── 权限档位 (每会话持久事实; §10) ───────────────────────
   /**
-   * 门禁注入规则 (机制与知识分离, 见 services/gate/rules.ts): 从 `shared/commands`
-   * 的危险表 (部署可整体替换 `config.dangerousCommands`) 与 `shared/game` 的命令
+   * 门禁注入规则 (机制与知识分离, 见 agent/gate/rules.ts): 从 `agent/commands`
+   * 的危险表 (部署可整体替换 `config.dangerousCommands`) 与 `world/game` 的命令
    * 派生器组装, 注入 policy/tool-gate —— 判定层不直接持有游戏知识。
    */
   const gateRules = buildGateRules(

@@ -23,8 +23,8 @@
       "default": "./lib/invariant.js"
     },
     "./preset-agent": {
-      "types": "./lib/agents/preset.d.ts",
-      "default": "./lib/agents/preset.js"
+      "types": "./lib/session/preset.d.ts",
+      "default": "./lib/session/preset.js"
     },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./remote-types": {

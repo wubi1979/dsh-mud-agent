@@ -29,9 +29,9 @@
 import { createAssistantMessage, createToolResultMessage, type Message } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { vi } from 'vitest'
-import { TriggerLlmAdapter } from '../src/agents/t1.ts'
-import type { MudSessionRuntime } from '../src/runtime/session/session.ts'
-import type { ReplySettle } from '../src/runtime/session/inflight.ts'
+import { TriggerLlmAdapter } from '../src/agent/t1.ts'
+import type { MudSessionRuntime } from '../src/session/session.ts'
+import type { ReplySettle } from '../src/agent/inflight.ts'
 
 /** 一条轨迹记录（诊断/断言用：turn/step/认领/请求/工具/收束）。 */
 export interface SimTrace {

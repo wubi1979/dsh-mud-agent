@@ -13,13 +13,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { LOGIN_FLOW, PRIORITY_NORMAL, type FlowSpec } from '../src/runtime/flow/flows/index.ts'
+import { LOGIN_FLOW, PRIORITY_NORMAL, type FlowSpec } from '../src/flow/flows/index.ts'
 import type { PerceptionRule } from '../src/perceive/types.ts'
-import { runWithDeliveryChannel } from '../src/agents/mount.ts'
-import { MudSessionRuntime } from '../src/runtime/session/session.ts'
-import type { MudRuntimeConfig, MudRuntimeSink } from '../src/runtime/session/types.ts'
-import type { MudConnectionManager, MudConnectionSink } from '../src/services/network/manager.ts'
-import type { MudLine } from '../src/services/network/ansi.ts'
+import { runWithDeliveryChannel } from '../src/session/mount.ts'
+import { MudSessionRuntime } from '../src/session/session.ts'
+import type { MudRuntimeConfig, MudRuntimeSink } from '../src/session/types.ts'
+import type { MudConnectionManager, MudConnectionSink } from '../src/network/manager.ts'
+import type { MudLine } from '../src/network/ansi.ts'
 
 const NAME_PROMPT = '您的英文名字：'
 

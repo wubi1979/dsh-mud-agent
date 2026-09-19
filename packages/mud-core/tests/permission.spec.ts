@@ -13,15 +13,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { PreToolDecision } from '@deepseek-ai/dsh-tools'
-import { installMudToolGate } from '../src/services/gate/tool-gate.ts'
-import { commandsOfToolCall, evaluateToolCall, type ToolCallVerdictInput } from '../src/services/gate/policy.ts'
-import { buildGateRules } from '../src/services/gate/rules.ts'
+import { installMudToolGate } from '../src/agent/gate/tool-gate.ts'
+import { commandsOfToolCall, evaluateToolCall, type ToolCallVerdictInput } from '../src/agent/gate/policy.ts'
+import { buildGateRules } from '../src/agent/gate/rules.ts'
 import {
   MUD_TIER_NAMES, MUD_TIER_SPECS, isMudTier, mudTierNote, mudTierOption, resolveMudTier, visibleTools,
-} from '../src/services/gate/tiers.ts'
+} from '../src/agent/gate/tiers.ts'
 import {
   applyCapabilityEvent, parseCapabilityState, registerMudCapability, type MudCapabilityApi,
-} from '../src/services/gate/capability.ts'
+} from '../src/agent/gate/capability.ts'
 
 /** 登录流程命令集 (与宿主装配一致: 由 login:* 规则派生; 这里显式列出以免测试依赖规则表)。 */
 const LOGIN_COMMANDS: ReadonlySet<string> = new Set(['{name}', '{pass}', 'y'])
@@ -154,7 +154,7 @@ describe('强制判定矩阵 (evaluateToolCall)', () => {
 })
 
 describe('命令提取 (commandsOfToolCall)', () => {
-  /** 注入缺省命令派生器 (buildGateRules 从 shared/game 组装)。 */
+  /** 注入缺省命令派生器 (buildGateRules 从 world/game 组装)。 */
   const commands = buildGateRules().commands
 
   it('mud_send / 序列', () => {

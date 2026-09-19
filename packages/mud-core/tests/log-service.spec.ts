@@ -10,7 +10,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { MudLogService, purgeSessionLogs, resolveLogDir, type LogEntry } from '../src/services/log/log-service.ts'
+import { MudLogService, purgeSessionLogs, resolveLogDir, type LogEntry } from '../src/log/log-service.ts'
 
 const tmpDirs: string[] = []
 

@@ -13,9 +13,9 @@
 import { describe, expect, it } from 'vitest'
 import { createUserMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, Message, StreamChunk } from '@deepseek-ai/dsh-llm'
-import { ownedGameMessage } from '../src/agents/lane.ts'
-import type { OwnedAction } from '../src/agents/lane.ts'
-import { TriggerLlmAdapter } from '../src/agents/t1.ts'
+import { ownedGameMessage } from '../src/deliver/lane.ts'
+import type { OwnedAction } from '../src/deliver/lane.ts'
+import { TriggerLlmAdapter } from '../src/agent/t1.ts'
 
 /** 动作请求 (契约同形; output 可省 = 纯工具动作)。 */
 type RenderedAction = Omit<OwnedAction, 'output'> & { output?: string }

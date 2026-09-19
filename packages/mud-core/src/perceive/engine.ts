@@ -15,8 +15,8 @@
  * @module @deepseek-ai/dsh-mud-core/perceive/engine
  */
 
-import type { MudLine } from '../services/network/ansi.ts'
-import { TriggerMatchService } from '../services/matcher/matcher.ts'
+import type { MudLine } from '../network/ansi.ts'
+import { TriggerMatchService } from './matcher.ts'
 import type { ActionSpec, PerceptionRule, PerceptHit } from './types.ts'
 
 /** 一条可渲染的命中 (T1 动作的输入单位)。 */

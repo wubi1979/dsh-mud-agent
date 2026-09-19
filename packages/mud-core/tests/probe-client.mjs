@@ -105,7 +105,7 @@ function hexdump(buf) {
   return out.join('\n')
 }
 
-// ── ANSI 剥离 (与 src/preprocess/ansi.ts ANSI_STRIP_RE 等价) ───────────────
+// ── ANSI 剥离 (与 src/network/ansi.ts ANSI_STRIP_RE 等价) ───────────────
 const ANSI_RE = /\x1b\[[0-9;:?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[@-_]/g
 const CTRL_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g
 function stripAnsi(t) { return KEEP_ANSI ? t : t.replace(ANSI_RE, '') }

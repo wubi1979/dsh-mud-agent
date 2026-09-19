@@ -13,7 +13,7 @@
 #
 # 生成方式（harness 检出在 D:/code/deepseek-harness 时）：
 #   取 standard 中 `# ── identity` 起的全部内容 → 前置本段头注释 → 末尾追加
-#   `# ── MUD player` 段（`mud-agent` 行，`name` 用相对路径 `../../lib/agents/preset.js`，
+#   `# ── MUD player` 段（`mud-agent` 行，`name` 用相对路径 `../../lib/session/preset.js`，
 #   以 `.` 开头按 preset 目录解析）。
 
 # ── identity ────────────────────────────────────────────────────────────────
@@ -264,4 +264,4 @@
 # 本行只注册工具与提示区段、不 provide 服务（挂载审计要求），因此无需 isolate；
 # 执行体在调用时按调用方 agent 解析到该会话的工具集（见 src/preset-agent.ts）。
 - id: mud-agent
-  name: '../../lib/agents/preset.js'
+  name: '../../lib/session/preset.js'

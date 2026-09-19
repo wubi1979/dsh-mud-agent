@@ -15,7 +15,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
-import { resolveLaneConfig, T1_MODEL, T1_PROVIDER } from '../src/agents/lane.ts'
+import { resolveLaneConfig, T1_MODEL, T1_PROVIDER } from '../src/deliver/lane.ts'
 
 /** 真实模型配置基样 (deepseek 官方线上模型)。 */
 const REAL: LlmCallConfig = { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'high' }

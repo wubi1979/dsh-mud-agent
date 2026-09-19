@@ -2,7 +2,7 @@
 sections: [7, 8]
 status: active
 deps: ["§1", "§2", "§5"]
-impl: packages/mud-core/src/agents/t1.ts + runtime/session/adjudicator.ts + runtime/session/inflight.ts
+impl: packages/mud-core/src/agent/t1.ts + deliver/adjudicator.ts + agent/inflight.ts
 ---
 
 ## §7 L4 动作渲染（T1）
@@ -34,13 +34,13 @@ impl: packages/mud-core/src/agents/t1.ts + runtime/session/adjudicator.ts + runt
 | **直接执行** | `action.direct: true` | **运行时**立即执行（actor `system`，不注册在途窗口） | **折叠**（不进 agent；`mud_recall` 也不再给） |
 
 - **直接执行的判据**：无状态、无需返回 —— `save` 提醒 → 发 `save`；分页提示 → 发翻页命令。这类触发的"决策"在规则里已经写全，交给模型只是多一个回合、多一份原文噪声。需要模型判断的动作（登录分支、fullme 提醒与答案）**不得**标 `direct`。
-- **直接执行仍受安全边界**：判据用 `services/gate/policy.ts` 的 `evaluateToolCall`（档位判据按 `full` 跑 —— 它是运行时的动作，不是模型的动作，故不受档位可见性约束），危险命令 `deny` 生效、`ask` 因无审批通道等同拒绝。
+- **直接执行仍受安全边界**：判据用 `agent/gate/policy.ts` 的 `evaluateToolCall`（档位判据按 `full` 跑 —— 它是运行时的动作，不是模型的动作，故不受档位可见性约束），危险命令 `deny` 生效、`ask` 因无审批通道等同拒绝。
 
 ---
 
 ## §8 行流裁决器与在途窗口（旁路 B）
 
-> **v0.6.0 设计稿（2026-09-14 作者审定三项决策）**：① 无标记输出靠帧内存阀兜底，不设全局兜底判据；② 事务窗口内的服务端插话**并入**事务响应；③ `settled:'timeout'` 保留枚举名、语义改为"放弃等待"；`'silent'` 删除。实现切片见 §8.8。**v0.9 W7.1（行流裁决器方案）：分帧器（`FrameSplitter`）退役并入 `runtime/session/adjudicator.ts`（`SessionAdjudicator`），帧机制原样保留于裁决器行流缓冲。** **v0.9 W7.2（桥 → 在途窗口）：旧命令-应答桥（`CommandResponseController`，挂起/闸门/单槽/I11/I12）删除，内核折叠进在途窗口表 `runtime/session/inflight.ts`（§8.3）；"TX 即开窗、一切发送者同构"改为"只有发命令工具注册窗口，直发命令延后（直发延后 gate，I12/§8.3）"。** **v0.9 W7.3（注册收口 + 落档）：裁决器注册收口为唯一 `register(registration)` 入口（打断武装 / flow arming 全量重放 / 直发判据投影一并并入；重连/断线 reset 后经 register 重挂一次，§8.5/§8.8）；本节整章重写落档（§8.3 已随 W7.2 落地为在途窗口叙述）。**
+> **v0.6.0 设计稿（2026-09-14 作者审定三项决策）**：① 无标记输出靠帧内存阀兜底，不设全局兜底判据；② 事务窗口内的服务端插话**并入**事务响应；③ `settled:'timeout'` 保留枚举名、语义改为"放弃等待"；`'silent'` 删除。实现切片见 §8.8。**v0.9 W7.1（行流裁决器方案）：分帧器（`FrameSplitter`）退役并入 `deliver/adjudicator.ts`（`SessionAdjudicator`），帧机制原样保留于裁决器行流缓冲。** **v0.9 W7.2（桥 → 在途窗口）：旧命令-应答桥（`CommandResponseController`，挂起/闸门/单槽/I11/I12）删除，内核折叠进在途窗口表 `agent/inflight.ts`（§8.3）；"TX 即开窗、一切发送者同构"改为"只有发命令工具注册窗口，直发命令延后（直发延后 gate，I12/§8.3）"。** **v0.9 W7.3（注册收口 + 落档）：裁决器注册收口为唯一 `register(registration)` 入口（打断武装 / flow arming 全量重放 / 直发判据投影一并并入；重连/断线 reset 后经 register 重挂一次，§8.5/§8.8）；本节整章重写落档（§8.3 已随 W7.2 落地为在途窗口叙述）。**
 
 ### §8.0 定位（一句话契约）
 
@@ -107,9 +107,9 @@ I5/I6（每行恰投一次、一结算点 ≤ 一条消息）由链的单遍结�
 
 | 新模块 | 从哪来 |
 |---|---|
-| `runtime/session/adjudicator.ts`（行流裁决器：行流缓冲/开放帧 + 标记表 + 内存阀 + 五站消费链；v0.9 W7.1 分帧器并入，原 `frame-splitter.ts` 退役） | 旧桥的边界逻辑剥离新建（v0.6.0 S1）→ W7.1 并入裁决器 |
+| `deliver/adjudicator.ts`（行流裁决器：行流缓冲/开放帧 + 标记表 + 内存阀 + 五站消费链；v0.9 W7.1 分帧器并入，原 `frame-splitter.ts` 退役） | 旧桥的边界逻辑剥离新建（v0.6.0 S1）→ W7.1 并入裁决器 |
 | 消费链（裁决器五站顺序调用） | 旧 `onTextBlock` 分支树 + `settle()` 汇合点重组 |
-| `runtime/session/inflight.ts`（**在途窗口表 `InflightWindowTable`**：注册/confirmSent 武装/`feedLines` 累积/N-GA 关窗/判据结算/超时放弃/`interrupt`/`close`+`reset`/直发延后 gate/diag；窗口 id `w<seq>` 全局递增） | **W7.2 取代旧桥**（`bridge.ts` 删除）：判据注册/命中结算/计时内核折叠 + 流程配对移交（`windowSpecFor`/`noteToolResult`，§19.3） |
+| `agent/inflight.ts`（**在途窗口表 `InflightWindowTable`**：注册/confirmSent 武装/`feedLines` 累积/N-GA 关窗/判据结算/超时放弃/`interrupt`/`close`+`reset`/直发延后 gate/diag；窗口 id `w<seq>` 全局递增） | **W7.2 取代旧桥**（`bridge.ts` 删除）：判据注册/命中结算/计时内核折叠 + 流程配对移交（`windowSpecFor`/`noteToolResult`，§19.3） |
 | `register(registration)` 唯一注册入口（`AdjudicatorRegistration {stateRules, eventRules, holdRuleIds, gateRules}` → 投影新建 PerceptionEngine + 打断常驻标记 `rule-int:<id>` + `deps.flow.syncArming()` 全量重放 + 直发判据投影） | **W7.3 注册收口**：取代旧"session 直持 engine + gateRules + interruptMarkers 分散注入/直调"——重连/断线 `resetForReconnect`/`abortForDisconnect` 内 `splitter.reset()` 后经 `register(this.registration)` 重挂一次；构造器末尾 `syncArming()` 补放一次（flow 构造期回调早于 `this.adjudicator` 赋值，可选链吞掉的补上）。壳仍经 `buildGateRules` 构造门禁规则并放进 `registration.gateRules`（装配期来源），裁决器 `register()` 后内部持有消费 —— `AdjudicatorDeps` 不再单收 engine/gateRules/interruptMarkers |
 
 切片：**S1** 分帧器 → **S2** 事务表瘦身 → **S3** 消费链重组 → **S4** 措辞同步（§2/§5/§19/§12）与测试对齐。`close()`/`signal`/发送失败语义沿用旧桥（§8.4 放弃之外的窗口结局：`abort`/`error`/`interrupted` 不变）。**v0.9 W7.1**：S1 产物 `frame-splitter.ts` 退役并入裁决器，`frame-splitter.spec.ts`/`response.spec.ts` 改指 `adjudicator.ts` 导出。**v0.9 W7.2**：`response.spec.ts` 重写为在途窗口表单元测试（注册/结算/N-GA 关窗/超时放弃/abort/断线/直发延后集成），`tools.spec.ts`/`flow-ownership.spec.ts` 同步窗口装配与归属口径。

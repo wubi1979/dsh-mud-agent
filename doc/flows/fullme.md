@@ -2,8 +2,8 @@
 sections: [11]
 status: active
 deps: ["§19", "§1", "§7", "§8", "§10"]
-impl: packages/mud-core/src/runtime/flow/flows/fullme.ts
-note: fullme 流程声明的设计事实源；实现跟随 runtime/flow/flows.ts 的 FULLME_FLOW，机制见 §19
+impl: packages/mud-core/src/flow/flows/fullme.ts
+note: fullme 流程声明的设计事实源；实现跟随 flow/flows/index.ts 的 FULLME_FLOW，机制见 §19
 ---
 
 # fullme 流程（声明）
@@ -133,7 +133,7 @@ export const FULLME_FLOW: FlowSpec = {
 3. **人工环节沿用本步 `timeoutMs`**（**不单列 `humanTimeoutMs`**）：`enterStep` 在 `awaitExternal` 步**照常布防计时器**（现在是"不布防"）；等人工期间计时器照跑，到点 = 该步超时 → 流程失败收束。`answer.timeoutMs = 180_000` = 图片有效期，等人工与答错重来共用这一份预算；**不需要 `Config.humanWaitMs`**。
 4. **`retry` 定稿** `{ attempts, on?, action? }`：`attempts` = **总尝试次数（含首次）**；`on` 缺省 `['driver']`（旧行为一字不变，全仓没有流程用过它，无迁移负担）；命中 `on` 里的判据时**在原步内重试** —— 投 `action`（缺省 = 重发本步动作）、清空本步 `awaitExternal` 的槽值、把命中行原文写进 `{lastFail}`、重新挂起等人工，**不重置本步计时器**；`attempts` 用尽才算失败。
 5. **流程路径的人工环节三处**（§19.3）：① `awaitExternal` 的动作**先挂起不投递**（现在帧内路径会先把字面 `fullme {captcha}` 发出去）；② `exitHumanWait` 调 `flow.resumeHuman()`（现在是死代码 → 永久挂死）：回到 `awaiting-result`，**计时器继续跑、不重布防**；③ 等人工期间**行判据不结算**本步。
-6. **`mud_captcha` 工具**（新注册，所有档位可见）：地址围栏（只允许 pkuxkx.net）→ 抓 `robot.php` → 取 `<img src>` → 归一为绝对地址 → 推前台弹窗（payload 带 `note` = 失败原文）→ **ask-human：在途挂起等人工提交**（v0.7.3；中止/兜底超时 = `ok:false`）→ 返回 `{ok, note 含码}`（无新依赖，复用 `services/network/captcha.ts`）。
+6. **`mud_captcha` 工具**（新注册，所有档位可见）：地址围栏（只允许 pkuxkx.net）→ 抓 `robot.php` → 取 `<img src>` → 归一为绝对地址 → 推前台弹窗（payload 带 `note` = 失败原文）→ **ask-human：在途挂起等人工提交**（v0.7.3；中止/兜底超时 = `ok:false`）→ 返回 `{ok, note 含码}`（无新依赖，复用 `network/captcha.ts`）。
 7. **退役**：`fullme:request`/`fullme:prompt`/`fullme:done` 三条规则（§16）；取图职责从运行时 `sink.captcha` 迁到 `mud_captcha`；随之 `Config.captchaPatterns` / `extractCaptchaUrl` 若无其它使用者一并退役；`runtime-captcha.spec.ts` 整篇改写为流程用例、`rule-coverage.spec.ts` 三条 fullme 样本移走、`runtime-direct-action.spec.ts` 的样本替换；`index.ts` 系统命令集里那截 `fullme:*` 过滤删除（`flowCommands(defaultFlows)` 已覆盖 `fullme`/`halt`/`fullme {captcha}`/`fullme 1`）。
 8. **判据文案 `why?`**（小项）：`FlowMatch` 可带 `why`，只影响日志/决策文案 —— 让 `stale` 的收束写成"放弃上一轮 → 本轮作废"而不是"命中失败判据 GA"。
 
@@ -141,4 +141,4 @@ export const FULLME_FLOW: FlowSpec = {
 
 - **ask-human 同回合提问**（v0.7.3 重定稿，对齐官方 `ApprovalService.request` 语义；机制全文见 §19.3）：`prompt` 步的 `mud_captcha` 推图后**工具不返回**（在途挂起 → 回合保持打开），人工提交的码作为**工具结果**回管线 → `answer` 动作随该工具结果 defer 进**同一回合**（不再"人工等待收束回合、回填开新回合"）。弹窗**只收图片里的码**（§19.3 人工只负责提供值；`halt`/`fullme` 序列仍归流程动作声明）。**不做 OCR**（pkuxkx 明确要求人工）。
 - **fail-closed 三出口**（工具结果 `ok:false` → 所在步失败收束，不悬挂）：① 弹窗"中止" → `captchaAbort` RPC → waiter 直接失败结束；② 每次提问的等待兜底 `CAPTCHA_WAIT_MS = 175_000`（`session.ts` 常量，**不给模型看、非 Config 字段**，先于步预算结算；步预算 180s 仍是硬上界）；③ 流程结束 / 断线 / 会话释放（等待作废）。
-- **取图职责分界**：**工具** `mud_captcha` 负责"出站围栏 + 抓 `robot.php` + 取 `<img src>` + 归一为绝对地址 + 推弹窗 + 在途等人工提交"（`services/network/captcha.ts` 的 `resolveCaptchaImage`），提交/中止/超时都体现为工具结果 `{ok, note 含码}`/`{ok:false}`；**宿主**（WebUI）负责弹窗交互（输入码 / 刷新 / 中止）并登记 `robotUrl → imageUrl`（供 `/mud/captcha/refresh` 刷新）。运行时只管"判据结算 + 槽插值 + 计时"。
+- **取图职责分界**：**工具** `mud_captcha` 负责"出站围栏 + 抓 `robot.php` + 取 `<img src>` + 归一为绝对地址 + 推弹窗 + 在途等人工提交"（`network/captcha.ts` 的 `resolveCaptchaImage`），提交/中止/超时都体现为工具结果 `{ok, note 含码}`/`{ok:false}`；**宿主**（WebUI）负责弹窗交互（输入码 / 刷新 / 中止）并登记 `robotUrl → imageUrl`（供 `/mud/captcha/refresh` 刷新）。运行时只管"判据结算 + 槽插值 + 计时"。

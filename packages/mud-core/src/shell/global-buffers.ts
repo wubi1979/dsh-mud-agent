@@ -9,7 +9,7 @@
  */
 
 import type { MudGameItem, MudUiItem } from './remote-types.ts'
-import type { MudUiItemInput } from '../runtime/session/types.ts'
+import type { MudUiItemInput } from '../session/types.ts'
 
 /** 流扇出接收端 (宿主侧形状; `MudFeedHub.pushGame/pushUi`)。 */
 interface BufferSink {

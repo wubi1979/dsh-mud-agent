@@ -11,10 +11,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { MudSessionRuntime } from '../src/runtime/session/session.ts'
-import type { MudRuntimeConfig, MudRuntimeSink } from '../src/runtime/session/types.ts'
-import type { MudConnectionManager, MudConnectionSink } from '../src/services/network/manager.ts'
-import type { MudLine } from '../src/services/network/ansi.ts'
+import { MudSessionRuntime } from '../src/session/session.ts'
+import type { MudRuntimeConfig, MudRuntimeSink } from '../src/session/types.ts'
+import type { MudConnectionManager, MudConnectionSink } from '../src/network/manager.ts'
+import type { MudLine } from '../src/network/ansi.ts'
 
 /** 构造一行 (abs 单调; 与 AnsiStreamParser 的分配一致)。 */
 function ml(text: string, abs: number): MudLine {

@@ -14,10 +14,10 @@ import { describe, expect, it } from 'vitest'
 import rules from '../src/perceive/rules.ts'
 import {
   defaultFlows, flowCommands, FULLME_FLOW, LOGIN_FLOW, validateFlows, type FlowSpec,
-} from '../src/runtime/flow/flows/index.ts'
-import { FlowRuntime } from '../src/runtime/flow/flow.ts'
-import type { WorldModel } from '../src/shared/world.ts'
-import type { MudLine } from '../src/services/network/ansi.ts'
+} from '../src/flow/flows/index.ts'
+import { FlowRuntime } from '../src/flow/engine.ts'
+import type { WorldModel } from '../src/world/state.ts'
+import type { MudLine } from '../src/network/ansi.ts'
 
 const NAME_PROMPT = '您的英文名字：'
 const FULLME_REMINDER = '5M后长时间不使用fullme，会被系统判定为机器人。'

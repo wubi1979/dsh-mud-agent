@@ -11,12 +11,12 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { FlowSpec } from '../src/runtime/flow/flows/index.ts'
+import type { FlowSpec } from '../src/flow/flows/index.ts'
 import type { PerceptionRule } from '../src/perceive/types.ts'
-import { MudSessionRuntime } from '../src/runtime/session/session.ts'
-import type { MudRuntimeConfig, MudRuntimeSink } from '../src/runtime/session/types.ts'
-import type { MudConnectionManager, MudConnectionSink } from '../src/services/network/manager.ts'
-import type { MudLine } from '../src/services/network/ansi.ts'
+import { MudSessionRuntime } from '../src/session/session.ts'
+import type { MudRuntimeConfig, MudRuntimeSink } from '../src/session/types.ts'
+import type { MudConnectionManager, MudConnectionSink } from '../src/network/manager.ts'
+import type { MudLine } from '../src/network/ansi.ts'
 
 /** 一条带动作的 event 规则（产生 T1 动作投递）。 */
 const ACTION_RULE: PerceptionRule = {

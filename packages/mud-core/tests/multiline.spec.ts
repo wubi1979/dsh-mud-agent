@@ -1,5 +1,5 @@
 /**
- * dsh-mud-core — 触发匹配回归测试 (v6: 触发匹配器迁入 services/matcher):
+ * dsh-mud-core — 触发匹配回归测试 (v6: 触发匹配器迁入 perceive):
  *   - 多行匹配状态机 (Mudlet 逐条件模型: 有序条件 / spacer / lineDelta 过期 /
  *     每行只喂一次);
  *   - 正则去 g 标志 (防 lastIndex 跨窗口错位);
@@ -7,9 +7,9 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Perceptor, TriggerMatchService } from '../src/services/matcher/matcher.ts'
-import { createMatchContext, type MatchContext, type MatchHit } from '../src/services/matcher/types.ts'
-import { StyleFlag, type ParsedLine, type StyleRun, type MudLine } from '../src/services/network/ansi.ts'
+import { Perceptor, TriggerMatchService } from '../src/perceive/matcher.ts'
+import { createMatchContext, type MatchContext, type MatchHit } from '../src/perceive/types.ts'
+import { StyleFlag, type ParsedLine, type StyleRun, type MudLine } from '../src/network/ansi.ts'
 
 function parsed(text: string, style: StyleRun[] = []): ParsedLine {
   return { text, raw: text, style, time: 0, isPrompt: false }

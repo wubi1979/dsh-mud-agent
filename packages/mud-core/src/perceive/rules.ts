@@ -118,17 +118,17 @@ const defaultPerceptionRules: readonly PerceptionRule[] = [
       const before = record.before
       // 1) 跳过出口行前空行, 收集描述块 (连续非空行, 直到空行/批首/地图块)。
       let i = before.length - 1
-      while (i >= 0 && (before[i] as import('../services/network/ansi.ts').MudLine).text.trim() === '') i -= 1
+      while (i >= 0 && (before[i] as import('../network/ansi.ts').MudLine).text.trim() === '') i -= 1
       const descEnd = i
-      while (i >= 0 && (before[i] as import('../services/network/ansi.ts').MudLine).text.trim() !== ''
-        && !isMapLine((before[i] as import('../services/network/ansi.ts').MudLine).text)) i -= 1
+      while (i >= 0 && (before[i] as import('../network/ansi.ts').MudLine).text.trim() !== ''
+        && !isMapLine((before[i] as import('../network/ansi.ts').MudLine).text)) i -= 1
       // i 停在描述块首行之前一位 (或描述块内混入的地图行)
-      const descLines = before.slice(i + 1, descEnd + 1).map(r => (r as import('../services/network/ansi.ts').MudLine).text.trimEnd())
+      const descLines = before.slice(i + 1, descEnd + 1).map(r => (r as import('../network/ansi.ts').MudLine).text.trimEnd())
       // 2) 地图块: 描述块上方连续地图行 (行首缩进+框线; 从描述块首向上收)。
       let j = i
-      while (j >= 0 && isMapLine((before[j] as import('../services/network/ansi.ts').MudLine).text)) j -= 1
+      while (j >= 0 && isMapLine((before[j] as import('../network/ansi.ts').MudLine).text)) j -= 1
       if (j < i) {
-        const mapLines = before.slice(j + 1, i + 1).map(r => (r as import('../services/network/ansi.ts').MudLine).text.replace(/\s+$/, ''))
+        const mapLines = before.slice(j + 1, i + 1).map(r => (r as import('../network/ansi.ts').MudLine).text.replace(/\s+$/, ''))
         if (mapLines.length > 0) mapText = mapLines.join('\n')
       }
       // 3) 房间名/描述 (启发式, 宁缺勿错):
@@ -214,7 +214,7 @@ const defaultPerceptionRules: readonly PerceptionRule[] = [
       tool: { name: 'world_patch', args: { patch: { dead: true, in_combat: false } } },
     },
   },
-  // ── fullme 防机器人验证: **已流程化**（`runtime/flow/flows.ts` 的 `FULLME_FLOW`, §11）──
+  // ── fullme 防机器人验证: **已流程化**（`flow/flows` 的 `FULLME_FLOW`, §11）──
   // 原 `fullme:request` / `fullme:prompt` / `fullme:done` 三条规则退役：
   // 入口提醒、验证码地址、成功句、答错句、上一轮未完成提示全部成为流程步的 driver/ok/fail
   // （驱动句/动作/判据只在流程表写一份；§16 删除清单）。

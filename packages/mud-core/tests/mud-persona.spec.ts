@@ -19,7 +19,7 @@ import type { Scope, ScopeKey } from '@deepseek-ai/dsh-scope'
 import SystemPrompt, {
   PERSONA_PREFIX_SECTION, PERSONA_SUFFIX_SECTION, renderPrompt,
 } from '@deepseek-ai/dsh-system-prompt'
-import { attachMudPersona, attachMudPrompt } from '../src/agents/mount.ts'
+import { attachMudPersona, attachMudPrompt } from '../src/session/mount.ts'
 
 /** standard preset 的 `persona` 行原文 (部署人设的典型形态)。 */
 const CODING_PERSONA = 'You are a coding agent powered by the deepseek-flash model.'

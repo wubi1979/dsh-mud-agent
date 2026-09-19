@@ -20,9 +20,9 @@
 import { describe, expect, it } from 'vitest'
 import rules from '../src/perceive/rules.ts'
 import { PerceptionEngine, type EngineHit } from '../src/perceive/engine.ts'
-import type { MudLine } from '../src/services/network/ansi.ts'
-import { ownedGameMessage } from '../src/agents/lane.ts'
-import { TriggerLlmAdapter } from '../src/agents/t1.ts'
+import type { MudLine } from '../src/network/ansi.ts'
+import { ownedGameMessage } from '../src/deliver/lane.ts'
+import { TriggerLlmAdapter } from '../src/agent/t1.ts'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
 
 /** 每条规则的 canonical 样本 (行序列; 单行规则给一行)。 */

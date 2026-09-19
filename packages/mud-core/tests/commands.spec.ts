@@ -12,7 +12,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   commandHelpText, commandsIndexForAgent, mudCommands, type MudCommand,
-} from '../src/shared/commands.ts'
+} from '../src/agent/commands.ts'
 
 /** 可执行命令 (有模板) 的 id 集合。 */
 const usableIds = mudCommands.filter(c => c.command !== '').map(c => c.id)

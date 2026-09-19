@@ -338,3 +338,11 @@ note: 只追加，不回改历史条目；每次设计变更在文末登记一�
 - ⑤ **Unhandled Rejection 清零（红名单漂移根因）**：`response.spec.ts` 两处（连续 3 次应答超时 reject / 发送守卫 error reject）改为**先挂 reject 断言、再推进计时器** —— reject 在 `advanceTimersByTimeAsync` 的计时器 tick 内同步发生，后挂 handler 会被 Node 记一次 unhandled rejection，vitest 明示可能引发跨文件假红
 - ⑥ **§17（17-18-roadmap.md）**：W7 行验收列补记 vitest 红清零明细，状态 🟡 → ✅ **已实现**（2026-09-19 验收通过）
 - 验证（agent 实测）：`vitest run --root packages/mud-core` 全包 **31 文件 / 345 例全绿**（0 Unhandled Rejection）；`tsc --noEmit` EXIT=0
+
+## v0.9.3（2026-09-19）W8：mud-core src 按数据流重组（纯文件级，零行为变更）
+
+- ① **目录 = 数据流阶段**：`services/network/*` → `network/`、`services/log/log-service.ts` → `log/`、matcher 三文件并入 `perceive/`（其契约并入 `perceive/types.ts`：机制层形状 + 策略层投影两段分区，避免撞名拆两个契约文件）、adjudicator/delivery-channel/state-track + `agents/lane.ts` → `deliver/`、t1/inflight/queue/skills/commands + `services/gate/*`（`agent/gate/`）+ tools → `agent/`、flow 三件 + flows → `flow/`、world/game → `world/`、session/connection-runtime/watchdogs/credentials/mount/preset → `session/`、`src/service.ts` → `shell/service.ts`；`services/`/`runtime/`/`agents/`/`shared/` 目录消失，src 根只剩 `assemble/index/invariant/types` 装配根四文件
+- ② **两处拆分**（整段搬移，不改签名）：`agents/tools.ts` → `agent/tools-schema.ts`（契约：MudToolResult/OUT_SCHEMA/OUT_RENDER/MudTool/MudToolCallOptions/MudToolSchema/MudTools，OUT_RENDER 随拆分导出）+ `agent/tools-build.ts`（buildMudTools/mudToolSchemaTable/插值/活动表；依赖方向 build → schema 单向）；`runtime/flow/flow.ts` → `flow/engine.ts`（FlowRuntime）+ `flow/util.ts`（entryMatch/commandsOf/interpolate/preview 纯函数）
+- ③ **保持原名原符号**：`inflight.ts`/`InflightWindowTable`（§8.3）仅随迁至 `agent/`；adjudicator 整体迁移不拆（分帧已并入，W7.1）；`credentials.ts` 过渡文件放消费方旁 `session/`
+- ④ **引用面随迁**：package.json exports `./preset-agent` → `lib/session/preset.js`（presets/mud-player/agent.cordis.yml 与 `preset-agent.spec.ts` 守卫断言同步）；tests 全部深路径 import 改指新位置；正式章节 impl front-matter 与路径字样随迁（§0/§7–§10/§11/§17–§18/§19/flows/login/fullme；§17 表尾登记 W8 行）
+- 验证（agent 实测）：`tsc --noEmit` EXIT=0；vitest 全包 **31 文件 / 345 例全绿**（= 基线，0 新增红例）；文件级循环 import 为零（DFS 全 54 文件可证）

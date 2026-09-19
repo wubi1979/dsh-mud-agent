@@ -2,7 +2,7 @@
 sections: [19]
 status: active
 deps: ["§1", "§7", "§8", "§11"]
-impl: packages/mud-core/src/runtime/flow/flow.ts
+impl: packages/mud-core/src/flow/engine.ts
 ---
 
 ## §19 流程表与流程运行时（step 驱动）
@@ -172,7 +172,7 @@ ok:[GA] ∧ fail:[GA] → **注册期报错**（互斥）
 **实现落点（2026-09-13 已接线）**：
 
 - **声明面**：`ActionSpec.interrupts?: number`（`perceive/types.ts`，纯数字；缺省 = 不参与）。
-- **判定点**：运行时在**同一批次**里、在投递规则动作之前先做打断准入（`runtime/session/session.ts` 的 `admitRuleHits`）—— 顺序是先流程判定（`flow.offer`）→ 待人工挂起（`parkExternalHits`）→ **打断准入** → 投递。判定用 `FlowRuntime.interrupt()`（`interrupts > flow.priority`）。
+- **判定点**：运行时在**同一批次**里、在投递规则动作之前先做打断准入（`session/session.ts` 的 `admitRuleHits`）—— 顺序是先流程判定（`flow.offer`）→ 待人工挂起（`parkExternalHits`）→ **打断准入** → 投递。判定用 `FlowRuntime.interrupt()`（`interrupts > flow.priority`）。
 - **打断的挂起结算**：`InflightWindowTable.interrupt(reason)`（W7.2 取代旧 `CommandResponseController.interruptInFlight`）—— 表内全部在途窗口**当场**结算为 `interrupted`，工具结果 `{ok:false, settled:'interrupted', note:'[流程打断] …'}`；表**继续可用**（打断后投递的新命令照常注册窗口），这一点与 `close()`（断线终止语义）不同。迟到/无主的 GA 只作裁决器边界事件，无窗口可结算（孤儿 GA 计数器已随旧桥删除，§8.7）。**队列残余清除**（v0.9.2）：序列命令在 pump 时已一次性入宿主命令队列（§8.3），窗口结算为 `interrupted` 时按 `replyId` 定向清除残余（`CommandQueue.discardByReplyId`）—— 否则 gate 放行后剩余命令照发（半截序列 bug，实测踩过）。
 - **排队与出队**：档位不够 → `FlowRuntime.pendingActions`；流程到达终态/失败/被打断后，运行时调 `drainFlowQueue()` 把队列里的动作**动作投递**给 T1（`deliverStandalone`）。判定点不止一处：批次尾、工具结果（`noteToolResult`）、以及流程失败回调（超时/断线路径）。
 - **端到端**：`tests/flow-interrupt.spec.ts`（8 例）：档位够 → 打断（interrupted + 复位 + `onInterrupt` 直发 + 事件动作投递）；档位不够 → 排队且在流程真的结束前不出队；未声明 → 照常投递；空闲 → 不生效；**login = 1000 不可打断**（战斗类只能排队）；**半截序列不发出**（打断后残余命令不再照发）。
@@ -206,7 +206,7 @@ ok:[GA] ∧ fail:[GA] → **注册期报错**（互斥）
 | ✅ **当前实现：`defer` + `concludeTurn`** | **1** | **3** | **3** | **0** | 同一回合三步，末步结果直接收束（`concludedTurns=1`、`deferred=2`）|
 
 - **落地前与"一个流程 = 一个回合"不符**：旧实现是**一步一回合 + 每步一次空续步**（每个流程步 2 次模型请求）。这不是缺陷，是 `followup` 的官方语义：*"the item becomes the sole ordinary message of its own turn"*（`core/agent/src/runtime-types.ts:217-222`）—— **现在已按 §19.6.2 切到 `deferContext` + `concludeTurn`**。
-- 三次实测 `t2Calls = 0`：流程期间**没有**任何请求落到 T2（真实 LLM）—— `turnLane` 在回合内沿用（`agents/mount.ts:219-241`）把工具续步/空续步都留在 T1。
+- 三次实测 `t2Calls = 0`：流程期间**没有**任何请求落到 T2（真实 LLM）—— `turnLane` 在回合内沿用（`session/mount.ts:219-241`）把工具续步/空续步都留在 T1。
 - **模拟器现在跑的是真行为**：`LoopSim.execute` 仿真官方包装器（`beginToolCall`/`endToolCall` → `takeDeferredDeliveries` → `exec.deferContext` → `result.ok && shouldConcludeTurn(callId)` → `exec.concludeTurn`），运行时那侧是**生产代码**。
 - 落地设计（✅ 已按此实现，见 §19.6.2）：① 两条通道分工 —— 有工具在途 ⇒ `deferContext`，无工具在途（帧内命中/人工回填/看门狗/一次性动作）⇒ `followup`；② 一次工具调用期间可能连推多步（`processBatch`），必须**按序全部** defer；③ `concludeTurn` 只对**T1/流程通道**的动作生效（T2 自己发起的工具调用绝不能收束回合）；④ 工具**不许抛异常**（registry 的 catch 会丢掉 deferred contexts，`core/tools/src/index.ts:1586-1588`），失败必须是"带错误的返回结果"（我们已是此风格）。
 
@@ -231,9 +231,9 @@ ok:[GA] ∧ fail:[GA] → **注册期报错**（互斥）
 - 槽的生命周期本来就被限制在**一次工具调用之内**（在途期间入槽、该调用的包装器结束时取走），不存在"残留到下一步"的可能，因此不需要任何显式清槽。
 
 **实现落点（三处，已落地）**：
-1. `agents/mount.ts`：新增 **`MudDeliveryChannel`** 接口（`beginToolCall`/`endToolCall`/`takeDeferredDeliveries`/`shouldConcludeTurn`）；`attachMudTools(..., channel?)` 的工具包装器在 `execute` 前后 begin/end，结果提交前 `for (msg of takeDeferredDeliveries()) exec.deferContext(msg)`（`exec.deferContext` = 官方 `inject` 原语的工具侧投递入口，I2），并在 `result.ok && shouldConcludeTurn(callId)` 时 `exec.concludeTurn()`。
-2. `runtime/session/session.ts`：实现该接口 —— `inFlightTools` 计数、`deferSlot` 槽、`deliverySizes`（每条投递的动作数）、`parseDeliveryCallId`（`mud-<delivery>-<index>`；**T2 自己的调用 id 解析失败 ⇒ 永不可收束**）、`shouldConcludeTurn`（判据 B 四项条件）；投递统一走 `sendDelivery`（在途 ⇒ 槽，否则 `followup`）；断线/释放时清槽与计数。**两条装配路径都必须接**：宿主路径（`attachMudTools(..., channel)`）与 preset 路径（`agents/preset.ts` 经 `MudAgentKit.channel(sessionId)`）共用 `runWithDeliveryChannel`。
-3. `agents/tools.ts` 与 `tests/loop-sim.ts` 的**工具语义不变**：工具保持纯净（defer 由包装器统一做）；模拟器改为**仿真官方包装器**（见 §13.6），因此 `loop-sim-login.spec.ts` 测的是真行为。
+1. `session/mount.ts`：新增 **`MudDeliveryChannel`** 接口（`beginToolCall`/`endToolCall`/`takeDeferredDeliveries`/`shouldConcludeTurn`）；`attachMudTools(..., channel?)` 的工具包装器在 `execute` 前后 begin/end，结果提交前 `for (msg of takeDeferredDeliveries()) exec.deferContext(msg)`（`exec.deferContext` = 官方 `inject` 原语的工具侧投递入口，I2），并在 `result.ok && shouldConcludeTurn(callId)` 时 `exec.concludeTurn()`。
+2. `session/session.ts`：实现该接口 —— `inFlightTools` 计数、`deferSlot` 槽、`deliverySizes`（每条投递的动作数）、`parseDeliveryCallId`（`mud-<delivery>-<index>`；**T2 自己的调用 id 解析失败 ⇒ 永不可收束**）、`shouldConcludeTurn`（判据 B 四项条件）；投递统一走 `sendDelivery`（在途 ⇒ 槽，否则 `followup`）；断线/释放时清槽与计数。**两条装配路径都必须接**：宿主路径（`attachMudTools(..., channel)`）与 preset 路径（`session/preset.ts` 经 `MudAgentKit.channel(sessionId)`）共用 `runWithDeliveryChannel`。
+3. `agent/tools-build.ts` 与 `tests/loop-sim.ts` 的**工具语义不变**：工具保持纯净（defer 由包装器统一做）；模拟器改为**仿真官方包装器**（见 §13.6），因此 `loop-sim-login.spec.ts` 测的是真行为。
 
 **实例（login 精简为 4 步，`replace` 为可选分支）**：投递 d1=[name]、d2=[pass]、d3=[y]（仅当服务器要求替换）、d4=[空命令]；每条投递 `N = 1`，`index = 0 = N-1`。
 `name` 执行期间 → 密码/替换提示到达（分支）→ 下一步动作入槽 → defer（不收束）；`pass` 执行期间 → 成功句到达 → 命中 `success` 的进入判据 → 空命令入槽 → defer；空命令执行期间 → GA → `finishFlow`（流程空闲）→ 槽空 → **conclude** ⇒ 整条流程（无论 `replace` 走没走）都在**一个回合**内，模型请求数 = 实际执行的动作数（3 或 4）。

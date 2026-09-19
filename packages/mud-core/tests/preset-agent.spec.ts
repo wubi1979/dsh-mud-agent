@@ -7,7 +7,7 @@
  *     未绑定会话 → 可读拒绝 (不发命令), 委托成功后记留痕;
  *   - 提示文案按 agent 求值 (persona/skills/commands 全局, tier 说明按会话), 无 agent
  *     上下文时退化为空/通用文本而不是抛错;
- *   - 组合文件 (`presets/mud-player/agent.cordis.yml`) 存在且指向 `lib/agents/preset.js`
+ *   - 组合文件 (`presets/mud-player/agent.cordis.yml`) 存在且指向 `lib/session/preset.js`
  *     的相对路径 (部署根就是靠这个文件被发现)。
  */
 
@@ -15,12 +15,13 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
-import type { MudDeliveryChannel } from '../src/agents/mount.ts'
-import { mudToolSchemaTable, type MudTools } from '../src/agents/tools.ts'
-import type { MudAgentKit } from '../src/service.ts'
+import type { MudDeliveryChannel } from '../src/session/mount.ts'
+import { mudToolSchemaTable } from '../src/agent/tools-build.ts'
+import type { MudTools } from '../src/agent/tools-schema.ts'
+import type { MudAgentKit } from '../src/shell/service.ts'
 
 /** 载入 preset 行模块 (顶层不 import 任何 cordis 服务, 可安全直接 import)。 */
-import { apply as applyPresetAgent, name as presetAgentName } from '../src/agents/preset.ts'
+import { apply as applyPresetAgent, name as presetAgentName } from '../src/session/preset.ts'
 
 interface RegisteredTool {
   name: string
@@ -253,9 +254,9 @@ describe('preset 组合文件 (部署根的被发现对象)', () => {
     expect(ids.length).toBeGreaterThanOrEqual(19)
   })
 
-  it('我们的行用相对路径指向 lib/agents/preset.js (行内不写死盘符)', () => {
+  it('我们的行用相对路径指向 lib/session/preset.js (行内不写死盘符)', () => {
     const raw = readFileSync(join(dir, 'agent.cordis.yml'), 'utf8')
-    expect(raw).toContain("name: '../../lib/agents/preset.js'")
+    expect(raw).toContain("name: '../../lib/session/preset.js'")
     // 只查**代码行**: 注释里提到 harness 检出路径是允许的 (生成说明)。
     const codeLines = raw.split('\n').filter(line => line.trim() !== '' && !line.trim().startsWith('#'))
     expect(codeLines.filter(line => /[A-Za-z]:[\\/]/.test(line))).toEqual([])

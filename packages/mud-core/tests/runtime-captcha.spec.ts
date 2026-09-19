@@ -30,12 +30,12 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import defaultPerceptionRules from '../src/perceive/rules.ts'
 import {
   defaultFlows, FULLME_OK_TEXT, FULLME_REMINDER_TEXT, FULLME_STALE_TEXT, FULLME_WRONG_TEXT,
-} from '../src/runtime/flow/flows/index.ts'
-import { runWithDeliveryChannel } from '../src/agents/mount.ts'
-import { MudSessionRuntime } from '../src/runtime/session/session.ts'
-import type { MudRuntimeConfig, MudRuntimeSink } from '../src/runtime/session/types.ts'
-import type { MudConnectionManager, MudConnectionSink } from '../src/services/network/manager.ts'
-import type { MudLine } from '../src/services/network/ansi.ts'
+} from '../src/flow/flows/index.ts'
+import { runWithDeliveryChannel } from '../src/session/mount.ts'
+import { MudSessionRuntime } from '../src/session/session.ts'
+import type { MudRuntimeConfig, MudRuntimeSink } from '../src/session/types.ts'
+import type { MudConnectionManager, MudConnectionSink } from '../src/network/manager.ts'
+import type { MudLine } from '../src/network/ansi.ts'
 
 const CAPTCHA_URL = 'http://fullme.pkuxkx.net/robot.php?filename=1699999999'
 const CAPTCHA_IMG = 'http://fullme.pkuxkx.net/b2evo_captcha_tmp/a.jpg'
