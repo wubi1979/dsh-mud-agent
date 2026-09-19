@@ -306,30 +306,52 @@ export function CaptchaDialog({ mudSocket, sendCommand, refreshCaptcha, abortCap
   )
 }
 
-/** Add-user dialog for one server: account name + password. */
+/**
+ * Add-user dialog for one server: account name + password.
+ *
+ * 密码不留在页面: `onAdd` 的契约是"把明文写进 host 凭据存储并落一条名单行",
+ * 因此它是 **async** —— 凭据写入失败时**弹窗必须保持打开**并把 host 的原话显示
+ * 出来 (值仍留在输入框, 用户改完可重试); 成功才关闭。早期实现是 `onAdd(...)`
+ * 后立刻 `close()`, 异步失败就没有落点了。
+ */
 export function UserDialog({ open, serverName, onClose, onAdd }: {
   open: boolean
   serverName: string
   onClose: () => void
-  onAdd: (input: { name: string; pass: string }) => void
+  onAdd: (input: { name: string; pass: string }) => Promise<void>
 }) {
   const [name, setName] = useState('')
   const [pass, setPass] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
 
   const close = (): void => {
     setName('')
     setPass('')
     setError(null)
+    setBusy(false)
     onClose()
   }
   const submit = (): void => {
+    if (busy) return
     if (name.trim() === '') {
       setError('请输入用户名')
       return
     }
-    onAdd({ name, pass })
-    close()
+    // 官方 `credentials.set` 拒绝空值 (`min(1)`): 空密码根本写不进去, 就地拦下
+    // 比让 host 回一句 `credential/rejected` 更清楚。
+    if (pass === '') {
+      setError('请输入密码')
+      return
+    }
+    setBusy(true)
+    setError(null)
+    void onAdd({ name, pass })
+      .then(() => { close() })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : String(err))
+        setBusy(false)
+      })
   }
   const enter = useEnterSubmit(submit)
 
@@ -342,7 +364,7 @@ export function UserDialog({ open, serverName, onClose, onAdd }: {
       footer={(
         <>
           <Button variant="outline" onClick={close}>取消</Button>
-          <Button variant="primary" onClick={submit}>添加</Button>
+          <Button variant="primary" onClick={submit}>{busy ? '保存中…' : '添加'}</Button>
         </>
       )}
     >
@@ -363,7 +385,7 @@ export function UserDialog({ open, serverName, onClose, onAdd }: {
         style={FIELD_STYLE}
         type="password"
         value={pass}
-        placeholder="登录密码"
+        placeholder="登录密码 (写入 host 凭据存储, 不进浏览器名单)"
         onChange={(e) => { setPass(e.target.value); setError(null) }}
         onKeyDown={enter.onKeyDown}
       />

@@ -34,6 +34,7 @@
  */
 
 import { MudConnectionManager } from './network/manager.ts'
+import { resolveMudPass } from './session/credential-source.ts'
 import { MudSessionRuntime } from './session/session.ts'
 import {
   DEFAULT_T2_DELIVER_INTERVAL_MS,
@@ -76,7 +77,8 @@ import type {
 export interface MudAgentConfig {
   host?: string
   port?: number
-  account?: { name?: string; pass?: string }
+  /** 部署缺省账户: name 明文 (低敏感, 回显署名); passRef = 密码凭据引用名 (官方 CredentialRef, connect 时经 ctx.credentials 解析, 不携明文)。 */
+  account?: { name?: string; passRef?: string }
   /** 缺省会话 id (路由未给 sessionId 且尚无活动会话时的回落)。 */
   sessionId?: string
   /** 缺省工作目录 (仅决定日志目录默认位置)。 */
@@ -462,6 +464,26 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
   }
 
   /**
+   * 解析登录密码的**凭据引用**(CredentialRef) → 明文。
+   *
+   * 策略在 `session/credential-source.ts` (三级 fail loud + 每次连接重新解析);
+   * 这里只负责本包的接线: 把失败写进 `lastError` 与该会话日志。
+   * @param sessionId 会话 id (留痕用)。
+   * @param explicit connect 选项显式给的引用名 (优先于部署配置)。
+   * @returns 明文密码; 无引用名时为空串。
+   */
+  function resolvePass(sessionId: string, explicit: string | undefined): Promise<string> {
+    return resolveMudPass(
+      ctx,
+      { explicit, fallback: config.account?.passRef },
+      (message) => {
+        lastError = message
+        tuiLog(sessionId, `[SYS] 凭据解析失败: ${message}`)
+      },
+    )
+  }
+
+  /**
    * 把该会话的**策略面**装配到 agent: 选路 + 权限闸门 + **人设槽覆盖**。
    *
    * 策略留在宿主 (§9): 选路要 lane 状态与投递回合, 权限闸门要会话运行时的登录/档位
@@ -669,15 +691,17 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
     purge(sessionId: string): { ok: boolean; files: number } {
       return purgeSession(sessionId)
     },
-    connect(options: MudConnectOptions = {}): void {
+    async connect(options: MudConnectOptions = {}): Promise<void> {
       const sessionId = view.resolve(options.sessionId)
-      const runtime = ensureRuntime(sessionId)
       // 账户来源: connect 选项优先, 回落部署配置 config.account (profile patch 的
       // 部署值路径 — 规则里的 {name}/{pass} 与命令回显署名都用它)。
       const name = typeof options.name === 'string' && options.name.trim() !== ''
         ? options.name.trim()
         : (config.account?.name?.trim() ?? '')
-      const pass = typeof options.pass === 'string' ? options.pass : (config.account?.pass ?? '')
+      // 密码解析**先于 ensureRuntime**: 解析失败不得声明 MUD 会话 (不建运行时、
+      // 不写档位记录、不进 diag().runtimes)。
+      const pass = await resolvePass(sessionId, options.passRef)
+      const runtime = ensureRuntime(sessionId)
       const account = name !== '' ? { name, pass } : undefined
       runtime.connect(options.host, options.port, account)
     },

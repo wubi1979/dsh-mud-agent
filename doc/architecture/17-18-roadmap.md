@@ -18,6 +18,8 @@ note: 当前状态的唯一来源；本文件之外不写状态摘要
 | **W7 核心重构 v2（v0.9.0）** | 三片：**W7.1** 裁决器抽出（`SessionAdjudicator` 承接分帧器 + 五站消费链收拢，`frame-splitter.ts` 退役）；**W7.2** 桥 → 在途窗口（`inflight.ts` 取代 `bridge.ts`，直发延后 gate 取代挂起闸门，流程配对移交 `windowSpecFor`/`noteToolResult`）；**W7.3** 注册收口（裁决器唯一 `register()` 入口）+ 选路回归（`resolveLaneConfig` 纯函数 + `agent/request(prepend)` 拦截 + realModel 还原，删 preDeliver / `ModelSelectionRef` 预写方案）+ 限速 T1 豁免接线修复（`onLane`→`currentLane`）+ 文档落档（§4–§8 / 不变量 / 术语表 / §17–§18） | **已达成**：`tsc --noEmit` 清零（2026-09-18 修 4 错：adjudicator `registration`/`engine`/`gateRules` 三处 definite-assignment 改 `!` 注解 + inflight `until` 分支 `outcome` 收紧为字面量）；新增 `lane-routing.spec.ts`（10 例表驱动 `resolveLaneConfig`）；loop-sim 冒烟（1 回合 / T1 步骤 t2Calls===0 / 空续步不误落 T2）；vitest 红清零（2026-09-19，全包 31 文件 / 345 例全绿：triage 10 例红 = 唯一功能 bug「打断后半截序列仍发出」—— 打断结算时按 `replyId` 定向清除宿主命令队列残余（§19.4）+ `CommandQueue.discardByReplyId`，其余 9 例属测试基建 —— login/interrupt 假 loop 改走官方工具包装器 `runWithDeliveryChannel`（真链路结果回喂）、ownership/GA 归属断言对齐 §19.2 分支等待语义、preset 守卫同步 standard 上游（`workflow-ptc` 行 + `tool-ralph` disabled）、response.spec 两处 reject 断言先挂后推进计时器消除 Unhandled Rejection（红名单漂移根因） | ✅ **已实现**（2026-09-18 落地；2026-09-19 验收通过，明细见 CHANGELOG v0.9.0/v0.9.2） |
 | **W8 src 按数据流重组（v0.9.3）** | 纯文件级重组，零行为变更：目录 = 数据流阶段（`network/`↔§11 连接面、`perceive/`↔§4、`deliver/`↔§5–§6、`agent/`↔§7–§10、`flow/`↔§19、`world/`、`session/`↔§11 编排、`shell/`↔服务面、`log/`）；约 40 文件迁移，`services/`/`runtime/`/`agents/`/`shared/` 目录消失，src 根只剩装配根四文件；`tools.ts` 拆 `tools-schema.ts`（契约）+ `tools-build.ts`（构建/插值）；`flow.ts` 拆 `engine.ts` + `util.ts`（纯辅助）；matcher 并入 `perceive/`（其契约并入 `perceive/types.ts`：机制层形状 + 策略层投影两段分区，避免撞名拆两个契约文件）；`inflight.ts`/`InflightWindowTable` 原名原符号随迁（§8.3）；exports `./preset-agent` 随产物迁至 `lib/session/preset.js`（组合文件 `agent.cordis.yml` 同步） | `tsc --noEmit` 零错误；vitest 全包 31 文件 / 345 例全绿（= 基线，0 新增红例）；文件级循环 import 为零（DFS 54 文件可证）；preset 装配无 `failed to mount`（`preset-agent.spec.ts` 守卫断言同步）；正式章节 impl 链接与路径字样随迁（§0/§7–§10/§11/§19/§flows） | ✅ **已实现**（2026-09-19，明细见 CHANGELOG v0.9.3） |
 
+| **W9 凭据引用化（v0.10.0）** | 密码明文的三分暴露面（浏览器 roster / RPC wire / 部署配置）收敛为**引用名**：`MudUser.pass` → `passRef`、`MudConnectOptions.pass` → `passRef`、`Config.account.pass` → `passRef`；host 连接瞬间经官方 `ctx.credentials.resolve` 解析，页面表单经官方 `remote.credentials.set` 单向写入；新增 `session/credential-source.ts#resolveMudPass`（三级 fail loud 策略的归属，与"明文暴露面"的 `session/credentials.ts` 职责正交）；webui 新增 `client/mud-credentials.ts`（自持最小结构化接口 + 引用名生成 + describe 分批/过滤）与用户行凭据徽标（已配置 / 只读(env) / 未配置 / 无密码） | `credential-source.spec.ts`（7 例：显式/回落/覆盖、缺 provider、未配置、非法引用名、无 passRef、每次连接重新解析）+ 全包 32 文件 / 352 例全绿；`tsc` 三包 EXIT=0；mud-webui build | ✅ **已实现**（2026-09-19，明细见 CHANGELOG v0.10.0） |
+
 > W1/W2 已随 v0.1 落地：新增 `perceive/engine.ts`（L1；v0.9 W7.3 勘误，原文误写 `perception/engine.ts`）、`perception/split.ts`（L2 纯函数，今 `perceive/split.ts`）、
 > T1 改为 hit 渲染器（`agent/t1.ts`）；桥删除行集表并对齐 GA 边界接线
 > （`network/manager.ts` 新增 `onBoundary`，此前 GA 主边界从未送达桥）。
@@ -27,17 +29,22 @@ note: 当前状态的唯一来源；本文件之外不写状态摘要
 
 ### 未决（open）
 
-1. **浏览器 roster 明文密码**：是否改走 host 侧凭据服务（§10）。
-2. **逐次升级语义**：`ask` 批准 = 仅此一次 vs 提升会话档位（建议前者，与 §10「agent 永不自提权」一致）。
-3. **旧 MUD 用户迁移**（会话无存储 preset）→ 删除重建（删除即归档，见 §11）。
-4. **流程化的待放宽项（v0.4.0 之后）**：① **单挂起（I11）** —— 已随 v0.9 W7.2 关闭：桥单槽删除，在途窗口表天然多窗口并发，流程单步约束由配对移交 `noteToolResult` 保证（I11 现行口径见 §1，不再有"一条流程同时最多一个挂起步骤"的实现载体）；② **流程内部并行分支** —— 当前分支是"命中哪个后继 driver 就走哪条"，同一时刻只推进一条路径；③ **跨会话流程编排**（多用户协同）—— 明确不在范围内。
-5. **W5 尾款**：`pendingEntry` 端到端用例、`hpbrief` 应答折叠进 world（§19.7 待定）。
-6. **官方并发档位的缺省依赖（I11 边界）**：I11 的"同一回合里工具逐个 await 结算"依赖官方**缺省独占调度** —— `@deepseek-ai/dsh-tools` `executionMode()` 是 fail-closed（未声明 `isConcurrencySafe` → exclusive）；本仓 MUD 工具均未声明该分类器。若未来某 MUD 工具声明并发安全，需重新评估 I11 的替代论证。
+> 编号为稳定标识，**不随增删重排**（外部 §18.N 引用指向同一件事）。已关闭的编号移入下方「已定」，明确不做的移入「非目标」；两处都保留原编号线索可追溯。
+
+4. **流程内部并行分支**（原 #4 的 ②）：同一流程内多个 driver 并行推进的语义与结算归属未定 —— 当前分支是"命中哪个后继 driver 就走哪条"，`flow/engine.ts` 只有 `pendingActions`/`pendingEntry` 两个**队列**，同一时刻只推进一条路径（I10：同一时刻最多一个流程实例）。**当前无消费方**：login/fullme 两条流程表都是严格串行，没有任何部署需求指向并行分支；按本仓"每个抽象都要有当前消费方"的规矩，**在真实需求出现前维持非目标**。
+5. **W5 尾款**：`pendingEntry` 端到端用例、`hpbrief` 应答折叠进 world（§19.7 待定 1/2）。机制侧都已就位（`flow/engine.ts` 的入队/接续 + `diag().pendingEntry` 计数；终态步已发 `hpbrief`），缺的是 e2e 用例与那条 state 规则。
+6. **并发调度分类器（I11 边界）**：I11 的"同一回合里工具逐个 await 结算"依赖**官方缺省独占调度** —— `ctx.tools.executionMode()` 是 fail-closed（未声明 `isConcurrencySafe` → `{ kind: 'exclusive' }`），本仓 MUD 工具均未声明。**这是本地决策，不是上游依赖**：`isConcurrencySafe` 是我们在 `defineTool({...})` 里自己就能加的字段（官方 `ToolDefinition.isConcurrencySafe?`；本仓注册点 `session/mount.ts`、`session/preset.ts`）。要给零发送的只读工具（`mud_state`/`mud_recall`/`mud_help`）声明并发安全时，必须同时重估 I11 的替代论证。
 7. **分页在窗口期被延后**：`pager:continue` 是 `direct:true` 直发（§7），窗口开启期被直发延后 gate 压底（gateRank 2，§8.3）；而窗口型工具的 `gaCount` 可为 1（如 `mud_look`）—— 长输出分页会"先关窗、后续页不进结果"且工具仍返回 `ok:true`。需明确窗口内插话命令的归属判据（§8.3）与翻页命令的豁免策略。
 8. **`halt` 无条件豁免直发延后 gate**：命令队列按 `priority==='halt'` 恒放行（gateRank 0），不区分是否打断路径 —— 是 GA 计数污染的潜在通道（非打断路径的 halt 应答 GA 可能误入在途窗口计数）。需收紧为打断路径专用并留痕（I12 只约束了"豁免存在"，未约束豁免范围）。
+9. **装配层测试基建：vitest 管线无法加载 TC39 装饰器模块**（W9 实测发现）：本仓测试链路是 vitest 4 + Vite 8/rolldown/oxc。`vite:oxc` 只在 `environment.config.isBundled` 为真时才读 `oxc` 配置项（vitest 的 node 环境不是 bundled；实测配 `oxc.decorator`/`oxc.target` 均无效），而 oxc 的 `decorator` 变换**只实现 legacy 版**（`legacy:false` 不降级；`legacy:true` 会让 `@Remote` 按 `(target, key, descriptor)` 被调用而在类定义期抛错），esbuild/swc 均不在依赖树里。后果：**任何从源码 import 到 `shell/mud-remote-service.ts`（即 `assemble.ts`）的 spec 都在 transform 阶段报 `SyntaxError: Invalid or unexpected token`** —— 这是"装配层与 remote 服务层至今没有测试"的真实原因（`tsc` 走 `lib/` 产物，装饰器已被降级成 helper 调用，不受影响）。已知绕法只有打 `lib/` 产物（要求测试前先 build），本仓不采用。待定：是否引入 esbuild/swc 变换链，或继续把可测策略从装配层抽出来（W9 的 `session/credential-source.ts` 即后者）。
+
+### 非目标（明确不做；出现真实需求时重开）
+
+1. **跨会话流程编排（多用户协同）**（原未决 #4 的 ③）：流程实例与在途窗口都是**每会话**状态，跨会话协同在本包里没有载体；多用户部署下 `SessionView` 的缺省回落是进程级 last-active 指针（该代价记在 `shell/mud-remote-service.ts` 的 `SessionView` JSDoc 与 CHANGELOG v0.7.0：多用户场景前端必须显式传 sessionId）。
 
 ### 已定（留档备查；编号沿用旧清单，外部 §18.N 引用仍指向此处）
 
+1. **浏览器 roster 明文密码（v0.10.0 W9 解决）**：不走"页面自己存/传明文"，改走 host 侧官方凭据 seam —— 名单/配置/RPC 一律只流转**引用名**（`passRef`），明文由 host 在连接瞬间 `ctx.credentials.resolve`，页面只在录入时经 `remote.credentials.set` 单向写入。暴露面是**收敛**而非归零（明文仍过一次网、仍以未加密文本落在 `$DSH_HOME/.credentials.yaml`）。口径与引用名生成见 §10，连接面见 §11。
 2. **终端大流量文本通道（v0.7.0 解决）**：走 typert 流 `mud/game`（官方 mux WS，`/api/remote.mux`），不进 session 事件流；"官方无非持久会话 UI 通道"的前提已变化 —— 官方 remote 流通道即是。
 3. **`/mud/*` HTTP 路由迁移（v0.7.0 解决）**：全部迁入 typert Remote 命名空间 `mud`（`shell/mud-remote-service.ts`，生成器模式严格 descriptor + zod 参数校验）；自建 routes/hub/trust/view 四件与 ws 帧协议删除。
 4. **只读档是否允许 T1（v0.4.0 解决）**：允许但动作 `deny`（§10 三档 × 动作矩阵已实现，见 `tests/permission.spec.ts`）。
@@ -50,5 +57,8 @@ note: 当前状态的唯一来源；本文件之外不写状态摘要
 15. **打断的第一版范围（v0.4.0）**：`onInterrupt` 只声明"打断时要先发的直发命令"（如练功的 `halt`；打断时序：先经 `InflightWindowTable.interrupt` 把在途窗口结算为 `interrupted`，再发 `onInterrupt` 直发命令，§19.4）；"打断后自动重试"、"打断原因的模型判定"留给 T2 决策一次，不自动重试。
 16. **MXP / 判据细节（作者 2026-09-13 已定）**：MXP 发任何命令都能跳过 / GA 与其它判据同权 / `succeedStep` 只是里程碑 / 打断接线 / 投递通道 `deferContext` / fullme 流程五步（§19.7）；仍待定的 `pendingEntry` 端到端用例与 `hpbrief` 应答折叠已上移至未决 #5。
 17. **`exec.concludeTurn()` 已接线（v0.9 W7.3 勘误，取代 #11）**：#11「已定不接」与实现矛盾 —— v0.4.0 defer 通道落地时即接线判据 B/C（`session/mount.ts`：`result.ok && channel.shouldConcludeTurn(callId)` ⇒ `exec.concludeTurn()`，判据定义见 `adjudicator.ts` §8/§19.3）。现行口径：**T1 回合**在工具结果返回且无待投递/无遗留时经官方 `concludeTurn()` 收束，省一次空续步；**T2 路径不接**（#11 原理由仍成立：T2 下"哪个工具调用该结束回合"没有客观判据）。
+18. **逐次升级语义（原未决 #2，2026-09-19 关闭）**：这**不是二选一**，是平台只有一种形态 —— 官方审批结果是封闭词汇表 `allowed-once | rejected | cancelled | unavailable`（`interaction/user-approval/src/types.ts`），服务定义明写"`allowed-once` is the only grant"（同包 `src/index.ts`）；MUD 闸门把 `ask` **原样交回官方**（`agent/gate/tool-gate.ts` 直接 `return verdict`），本插件**没有任何写档位的路径**（唯一写入口是 `capability.set`，入口只有页面/宿主）。故 `ask` 批准恒为"仅此一次"，与 §10「agent 永不自提权」一致。
+19. **旧 MUD 用户迁移（原未决 #3，2026-09-19 关闭）**：不存在"必须删除重建"的强制路径 —— `assemble.ts#installPresetCapability` 把 `agentPresets.select` 的**任何**失败（含旧会话已锁定）都 catch 住，留痕后**回落宿主侧装配**；而 §9 明写宿主侧装配是完整可用的一条（可见性层还比 preset 模式更严格）。真正要用户动手的迁移只剩 W9 那一条：旧名单行没有 `passRef` → 重录一次密码（§10）。
+20. **单挂起（I11）（原未决 #4 的 ①，已随 v0.9 W7.2 关闭）**：桥单槽删除，在途窗口表天然多窗口并发；流程单步约束由配对移交 `noteToolResult` 保证，不再有"一条流程同时最多一个挂起步骤"的实现载体（I11 现行口径见 §1）。
 
 ---

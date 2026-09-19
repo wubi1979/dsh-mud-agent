@@ -15,12 +15,19 @@
 
 import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
 import type { MudRemoteController } from './mud-remote.ts'
+import type { MudCredentialInfo, MudCredentialsController } from './mud-credentials.ts'
 
 /** One MUD game account attached to a server, bound to its own DSH session. */
 export interface MudUser {
   readonly id: string
   readonly name: string
-  readonly pass: string
+  /**
+   * 密码的**凭据引用名** (官方 CredentialRef, 如 `MUD_PASS_VICRLY_3f6a1c`)。
+   * 名单里永不存明文: 值由用户在表单录入后经 `remote.credentials.set` 单向写入
+   * host 凭据存储 (`$DSH_HOME/.credentials.yaml`), 连接时由 host 侧解析。
+   * 空串 = 该用户没有配密码 (合法: 有些服务器不校验密码)。
+   */
+  readonly passRef: string
   /**
    * Official DSH session id for this account (`sessions.create()` result).
    * Empty while creation is in flight or after a failure — such a user cannot
@@ -77,6 +84,11 @@ export interface MudServersSnapshot {
   readonly sessionState: Readonly<Record<string, MudConnState>>
   /** sessionId → permission tier (host-authoritative; absent = 未声明/未轮询到). */
   readonly sessionTier: Readonly<Record<string, MudTier>>
+  /**
+   * 凭据引用名 → 状态 (`remote.credentials.describe` 的结果; 不含值)。
+   * 缺席 = 还没轮到/拉不到, 行上不显示徽标 (不谎报"未配置")。
+   */
+  readonly credentialStatus: Readonly<Record<string, MudCredentialInfo>>
 }
 
 /** localStorage key for the roster (servers + active target only). */
@@ -92,12 +104,27 @@ export const IDLE_CONN: MudConnInfo = {
   error: null,
 }
 
-/** Minimal structural validation for a parsed roster (mis-shaped storage resets). */
-function parseRoster(value: unknown): { servers: MudServer[]; active: MudServersSnapshot['active'] } | null {
+/**
+ * Minimal structural validation for a parsed roster (mis-shaped storage resets).
+ *
+ * **旧名单迁移契约 (W9 凭据引用化)**: 早期版本把登录密码明文存在 `user.pass`;
+ * 现在只存引用名 `passRef`。读到只有 `pass`、没有 `passRef` 的行时**只丢那个明文值**,
+ * server/user 行原样保留、`passRef` 记为空串 (引用名无法从明文推导, 用户重新录入
+ * 一次即可)。这条边界必须显式写出来: 本函数的既有策略是"任何一条 user 字段不符即
+ * 返回 null", 若照字面"含明文 pass 就丢弃"实现, 会把用户的**整份服务器清单**清空。
+ * @param value parsed localStorage JSON.
+ * @returns roster + active target, `legacyPlaintext` 标出"这份数据里还带着明文密码"。
+ */
+function parseRoster(value: unknown): {
+  servers: MudServer[]
+  active: MudServersSnapshot['active']
+  legacyPlaintext: boolean
+} | null {
   if (typeof value !== 'object' || value === null) return null
   const raw = value as { servers?: unknown; active?: unknown }
   if (!Array.isArray(raw.servers)) return null
   const servers: MudServer[] = []
+  let legacyPlaintext = false
   for (const item of raw.servers) {
     if (typeof item !== 'object' || item === null) return null
     const server = item as { id?: unknown; name?: unknown; host?: unknown; port?: unknown; cwd?: unknown; users?: unknown }
@@ -107,12 +134,15 @@ function parseRoster(value: unknown): { servers: MudServer[]; active: MudServers
     const users: MudUser[] = []
     for (const user of server.users) {
       if (typeof user !== 'object' || user === null) return null
-      const u = user as { id?: unknown; name?: unknown; pass?: unknown; sessionId?: unknown }
-      if (typeof u.id !== 'string' || typeof u.name !== 'string' || typeof u.pass !== 'string') return null
+      const u = user as { id?: unknown; name?: unknown; pass?: unknown; passRef?: unknown; sessionId?: unknown }
+      if (typeof u.id !== 'string' || typeof u.name !== 'string') return null
+      if (typeof u.pass === 'string' && u.pass !== '') legacyPlaintext = true
       users.push({
         id: u.id,
         name: u.name,
-        pass: u.pass,
+        // 缺 passRef 一律记空串: 旧行的明文 pass 到此为止 (下一次 persist 即从
+        // localStorage 消失)。
+        passRef: typeof u.passRef === 'string' ? u.passRef : '',
         // Rosters written before the official-create path carry a locally
         // minted id; keep it (it is still a valid explicit session id).
         sessionId: typeof u.sessionId === 'string' ? u.sessionId : '',
@@ -134,17 +164,22 @@ function parseRoster(value: unknown): { servers: MudServer[]; active: MudServers
     serverId: act !== undefined && typeof act.serverId === 'string' ? act.serverId : null,
     userId: act !== undefined && typeof act.userId === 'string' ? act.userId : null,
   }
-  return { servers, active }
+  return { servers, active, legacyPlaintext }
 }
 
 /** Load the persisted roster; falls back to empty on any parse failure. */
-function loadRoster(): { servers: MudServer[]; active: MudServersSnapshot['active'] } {
+function loadRoster(): {
+  servers: MudServer[]
+  active: MudServersSnapshot['active']
+  legacyPlaintext: boolean
+} {
+  const empty = { servers: [] as MudServer[], active: { serverId: null, userId: null }, legacyPlaintext: false }
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw === null) return { servers: [], active: { serverId: null, userId: null } }
-    return parseRoster(JSON.parse(raw)) ?? { servers: [], active: { serverId: null, userId: null } }
+    if (raw === null) return empty
+    return parseRoster(JSON.parse(raw)) ?? empty
   } catch {
-    return { servers: [], active: { serverId: null, userId: null } }
+    return empty
   }
 }
 
@@ -159,8 +194,12 @@ export class MudStateController {
   /** 官方 typert RPC 控制器 (构造注入; connect/断开/档位/状态轮询都走它)。 */
   private readonly remote: MudRemoteController
 
-  constructor(remote: MudRemoteController) {
+  /** 凭据引用面 (官方 `remote.credentials`; set/describe/unset)。 */
+  private readonly credentials: MudCredentialsController
+
+  constructor(remote: MudRemoteController, credentials: MudCredentialsController) {
     this.remote = remote
+    this.credentials = credentials
     const loaded = loadRoster()
     this.state = {
       servers: loaded.servers,
@@ -168,7 +207,11 @@ export class MudStateController {
       conn: IDLE_CONN,
       sessionState: {},
       sessionTier: {},
+      credentialStatus: {},
     }
+    // 旧名单里还带着明文密码: 立刻重写一次 localStorage, 让那份明文当场离开磁盘
+    // (否则要等到用户下一次改动名单才被覆盖掉)。
+    if (loaded.legacyPlaintext) this.persist()
   }
 
   /** Stable snapshot reference for useSyncExternalStore semantics. */
@@ -228,15 +271,20 @@ export class MudStateController {
   /**
    * Add a user to a server. The session id starts empty: the caller creates the
    * official session and then calls {@link setUserSession} with its id.
+   *
+   * `passRef` 由调用方 (client 装配层) 先生成并 `credentials.set` 成功后才传进来:
+   * 名单行与凭据写入必须"要么都成、要么都不落", 否则会留下指向不存在凭据的账号。
+   * @param serverId 目标服务器 id。
+   * @param input 用户名 + 凭据引用名 (`''` = 无密码)。
    * @returns the new roster entry (or null when the server is unknown).
    */
-  addUser(serverId: string, input: { name: string; pass: string }): MudUser | null {
+  addUser(serverId: string, input: { name: string; passRef: string }): MudUser | null {
     const server = this.state.servers.find(candidate => candidate.id === serverId)
     if (server === undefined) return null
     const user: MudUser = {
       id: randomUUID(),
       name: input.name.trim(),
-      pass: input.pass,
+      passRef: input.passRef,
       sessionId: '',
     }
     this.set({
@@ -332,7 +380,7 @@ export class MudStateController {
         host: server.host,
         port: server.port,
         name: user.name,
-        pass: user.pass,
+        passRef: user.passRef,
         sessionId: user.sessionId,
       })
       await this.refreshStatus(user.sessionId)
@@ -389,10 +437,32 @@ export class MudStateController {
   }
 
   /**
+   * Pull credential state for every reference the roster currently names.
+   *
+   * 状态是**装饰性**的: 拉不到就**保留旧快照** (与 `refreshStatus` 同策略),
+   * 绝不因为它把名单或连接流程搞挂。空引用名在控制器里已被过滤 (官方 schema 只要
+   * 有一个名字不合语法就整批拒答)。名单里已无引用时清空状态。
+   */
+  async refreshCredentials(): Promise<void> {
+    const refs = this.state.servers.flatMap(server => server.users.map(user => user.passRef))
+    if (refs.every(ref => ref === '')) {
+      if (Object.keys(this.state.credentialStatus).length > 0) this.set({ credentialStatus: {} })
+      return
+    }
+    try {
+      const credentialStatus = await this.credentials.describe(refs)
+      this.set({ credentialStatus })
+    } catch { /* 装饰性状态: 拉不到保留旧快照 */ }
+  }
+
+  /**
    * Poll status RPC and reconcile the connection info with the roster.
    * @param focusSessionId session whose status fills `conn` (缺省 = active target)。
    */
   async refreshStatus(focusSessionId?: string): Promise<void> {
+    // 凭据状态搭同一次轮询的车 (侧栏 2.5s 一次): 用户在 Models 页改了引用、
+    // 或往环境里加了同名变量, 徽标不需要额外触发就能跟上。
+    await this.refreshCredentials()
     try {
       const body = await this.remote.status(focusSessionId)
       const sessionState: Record<string, MudConnState> = {}

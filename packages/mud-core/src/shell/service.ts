@@ -27,8 +27,16 @@ export interface MudConnectOptions {
   port?: number
   /** 登录账户名 (登录规则 {name} 模板 + 命令回显署名)。 */
   name?: string
-  /** 登录密码 ({pass} 模板; 明文只在本会话运行时内存中)。 */
-  pass?: string
+  /**
+   * 登录密码的**凭据引用名** (官方 CredentialRef = 环境变量名, 如 `MUD_PASS_XIAOYAO`)。
+   * connect 本身不携明文: host 侧连接时经 `ctx.credentials.resolve` 每次重新解析
+   * (进程 env → `$DSH_HOME/.credentials.yaml` → `.env`), 解析值即 {pass} 模板值,
+   * 之后仍走既有的明文最小暴露面 (占位符流转 + 发送瞬间插值 + 掩码)。
+   *
+   * 缺席（含空串）= 合法空密码: 该服务器可能不校验密码, 此时不触碰凭据服务。
+   * 引用名非法 / 未挂载凭据 provider / 引用未配置 → 抛出 (不建连接, 留痕进 diag)。
+   */
+  passRef?: string
 }
 
 /** 单会话连接状态快照。 */
@@ -150,8 +158,8 @@ export interface MudCoreService {
    * @returns `ok` = 已执行注销 (空 id 为 false); `files` = 删除的日志文件数。
    */
   purge(sessionId: string): { ok: boolean; files: number }
-  /** 建立某会话的 telnet 连接 (幂等: 已连接/连接中忽略)。 */
-  connect(options?: MudConnectOptions): void
+  /** 建立某会话的 telnet 连接 (幂等: 已连接/连接中忽略; passRef 在此解析, 失败抛错不建连接)。 */
+  connect(options?: MudConnectOptions): Promise<void>
   /** 断开某会话连接 (缺省 = 最近一次 bind/connect 的会话)。 */
   disconnect(sessionId?: string): void
   /** 单会话连接状态 (缺省 = 最近一次绑定会话)。 */

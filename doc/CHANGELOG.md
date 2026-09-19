@@ -360,3 +360,28 @@ note: 只追加，不回改历史条目；每次设计变更在文末登记一�
 - ① `presets/mud-player/agent.cordis.yml` 删除 `workflow-worker-thread` 行（`provider: spawn` 的编排由 `workflow-ptc` 承担，功能不丢）
 - ② `preset-agent.spec.ts` 守卫断言同步：extra 只放行 `mud-agent` 一行，并留痕删除缘由
 - 验证（agent 实测）：vitest 全包 31 文件 / 345 例全绿（守卫逐行比对通过：副本与 standard 现仅差 mud-agent 一行）
+
+## v0.10.0（2026-09-19）W9：凭据引用化（密码明文的三分暴露面收敛为引用名）
+
+- ① **三个面全部改为引用名**：`MudUser.pass` → `passRef`（浏览器名单）、`MudConnectOptions.pass` → `passRef`（RPC）、`Config.account.pass` → `passRef`（部署配置）。明文由 host 在**连接瞬间**经官方 `ctx.credentials.resolve` 解析，**每次连接重新解析**（不跨操作缓存 ⇒ 改密后下次连接即生效）；页面表单经官方 `remote.credentials.set` 单向写入 `$DSH_HOME/.credentials.yaml`，页面永不读回（`describe` 只回 `{configured, source?, writable}`）
+- ② **新增 `session/credential-source.ts#resolveMudPass`**：三级 fail loud 策略的归属（引用名不合 CredentialRef 语法 / 本次部署未挂载凭据 provider / 引用未配置）—— 留痕后抛出，**解析先于会话运行时装配**，失败不建连接、不声明会话（不写档位记录、不进 `diag().runtimes`）。无 `passRef` 是**合法空密码**（有些服务器不校验密码）。与既有的 `session/credentials.ts`（管"明文在命令流/日志/转录里的**暴露面**"）职责正交：一个管"明文从哪来"，一个管"明文到哪去"
+- ③ **webui 新增 `client/mud-credentials.ts`**：自持最小结构化接口对接官方 `credentials` 远端命名空间（**不引 `@deepseek-ai/dsh-api-remotes`** —— 本仓 `packages/typert-protocol` 是官方镜像，与 npm 上的 `dsh-typert-protocol` 是两个 module 身份，`TypertRemoteNamespaceMap` 合并不会生效，且会在 cordis `Context` 上塞入第二个不含 `mud` 的 `remote` 类型）；软解析 `ctx.get('remote.credentials')` 而**不加硬 inject**（硬依赖缺失会让整个侧栏/游戏/日志 tab 不加载且无提示）；`describe` 调用前过滤空名/非法名并按官方上限 64 分批（官方 schema 只要一个名字不合法就整批拒答）
+- ④ **引用名生成 `mintPassRef`**：`MUD_PASS_<净化名>_<6位随机十六进制>`。**不用"净化名 + 冲突序号"**：`removeUser`/`removeServer` 会 `unset` 该引用，而部署手写的 `account.passRef` 可能与净化后的用户名同名 —— 名字可推导就等于"删一个页面用户"能删掉部署凭据；随机后缀把 `unset` 的破坏面限定在该名单行自己的引用内
+- ⑤ **名单迁移契约（必须显式实现）**：旧 localStorage 只有 `pass`、没有 `passRef` → **只丢弃明文值，server/user 行原样保留**（`passRef` 记空串，用户重录一次即可）。既有 `parseRoster` 的策略是"任何一条 user 字段不符即 `return null`、整份名单回落成空"，若照字面"含明文就丢弃"实现会把用户的**整份服务器清单**清空；另外读到旧数据即当场重写一次 localStorage，让那份明文当场离开磁盘
+- ⑥ **录入路径的失败落点**：`UserDialog.onAdd` 由同步改 **async** —— 凭据写入失败时弹窗保持打开并显示 host 原话（早期实现是 `onAdd(...)` 后立刻 `close()`，异步失败没有落点）；空密码就地拦下（官方 `set` 拒绝空值 `min(1)`）；名单行只在凭据写入成功后落，未落则回滚刚写的引用
+- ⑦ **用户行凭据徽标**：已配置 / **只读 (env)** / 未配置 / 无密码四态。`writable: false` 是必须显示的一档 —— 进程环境里有同名引用时官方 seam 以只读源遮蔽它，`set`/`unset` 一律被拒；不说清楚就是死胡同
+- ⑧ **新增 `tests/credential-source.spec.ts`（7 例）**：显式 passRef / 回落 / 覆盖、缺 provider、引用未配置、非法引用名（文案指名引用名）、无 passRef 不触碰凭据服务、**每次连接重新解析**（连续两次返回不同值，`resolve` 调用 2 次）
+- ⑨ **§18 未决 #1（浏览器 roster 明文密码）关闭**，移入「已定」；新增未决 #9（装配层测试基建：vitest 管线无法加载 TC39 装饰器模块，见下）
+- 暴露面口径（文档与实现同此，不得写成"明文消失"）：connect 不再携明文；录入瞬间仍过一次网；明文仍以**未加密文本**落在 `$DSH_HOME/.credentials.yaml`（目录 owner-only）。`{name}/{pass}` 占位符与掩码机制不变
+- 验证（agent 实测）：`tsc` 三包 EXIT=0（`pnpm -r build`）；mud-core vitest **32 文件 / 352 例全绿**（v0.9.5 基线 345 + 新 7 例，0 新增红例）；mud-webui `tsdown` 产物构建通过
+- **已知限制（本次实测发现，记入 §18 未决 #9）**：本仓测试链路（vitest 4 + Vite 8/rolldown/oxc）**无法加载 TC39 标准装饰器模块** —— `@Remote` 标注的 `shell/mud-remote-service.ts` 是入口，于是任何 import 到 `assemble.ts` 的 spec 都会在 transform 阶段报 `SyntaxError: Invalid or unexpected token`。机制：`vite:oxc` 仅在 `environment.config.isBundled` 为真时读 `oxc` 配置项（vitest 的 node 环境不是 bundled，实测配 `oxc.decorator`/`oxc.target` 均无效），且 oxc 的 `decorator` 变换只实现 legacy 版（`legacy:false` 不降级；`legacy:true` 会让 `@Remote` 按 `(target, key, descriptor)` 被调用而在类定义期抛错）。这既是"装配层与 remote 服务层至今没有测试"的真实原因，也是本切片把凭据策略抽成独立模块（②）的直接理由
+## v0.10.0（2026-09-19，补）§18 未决事项逐条核对：两条过时关闭、一条改写、一条拆解
+
+- 触发：作者反馈"未决事项有些感觉过时"，逐条对现行代码取证核对
+- ① **#2「`ask` 批准的逐次升级语义」关闭 → 已定 #18**：不是二选一 —— 官方审批结果是封闭词汇表 `allowed-once | rejected | cancelled | unavailable`（`interaction/user-approval/src/types.ts:32`），服务定义明写 "`allowed-once` is the only grant"（同包 `src/index.ts:204`），invariant 测试还断言 `policy: 'always'` 被拒；而 MUD 闸门只是把 `ask` 原样交回官方（`agent/gate/tool-gate.ts:110` 直接 `return verdict`），**本插件没有任何写档位的路径**（唯一写入口 `capability.set`，入口只有页面/宿主）。故 `ask` 批准恒为"仅此一次"
+- ② **#3「旧 MUD 用户迁移 → 删除重建」关闭 → 已定 #19**：不存在强制删除路径 —— `assemble.ts#installPresetCapability` 把 `agentPresets.select` 的**任何**失败（含旧会话已锁定）都 catch 住并**回落宿主侧装配**，而 §9 明写宿主侧装配是完整可用的一条（可见性层还更严格）。要用户动手的迁移只剩 W9 那条：旧名单行无 `passRef` → 重录密码
+- ③ **#6 改写（语义纠正）**：原题"官方并发档位的**缺省依赖**"读起来像等上游 —— 实际 `isConcurrencySafe` 是**我们自己**在 `defineTool({...})` 里可声明的字段（官方 `ToolDefinition.isConcurrencySafe?`；本仓注册点 `session/mount.ts:178`、`session/preset.ts:78`），`executionMode()` 的 fail-closed 未变（`core/tools/src/index.ts:1284`）。改为"**本地决策**：给 `mud_state`/`mud_recall`/`mud_help` 这类零发送只读工具声明并发安全时，必须同时重估 I11"
+- ④ **#4 拆解**：① 单挂起（I11）→ 已定 #20（原文自己就写着"已随 W7.2 关闭"却仍留在未决表）；② 流程内部并行分支**保留在 #4** 并标注"**当前无消费方**（login/fullme 都严格串行）→ 真实需求出现前维持非目标"；③ 跨会话流程编排 → 新增「**非目标**」子节（它本来就是范围声明，不是未决）
+- ⑤ **核对后确认仍然成立、原样保留**：#5（`pendingEntry` 机制在 `flow/engine.ts:65/434/895` 已实现且 `diag()` 已暴露计数，但 tests 零引用；`hpbrief` 只在 `flow/flows/fullme.ts:104` 发出、感知规则与 world 无解析）、#7（`pager:continue` 仍是 `direct:true`（`perceive/rules.ts:259`）→ 走 `queue.send` 不带 `noGate`（`session.ts:214`）→ `gateRank` 判 2 压底（`queue.ts:85-88`），无豁免被加过）、#8（`queue.ts:86` 仍是 `halt → 0` 无条件豁免）、#9（本次新增）
+- ⑥ **结构**：§18 由"未决 / 已定"两节扩为"**未决 / 非目标 / 已定**"三节；未决表加"编号为稳定标识、不随增删重排"的说明，已关闭条目在「已定」用接续号（18/19/20）并标注"原未决 #N" 保留可追溯；`doc/PLAN.md` 待办池同步（T2/T3 删除，T4/T6 改写，其余原样）
+- 验证（agent 实测）：全仓 grep 确认无指向旧编号的悬挂引用（`§18.2`/`§18.3` 仅存于 CHANGELOG 历史条目，按"只追加不回改"保留）；纯文档改动，未触碰代码

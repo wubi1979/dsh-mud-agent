@@ -129,5 +129,22 @@ impl: packages/mud-core/src/session/preset.ts + agent/gate/
 1. **`mud_send` / `world_patch` / `mud_captcha` 在所有档位都注册**。前两者是 T1 通道本身（登录流程发名字/密码、登录完成/失败置位），只读档若把它们摘掉，登录动作会在官方 `tools/pre-execute` **之前**就被判 `UNKNOWN_TOOL`，强制层根本看不到该调用；`mud_captcha` 是 fullme 流程的解析工具（不发游戏命令，零发送）。因此只读档对 `mud_send` 的约束落在强制层（登录命令放行、其余 deny）。
 2. **客户端读档位走 `/mud/status`（HTTP 每会话状态通道），不新增投影 wire 视图**。投影保持 host-only（`mudCapabilities` 状态表），因为当前唯一消费方是页面档位选择器，而它已经每 2.5s 轮询 `/mud/status`；加一个没有消费方的 wire 视图违反"每个抽象都要有当前消费方"。
 
-**与官方正交**：不复用 `sandbox`（管 fs/shell）、不塞 `permissionPresets`（只有 sandbox+approval 两个 knob）。
+**凭据来源（W9 凭据引用化，2026-09-19）**：登录密码不再以明文进名单 / 配置 / RPC。
+
+| 面 | 事实 |
+|---|---|
+| 名单（浏览器） | `MudUser.passRef` = 官方 CredentialRef（POSIX 环境变量名，本仓生成形态 `MUD_PASS_<净化名>_<6位十六进制>`）。**值永不回页面**：官方 `credentials` 远端命名空间只有 `describe`/`set`/`unset`，`describe` 只回 `{configured, source?, writable}` |
+| 配置（部署） | `Config.account = { name?, passRef? }` —— `name` 仍是明文（低敏感，回显署名用） |
+| RPC | `ctx.mud.connect` 只收 `passRef`（`pass` 字段已删除）；明文由 host 在**连接瞬间**经 `ctx.credentials.resolve` 解析，**每次连接重新解析**（不跨操作缓存 ⇒ 改密后下次连接即生效） |
+| 值来源 | 官方 seam 分层：进程 env → `$DSH_HOME/.credentials.yaml`（provider 托管、可写）→ project/user `.env` |
+| 录入 | 页面用户表单 → `remote.credentials.set(ref, value)` 单向写入 host 凭据存储；名单行只在写入成功后落（失败不留指向不存在凭据的账号） |
+| 失败 | 三级 fail loud：引用名不合 CredentialRef 语法 / 未挂载凭据 provider / 引用未配置。留痕进 `diag().lastError` 与该会话日志，抛出，**不建连接也不声明会话**。无 `passRef`（含空白串）是**合法空密码**（有些服务器不校验密码），不触碰凭据服务 |
+
+**暴露面口径（文档不得写成"明文消失"）**：改的是**收敛**而非归零 —— ① connect 不再携明文（原先每次连接都过网）；② 录入瞬间 `credentials.set` 仍携明文过一次网；③ 明文以**未加密文本**落在 `$DSH_HOME/.credentials.yaml`（目录 owner-only）；④ host 内存里的明文生命周期由"连接后持有"变为"连接前解析后持有"。`{name}/{pass}` 占位符与掩码机制**不变**（§19）：明文仍只在发送瞬间插值。
+
+**变量与磁盘遮蔽（`writable: false`）**：进程环境里有同名引用时，官方 seam 以只读源遮蔽它 —— `set`/`unset` 一律被拒。页面必须把这一档显示出来（"只读 (env)"徽标）并把官方 seam 的原话回显在表单里，否则用户会看到"已配置"却改不动。
+
+**引用名为什么带随机后缀**：`removeUser`/`removeServer` 会 `unset` 该引用，而部署手写的 `account.passRef` 完全可能与"净化后的用户名"同名 —— 名字可推导就等于"删一个页面用户"能删掉部署凭据。随机后缀让生成名与手写名实际不可能相撞，`unset` 的破坏面因此限定在该名单行自己的引用内（代价：同一账号删后重建会换名，旧名已随删除回收）。
+
+**与官方正交**：不复用 `sandbox`（管 fs/shell）、不塞 `permissionPresets`（只有 sandbox+approval 两个 knob）。凭据面复用官方 `credentials` seam 与它的远端命名空间，不自建存储。
 

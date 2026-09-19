@@ -44,9 +44,10 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import type { SidebarRightTabDefinition } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
-import { MudStateController, IDLE_CONN } from './mud-state.ts'
+import { MudStateController, IDLE_CONN, type MudUser } from './mud-state.ts'
 import { MudSocketController } from './mud-socket.ts'
 import { MudRemoteController } from './mud-remote.ts'
+import { MudCredentialsController, mintPassRef } from './mud-credentials.ts'
 import { MudSidebar, type MudClientInjected } from './MudSidebar.tsx'
 import { GameView } from './GameView.tsx'
 import { LogView } from './LogView.tsx'
@@ -113,9 +114,11 @@ export function apply(ctx: ClientContext): void {
   // typert 服务晚就绪的暂态时序); 重试穷尽后把真实原因写到侧栏状态行 (conn.error),
   // 不用开控制台也能看到为什么"尚未挂载"。
   const mudRemote = new MudRemoteController()
+  // 凭据引用面 (官方 `remote.credentials`): 明文只经它单向写入 host, 名单只存引用名。
+  const credentials = new MudCredentialsController(ctx)
   // Roster + per-session connection controller: one observable source shared by
   // every registration through the inject hooks compartment.
-  const mud = new MudStateController(mudRemote)
+  const mud = new MudStateController(mudRemote, credentials)
   // One shared MUD stream consumer per page: game/log/decision/world push.
   const mudSocket = new MudSocketController()
   const MOUNT_CONN_LABEL = 'MUD RPC'
@@ -259,6 +262,24 @@ export function apply(ctx: ClientContext): void {
     purgeSessionOnHost(sessionId)
   }
 
+  /** 一组用户里非空的凭据引用名 (回收时用)。 */
+  const passRefsOf = (users: readonly MudUser[]): string[] =>
+    users.map(user => user.passRef).filter(ref => ref !== '')
+
+  /**
+   * best-effort 回收一个凭据引用 (删用户 / 删服务器 / 名单未落时回滚)。
+   *
+   * 引用名带随机后缀 (见 `mintPassRef`), 所以删掉的只会是本条名单行自己写的那个 ——
+   * 部署手写的 `account.passRef` 不可能撞上。失败不阻塞页面流程 (名单行已经删了),
+   * 但**不能静默**: 留下的是 `.credentials.yaml` 里的孤儿条目, 得能查。
+   * @param ref 待回收的引用名。
+   * @returns 完成即 resolve 的 promise (调用点普遍 void 掉)。
+   */
+  const releasePassRef = (ref: string): Promise<void> =>
+    credentials.unset(ref).catch((err: unknown) => {
+      console.warn(`[mud] 凭据引用回收失败 (${ref}):`, err)
+    })
+
   /** Shared inject face: the hook sources plus the action surface. */
   const injectFace = (): MudClientInjected => ({
     hooks: {
@@ -275,15 +296,28 @@ export function apply(ctx: ClientContext): void {
       }
     },
     removeServer: (serverId) => {
-      // 删服务器 = 回收它名下全部用户会话 (与 removeUser 同一条理由)。
+      // 删服务器 = 回收它名下全部用户会话 (与 removeUser 同一条理由) + 回收凭据引用。
       const server = mud.getSnapshot().servers.find(candidate => candidate.id === serverId)
       const sessionIds = server?.users.map(user => user.sessionId).filter(id => id !== '') ?? []
       mud.removeServer(serverId)
       for (const sessionId of sessionIds) recycleSession(sessionId)
+      for (const ref of passRefsOf(server?.users ?? [])) void releasePassRef(ref)
     },
-    addUser: (serverId, input) => {
-      const user = mud.addUser(serverId, input)
-      if (user === null) return
+    addUser: async (serverId, input) => {
+      const server = mud.getSnapshot().servers.find(candidate => candidate.id === serverId)
+      if (server === undefined) throw new Error('服务器已不存在, 请重新打开该服务器')
+      // 顺序即契约: 先把明文写进 host 凭据存储, 成功后才落名单行 —— 凭据被拒
+      // (或被只读源遮蔽) 时不留下一行指向不存在凭据的账号。弹窗 await 这次调用,
+      // 失败会把 host 的原话显示出来并保持打开。
+      const passRef = mintPassRef(server.users.map(user => user.passRef), input.name)
+      await credentials.set(passRef, input.pass)
+      const user = mud.addUser(serverId, { name: input.name, passRef })
+      if (user === null) {
+        // 名单侧没落 (服务器中途没了): 回滚刚写下的引用, 别留孤儿。
+        void releasePassRef(passRef)
+        throw new Error('服务器已不存在, 请重新打开该服务器')
+      }
+      void mud.refreshCredentials()
       // 创建用户 = 创建会话: 走官方新建会话流程 (id 由 host 返回并登记),
       // 再声明 MUD 绑定 + 打开会话。不发占位消息 — 连接后第一批游戏输出
       // 自然开回合并翻 blank (见 openSession)。
@@ -296,8 +330,13 @@ export function apply(ctx: ClientContext): void {
       // 配套的官方会话**归档** (官方界面从此不再显示它); 再丢弃本页该会话的
       // 缓冲, 最后删名单行。
       const server = mud.getSnapshot().servers.find(candidate => candidate.id === serverId)
-      const sessionId = server?.users.find(candidate => candidate.id === userId)?.sessionId ?? ''
+      const user = server?.users.find(candidate => candidate.id === userId)
+      const sessionId = user?.sessionId ?? ''
       mud.removeUser(serverId, userId)
+      if (user !== undefined) {
+        for (const ref of passRefsOf([user])) void releasePassRef(ref)
+      }
+      void mud.refreshCredentials()
       recycleSession(sessionId)
     },
     // 共建: 委托给上面的 ensureAndOpenUserSession (官方 create + 绑定 + 打开)。

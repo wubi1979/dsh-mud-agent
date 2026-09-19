@@ -127,11 +127,11 @@ export class MudRemoteService extends TypertRemoteService {
     return { sessionId: target }
   }
 
-  /** 建立某会话的 telnet 连接 (幂等; 缺省回落部署 config.account)。 */
+  /** 建立某会话的 telnet 连接 (幂等; 缺省回落部署 config.account; passRef 由服务解析, 失败抛错)。 */
   @Remote
-  connect(options: MudConnectOptions | undefined): { sessionId: string } {
+  async connect(options: MudConnectOptions | undefined): Promise<{ sessionId: string }> {
     const sessionId = this.resolveSession(options?.sessionId)
-    this.service.connect({ ...options, sessionId })
+    await this.service.connect({ ...options, sessionId })
     return { sessionId }
   }
 

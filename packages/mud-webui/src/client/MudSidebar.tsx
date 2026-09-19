@@ -27,6 +27,7 @@ import type {
   MudConnInfo, MudConnState, MudServer, MudServersSnapshot, MudTier, MudUser,
 } from './mud-state.ts'
 import { MUD_TIER_CHOICES } from './mud-state.ts'
+import type { MudCredentialInfo } from './mud-credentials.ts'
 import type { MudSocketController } from './mud-socket.ts'
 import type { MudRemoteController } from './mud-remote.ts'
 import { ServerDialog, UserDialog } from './MudDialogs.tsx'
@@ -44,7 +45,11 @@ export interface MudClientInjected {
   remote: MudRemoteController
   addServer: (input: { name: string; host: string; port: number; cwd: string }) => void
   removeServer: (serverId: string) => void
-  addUser: (serverId: string, input: { name: string; pass: string }) => void
+  /**
+   * 添加用户 = 写凭据 + 落名单行 (`{name, pass}` 里的明文只进 host 凭据存储)。
+   * 失败抛出 (凭据被拒 / 本部署无凭据服务), 调用方 (弹窗) 负责显示并保持打开。
+   */
+  addUser: (serverId: string, input: { name: string; pass: string }) => Promise<void>
   removeUser: (serverId: string, userId: string) => void
   /** 连接入口在用户行 ⋯ 菜单 (会话体渲染之前就可用)。 */
   connectUser: (serverId: string, userId: string) => Promise<void>
@@ -112,6 +117,27 @@ export function connText(conn: MudConnInfo): string {
 }
 
 /**
+ * 一条名单用户的**凭据徽标** (值永不进页面, 这里只区分四种可行动状态)。
+ *
+ * `writable: false` 是必须显示的第三种状态: 进程环境里有同名引用时, 官方
+ * seam 会以只读源遮蔽它, `set`/`unset` 都会被拒 —— 用户看到"已配置"却改不动,
+ * 不说清楚就是死胡同。
+ * @param passRef 该用户的凭据引用名 (`''` = 没配密码)。
+ * @param status 引用的状态 (缺席 = 还没轮询到)。
+ * @returns 徽标文案与样式类; 无状态时不显示。
+ */
+function credBadge(passRef: string, status: MudCredentialInfo | undefined): {
+  text: string
+  className: string
+} | null {
+  if (passRef === '') return { text: '无密码', className: css.credMissing ?? '' }
+  if (status === undefined) return null
+  if (!status.configured) return { text: '凭据未配置', className: css.credMissing ?? '' }
+  if (!status.writable) return { text: `只读 (${status.source ?? 'env'})`, className: css.credReadonly ?? '' }
+  return { text: '凭据已配置', className: css.credOk ?? '' }
+}
+
+/**
  * Render the MUD sidebar column.
  * @param props - composed slot props (owner share + injected actions/hooks).
  * @returns the sidebar element tree.
@@ -130,7 +156,7 @@ export function MudSidebar({
   setTier,
   toggleSidebar,
 }: MudSidebarProps) {
-  const { servers, conn, sessionState, sessionTier } = useServers(s => s)
+  const { servers, conn, sessionState, sessionTier, credentialStatus } = useServers(s => s)
   const [serverDialogOpen, setServerDialogOpen] = useState(false)
   const [userDialogTarget, setUserDialogTarget] = useState<MudServer | null>(null)
   const [serverMenuFor, setServerMenuFor] = useState<MudServer | null>(null)
@@ -222,6 +248,7 @@ export function MudSidebar({
               </div>
               {server.users.map((user) => {
                 const state = rowState(conn, sessionState, user)
+                const badge = credBadge(user.passRef, credentialStatus[user.passRef])
                 return (
                   <div
                     key={user.id}
@@ -239,6 +266,9 @@ export function MudSidebar({
                   >
                     <span className={css.userIcon}><IconUserOutline16 size={13} /></span>
                     <span className={css.userName}>{user.name}</span>
+                    {badge !== null && (
+                      <span className={clsx(css.credBadge, badge.className)}>{badge.text}</span>
+                    )}
                     <span className={clsx(css.stateDot, dotClass(state))} aria-hidden="true" />
                     <Menu
                       open={userMenuFor?.serverId === server.id && userMenuFor?.userId === user.id}
@@ -360,8 +390,10 @@ export function MudSidebar({
         open={userDialogTarget !== null}
         serverName={userDialogTarget?.name ?? ''}
         onClose={() => { setUserDialogTarget(null) }}
+        // 弹窗 await 这次调用: 凭据写入失败时它保持打开并显示 host 的原话。
         onAdd={(input) => {
-          if (userDialogTarget !== null) addUser(userDialogTarget.id, input)
+          if (userDialogTarget === null) return Promise.resolve()
+          return addUser(userDialogTarget.id, input)
         }}
       />
     </div>

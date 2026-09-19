@@ -225,6 +225,32 @@
   opacity: 0.55;
 }
 
+/* 凭据徽标: 只在"需要用户动手"或"已就绪"时占用宽度 (无密码/未配置/只读/已配置)。 */
+.credBadge {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  line-height: 1.6;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.credOk {
+  color: #5fbf77;
+  border-color: color-mix(in srgb, #5fbf77 40%, transparent);
+}
+
+.credMissing {
+  color: #d85f5f;
+  border-color: color-mix(in srgb, #d85f5f 40%, transparent);
+}
+
+.credReadonly {
+  color: #d8a15a;
+  border-color: color-mix(in srgb, #d8a15a 40%, transparent);
+}
+
 .stateIdle {
   background: var(--dsw-alias-label-secondary);
   opacity: 0.4;
