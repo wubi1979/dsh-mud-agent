@@ -20,6 +20,7 @@ import defaultPerceptionRules from '../src/perceive/rules.ts'
 import {
   LOGIN_FLOW, defaultFlows, flowCommands, validateFlows,
 } from '../src/runtime/flow/flows/index.ts'
+import { runWithDeliveryChannel } from '../src/agents/mount.ts'
 import { MudSessionRuntime } from '../src/runtime/session/session.ts'
 import type { MudRuntimeConfig, MudRuntimeSink } from '../src/runtime/session/types.ts'
 import type { MudConnectionManager, MudConnectionSink } from '../src/services/network/manager.ts'
@@ -38,7 +39,28 @@ function ml(text: string, abs: number): MudLine {
 interface Delivered {
   text: string
   lane?: string
+  delivery?: string
   actions: readonly { ruleId: string; tool: { name: string; args: Record<string, unknown> } }[]
+}
+
+/** 官方投递消息的最小形状（`ownedGameMessage` 的产物）。 */
+interface OwnedMessage {
+  content: readonly { type: string; text?: string }[]
+  source?: {
+    lane?: string
+    delivery?: string
+    actions?: readonly { ruleId: string; tool: { name: string; args: Record<string, unknown> } }[]
+  }
+}
+
+/** 投递消息 → 断言用的扁平记录。 */
+function toDelivered(message: OwnedMessage): Delivered {
+  return {
+    text: message.content.find(b => b.type === 'text')?.text ?? '',
+    ...(message.source?.lane === undefined ? {} : { lane: message.source.lane }),
+    ...(message.source?.delivery === undefined ? {} : { delivery: message.source.delivery }),
+    actions: message.source?.actions ?? [],
+  }
 }
 
 function harness(sessionId: string): {
@@ -68,15 +90,8 @@ function harness(sessionId: string): {
     id: sessionId,
     status: 'idle',
     inbox: { nextTurn: [] },
-    followup: (message: {
-      content: readonly { type: string; text?: string }[]
-      source?: { lane?: string; actions?: readonly { ruleId: string; tool: { name: string; args: Record<string, unknown> } }[] }
-    }) => {
-      delivered.push({
-        text: message.content.find(b => b.type === 'text')?.text ?? '',
-        ...(message.source?.lane === undefined ? {} : { lane: message.source.lane }),
-        actions: message.source?.actions ?? [],
-      })
+    followup: (message: OwnedMessage) => {
+      delivered.push(toDelivered(message))
     },
   } as unknown as Agent
   const sink: MudRuntimeSink = {
@@ -124,17 +139,30 @@ function harness(sessionId: string): {
   }
 }
 
-/** 假 loop: 执行最新一条投递里的动作（官方工具路径；桥挂起）。 */
+/**
+ * 假 loop: 走**官方工具包装器**执行最新一条投递里的动作（真链路: begin/end + 工具结果
+ * 回喂流程机 + defer —— 与 runtime-captcha.spec 的 startAction 同一接线）。
+ */
 async function runLatestAction(h: ReturnType<typeof harness>): Promise<{
   ruleId: string
   pending: Promise<unknown>
 }> {
   const message = h.delivered.at(-1)
   if (message === undefined || message.actions.length === 0) throw new Error('没有待执行动作')
+  if (message.delivery === undefined) throw new Error('投递消息没有 delivery id')
   const action = message.actions[0]!
   const tool = h.runtime.tools()[action.tool.name]
   if (tool === undefined) throw new Error(`未知工具 ${action.tool.name}`)
-  const pending = Promise.resolve(tool.execute({ ...action.tool.args }))
+  const pending = runWithDeliveryChannel({
+    channel: h.runtime,
+    callId: `mud-${message.delivery}-0`,
+    exec: {
+      // 官方 loop: `additionalContexts` 进下一步认领消息 → 测试里等价于"多了一条投递"。
+      deferContext: (deferredMessage) => { h.delivered.push(toDelivered(deferredMessage as unknown as OwnedMessage)) },
+      concludeTurn: () => {},
+    },
+    run: async () => await tool.execute({ ...action.tool.args }),
+  })
   await vi.advanceTimersByTimeAsync(1)   // 队列写出 → 武装
   return { ruleId: action.ruleId, pending }
 }
@@ -380,12 +408,13 @@ describe('登录流程端到端 (流程表 → T1 动作 → 桥挂起 → 判�
     await second.pending
     vi.advanceTimersByTime(1)
     expect(h.delivered.at(-1)!.actions.map(a => a.ruleId)).toEqual(['flow:login/success'])
-    // 此刻空命令还没写出 → 该步不应被上一条命令的 GA 结算；日志会**点名**是哪条命令的结算，
-    // 且命令文本先过脱敏（密码落成 ***，用户名照旧可读）。
+    // 此刻空命令还没写出 → 该步不应被上一条命令的 GA 结算。W7.2 起归属按 stepId 判定:
+    // 工具结果解析出的 stepId 不是当前步 → 点名忽略（日志只含 stepId, 不含命令文本,
+    // 密码/用户名不会出现在日志里）。
     expect(h.runtime.diag().flow).toMatchObject({ stepId: 'success' })
-    expect(h.logs.join('\n')).toContain('不是本步命令的结算: "***"')
-    // 同理：name 步发完 {name} 后，它的 GA 在 pass 步到达时也被按命令比对挡掉。
-    expect(h.logs.join('\n')).toContain('不是本步命令的结算: "tester"')
+    expect(h.logs.join('\n')).toContain('工具结果（不是本步的: pass, 忽略）')
+    // 同理：name 步发完 {name} 后，它的 GA 在 pass 步到达时也按 stepId 归属挡掉。
+    expect(h.logs.join('\n')).toContain('工具结果（不是本步的: name, 忽略）')
     expect(h.logs.join('\n')).not.toContain('secret')
     h.runtime.dispose()
   })

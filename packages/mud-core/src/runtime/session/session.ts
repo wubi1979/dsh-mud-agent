@@ -165,6 +165,7 @@ export class MudSessionRuntime {
       onArm: (markerId, pattern) => { this.adjudicator?.armWindowMarker(markerId, pattern) },
       onDisarm: (markerId) => { this.adjudicator?.disarmWindowMarker(markerId) },
       onGate: (active) => { this.queue.setGate(active) },
+      onDropQueued: (replyId) => { this.queue.discardByReplyId(replyId) },
       onLog: (text) => this.debug('network', text),
       defaultTimeoutMs: config.bridgeTimeoutMs,
       declaredTimeoutMs: config.bridgeDeclaredTimeoutMs,

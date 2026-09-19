@@ -170,8 +170,11 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
     await expect(p2).resolves.toMatchObject({ settled: 'timeout' })
     const p3 = h.windows.register({ cmds: ['c'], timeoutMs: 50 })
     h.windows.confirmSent('w3')
+    // 先挂 reject 断言再推进计时器: reject 在计时器 tick 内同步发生, 后挂 handler
+    // 会被 Node 记一次 unhandled rejection (污染运行 → 红名单漂移根因)。
+    const p3Rejects = expect(p3).rejects.toThrow(/连续 3 次应答超时/)
     await vi.advanceTimersByTimeAsync(51)
-    await expect(p3).rejects.toThrow(/连续 3 次应答超时/)
+    await p3Rejects
   })
 
   it('非超时结算复位连续放弃计数', async () => {
@@ -233,8 +236,10 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
   it('发送守卫: confirmSent 迟迟不调 → defaultTimeoutMs 后 error 结算 (防 sending 死锁)', async () => {
     const h = makeTable({ defaultTimeoutMs: 1000 })
     const p = h.windows.register({ cmds: ['look'] })
+    // 先挂 reject 断言再推进计时器 (理由同上: reject 在计时器 tick 内同步发生)。
+    const pRejects = expect(p).rejects.toThrow(/未确认武装/)
     await vi.advanceTimersByTimeAsync(1001)
-    await expect(p).rejects.toThrow(/未确认武装/)
+    await pRejects
   })
 
   it('interrupt(): 在途+排队全部结算 interrupted; gate 释放; 表继续可用', async () => {

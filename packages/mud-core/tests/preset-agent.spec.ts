@@ -318,7 +318,9 @@ describe('preset 副本与 harness standard 的一致性 (本机存在检出时�
     const ours = rowBlocks(readFileSync(OURS, 'utf8'))
 
     const extra = [...ours.keys()].filter(id => !standard.has(id))
-    expect(extra).toEqual(['mud-agent'])
+    // 只多两行: mud-agent (本插件的 MUD 会话行) + workflow-worker-thread (6a98c13 起
+    // 副本有意新增的插入行, harness standard 尚未同步)。
+    expect(extra).toEqual(['workflow-worker-thread', 'mud-agent'])
 
     const missing = [...standard.keys()].filter(id => !ours.has(id))
     expect(missing, '副本缺少 standard 的行').toEqual([])

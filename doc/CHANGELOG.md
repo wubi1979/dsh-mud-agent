@@ -328,3 +328,13 @@ note: 只追加，不回改历史条目；每次设计变更在文末登记一�
 - ⑤ **§12/§13（12-13-observability-testing.md）**：§12 清 3 条已无实现的旧桥/闸门日志样例（"挂起期第二条应答请求已拒绝"、"不是本步命令的结算"、"判据冲突"——grep 证实零实现），补 `[在途]` 三条现行样例与打断结算/排队出队日志；diag 计数行"挂起期第二条请求拒绝次数" → **在途窗口结算结局计数**（§8.3/I4）；§13 补 lane-routing 登记（10 例表驱动 `resolveLaneConfig`）、例数基线（345 总例，红绿以当次 vitest 汇总为准）、W7.3 注册收口后测试对象说明、旧"挂起期闸门"计划项 → 在途窗口结算
 - ⑥ **PLAN.md 角色变更**：旧 W7 核心重构方案归档 `doc/history/plan-w7-core-refactor.md`（archived 头 + 已收官声明 + 4 条实施证伪勘误：§0.1"不再分帧"、§2.2"gaCount 缺省 1"、§2.2"criteria 多行状态机"、§7"官方管道强制工具返回"）；`doc/PLAN.md` 重写为**新计划起草区**（新计划先在此起草成型，实施后同步正式章节 + CHANGELOG，再清空/归档），首个起草项 = vitest 红清零 triage
 - 验证（不由 agent 执行）：`pnpm --filter @deepseek-ai/dsh-mud-core exec tsc --noEmit`（agent 已跑，EXIT=0）；vitest 345 总例/10 红（v0.9.1 实测，红名单见 §17 W7 行，修复属起草区第一项）
+
+## v0.9.2（2026-09-19）vitest 红清零（起草一实施收官）
+
+- ① **功能修复（唯一一处，打断半截序列）**：`InflightWindowTable.settle` 结算为 `interrupted` 时经新接线 `onDropQueued(replyId)` 定向清除宿主命令队列残余（`CommandQueue.discardByReplyId`，`session.ts` 接线）—— 序列命令在 pump 时已一次性入队（§8.3），此前打断只结算窗口不清队列，gate 放行后剩余命令照发；设计落档 §19.4（打断流程 ① 补"定向清除队列残余" + 实现落点补队列残余清除段 + 端到端补"半截序列不发出"，flow-interrupt 例数 7 → 8）。配套用例修正：「半截序列」harness 的 `commandIntervalMs: 0` 会在打断前把整条序列瞬间发完（前提不成立，实测插桩证实），该用例改用真实节流间隔 400ms
+- ② **测试基建（#1–#6）**：`flow-login.spec.ts` / `flow-interrupt.spec.ts` 假 loop `runLatestAction` 改走官方工具包装器 `runWithDeliveryChannel`（`channel: runtime` + `callId: mud-<delivery>-<index>` + `deferContext` 收 defer 投递，与 `runtime-captcha.spec.ts` 同一接线）—— 此前 harness 直调 `tool.execute()` 绕过包装器 → `noteToolResult` 从未被调用 → 凡依赖 GA 结算推进流程的断言全红（GA 收步统一走 `noteToolResult(settled='ga')`，§19.3）；「未声明 interrupts」用例同步改异步推进（包装器 endToolCall → defer 冲刷在微任务里，同步推进等不到）
+- ③ **断言对齐（#4/#8/#9）**：GA 归属断言由旧桥"按命令比对"文案（`不是本步命令的结算: "***"`）改写为 W7.2 stepId 归属语义（`工具结果（不是本步的: <stepId>, 忽略）`）；`flow-ownership` 两例 `{stepId:'done'}` 改 `{stepId:'start', phase:'awaiting-branch'}`（§19.2：带 driver 的后继 = 条件分支，`done` 只由收功句进入，GA 收步后停在分支等待）
+- ④ **preset 守卫同步（#10）**：副本 `presets/mud-player/agent.cordis.yml` 对齐 harness standard 上游 —— 补 `workflow-ptc` 行 + `tool-ralph` 补 `disabled: true`；守卫断言放行 `workflow-worker-thread`（6a98c13 起副本有意新增、standard 尚未同步的插入行）
+- ⑤ **Unhandled Rejection 清零（红名单漂移根因）**：`response.spec.ts` 两处（连续 3 次应答超时 reject / 发送守卫 error reject）改为**先挂 reject 断言、再推进计时器** —— reject 在 `advanceTimersByTimeAsync` 的计时器 tick 内同步发生，后挂 handler 会被 Node 记一次 unhandled rejection，vitest 明示可能引发跨文件假红
+- ⑥ **§17（17-18-roadmap.md）**：W7 行验收列补记 vitest 红清零明细，状态 🟡 → ✅ **已实现**（2026-09-19 验收通过）
+- 验证（agent 实测）：`vitest run --root packages/mud-core` 全包 **31 文件 / 345 例全绿**（0 Unhandled Rejection）；`tsc --noEmit` EXIT=0

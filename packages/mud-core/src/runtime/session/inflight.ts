@@ -144,6 +144,9 @@ export interface InflightWindowDeps {
   onDisarm: (markerId: string) => void
   /** 直发延后 gate (§2.8): true = 窗口开启 (压住非豁免直发), false = 结算放行。 */
   onGate: (active: boolean) => void
+  /** 定向丢弃队列残余 (§19.4 打断): 窗口结算为 `interrupted` 时, 按 replyId 移除
+   *  宿主命令队列里该窗口尚未发出的序列命令 (打断后剩余命令不得照发)。 */
+  onDropQueued?: (replyId: string) => void
   /** 日志。 */
   onLog?: (text: string) => void
   /** 未声明判据的窗口超时 (缺省 10s; 兼发送守卫窗)。 */
@@ -206,7 +209,7 @@ interface WindowEntry {
  * 顺序执行下同时至多一个窗口在途, §2.6), 窗口重叠时后到者排队。
  */
 export class InflightWindowTable {
-  private readonly opts: { send: InflightWindowDeps['send']; onArm: InflightWindowDeps['onArm']; onDisarm: InflightWindowDeps['onDisarm']; onGate: InflightWindowDeps['onGate']; onLog?: (text: string) => void; defaultTimeoutMs: number; declaredTimeoutMs: number; consecutiveTimeoutLimit: number }
+  private readonly opts: { send: InflightWindowDeps['send']; onArm: InflightWindowDeps['onArm']; onDisarm: InflightWindowDeps['onDisarm']; onGate: InflightWindowDeps['onGate']; onDropQueued?: InflightWindowDeps['onDropQueued']; onLog?: (text: string) => void; defaultTimeoutMs: number; declaredTimeoutMs: number; consecutiveTimeoutLimit: number }
 
   /** 已注册但未发送的窗口 (FIFO)。 */
   private pending: WindowEntry[] = []
@@ -231,6 +234,7 @@ export class InflightWindowTable {
       onArm: deps.onArm,
       onDisarm: deps.onDisarm,
       onGate: deps.onGate,
+      ...(deps.onDropQueued !== undefined ? { onDropQueued: deps.onDropQueued } : {}),
       ...(deps.onLog !== undefined ? { onLog: deps.onLog } : {}),
       defaultTimeoutMs: deps.defaultTimeoutMs ?? 10_000,
       declaredTimeoutMs: deps.declaredTimeoutMs ?? 120_000,
@@ -533,6 +537,9 @@ export class InflightWindowTable {
     const idx = this.pending.indexOf(w)
     if (idx !== -1) this.pending.splice(idx, 1)
     if (this.live === w) this.live = null
+    // §19.4 打断: 序列命令已全部入宿主队列 (pump 一次性入队), 窗口作废后残余
+    // 待发命令按 replyId 定向清除 —— 否则 gate 放行后剩余命令照发 (半截序列)。
+    if (kind === 'interrupted') this.opts.onDropQueued?.(w.id)
     // gate 释放 (§2.8): 批量结算由调用方 finally 统一放; 单窗口结算走 pump 排空放行。
     if (!this.batchSettling) this.pump()
 

@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { LOGIN_FLOW, PRIORITY_NORMAL, type FlowSpec } from '../src/runtime/flow/flows/index.ts'
 import type { PerceptionRule } from '../src/perceive/types.ts'
+import { runWithDeliveryChannel } from '../src/agents/mount.ts'
 import { MudSessionRuntime } from '../src/runtime/session/session.ts'
 import type { MudRuntimeConfig, MudRuntimeSink } from '../src/runtime/session/types.ts'
 import type { MudConnectionManager, MudConnectionSink } from '../src/services/network/manager.ts'
@@ -91,13 +92,36 @@ function ml(text: string, abs: number): MudLine {
 interface Delivered {
   text: string
   lane?: string
+  delivery?: string
   actions: readonly { ruleId: string; tool: { name: string; args: Record<string, unknown> } }[]
+}
+
+/** 官方投递消息的最小形状（`ownedGameMessage` 的产物）。 */
+interface OwnedMessage {
+  content: readonly { type: string; text?: string }[]
+  source?: {
+    lane?: string
+    delivery?: string
+    actions?: readonly { ruleId: string; tool: { name: string; args: Record<string, unknown> } }[]
+  }
+}
+
+/** 投递消息 → 断言用的扁平记录。 */
+function toDelivered(message: OwnedMessage): Delivered {
+  return {
+    text: message.content.find(b => b.type === 'text')?.text ?? '',
+    ...(message.source?.lane === undefined ? {} : { lane: message.source.lane }),
+    ...(message.source?.delivery === undefined ? {} : { delivery: message.source.delivery }),
+    actions: message.source?.actions ?? [],
+  }
 }
 
 function harness(sessionId: string, options: {
   flows: readonly FlowSpec[]
   rules: readonly PerceptionRule[]
   withAccount?: boolean
+  /** 命令队列最小间隔 (缺省 0 = 立即发完; 验证"半截序列"需真实节流, 见 §19.4)。 */
+  commandIntervalMs?: number
 }): {
   runtime: MudSessionRuntime
   sink: () => MudConnectionSink
@@ -125,15 +149,8 @@ function harness(sessionId: string, options: {
     id: sessionId,
     status: 'idle',
     inbox: { nextTurn: [] },
-    followup: (message: {
-      content: readonly { type: string; text?: string }[]
-      source?: { lane?: string; actions?: readonly { ruleId: string; tool: { name: string; args: Record<string, unknown> } }[] }
-    }) => {
-      delivered.push({
-        text: message.content.find(b => b.type === 'text')?.text ?? '',
-        ...(message.source?.lane === undefined ? {} : { lane: message.source.lane }),
-        actions: message.source?.actions ?? [],
-      })
+    followup: (message: OwnedMessage) => {
+      delivered.push(toDelivered(message))
     },
   } as unknown as Agent
   const sink: MudRuntimeSink = {
@@ -148,7 +165,7 @@ function harness(sessionId: string, options: {
   }
   const config: MudRuntimeConfig = {
     agentMode: 'full',
-    commandIntervalMs: 0,
+    commandIntervalMs: options.commandIntervalMs ?? 0,
     bridgeTimeoutMs: 10_000,
     bridgeDeclaredTimeoutMs: 120_000,
     bridgeSilenceMs: 2_000,
@@ -180,14 +197,27 @@ function harness(sessionId: string, options: {
   }
 }
 
-/** 假 loop: 执行最新一条投递里的动作（官方工具路径 → 桥挂起）。 */
+/**
+ * 假 loop: 走**官方工具包装器**执行最新一条投递里的动作（真链路: begin/end + 工具结果
+ * 回喂流程机 + defer —— 与 runtime-captcha.spec 的 startAction 同一接线）。
+ */
 async function runLatestAction(h: ReturnType<typeof harness>): Promise<{ ruleId: string; pending: Promise<{ ok: boolean; settled?: string; note: string }> }> {
   const message = h.delivered.at(-1)
   if (message === undefined || message.actions.length === 0) throw new Error('没有待执行动作')
+  if (message.delivery === undefined) throw new Error('投递消息没有 delivery id')
   const action = message.actions[0]!
   const tool = h.runtime.tools()[action.tool.name]
   if (tool === undefined) throw new Error(`未知工具 ${action.tool.name}`)
-  const pending = Promise.resolve(tool.execute({ ...action.tool.args })) as Promise<{ ok: boolean; settled?: string; note: string }>
+  const pending = runWithDeliveryChannel({
+    channel: h.runtime,
+    callId: `mud-${message.delivery}-0`,
+    exec: {
+      // 官方 loop: `additionalContexts` 进下一步认领消息 → 测试里等价于"多了一条投递"。
+      deferContext: (deferredMessage) => { h.delivered.push(toDelivered(deferredMessage as unknown as OwnedMessage)) },
+      concludeTurn: () => {},
+    },
+    run: async () => await tool.execute({ ...action.tool.args }),
+  }) as Promise<{ ok: boolean; settled?: string; note: string }>
   await vi.advanceTimersByTimeAsync(1)
   return { ruleId: action.ruleId, pending }
 }
@@ -290,7 +320,8 @@ describe('打断与排队 (§19.4)', () => {
 
     h.sink().onLines([ml('天空飘过一片云', 1)])
     h.sink().onBoundary('ga')
-    vi.advanceTimersByTime(1)
+    // 异步推进: 工具包装器收尾 (endToolCall → defer 冲刷) 在微任务里, 同步推进等不到。
+    await vi.advanceTimersByTimeAsync(1)
 
     expect(h.runtime.diag().flow).toMatchObject({ flowId: 'practice' })     // 流程没被打断
     const plain = h.delivered.filter(msg => msg.actions.some(a => a.ruleId === 'test:plain'))
@@ -356,7 +387,10 @@ describe('打断与排队 (§19.4)', () => {
         onInterrupt: ['halt'],
       }],
     }
-    const h = harness('session-series', { flows: [seriesFlow], rules: [COMBAT_RULE] })
+    // 真实节流间隔: 序列命令逐条按 minInterval 发出 (interval 0 会在打断前把
+    // 整条序列瞬间发完, 前提不成立) —— 生产路径 400ms, 此处 400ms 保证"第一条
+    // 在途、第二条仍在队列"时被打断。
+    const h = harness('session-series', { flows: [seriesFlow], rules: [COMBAT_RULE], commandIntervalMs: 400 })
     h.runtime.connect()
     h.sink().onConnect()
     vi.advanceTimersByTime(10)

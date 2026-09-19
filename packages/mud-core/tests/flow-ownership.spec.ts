@@ -109,17 +109,19 @@ describe('结算归属 (W7.2: 配对移交在途窗口)', () => {
     flow.dispose()
   })
 
-  it('GA 关窗 (settled=ga, outcome ok) → 推进到后继 done; 同窗口不会二次结算', () => {
+  it('GA 关窗 (settled=ga, outcome ok) → start 成功进入分支等待; 同窗口不会二次结算', () => {
     const logs: string[] = []
     const flow = runtime(logs)
     armed(flow)
 
     const hits = flow.noteToolResult('start', 'ok', 'ga')
-    expect(flow.state()).toMatchObject({ flowId: 'test', stepId: 'done' })
+    // start 带 driver 的后继 done = 条件分支: GA 收步后停在 awaiting-branch 等收功句
+    // （§19.2 — done 靠 "你站了起来" 进入, 不是靠 GA）。
     expect(hits).toEqual([])
-    // 上一步窗口的结局不会结算新进入的步骤 (done 在等自己的 driver 句)。
+    expect(flow.state()).toMatchObject({ flowId: 'test', stepId: 'start', phase: 'awaiting-branch' })
+    // 上一步窗口的结局不会把流程推进到 done (done 在等自己的 driver 句)。
     flow.noteToolResult('start', 'ok', 'ga')
-    expect(flow.state()).toMatchObject({ flowId: 'test', stepId: 'done' })
+    expect(flow.state()).toMatchObject({ flowId: 'test', stepId: 'start', phase: 'awaiting-branch' })
     flow.dispose()
   })
 
@@ -138,7 +140,8 @@ describe('结算归属 (W7.2: 配对移交在途窗口)', () => {
     const flow = runtime(logs)
     armed(flow)
     flow.noteToolResult('start', 'ok', 'ga')
-    expect(flow.state()).toMatchObject({ flowId: 'test', stepId: 'done' })
+    // GA 收步后进入分支等待 (流程仍活跃, 等收功句进 done)。
+    expect(flow.state()).toMatchObject({ flowId: 'test', stepId: 'start', phase: 'awaiting-branch' })
 
     // done 在等 driver 句, 没有命令在途 → 任何命令都拿不到判据。
     expect(flow.windowSpecFor('dazuo 10')).toBeNull()

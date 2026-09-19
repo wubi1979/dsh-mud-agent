@@ -160,7 +160,7 @@ ok:[GA] ∧ fail:[GA] → **注册期报错**（互斥）
 ```
 规则命中（顺序：第 1 步就判定能否打断）
   ├─ rule.interrupts > flow.priority  → **打断**
-  │     ① 结算挂起 = interrupted（工具拿到 {ok:false, settled:'interrupted'}）
+  │     ① 结算挂起 = interrupted + **定向清除该窗口的队列残余命令**（工具拿到 {ok:false, settled:'interrupted'}）
   │     ② 注销 arming + 复位流程（只留入口）→ 流程收束
   │     ③ 发 onInterrupt 命令（直发，如练功的 halt）
   │     ④ 投递打断事件的动作（原文 + 动作请求）→ T1 渲染 → 官方工具路径
@@ -173,9 +173,9 @@ ok:[GA] ∧ fail:[GA] → **注册期报错**（互斥）
 
 - **声明面**：`ActionSpec.interrupts?: number`（`perceive/types.ts`，纯数字；缺省 = 不参与）。
 - **判定点**：运行时在**同一批次**里、在投递规则动作之前先做打断准入（`runtime/session/session.ts` 的 `admitRuleHits`）—— 顺序是先流程判定（`flow.offer`）→ 待人工挂起（`parkExternalHits`）→ **打断准入** → 投递。判定用 `FlowRuntime.interrupt()`（`interrupts > flow.priority`）。
-- **打断的挂起结算**：`InflightWindowTable.interrupt(reason)`（W7.2 取代旧 `CommandResponseController.interruptInFlight`）—— 表内全部在途窗口**当场**结算为 `interrupted`，工具结果 `{ok:false, settled:'interrupted', note:'[流程打断] …'}`；表**继续可用**（打断后投递的新命令照常注册窗口），这一点与 `close()`（断线终止语义）不同。迟到/无主的 GA 只作裁决器边界事件，无窗口可结算（孤儿 GA 计数器已随旧桥删除，§8.7）。
+- **打断的挂起结算**：`InflightWindowTable.interrupt(reason)`（W7.2 取代旧 `CommandResponseController.interruptInFlight`）—— 表内全部在途窗口**当场**结算为 `interrupted`，工具结果 `{ok:false, settled:'interrupted', note:'[流程打断] …'}`；表**继续可用**（打断后投递的新命令照常注册窗口），这一点与 `close()`（断线终止语义）不同。迟到/无主的 GA 只作裁决器边界事件，无窗口可结算（孤儿 GA 计数器已随旧桥删除，§8.7）。**队列残余清除**（v0.9.2）：序列命令在 pump 时已一次性入宿主命令队列（§8.3），窗口结算为 `interrupted` 时按 `replyId` 定向清除残余（`CommandQueue.discardByReplyId`）—— 否则 gate 放行后剩余命令照发（半截序列 bug，实测踩过）。
 - **排队与出队**：档位不够 → `FlowRuntime.pendingActions`；流程到达终态/失败/被打断后，运行时调 `drainFlowQueue()` 把队列里的动作**动作投递**给 T1（`deliverStandalone`）。判定点不止一处：批次尾、工具结果（`noteToolResult`）、以及流程失败回调（超时/断线路径）。
-- **端到端**：`tests/flow-interrupt.spec.ts`（7 例）：档位够 → 打断（interrupted + 复位 + `onInterrupt` 直发 + 事件动作投递）；档位不够 → 排队且在流程真的结束前不出队；未声明 → 照常投递；空闲 → 不生效；**login = 1000 不可打断**（战斗类只能排队）。
+- **端到端**：`tests/flow-interrupt.spec.ts`（8 例）：档位够 → 打断（interrupted + 复位 + `onInterrupt` 直发 + 事件动作投递）；档位不够 → 排队且在流程真的结束前不出队；未声明 → 照常投递；空闲 → 不生效；**login = 1000 不可打断**（战斗类只能排队）；**半截序列不发出**（打断后残余命令不再照发）。
 - **`onInterrupt` 的范围**：只声明"打断时要先发的直发命令"（如 halt）；"打断后自动重试/原因判定"留给 T2（§18.15）。
 
 - **login = 1000**：没有任何规则的 `interrupts` 能高过它 → 无人可打断（用户定案）。

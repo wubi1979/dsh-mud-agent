@@ -121,6 +121,23 @@ export class CommandQueue {
     this.queue = []
   }
 
+  /**
+   * 定向清除: 移除所有归属指定在途窗口 (`meta.replyId`) 的待发命令 (§19.4 流程
+   * 打断) —— 窗口已结算为 `interrupted`, 序列命令只发出去了前几条, 残余不得再发。
+   * @returns 移除的命令数 (0 = 无残留; 诊断留痕用)。
+   */
+  discardByReplyId(replyId: string): number {
+    const before = this.queue.length
+    this.queue = this.queue.filter(item => item.meta.replyId !== replyId)
+    const removed = before - this.queue.length
+    // 清空后不再需要已排的发送定时器 (kick 对空队列本就无操作, 这里显式收干净)。
+    if (removed > 0 && this.queue.length === 0 && this.pendingTimer !== null) {
+      clearTimeout(this.pendingTimer)
+      this.pendingTimer = null
+    }
+    return removed
+  }
+
   /** 队列统计。 */
   stats(): { queued: number; sent: number; lastSentAt: number; gate: boolean } {
     return { queued: this.queue.length, sent: this.sentCount, lastSentAt: this.lastSentAt, gate: this.gateActive }
