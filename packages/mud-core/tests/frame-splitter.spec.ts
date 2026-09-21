@@ -66,6 +66,19 @@ describe('FrameSplitter', () => {
     expect(frames[1].lines.map(l => l.text)).toEqual(['其他'])
   })
 
+  it('immediate:false (W10.2 win- 标记): 武装不回测开放帧既有行, 武装后到达的行才命中提交', () => {
+    const { splitter, frames } = harness()
+    splitter.feedLines([ml('你将内息收回丹田，站了起来。'), ml('其他')])
+    splitter.arm({ id: 'done', pattern: '^你将内息收回丹田', immediate: false })
+    // 对照 arming 即测: 同样的开放帧, immediate:false 不当场提交 (A2 无回看 ——
+    // 命令发出前已在缓冲的行不参与本步结算; span 归属由裁决器 spanFloor 过滤)。
+    expect(frames).toEqual([])
+    // 武装后到达的命中行 → 正常提交。
+    splitter.feedLines([ml('你将内息收回丹田，站了起来。')])
+    expect(frames.length).toBe(1)
+    expect(frames[0].markerId).toBe('done')
+  })
+
   it('once (缺省): 命中提交后自动注销', () => {
     const { splitter, frames } = harness()
     splitter.arm({ id: 't1', pattern: '触发' })

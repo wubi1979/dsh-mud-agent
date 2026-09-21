@@ -170,6 +170,9 @@ export class MudSessionRuntime {
       onLog: (text) => this.debug('network', text),
       defaultTimeoutMs: config.bridgeTimeoutMs,
       declaredTimeoutMs: config.bridgeDeclaredTimeoutMs,
+      // span 起点取样 (W10.2): confirmSent 时点的行流缓冲半区水位 (裁决器 feedLines 更新)。
+      // windows 先于 adjudicator 创建, 用可选链回落 -1 (裁决器缺省也是 -1, 语义一致)。
+      absWatermark: () => this.adjudicator?.absWatermark() ?? -1,
     })
     this.queue = new CommandQueue({
       minInterval: config.commandIntervalMs,
@@ -323,14 +326,13 @@ export class MudSessionRuntime {
   }
 
   /**
-   * **尚未投递给模型**的最近 n 行游戏输出 (mud_recall / mud_state 数据源)。
+   * 最近 n 行游戏输出的**历史查询** (mud_recall / mud_state 数据源; W10.2 R2)。
    *
-   * 只回看交付水位 (`deliveredAbs`) 之后的行: 已经随 T1 原文投递消息 / T2 批次 / 工具应答帧
-   * 进过 session 的行**不再重复给出** —— 否则模型会在工具结果里再看到一遍自己刚读过的
-   * 文本 (实测: `mud_state` 把从连接开始的全部输出又倒了一遍)。要回顾更早的内容, 模型
-   * 的会话历史里本来就有。
+   * 交付水位已废除 —— recall 改为无过滤的历史查询: 已投递/已消费的行同样可查,
+   * 按 `RECALL_HISTORY_ROWS` (2000) 上限保留最近行。模型要回顾更早的内容时不必再
+   * 依赖会话历史里有没有 —— 工具结果里被截断或已被后续行冲掉的文本也能翻回来。
    * @param count 最多返回行数 (取最新的 count 行)。
-   * @returns 未投递行的纯文本 (可能为空)。
+   * @returns 历史行纯文本 (可能为空)。
    */
   recall(count: number): string[] {
     return this.adjudicator.recall(count)
@@ -354,6 +356,11 @@ export class MudSessionRuntime {
               ...(request.criteria !== undefined ? { criteria: request.criteria } : {}),
               ...(request.gaCount !== undefined ? { gaCount: request.gaCount } : {}),
               ...(request.timeoutMs !== undefined ? { timeoutMs: request.timeoutMs } : {}),
+              // W10.2 收口 owner 化: branch/captures/onSettle 只来自 tool-call 声明
+              // (FlowWindowSpec 无这些字段, 流程覆盖分支不透传)。
+              ...(request.branch !== undefined ? { branch: [...request.branch] } : {}),
+              ...(request.captures !== undefined ? { captures: [...request.captures] } : {}),
+              ...(request.onSettle !== undefined ? { onSettle: request.onSettle } : {}),
             }
             : {
               ...(override.criteria !== undefined ? { criteria: override.criteria } : {}),

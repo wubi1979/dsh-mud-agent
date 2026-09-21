@@ -6,6 +6,7 @@
  *   - 注册 → pump 发送 (meta.replyId/noGate 穿透) → 宿主 confirmSent 武装 →
  *     判据命中 (win- 标记路由) / N-GA 关窗 / 超时 / abort / 断线 → 结算 (I4 必有结局);
  *   - 结算优先级: 判据命中 > 窗口关闭 (N-GA) > 超时 > 断线;
+ *   - 无回看 (W10.2 A2): sending 期不吸收, span = confirmSent 水位之后的行;
  *   - 直发延后 (§8.3/I12): 窗口开启 ⇒ 队列 gate 压住非豁免直发 (noGate/halt 豁免)。
  *
  * 裁决器站③的接线 (feedLines / boundary / settleCriteria) 在测试里按宿主身份直调 ——
@@ -26,6 +27,11 @@ function ml(text: string): MudLine {
   return { text, raw: text, style: [], abs: 0, time: Date.now(), isPrompt: false }
 }
 
+/** ml 的带 abs 版本 (W10.2 span 测试用; abs 单调递增模拟裁决器行流水位)。 */
+function mlAbs(text: string, abs: number): MudLine {
+  return { text, raw: text, style: [], abs, time: Date.now(), isPrompt: false }
+}
+
 /** 宿主接线采样 (send/armed/disarmed/gate/logs)。 */
 interface Harness {
   windows: InflightWindowTable
@@ -36,7 +42,7 @@ interface Harness {
   logs: string[]
 }
 
-function makeTable(opts: { defaultTimeoutMs?: number } = {}): Harness {
+function makeTable(opts: { defaultTimeoutMs?: number; absWatermark?: () => number } = {}): Harness {
   const h: Harness = { sent: [], armed: [], disarmed: [], gates: [], logs: [] } as never
   h.windows = new InflightWindowTable({
     send: (cmd, meta) => { h.sent.push({ cmd, meta }) },
@@ -45,6 +51,7 @@ function makeTable(opts: { defaultTimeoutMs?: number } = {}): Harness {
     onGate: (active) => { h.gates.push(active) },
     onLog: (text) => { h.logs.push(text) },
     ...(opts.defaultTimeoutMs !== undefined ? { defaultTimeoutMs: opts.defaultTimeoutMs } : {}),
+    ...(opts.absWatermark !== undefined ? { absWatermark: opts.absWatermark } : {}),
   })
   return h
 }
@@ -71,15 +78,18 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
     expect(h.gates.at(-1)).toBe(false)
   })
 
-  it('sending 期 feedLines: 队列节流窗口里提交的帧同属本窗口 (§8.3 帧归属取样)', async () => {
-    const h = makeTable()
+  it('无回看 (W10.2 A2): sending 期不吸收; span = confirmSent 水位之后的行', async () => {
+    const h = makeTable({ absWatermark: () => 5 })
     const p = h.windows.register({ cmds: ['look'] })
-    // 还没 confirmSent (sending): 提前到达的帧也归属本窗口。
-    h.windows.feedLines([ml('提前到达的行')])
-    h.windows.confirmSent('w1')
+    // 还没 confirmSent (sending): 行不吸收 —— 命令发出前已在缓冲的行不进窗口。
+    h.windows.feedLines([mlAbs('命令发出前已在缓冲的行', 4)])
+    h.windows.confirmSent('w1')   // spanStartAbs = 5
+    // armed 后喂入: abs ≤ 5 是命令发出前的行 (不进 span), abs > 5 才算本步应答。
+    h.windows.feedLines([mlAbs('前置噪声行', 5), mlAbs('look 应答行', 6)])
     h.windows.boundary('ga')
     const r = await p
-    expect(r.text).toContain('提前到达的行')
+    expect(r.text).toBe('look 应答行')
+    expect(r.span).toEqual({ fromAbs: 6, toAbs: 6 })
   })
 
   it('N-GA 边界: gaCount 2 需两次 GA 才关窗', async () => {
@@ -114,9 +124,10 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
     const h = makeTable()
     const p = h.windows.register({ cmds: ['dz'], criteria: { ok: /站了起来/, fail: /你无法/ } })
     h.windows.confirmSent('w1')
+    // 武装序 fail → branch → ok (D3 同帧同类命中定序: splitter.testLine 按声明序取首)。
     expect(h.armed).toEqual([
-      { id: 'win-1:ok', pattern: /站了起来/ },
       { id: 'win-1:fail', pattern: /你无法/ },
+      { id: 'win-1:ok', pattern: /站了起来/ },
     ])
     h.windows.settleCriteria('win-1:ok', '你站了起来')
     const r = await p
@@ -133,6 +144,26 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
     await expect(p).resolves.toMatchObject({ ok: false, settled: 'until', outcome: 'fail', hitText: '你的验证码不对。' })
   })
 
+  it('branch 分支判据 (W10.2): 武装序 fail→branch→ok; 命中 → until 结算 hit={class:branch,id}', async () => {
+    const h = makeTable()
+    const p = h.windows.register({
+      cmds: ['look'],
+      criteria: { ok: /你看到/, fail: /什么也没有/ },
+      branch: [{ id: 'alt', pattern: /特殊的替代行/ }],
+    })
+    h.windows.confirmSent('w1')
+    expect(h.armed.map(a => a.id)).toEqual(['win-1:fail', 'win-1:branch:alt', 'win-1:ok'])
+    h.windows.feedLines([mlAbs('一行特殊的替代行', 1)])
+    h.windows.settleCriteria('win-1:branch:alt', '一行特殊的替代行')
+    const r = await p
+    expect(r).toMatchObject({
+      ok: true, settled: 'until', hit: { class: 'branch', id: 'alt' }, hitText: '一行特殊的替代行',
+    })
+    expect(r.text).toContain('替代行')   // until text = span 行文本
+    // 任何结算注销全部标记 (含 branch, 不留脏标记)。
+    expect(h.disarmed).toEqual(['win-1:ok', 'win-1:fail', 'win-1:branch:alt'])
+  })
+
   it('判据型 GA 关窗未命中 → 失败 ("判据未等到")', async () => {
     const h = makeTable()
     const p = h.windows.register({ cmds: ['dz'], criteria: { ok: /站了起来/ } })
@@ -140,6 +171,40 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
     h.windows.boundary('ga')
     await expect(p).resolves.toMatchObject({
       ok: false, settled: 'ga', outcome: 'fail', text: '判据未等到 (窗口在 GA 边界关闭)',
+    })
+  })
+
+  it('captures 抽取 (W10.2): 只扫 span 行 + 命名捕获组即槽名 + 先到先得', async () => {
+    const h = makeTable({ absWatermark: () => 10 })
+    const p = h.windows.register({
+      cmds: ['hp'],
+      captures: [/(?<hp>\d+)\/\d+/, /气定神闲地(?<act>打坐|睡觉)/, /永不匹配(?<miss>x)/],
+    })
+    h.windows.confirmSent('w1')   // spanStartAbs = 10
+    h.windows.feedLines([
+      mlAbs('你气定神闲地打坐', 11),
+      mlAbs('气血 80/100', 12),
+      mlAbs('气血 70/100', 13),   // 先到先得: hp 不被后到覆盖
+      mlAbs('命令前的行', 9),      // abs ≤ 10: 不进 span, 不参与抽取
+    ])
+    h.windows.boundary('ga')
+    const r = await p
+    expect(r.captures).toEqual({ hp: '80', act: '打坐' })
+  })
+
+  it('onSettle 显式化 (W10.2): on ga:N + onSettle fail → GA 关窗 outcome=fail (缺省裁决不再恒 ok)', async () => {
+    const h = makeTable()
+    const p = h.windows.register({ cmds: ['fullme 1234'], gaCount: 3, onSettle: 'fail' })
+    h.windows.confirmSent('w1')
+    h.windows.boundary('ga')
+    h.windows.boundary('ga')
+    let settled = false
+    void p.then(() => { settled = true })
+    await vi.advanceTimersByTimeAsync(1)
+    expect(settled).toBe(false)
+    h.windows.boundary('ga')
+    await expect(p).resolves.toMatchObject({
+      ok: false, settled: 'ga', outcome: 'fail', hit: { class: 'fail' },
     })
   })
 

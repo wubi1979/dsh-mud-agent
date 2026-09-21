@@ -23,9 +23,15 @@
  * 直发延后 (§2.8): 在途窗口开启 ⇒ 直发命令队列延后 (queue gate, `onGate(true)`);
  * 窗口自身命令 `noGate:true` 豁免, halt 优先级豁免 —— GA 计数从此不被直发应答污染。
  *
- * 判据武装 (win- 标记): confirmSent 武装后, 对 criteria.ok / criteria.fail 各注册
- * `win-<n>:ok` / `win-<n>:fail` 一次性武装标记 (once:true, 经裁决器注册进行流缓冲);
- * 命中帧由裁决器站③路由回 `settleCriteria`。任何结算都注销两标记 (不留脏标记)。
+ * 判据武装 (win- 标记): confirmSent 武装后, 对 criteria.fail / branch / criteria.ok 各注册
+ * `win-<n>:fail` / `win-<n>:branch:<id>` / `win-<n>:ok` 一次性武装标记 (once:true, 经裁决器
+ * armWindowMarker 以 immediate:false 武装 —— **无回看** (A2): 开放帧里命令发出前已缓冲的行
+ * 不回测, 武装后到达的行才命中); 武装序 fail → branch → ok (同帧同类命中按声明序取首)。
+ * 命中帧由裁决器站③路由回 `settleCriteria`。任何结算都注销全部标记 (不留脏标记)。
+ *
+ * span (W10.2 A2/A3): confirmSent 时点记录行流水位 (spanStartAbs) —— 结算时 span = 吸收行中
+ * abs > spanStartAbs 的部分 (首个/末个行 abs 进 `WindowResult.span`), until/ga 结算的
+ * text/lines 只取 span 行 (命令发出前的缓冲行不属于本步应答), capture 抽取只扫 span 行。
  *
  * 计时语义 (沿用旧桥 §8.4): 唯一的计时器是**放弃** —— 未声明 10s / 声明 120s
  * (spec.timeoutMs 覆盖); **连续 3 次放弃** → promise reject (工具 throw → DSH 失败
@@ -72,6 +78,12 @@ export interface WindowRequest {
   label?: string
   /** 中止信号: 触发后优雅结算 (settled='abort'), 不留悬挂 promise。 */
   signal?: AbortSignal
+  /** 分支判据 (任一命中即 until 结算, hit={class:'branch', id}; 全部武装为 win-<n>:branch:<id>)。 */
+  branch?: readonly { id: string; pattern: RegExp }[]
+  /** capture 抽取正则 (命名捕获组 (?<name>…) 即槽名; 结算时对窗口 span 逐行扫描, 先到先得)。 */
+  captures?: readonly RegExp[]
+  /** on 条件关窗但分类未命中时的裁决 (缺省 ok; 仅显式 'fail' 时透传)。 */
+  onSettle?: 'ok' | 'fail'
 }
 
 /** 注册规格 (壳装配后调用 register 的入参): WindowRequest + 流程表覆盖。 */
@@ -90,6 +102,12 @@ export interface WindowSpec {
   label?: string
   /** 中止信号。 */
   signal?: AbortSignal
+  /** 分支判据 (语义同 WindowRequest.branch)。 */
+  branch?: readonly { id: string; pattern: RegExp }[]
+  /** capture 抽取正则 (语义同 WindowRequest.captures)。 */
+  captures?: readonly RegExp[]
+  /** on 条件关窗但分类未命中时的裁决 (语义同 WindowRequest.onSettle)。 */
+  onSettle?: 'ok' | 'fail'
 }
 
 /** 一次在途窗口的结算结果 (工具 execute 的返回值形状; 规则续步判定入参)。 */
@@ -108,6 +126,12 @@ export interface WindowResult {
   outcome?: 'ok' | 'fail' | 'error'
   /** 判据命中行原文 (until 结算; 流程 `{lastFail}` 槽源)。 */
   hitText?: string
+  /** 判据命中描述 (W10.2): until = 命中判据的类与 id (branch 携带分支 id); ga 关窗 = 结局类。 */
+  hit?: { class: 'ok' | 'fail' | 'branch'; id?: string }
+  /** 窗口 span (A3): span 内首个/末个吸收行的 abs (无吸收行 = 缺省不带)。 */
+  span?: { fromAbs: number; toAbs: number }
+  /** capture 抽取结果 (命名捕获组槽名 → 值; 先到先得; 无匹配 = 缺省不带)。 */
+  captures?: Record<string, string>
 }
 
 /** 在途窗口表诊断 (§2.9; 替换旧桥活动表, 进 /mud/diag)。 */
@@ -155,6 +179,9 @@ export interface InflightWindowDeps {
   declaredTimeoutMs?: number
   /** 连续超时上限 (缺省 3; 达到即 reject → DSH 失败终态)。 */
   consecutiveTimeoutLimit?: number
+  /** 行流水位 (裁决器缓冲半区已见的最新行 abs; confirmSent 记 spanStartAbs 用)。
+   *  缺省 () => -1 = 全部行入 span (单测夹具兼容)。 */
+  absWatermark?: () => number
 }
 
 /** v0.6.0 §8.4: timeout 放弃语义文本 (放弃 = 未等到权威边界)。 */
@@ -164,11 +191,33 @@ export const ABORT_TEXT = '（已中止）'
 /** 流程打断的缺省原因 (工具结果文本; `interrupt` 用)。 */
 export const INTERRUPT_TEXT = '（流程被打断：本步已作废，请按新情况决策）'
 
-/** win- 武装标记 id 解析: `win-<n>:(ok|fail)` → [n, 后缀] (非 win 标记 = null)。 */
-export function parseWindowMarkerId(markerId: string): { n: number; suffix: 'ok' | 'fail' } | null {
-  const m = /^win-(\d+):(ok|fail)$/.exec(markerId)
+/** win- 武装标记 id 解析: `win-<n>:(ok|fail|branch:<branchId>)` → [n, 类, 分支 id]
+ *  (非 win 标记 = null)。branch 判据 id 不得含 `:` (工具层编译时校验)。 */
+export function parseWindowMarkerId(markerId: string): { n: number; kind: 'ok' | 'fail' | 'branch'; branchId?: string } | null {
+  const m = /^win-(\d+):(ok|fail|branch:([^:]+))$/.exec(markerId)
   if (m === null) return null
-  return { n: Number(m[1]), suffix: m[2] as 'ok' | 'fail' }
+  if (m[2] === 'ok' || m[2] === 'fail') return { n: Number(m[1]), kind: m[2] }
+  return { n: Number(m[1]), kind: 'branch', branchId: m[3] }
+}
+
+/**
+ * capture 抽取 (W10.2): 对 span 行逐行跑抽取正则, 命名捕获组 `(?<name>…)` 即槽名;
+ * 先到先得 (首个匹配值占槽), 未匹配不报错。全部正则无命中 → undefined。
+ */
+function extractCaptures(patterns: readonly RegExp[] | undefined, lines: readonly MudLine[]): Record<string, string> | undefined {
+  if (patterns === undefined || patterns.length === 0 || lines.length === 0) return undefined
+  const slots: Record<string, string> = {}
+  for (const line of lines) {
+    for (const re of patterns) {
+      re.lastIndex = 0
+      const m = re.exec(line.text)
+      if (m === null || m.groups === undefined) continue
+      for (const [name, value] of Object.entries(m.groups)) {
+        if (value !== undefined && slots[name] === undefined) slots[name] = value
+      }
+    }
+  }
+  return Object.keys(slots).length > 0 ? slots : undefined
 }
 
 /** 单个窗口的运行时状态。 */
@@ -199,6 +248,16 @@ interface WindowEntry {
   /** win-<n>:ok / win-<n>:fail 武装标记 id (criteria 存在时才有)。 */
   okMarkerId?: string
   failMarkerId?: string
+  /** win-<n>:branch:<id> 武装标记 id (branch 声明时才有; 与 branch 同序)。 */
+  branchMarkerIds?: string[]
+  /** 分支判据 (任一命中即 until 结算, hit={class:'branch', id})。 */
+  branch?: readonly { id: string; pattern: RegExp }[]
+  /** capture 抽取正则 (结算时对 span 行扫描)。 */
+  captures?: readonly RegExp[]
+  /** on 条件关窗但分类未命中时的裁决 (缺省 ok)。 */
+  onSettle?: 'ok' | 'fail'
+  /** span 起点 (confirmSent 时点的行流水位; -1 = 全部行入 span)。 */
+  spanStartAbs: number
   /** 注册时刻 (diag elapsedMs)。 */
   startedAt: number
 }
@@ -209,7 +268,7 @@ interface WindowEntry {
  * 顺序执行下同时至多一个窗口在途, §2.6), 窗口重叠时后到者排队。
  */
 export class InflightWindowTable {
-  private readonly opts: { send: InflightWindowDeps['send']; onArm: InflightWindowDeps['onArm']; onDisarm: InflightWindowDeps['onDisarm']; onGate: InflightWindowDeps['onGate']; onDropQueued?: InflightWindowDeps['onDropQueued']; onLog?: (text: string) => void; defaultTimeoutMs: number; declaredTimeoutMs: number; consecutiveTimeoutLimit: number }
+  private readonly opts: { send: InflightWindowDeps['send']; onArm: InflightWindowDeps['onArm']; onDisarm: InflightWindowDeps['onDisarm']; onGate: InflightWindowDeps['onGate']; onDropQueued?: InflightWindowDeps['onDropQueued']; onLog?: (text: string) => void; defaultTimeoutMs: number; declaredTimeoutMs: number; consecutiveTimeoutLimit: number; absWatermark: () => number }
 
   /** 已注册但未发送的窗口 (FIFO)。 */
   private pending: WindowEntry[] = []
@@ -239,6 +298,7 @@ export class InflightWindowTable {
       defaultTimeoutMs: deps.defaultTimeoutMs ?? 10_000,
       declaredTimeoutMs: deps.declaredTimeoutMs ?? 120_000,
       consecutiveTimeoutLimit: deps.consecutiveTimeoutLimit ?? 3,
+      absWatermark: deps.absWatermark ?? (() => -1),
     }
   }
 
@@ -287,6 +347,14 @@ export class InflightWindowTable {
       ...(spec.gaOutcome !== undefined ? { gaOutcome: spec.gaOutcome } : {}),
       ...(spec.timeoutMs !== undefined ? { timeoutMs: spec.timeoutMs } : {}),
       ...(spec.signal !== undefined ? { signal: spec.signal } : {}),
+      ...(spec.branch !== undefined && spec.branch.length > 0
+        ? {
+          branch: spec.branch,
+          branchMarkerIds: spec.branch.map(b => `win-${n}:branch:${b.id}`),
+        }
+        : {}),
+      ...(spec.captures !== undefined && spec.captures.length > 0 ? { captures: spec.captures } : {}),
+      ...(spec.onSettle !== undefined ? { onSettle: spec.onSettle } : {}),
       lines: [],
       text: '',
       state: 'registered',
@@ -295,6 +363,7 @@ export class InflightWindowTable {
       timeoutTimer: null,
       abortListener: null,
       gaSeen: 0,
+      spanStartAbs: -1,
       ...(spec.criteria?.ok !== undefined ? { okMarkerId: `win-${n}:ok` } : {}),
       ...(spec.criteria?.fail !== undefined ? { failMarkerId: `win-${n}:fail` } : {}),
       startedAt: Date.now(),
@@ -322,11 +391,22 @@ export class InflightWindowTable {
     const w = this.live
     if (!w || w.state !== 'sending' || w.id !== windowId) return
     w.state = 'armed'
+    // span 起点 (A2 无回看): 武装时点的行流水位 —— 此前已在缓冲的行不参与本步结算
+    // (结算时 span = 吸收行中 abs > spanStartAbs 的部分)。
+    w.spanStartAbs = this.opts.absWatermark()
     this.armTimers(w)
-    // 判据型窗口: ok/fail 各注册一次性武装标记 (win-<n>:ok/:fail), 命中帧由裁决器
-    // 站③路由回 settleCriteria。分帧器 arm 的"arming 即测"覆盖判据行先到的情况。
-    if (w.okMarkerId !== undefined && w.criteria?.ok !== undefined) this.opts.onArm(w.okMarkerId, w.criteria.ok)
+    // 判据型窗口: fail / branch / ok 各注册一次性武装标记 (win-<n>:fail/:branch:<id>/:ok),
+    // 命中帧由裁决器站③路由回 settleCriteria。武装序 fail → branch → ok (同帧同类命中
+    // 按声明序取首); win- 标记经 armWindowMarker 以 immediate:false 武装 —— 无回看:
+    // 开放帧里命令发出前已缓冲的行不回测 (与 spanStartAbs 同一水位语义)。
     if (w.failMarkerId !== undefined && w.criteria?.fail !== undefined) this.opts.onArm(w.failMarkerId, w.criteria.fail)
+    if (w.branchMarkerIds !== undefined && w.branch !== undefined) {
+      for (let i = 0; i < w.branchMarkerIds.length; i++) {
+        const b = w.branch[i]
+        if (b !== undefined) this.opts.onArm(w.branchMarkerIds[i]!, b.pattern)
+      }
+    }
+    if (w.okMarkerId !== undefined && w.criteria?.ok !== undefined) this.opts.onArm(w.okMarkerId, w.criteria.ok)
   }
 
   /**
@@ -342,24 +422,36 @@ export class InflightWindowTable {
   }
 
   /**
-   * 喂入一帧的行 (响应 = 窗口开启期间提交帧的并集): 宿主把**裁决器提交的帧**原样
-   * 喂入, 在途窗口 (sending/armed) 就地累积 —— 表不自造边界、不持有标记。
+   * 喂入一帧的行 (响应 = **armed 窗口**期间提交帧的并集): 宿主把**裁决器提交的帧**原样
+   * 喂入, 在途窗口 (armed) 就地累积 —— 表不自造边界、不持有标记。
+   * **无回看 (A2)**: 只吸收 armed 窗口 —— sending 期提交的帧是命令发出前已在缓冲的内容
+   * (命令还没写 socket), 不属于本步应答, 由裁决器站⑤按 spanFloor 过滤留给后续消费批。
    * 无主帧 (无在途窗口) 不在此登记 —— 投递由裁决器消费链负责 (站⑤)。
    */
   feedLines(lines: readonly MudLine[]): void {
     if (lines.length === 0 || this.disposed) return
     const w = this.live
-    if (!w || (w.state !== 'armed' && w.state !== 'sending')) return
-    // `sending` = 已注册但还没真实写出 (队列节流窗口): 窗口期间提交的帧同属本窗口。
+    if (!w || w.state !== 'armed') return
     w.lines = [...w.lines, ...lines]
     w.text = textOfLines(w.lines)
     // 判据命中归武装标记 (win-*, 裁决器站③路由) — 表只累积行, 不判边界。
   }
 
   /**
+   * span 过滤水位 (W10.2 站⑤取样面): live armed 窗口的 span 起点 (spanStartAbs);
+   * 无 live armed 窗口 = +Infinity (无行被 span 吸收)。裁决器站⑤必须在窗口结算前
+   * 取样 (结算会清 live), abs > 水位的行归窗口 (工具应答), ≤ 水位的行是前置噪声
+   * (留待决, 走正常投递)。
+   */
+  spanFloor(): number {
+    const w = this.live
+    return w !== null && w.state === 'armed' ? w.spanStartAbs : Number.POSITIVE_INFINITY
+  }
+
+  /**
    * GA/EOR 边界 (§2.2 N-GA 关窗信号): 仅 **armed** 窗口计数 —— gaSeen 达 gaCount
-   * 即关窗结算 (结局: gaOutcome 覆盖 > 有判据 = fail ("判据未等到") > 无判据 = ok)。
-   * sending 期与无主边界不计数 (无主帧走裁决器消费链的投递结算)。
+   * 即关窗结算 (结局链: gaOutcome 覆盖 > onSettle 裁决 > 有判据 = fail ("判据未等到")
+   * > 无判据 = ok)。sending 期与无主边界不计数 (无主帧走裁决器消费链的投递结算)。
    */
   boundary(kind: BoundaryKind): void {
     void kind
@@ -368,20 +460,25 @@ export class InflightWindowTable {
     w.gaSeen += 1
     if (w.gaSeen < w.gaCount) return
     const hasCriteria = w.criteria?.ok !== undefined || w.criteria?.fail !== undefined
-    const outcome = w.gaOutcome ?? (hasCriteria ? 'fail' : 'ok')
+    const outcome = w.gaOutcome ?? w.onSettle ?? (hasCriteria ? 'fail' : 'ok')
     this.settle(w, 'ga', undefined, undefined, outcome)
   }
 
   /**
-   * win- 武装标记命中 (裁决器站③路由): 按标记后缀结算判据 (ok = 成功 / fail = 失败),
-   * `hitText` = 命中行原文 (流程 `{lastFail}` 槽源)。仅 live armed 且 id 匹配时生效。
+   * win- 武装标记命中 (裁决器站③路由): 按标记类结算判据 (ok = 成功 / fail = 失败 /
+   * branch = 分支命中), `hitText` = 命中行原文 (流程 `{lastFail}` 槽源)。
+   * 仅 live armed 且 id 匹配时生效。
    */
   settleCriteria(markerId: string, hitText?: string): void {
     const parsed = parseWindowMarkerId(markerId)
     if (parsed === null) return
     const w = this.live
     if (!w || w.state !== 'armed' || w.id !== `w${parsed.n}`) return
-    this.settle(w, 'until', undefined, hitText, parsed.suffix)
+    if (parsed.kind === 'branch') {
+      this.settle(w, 'until', undefined, hitText, undefined, parsed.branchId)
+      return
+    }
+    this.settle(w, 'until', undefined, hitText, parsed.kind)
   }
 
   /** 断线: 在途/排队窗口全部 reject (error), 停止接受新注册 (终止语义)。 */
@@ -521,14 +618,18 @@ export class InflightWindowTable {
   /** 结算 (唯一出口: resolve/reject 恰一次; 之后的 feed/boundary 归无主)。
    *  @param errorMessage 覆盖缺省文案 (error: 发送失败等; interrupted: 打断原因)。
    *  @param hitText 判据命中行原文 (until)。
-   *  @param untilOutcome 判据结局 (until: 标记后缀) / ga 关窗结局 (gaOutcome 链已解析)。 */
-  private settle(w: WindowEntry, kind: ReplySettle, errorMessage?: string, hitText?: string, untilOutcome?: 'ok' | 'fail'): void {
+   *  @param untilOutcome 判据结局 (until: 标记类) / ga 关窗结局 (结局链已解析)。
+   *  @param branchId 分支判据 id (until + branch 标记命中; ok 恒 true, hit.class='branch')。 */
+  private settle(w: WindowEntry, kind: ReplySettle, errorMessage?: string, hitText?: string, untilOutcome?: 'ok' | 'fail', branchId?: string): void {
     if (w.state === 'settled') return
     w.state = 'settled'
     this.clearTimers(w)
     // 任何结算都注销 win- 标记 (timeout/abort/error 后不能留脏标记)。
     if (w.okMarkerId !== undefined) this.opts.onDisarm(w.okMarkerId)
     if (w.failMarkerId !== undefined) this.opts.onDisarm(w.failMarkerId)
+    if (w.branchMarkerIds !== undefined) {
+      for (const markerId of w.branchMarkerIds) this.opts.onDisarm(markerId)
+    }
     if (w.abortListener !== null) {
       w.signal?.removeEventListener('abort', w.abortListener)
       w.abortListener = null
@@ -542,6 +643,15 @@ export class InflightWindowTable {
     if (kind === 'interrupted') this.opts.onDropQueued?.(w.id)
     // gate 释放 (§2.8): 批量结算由调用方 finally 统一放; 单窗口结算走 pump 排空放行。
     if (!this.batchSettling) this.pump()
+
+    // span (A2/A3): span = 吸收行中 abs > spanStartAbs 的部分 —— 命令发出前已在缓冲的行
+    // 不属于本步应答。空 span (无行入 span) → 结果缺省不带 span/captures; capture 抽取
+    // 只扫 span 行 (先到先得)。
+    const spanLines = w.lines.filter(l => l.abs > w.spanStartAbs)
+    const span = spanLines.length > 0
+      ? { fromAbs: spanLines[0]!.abs, toAbs: spanLines[spanLines.length - 1]!.abs }
+      : undefined
+    const captures = extractCaptures(w.captures, spanLines)
 
     if (kind === 'error') {
       this.counters.error += 1
@@ -557,8 +667,17 @@ export class InflightWindowTable {
         w.reject(new Error(`连续 ${limit} 次应答超时 (边界未命中), 回合失败终止`))
         return
       }
-      // timeout = 放弃 (§8.4): 窗口行不随结果返回 (已在交付水位内), 回放只进诊断日志。
-      w.resolve({ ok: false, cmd: w.cmd, text: ABANDON_TEXT, lines: [], settled: 'timeout', outcome: 'fail' })
+      // timeout = 放弃 (§8.4): 窗口行不随结果返回 (已在交付水位内), 回放只进诊断日志;
+      // span 留痕 (D4 最小化: 不带 captures)。
+      w.resolve({
+        ok: false,
+        cmd: w.cmd,
+        text: ABANDON_TEXT,
+        lines: [],
+        settled: 'timeout',
+        outcome: 'fail',
+        ...(span !== undefined ? { span } : {}),
+      })
       return
     }
 
@@ -566,38 +685,73 @@ export class InflightWindowTable {
     switch (kind) {
       case 'abort': {
         this.counters.abort += 1
-        w.resolve({ ok: false, cmd: w.cmd, text: ABORT_TEXT, lines: w.lines, settled: 'abort', outcome: 'fail' })
+        w.resolve({
+          ok: false,
+          cmd: w.cmd,
+          text: ABORT_TEXT,
+          lines: w.lines,
+          settled: 'abort',
+          outcome: 'fail',
+          ...(span !== undefined ? { span } : {}),
+        })
         return
       }
       case 'interrupted': {
         this.counters.interrupted += 1
-        w.resolve({ ok: false, cmd: w.cmd, text: errorMessage ?? INTERRUPT_TEXT, lines: w.lines, settled: 'interrupted', outcome: 'fail' })
+        w.resolve({
+          ok: false,
+          cmd: w.cmd,
+          text: errorMessage ?? INTERRUPT_TEXT,
+          lines: w.lines,
+          settled: 'interrupted',
+          outcome: 'fail',
+          ...(span !== undefined ? { span } : {}),
+        })
         return
       }
       case 'until': {
-        const ok = untilOutcome === 'ok'
+        const ok = branchId !== undefined ? true : untilOutcome === 'ok'
         if (ok) this.counters.ok += 1
         else this.counters.fail += 1
+        const hit: { class: 'ok' | 'fail' | 'branch'; id?: string } = branchId !== undefined
+          ? { class: 'branch', id: branchId }
+          : { class: untilOutcome === 'fail' ? 'fail' : 'ok' }
         w.resolve({
           ok,
           cmd: w.cmd,
-          text: w.text,
-          lines: w.lines,
+          text: textOfLines(spanLines),
+          lines: spanLines,
           settled: 'until',
           outcome: ok ? 'ok' : 'fail',
+          hit,
           ...(hitText !== undefined ? { hitText } : {}),
+          ...(span !== undefined ? { span } : {}),
+          ...(captures !== undefined ? { captures } : {}),
         })
         return
       }
       default: {
-        // 'ga' | 'eor': N-GA 关窗 (§2.3)。窗口型 = 成功 (窗口行 = 工具结果);
-        // 判据型关窗未命中 = 失败 ("判据未等到")。
-        const outcome = untilOutcome ?? (w.gaOutcome ?? 'ok')
+        // 'ga' | 'eor': N-GA 关窗 (§2.3)。结局链 (W10.2): untilOutcome ?? gaOutcome ??
+        // onSettle ?? (有判据 = fail, 无判据 = ok)。窗口型 = 成功 (窗口行 = 工具结果);
+        // 判据型关窗未命中 = 失败 ("判据未等到")。跨行同帧定序过渡语义: 同行同类命中
+        // 靠武装序 (fail → branch → ok), 跨行 = 到达序 (W10.4 窗口表批量匹配收口)。
+        const hasCriteria = w.criteria?.ok !== undefined || w.criteria?.fail !== undefined
+        const outcome = untilOutcome ?? (w.gaOutcome ?? w.onSettle ?? (hasCriteria ? 'fail' : 'ok'))
         const ok = outcome === 'ok'
         if (ok) this.counters.ok += 1
         else this.counters.fail += 1
-        const text = ok || w.text !== '' ? w.text : '判据未等到 (窗口在 GA 边界关闭)'
-        w.resolve({ ok, cmd: w.cmd, text, lines: w.lines, settled: 'ga', outcome })
+        const text = textOfLines(spanLines)
+        w.resolve({
+          ok,
+          cmd: w.cmd,
+          text: ok || text !== '' ? text : '判据未等到 (窗口在 GA 边界关闭)',
+          lines: spanLines,
+          settled: kind === 'eor' ? 'eor' : 'ga',
+          outcome,
+          hit: { class: outcome },
+          ...(span !== undefined ? { span } : {}),
+          ...(captures !== undefined ? { captures } : {}),
+        })
       }
     }
   }

@@ -18,6 +18,7 @@
  *   settled 结算方式 (ga/until/timeout/abort/interrupted/error)
  *   outcome 结算结局 (ok/fail/error; 流程机单步推进判据)
  *   hitText 判据命中行原文 (until 结算; 流程 {lastFail} 槽源)
+ *   captures 抽取槽 (W10.2: 结算时对 span 行跑 captures 正则, 命名捕获组即槽名)
  *
  * 工具契约 (LLM 所见声明的类型基础: MudToolResult/OUT_SCHEMA/MudTool/…)
  * 见 `tools-schema.ts`; 本模块 = 构建/插值 (buildMudTools + 占位符插值 + 活动表)。
@@ -111,6 +112,12 @@ interface ResolvedSettle {
   criteria?: WindowCriteria
   gaCount?: number
   timeoutMs?: number
+  /** 分支判据 (W10.2 收口 owner 化): 任一命中即结算, hit={class:'branch', id}。 */
+  branch?: { id: string; pattern: RegExp }[]
+  /** capture 抽取正则 (命名捕获组 (?<name>…) 即槽名; 窗口结算时对 span 行抽取)。 */
+  captures?: RegExp[]
+  /** on 条件关窗但分类未命中时的裁决 (仅显式 'fail' 时携带; 缺省 ok)。 */
+  onSettle?: 'ok' | 'fail'
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -141,9 +148,9 @@ function compilePatterns(list: unknown, field: string): { ok: true; value: RegEx
  *
  * **收口缺省** `{mode:'stream'}` + fallback 3000 (两 lane 一致, 调用期不报错); 非法声明
  * **fail-closed 拒绝** (返回 error 文本, 不静默回退——声明写错不该被 3s 兜底掩盖)。
- * W10.1 工具层形态: `on regex` → 判据型窗口 (onSettle 定 ok/fail 侧), 分类正则命中即结算
- * (fail-fast), `on ga` → gaCount, fallback.ms → 放弃计时; capture 抽取与收口 owner 化随
- * W10.2 落地。
+ * W10.2 收口 owner 化: `on regex` → 判据型窗口 (onSettle 定 ok/fail 侧), 分类正则命中即
+ * 结算 (fail-fast), `on ga` → gaCount, fallback.ms → 放弃计时, `classify.branch` → 分支
+ * 判据 (任一命中即结算, id 不含 ':'), `captures` → 抽取正则 (窗口结算时对 span 行抽取)。
  */
 function resolveSettleWindow(
   settle: unknown,
@@ -153,9 +160,11 @@ function resolveSettleWindow(
   // ① 分类声明先编译 (inline 下声明分类/抽取拒绝)。
   let classifyOk: RegExp | undefined
   let classifyFail: RegExp | undefined
+  let branch: { id: string; pattern: RegExp }[] | undefined
+  let captureRes: RegExp[] | undefined
   let onSettle: 'ok' | 'fail' = 'ok'
   if (classify !== undefined) {
-    if (!isPlainObject(classify)) return { error: '工具拒绝: classify 必须是对象 ({ok?/fail?/onSettle?})' }
+    if (!isPlainObject(classify)) return { error: '工具拒绝: classify 必须是对象 ({ok?/fail?/branch?/onSettle?})' }
     if (classify.ok !== undefined) {
       const c = compilePatterns(classify.ok, 'classify.ok')
       if (!c.ok) return { error: `工具拒绝: ${c.error}` }
@@ -166,11 +175,50 @@ function resolveSettleWindow(
       if (!c.ok) return { error: `工具拒绝: ${c.error}` }
       classifyFail = c.value
     }
+    if (classify.branch !== undefined) {
+      if (!Array.isArray(classify.branch) || classify.branch.length === 0) {
+        return { error: '工具拒绝: classify.branch 必须是非空的 {id, pattern} 数组' }
+      }
+      branch = []
+      for (const item of classify.branch) {
+        if (!isPlainObject(item)) {
+          return { error: '工具拒绝: classify.branch 的每项必须是 {id, pattern}' }
+        }
+        if (typeof item.id !== 'string' || item.id.trim() === '' || item.id.includes(':')) {
+          return { error: '工具拒绝: classify.branch id 必须是非空字符串且不含 ":"' }
+        }
+        if (typeof item.pattern !== 'string' && !(item.pattern instanceof RegExp)) {
+          return { error: `工具拒绝: classify.branch ${item.id} 的 pattern 必须是正则源码字符串` }
+        }
+        try {
+          branch.push({ id: item.id, pattern: new RegExp(item.pattern instanceof RegExp ? item.pattern.source : item.pattern) })
+        } catch (error) {
+          return { error: `工具拒绝: classify.branch ${item.id} 正则编译失败 (${error instanceof Error ? error.message : String(error)})` }
+        }
+      }
+    }
     if (classify.onSettle !== undefined) {
       if (classify.onSettle !== 'ok' && classify.onSettle !== 'fail') {
         return { error: "工具拒绝: classify.onSettle 只能是 'ok'/'fail'" }
       }
       onSettle = classify.onSettle
+    }
+  }
+  // ①' capture 抽取声明编译 (每项正则源码字符串; 命名捕获组 (?<name>…) 即槽名)。
+  if (captures !== undefined) {
+    if (!Array.isArray(captures) || captures.length === 0) {
+      return { error: '工具拒绝: captures 必须是非空正则源码字符串数组' }
+    }
+    captureRes = []
+    for (const item of captures) {
+      if (typeof item !== 'string' && !(item instanceof RegExp)) {
+        return { error: '工具拒绝: captures 的每项必须是正则源码字符串' }
+      }
+      try {
+        captureRes.push(new RegExp(item instanceof RegExp ? item.source : item))
+      } catch (error) {
+        return { error: `工具拒绝: captures 正则编译失败 (${error instanceof Error ? error.message : String(error)})` }
+      }
     }
   }
   // ② 缺省收口 = stream + fallback 3000; 已编译的分类照常进判据 (分类来源解析三序 ①)。
@@ -179,7 +227,14 @@ function resolveSettleWindow(
     if (classifyOk !== undefined) criteria.ok = classifyOk
     if (classifyFail !== undefined) criteria.fail = classifyFail
     const hasCriteria = criteria.ok !== undefined || criteria.fail !== undefined
-    return { inline: false, ...(hasCriteria ? { criteria } : {}), timeoutMs: SETTLE_FALLBACK_MS }
+    return {
+      inline: false,
+      ...(hasCriteria ? { criteria } : {}),
+      ...(branch !== undefined ? { branch } : {}),
+      ...(captureRes !== undefined ? { captures: captureRes } : {}),
+      ...(onSettle === 'fail' ? { onSettle } : {}),
+      timeoutMs: SETTLE_FALLBACK_MS,
+    }
   }
   if (!isPlainObject(settle)) {
     return { error: '工具拒绝: settle 必须是 {mode:"inline"} 或 {mode:"stream", on?, fallback?}' }
@@ -241,6 +296,9 @@ function resolveSettleWindow(
     inline: false,
     ...(hasCriteria ? { criteria } : {}),
     ...(gaCount !== undefined ? { gaCount } : {}),
+    ...(branch !== undefined ? { branch } : {}),
+    ...(captureRes !== undefined ? { captures: captureRes } : {}),
+    ...(onSettle === 'fail' ? { onSettle } : {}),
     timeoutMs,
   }
 }
@@ -343,7 +401,8 @@ export function mudToolSchemaTable(): readonly MudToolSchema[] {
  * @param opts.humanWindow 人工等待诊断通道 (mud_captcha 挂起段 begin/end 包裹;
  *   进在途窗口表 diag 的人工等待条目, 仅诊断不参与 gate)。
  * @param opts.log  (text) => void 活动日志 (WebUI 决策通道)。
- * @param opts.recall (n) => string[] **尚未投递**的最近 n 行游戏输出 (mud_recall/mud_state)。
+ * @param opts.recall (n) => string[] 最近 n 行游戏输出**历史查询** (mud_recall/mud_state;
+ *   W10.2 R2: 无水位过滤, 已投递/已消费的行同样可查)。
  * @param opts.flowControl 触发器组开关/状态 (mud_flow_*; M4 落地前缺省不可用)。
  * @param opts.onWorldChange 世界模型被工具改写后的回调 (装配方据此重评估看门狗)。
  */
@@ -424,6 +483,7 @@ export function buildMudTools({
       settled: r.settled,
       ...(r.outcome !== undefined ? { outcome: r.outcome } : {}),
       ...(r.hitText !== undefined ? { hitText: r.hitText } : {}),
+      ...(r.captures !== undefined ? { captures: r.captures } : {}),
     }
   }
   return {
@@ -543,12 +603,12 @@ export function buildMudTools({
         classify: {
           type: 'object',
           additionalProperties: true,
-          description: '可选分类声明 (只回答"应答内容算哪一类", 与关窗解耦): {ok?: 正则源码字符串[], fail?: 正则源码字符串[], onSettle?: "ok"|"fail"}——正则命中应答即结算 (ok=成功 / fail=失败); onSettle 是 on 条件关窗但分类未命中时的裁决 (缺省 ok)',
+          description: '可选分类声明 (只回答"应答内容算哪一类", 与关窗解耦): {ok?: 正则源码字符串[], fail?: 正则源码字符串[], branch?: {id, pattern}[], onSettle?: "ok"|"fail"}——正则命中应答即结算 (ok=成功 / fail=失败); branch 为分支判据 (任一命中即结算, 结果携带 hit={class:"branch", id}); onSettle 是 on 条件关窗但分类未命中时的裁决 (缺省 ok)',
         },
         captures: {
           type: 'array',
           items: { type: 'string' },
-          description: '可选抽取声明 (正则源码字符串数组): 逐行扫描应答窗口, 命名捕获组 (?<name>…) 即槽名, 未匹配不报错',
+          description: '可选抽取声明 (正则源码字符串数组): 窗口结算时对 span 行逐行扫描, 命名捕获组 (?<name>…) 即槽名, 结果携带 captures={槽名:值} (先到先得, 未匹配不报错)',
         },
       },
       output: { schema: OUT_SCHEMA, render: OUT_RENDER },
@@ -627,6 +687,9 @@ export function buildMudTools({
               ...(criteria !== undefined ? { criteria } : {}),
               ...(timeoutMs !== undefined ? { timeoutMs } : {}),
               ...(settleResolved.gaCount !== undefined ? { gaCount: settleResolved.gaCount } : {}),
+              ...(settleResolved.branch !== undefined ? { branch: settleResolved.branch } : {}),
+              ...(settleResolved.captures !== undefined ? { captures: settleResolved.captures } : {}),
+              ...(settleResolved.onSettle !== undefined ? { onSettle: settleResolved.onSettle } : {}),
               label: 'mud_send',
               ...(signal !== undefined ? { signal } : {}),
             })
@@ -658,6 +721,9 @@ export function buildMudTools({
             ...(criteria !== undefined ? { criteria } : {}),
             ...(timeoutMs !== undefined ? { timeoutMs } : {}),
             ...(settleResolved.gaCount !== undefined ? { gaCount: settleResolved.gaCount } : {}),
+            ...(settleResolved.branch !== undefined ? { branch: settleResolved.branch } : {}),
+            ...(settleResolved.captures !== undefined ? { captures: settleResolved.captures } : {}),
+            ...(settleResolved.onSettle !== undefined ? { onSettle: settleResolved.onSettle } : {}),
             label: 'mud_send',
             ...(signal !== undefined ? { signal } : {}),
           })
@@ -667,14 +733,14 @@ export function buildMudTools({
       },
     },
 
-    /** 回看: **尚未投递给你**的最近 n 行游戏输出 (终端缓冲; 不走游戏)。 */
+    /** 回看: 最近 n 行游戏输出历史 (含命令回显; W10.2 R2 — 已投递/已消费行同样可查)。 */
     mud_recall: {
       name: 'mud_recall',
-      description: '读取**尚未投递给你**的最近 count 行游戏输出 (含命令回显)。已经出现在会话历史里的内容不会重复给出; 不发送任何命令。',
+      description: '读取最近 count 行游戏输出历史 (含命令回显; 已投递/已消费的行同样可查——历史查询, 要回顾刚刚错过的内容时用)。不发送任何命令。',
       parameters: {
         count: {
           type: 'integer',
-          description: '最多读取多少行尚未投递的输出 (1-200, 缺省 20)',
+          description: '最多读取多少行历史输出 (1-200, 缺省 20)',
         },
       },
       output: { schema: OUT_SCHEMA, render: OUT_RENDER },
@@ -685,7 +751,7 @@ export function buildMudTools({
         log(`[工具] mud_recall → 最近 ${lines.length} 行`)
         // 空结果显式反馈 (静默空串会让 agent 误判工具异常/反复重试)。
         if (lines.length === 0) {
-          return { ok: true, note: '（没有尚未投递的游戏输出 — 新输出到达时会自动投递给你）', cmd: '' }
+          return { ok: true, note: '（暂无可查询的历史输出）', cmd: '' }
         }
         return { ok: true, note: lines.map(l => l.replace(/\x1b\[[0-9;]*m/g, '')).join('\n'), cmd: '' }
       },
@@ -755,11 +821,11 @@ export function buildMudTools({
      */
     mud_state: {
       name: 'mud_state',
-      description: '读取当前会话的已知状态: 世界模型快照 (房间/出口/气血/内力/标志位) + **尚未投递给你**的游戏输出。不发送任何命令 (只读通路)。',
+      description: '读取当前会话的已知状态: 世界模型快照 (房间/出口/气血/内力/标志位) + 最近的游戏输出历史 (含已投递/已消费行)。不发送任何命令 (只读通路)。',
       parameters: {
         lines: {
           type: 'integer',
-          description: '附带读取的尚未投递输出行数 (0-100, 缺省 20; 0 = 只看世界模型)',
+          description: '附带读取的历史输出行数 (0-100, 缺省 20; 0 = 只看世界模型)',
         },
       },
       output: { schema: OUT_SCHEMA, render: OUT_RENDER },

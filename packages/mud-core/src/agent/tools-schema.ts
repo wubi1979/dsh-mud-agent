@@ -25,6 +25,8 @@ export interface MudToolResult {
   outcome?: 'ok' | 'fail' | 'error'
   /** 判据命中行原文 (until 结算; 流程 {lastFail} 槽源)。 */
   hitText?: string
+  /** capture 抽取结果 (W10.2; 槽名 → 值, 先到先得; declare captures 的窗口结算携带)。 */
+  captures?: Record<string, string>
 }
 
 /**
@@ -33,7 +35,7 @@ export interface MudToolResult {
  * §8.3/§8.4。工具层校验拒绝 (未连接/危险命令) 不带该字段 —
  * 缺省即"未结算"。声明为 optional 是必需的: `additionalProperties: false`
  * 下漏声明会让**成功**的调用报 `value.settled is not a declared property`
- * (工具实际已执行, 却回给模型一条失败帧)。`outcome`/`hitText` 同理。
+ * (工具实际已执行, 却回给模型一条失败帧)。`outcome`/`hitText`/`captures` 同理。
  */
 export const OUT_SCHEMA = {
   type: 'object',
@@ -45,6 +47,7 @@ export const OUT_SCHEMA = {
     settled: { type: 'string' },
     outcome: { type: 'string' },
     hitText: { type: 'string' },
+    captures: { type: 'object', additionalProperties: true },
   },
 } as const satisfies ValueSchemaSpec
 

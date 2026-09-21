@@ -16,15 +16,17 @@
  *            ⑤ 残余记账   → 投递视图 (批次/recall) + 投递节拍 (settle)
  * ```
  *
- * **帧归属取样契约**: `inFrame` ("提交时点是否在在途窗口内", §2.3 帧并集判据) 必须
- * 在站③之前取样 —— GA/EOR 关窗结算会翻转 `windows.hasOpen()`; 站④使用③前取样值。
+ * **帧归属取样契约**: `inFrame` ("提交时点是否在在途窗口内", §2.3 帧并集判据) 与
+ * `spanFloor` (live armed 窗口的 span 起点水位, W10.2 A2 无回看) 都必须在站③之前取样
+ * —— GA/EOR 关窗结算会翻转 `windows.hasOpen()` 并清 live (spanFloor 变 +Infinity);
+ * 站④⑤使用③前取样值。
  *
  * 不变量: I5 每行恰被认领一次 (折叠/直发/抓取/投递); I6 一个结算点 ≤ 一条投递消息
  * (standalone 先于批次); I7 多行状态机 (engine 求值器); I8 计时器全归本类 (settle
  * 重试 / hold 兜底 / 帧装配阀)。
  *
  * 职责边界: 本类持有行流缓冲、武装标记、投递记账 (pending/pendingActions/standalone/
- * consumeTo/recallLines/deliveredAbs) 与全部会话内计时器; **不持有** agent、传输连接、
+ * consumeTo/recallLines) 与全部会话内计时器; **不持有** agent、传输连接、
  * T1 adapter、会话日志与人工交互状态 (awaitingHuman/externalValues 归壳, 经 deps 回调
  * 只读写)。投递副作用由 deps 的薄回调执行 (state/queue/channel/log/debug/decision)。
  * @module @deepseek-ai/dsh-mud-core/deliver/adjudicator
@@ -66,6 +68,9 @@ const t1Allowed = (mode: MudRuntimeConfig['agentMode']): boolean => mode === 't1
 /** T2 通道允许 (模式 `t2`/`full`): 行批次/控制唤醒进真实 LLM 回合。 */
 export const t2Allowed = (mode: MudRuntimeConfig['agentMode']): boolean => mode === 't2' || mode === 'full'
 
+/** recall 历史查询缓冲上限 (W10.2 R2: 已投递/已消费行同样可查, 取代旧 200 行水位回看)。 */
+const RECALL_HISTORY_ROWS = 2000
+
 // ── 行流缓冲半区 (原 frame-splitter.ts, W7.1 等价并入; 导出仅为测试对齐保留) ────
 
 /** 帧提交标记: ga/eor (主边界) / armed (武装判据命中) / valve (帧内存阀)。 */
@@ -91,6 +96,9 @@ export interface ArmedMarkerSpec {
   pattern: string | RegExp
   /** 一次性: 命中提交后自动注销 (事务判据缺省 true; 常驻标记写 false)。 */
   once?: boolean
+  /** 武装即测 (缺省 true): 开放帧里的既有行若已命中, 当场提交。win- 窗口判据写
+   *  false —— **无回看** (W10.2 A2): 命令发出前已在缓冲的行不回测, 武装后到达才命中。 */
+  immediate?: boolean
 }
 
 /** 已编译的武装标记 (内部)。 */
@@ -179,8 +187,9 @@ export class FrameSplitter {
   }
 
   /**
-   * 注册武装标记 (§8.5)。**arming 即测**: 开放帧里的既有行若已命中 (重试重挂、
-   * 流程换步时完成句已在帧内), 当场提交 —— 与流程"同批行优先"同语义。
+   * 注册武装标记 (§8.5)。**arming 即测** (缺省, `immediate:false` 可关): 开放帧里的
+   * 既有行若已命中 (重试重挂、流程换步时完成句已在帧内), 当场提交 —— 与流程"同批行
+   * 优先"同语义; win- 窗口判据关掉即测 = 无回看 (A2)。
    * @returns 标记 id (非法正则时同样返回, 但标记永不命中并留痕一次)。
    */
   arm(spec: ArmedMarkerSpec): string {
@@ -189,7 +198,7 @@ export class FrameSplitter {
       this.onLog?.(`[分帧] 武装标记正则非法, 永不命中: ${spec.id}`)
     }
     this.armed.push({ ...spec, re })
-    if (re !== null) {
+    if (re !== null && spec.immediate !== false) {
       const idx = this.open.findIndex(line => testRe(re, line.text))
       if (idx !== -1) {
         this.commit(idx, 'armed', spec.id)
@@ -371,8 +380,8 @@ export class SessionAdjudicator {
   /** §8.5: 当前由流程布防同步来的武装标记 id (flow-arm:*; 全量替换同步)。 */
   private readonly flowMarkerIds = new Set<string>()
   private readonly recallLines: { text: string; abs: number }[] = []
-  /** 已投递给模型的最大行 abs (交付水位): recall 只回看其后的行, 保证 session 不重复。 */
-  private deliveredAbs = -1
+  /** 行流水位 (已入缓冲半区的最新行 abs; W10.2 单一水位线, 取代旧交付水位 deliveredAbs)。 */
+  private lastLineAbs = -1
   /** 缺陷计数 (不变量 I9): 遗留段丢弃 / hold 超时释放。 */
   private readonly counters = { hitsDropped: 0, carryDropped: 0, holdReleases: 0 }
   private disposed = false
@@ -438,12 +447,22 @@ export class SessionAdjudicator {
 
   /** 行流入口 (telnet 'parsed' 粒度): 进缓冲半区, 逐行测武装标记。 */
   feedLines(lines: readonly MudLine[]): void {
+    // 行流水位 (W10.2 单一水位线): 在途窗口 span 起点的水位源 (absWatermark)。
+    for (const line of lines) {
+      if (line.abs > this.lastLineAbs) this.lastLineAbs = line.abs
+    }
     this.splitter.feedLines(lines)
   }
 
   /** 元事件入口 (telnet 'boundary'): GA/EOR 主边界, 命中即提交 (空帧也提交)。 */
   boundary(kind: 'ga' | 'eor'): void {
     this.splitter.boundary(kind)
+  }
+
+  /** 行流水位 (已入缓冲半区的最新行 abs; 在途窗口表 confirmSent 记 spanStartAbs 用,
+   *  W10.2 单一水位线 —— 旧交付水位 deliveredAbs 已废除, 全会话只剩这一条行流水位)。 */
+  absWatermark(): number {
+    return this.lastLineAbs
   }
 
   // ── 武装标记 (打断常驻 / 流程布防 / 桥 until) ──────────
@@ -460,9 +479,11 @@ export class SessionAdjudicator {
     }
   }
 
-  /** win- 武装标记注册 (窗口 confirmSent 武装后; §2 判据武装)。 */
+  /** win- 武装标记注册 (窗口 confirmSent 武装后; §2 判据武装)。
+   *  immediate:false = **无回看** (A2): 开放帧里命令发出前已缓冲的行不回测, 武装后
+   *  到达的行才命中 —— 与窗口表 spanStartAbs 同一水位语义。 */
   armWindowMarker(markerId: string, pattern: string | RegExp): void {
-    this.splitter.arm({ id: markerId, pattern, once: true })
+    this.splitter.arm({ id: markerId, pattern, once: true, immediate: false })
   }
 
   /** 窗口结算注销 win- 标记 (任何结算都注销, timeout/abort/error 后不能留脏标记)。 */
@@ -481,6 +502,9 @@ export class SessionAdjudicator {
     // 帧归属取样 (§2.3 帧并集判据): "提交时点是否在在途窗口内"。必须在 ③ 之前 ——
     // GA/EOR 关窗结算会翻转 hasOpen()。
     const inFrame = this.deps.windows.hasOpen()
+    // span 过滤水位 (W10.2 单一水位线): live armed 窗口的 span 起点 (无 = +Infinity)。
+    // 必须在 ③ 之前取样 —— 结算会清 live; abs ≤ 水位的行 = 命令发出前已在缓冲的前置噪声。
+    const spanFloor = this.deps.windows.spanFloor()
     // ① 状态折叠 → world 落库。
     const result = lines.length > 0 ? this.engine.feed(lines) : null
     if (result !== null) {
@@ -509,24 +533,32 @@ export class SessionAdjudicator {
     // 结算 (onSettle) / 判据命中可能让流程到达终态 → 排队的动作此时出队投递。
     this.drainFlowQueue()
     // ⑤ 残余记账 → 投递视图 (批次/recall): 只记**可能投递给模型**的行 —— 折叠行
-    //    (state 入库 / 直接执行) 已被处理过, `mud_recall` 不再倒出模型本看不到的原文。
+    //    (state 入库 / 直接执行) 已被处理过, `mud_recall` 不再倒出模型本看不到的原文
+    //    (R2: recall 已改历史查询, 已投递/已消费行同样保留在缓冲里可查)。
     if (result !== null) {
       for (const line of lines) {
         if (result.foldedAbs.has(line.abs)) continue
         this.recallLines.push({ text: line.text, abs: line.abs })
-        if (this.recallLines.length > 200) this.recallLines.shift()
+      }
+      if (this.recallLines.length > RECALL_HISTORY_ROWS) {
+        this.recallLines.splice(0, this.recallLines.length - RECALL_HISTORY_ROWS)
       }
     }
     if (inFrame) {
-      // 帧内 (I5/I6): 帧行不进待决 → 走在途窗口 (工具应答帧并集), **不进投递**; 命中不丢:
-      // 当场**动作投递** (工具应答与游戏输出同源进 L1, 见 §4)。
+      // 帧内 (I5/I6): span 内行 (abs > spanFloor) 归在途窗口 (工具应答帧并集), **不进
+      // 投递**; 前置噪声 (abs ≤ spanFloor, 命令发出前已在缓冲) 留待决走正常投递; 命中
+      // 不丢: 当场**动作投递** (工具应答与游戏输出同源进 L1, 见 §4)。
       if (readyRuleHits.length > 0) {
         this.deliverStandalone(
           textOfLines(lines).trim(),
           readyRuleHits.map(hit => actionOf(hit.ruleId, hit.action)),
         )
       }
-      this.noteDelivered(lines)
+      for (const line of lines) {
+        if (line.abs > spanFloor) continue
+        if (result !== null && result.foldedAbs.has(line.abs)) continue
+        this.pending.push(line)
+      }
     } else {
       // 无主帧: 动作随本帧原文在一次原文投递里走 (行序与消费边界不变)。
       const requests = readyRuleHits.map(hit => actionOf(hit.ruleId, hit.action))
@@ -756,25 +788,13 @@ export class SessionAdjudicator {
   // ── 站⑤: 投递记账与节拍 ───────────────────────────────
 
   /**
-   * **尚未投递给模型**的最近 n 行游戏输出 (mud_recall / mud_state 数据源)。
-   *
-   * 只回看交付水位 (`deliveredAbs`) 之后的行: 已经随 T1 原文投递消息 / T2 批次 / 工具应答帧
-   * 进过 session 的行**不再重复给出** —— 否则模型会在工具结果里再看到一遍自己刚读过的
-   * 文本 (实测: `mud_state` 把从连接开始的全部输出又倒了一遍)。要回顾更早的内容, 模型
-   * 的会话历史里本来就有。
+   * **历史查询** (mud_recall / mud_state 数据源, W10.2 R2 改写): 最近 n 行游戏输出。
+   * 交付水位已废除 (单一水位线 = 行流缓冲半区的 absWatermark), 已投递/已消费的行
+   * 同样保留在缓冲里可查 —— 模型要回顾最近上下文时直接查, 不必翻会话历史; 缓冲按
+   * `RECALL_HISTORY_ROWS` 上限驱逐最旧行 (折叠行不入缓冲, 见站⑤)。
    */
   recall(count: number): string[] {
-    return this.recallLines
-      .filter(entry => entry.abs > this.deliveredAbs)
-      .slice(-count)
-      .map(entry => entry.text)
-  }
-
-  /** 记录一批行已交付给模型 (交付水位前移; 只增不减)。 */
-  private noteDelivered(lines: readonly { abs: number }[]): void {
-    for (const line of lines) {
-      if (line.abs > this.deliveredAbs) this.deliveredAbs = line.abs
-    }
+    return this.recallLines.slice(-count).map(e => e.text)
   }
 
   /** 投递重试定时 (T2 限流差额等): 只重试**投递**, 不切帧 —— 消费边界只认标记, 这不是消费边界。 */
@@ -859,7 +879,6 @@ export class SessionAdjudicator {
       this.deps.debug('perception',
         `[感知] 原文投递 ${reflexLines.length} 行 + ${actions.length} 动作 (` +
         `agent ${agent.status}, 遗留 ${carry.length} 行)`)
-      this.noteDelivered(reflexLines)
       this.deliver(agent, text, actions, 'T1 原文投递')
       return
     }
@@ -890,13 +909,11 @@ export class SessionAdjudicator {
     }
     const batchLines = this.pending.splice(0)
     this.consumeTo = -1
-    // 交付水位按**实际投出的行**记账 (裁剪后), 这样被裁掉的行仍然可以被下次 recall 读到。
     const deliveredLines = this.trimObservation(batchLines)
     const text = textOfLines(deliveredLines).trim()
     // 本段没有动作请求, 但可能有"暂存的动作消息"(帧内命中): 先投它, 再投批次。
     if (standalone !== null) this.flushStandalone()
     if (text === '') return
-    this.noteDelivered(deliveredLines)
     this.deps.debug('perception',
       `[感知] 批次投递 ${batchLines.length} 行 (agent ${agent.status}, 队列 ${agent.inbox.nextTurn.length} 条)`)
     this.deps.channel.send(agent, ownedGameMessage(text, 't2', this.deps.sessionId))
@@ -1061,9 +1078,9 @@ export class SessionAdjudicator {
   /**
    * 重连复位 (socket connect): 行流缓冲与武装标记随连接作废 (win- 标记由窗口表
    * settle 的 onDisarm 同步注销, 打断规则重挂); 投递记账 (待决/动作/暂存/消费边界/
-   * 交付水位/回看缓冲) 一并复位; hold 计时清除。**行号 (abs) 由每连接一个解析器
-   * 分配 → 重连后从 0 起**: 交付水位与回看缓冲必须一起清, 否则新行 (abs 小) 会被
-   * 旧水位全部滤掉 (recall 永远为空)。
+   * 行流水位/回看缓冲) 一并复位; hold 计时清除。**行号 (abs) 由每连接一个解析器
+   * 分配 → 重连后从 0 起**: 行流水位与回看缓冲必须一起清, 否则新行 (abs 小) 会被
+   * 旧水位判成前置噪声 (span 判定/recall 全部失效)。
    */
   resetForReconnect(): void {
     this.splitter.reset()
@@ -1074,7 +1091,7 @@ export class SessionAdjudicator {
     this.pendingActions = []
     this.standalone = null
     this.consumeTo = -1
-    this.deliveredAbs = -1
+    this.lastLineAbs = -1
     this.recallLines.length = 0
     this.clearHoldTimer()
   }
@@ -1093,6 +1110,7 @@ export class SessionAdjudicator {
     this.pendingActions = []
     this.standalone = null
     this.consumeTo = -1
+    this.lastLineAbs = -1
     this.splitter.reset()
     // register() 重挂一次 (§1.2 唯一注册入口): 引擎重建 + 打断标记 + flow arming。
     // 壳随后 flow.noteDisconnect() 触发 onArmSync 收缩布防, 最终态一致。
