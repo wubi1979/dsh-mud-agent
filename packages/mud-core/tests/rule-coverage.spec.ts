@@ -27,7 +27,7 @@ import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
 
 /** 每条规则的 canonical 样本 (行序列; 单行规则给一行)。 */
 const SAMPLES: Record<string, readonly string[]> = {
-  // ── state (预匹配折叠 → world) ──
+  // ── state (状态抓取 → world; 独立桶, 不改行流) ──
   'state:hp': ['【 气血 】 100/200'],
   'state:exp': ['经验：1234'],
   'state:look': [

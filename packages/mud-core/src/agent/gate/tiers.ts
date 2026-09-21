@@ -54,17 +54,17 @@ export const MUD_TIER_SPECS: Record<MudTier, MudTierSpec> = {
   observe: {
     tier: 'observe',
     name: '只读',
-    description: '只看不发: 读世界快照与最近输出 (mud_state/mud_recall), 查命令语法 (mud_help); 登录流程照常。',
+    description: '只看不发: 读世界快照 (mud_state)、查命令语法 (mud_help); 登录流程照常。',
     // mud_send/world_patch = T1 T1 动作通道 (登录 + 置位), 见模块头部的取舍说明。
     // mud_help = 零发送语法查询 (只读档也要能查"有哪些命令")。
-    tools: ['mud_state', 'mud_recall', 'mud_help', 'mud_send', 'world_patch', 'mud_captcha'],
+    tools: ['mud_state', 'mud_help', 'mud_send', 'world_patch', 'mud_captcha'],
     capabilities: [],
   },
   operate: {
     tier: 'operate',
     name: '读写',
     description: '读写游戏: 移动/观察/状态查询/任意命令。',
-    tools: ['mud_state', 'mud_recall', 'mud_help', 'mud_send', 'world_patch', 'mud_captcha', 'mud_move', 'mud_look', 'mud_status'],
+    tools: ['mud_state', 'mud_help', 'mud_send', 'world_patch', 'mud_captcha', 'mud_move', 'mud_look', 'mud_status'],
     capabilities: [],
   },
   full: {
@@ -72,7 +72,7 @@ export const MUD_TIER_SPECS: Record<MudTier, MudTierSpec> = {
     name: '完全',
     description: '读写 + 外围能力 (连接/唤醒/目录/验证码刷新)。',
     tools: [
-      'mud_state', 'mud_recall', 'mud_help', 'mud_send', 'world_patch', 'mud_captcha', 'mud_move', 'mud_look', 'mud_status',
+      'mud_state', 'mud_help', 'mud_send', 'world_patch', 'mud_captcha', 'mud_move', 'mud_look', 'mud_status',
       'mud_flow_list', 'mud_flow_disable', 'mud_flow_enable',
     ],
     capabilities: FULL_CAPABILITIES,
@@ -142,7 +142,7 @@ export function visibleTools(tier: MudTier): readonly string[] {
 export function mudTierNote(tier: MudTier): string {
   switch (tier) {
     case 'observe':
-      return '当前权限档位: 只读。只能用 mud_state / mud_recall 读取已知状态 (世界模型 + 最近输出)、用 mud_help 查命令语法, 不能发送任何游戏命令 (登录流程除外); 需要操作时请让用户把档位切到「读写」。'
+      return '当前权限档位: 只读。只能用 mud_state 读取世界模型、用 mud_help 查命令语法, 不能发送任何游戏命令 (登录流程除外); 需要操作时请让用户把档位切到「读写」。'
     case 'operate':
       return '当前权限档位: 读写。可以移动/观察/查询/发送命令; 放弃技能/偷窃/叫杀/丢弃/退出等有代价的操作需要用户批准; 删号改密类命令一律被拒绝。'
     case 'full':

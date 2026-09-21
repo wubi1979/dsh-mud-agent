@@ -26,7 +26,7 @@ import {
 /** 登录流程命令集 (与宿主装配一致: 由 login:* 规则派生; 这里显式列出以免测试依赖规则表)。 */
 const LOGIN_COMMANDS: ReadonlySet<string> = new Set(['{name}', '{pass}', 'y'])
 const MUD_TOOLS: ReadonlySet<string> = new Set([
-  'mud_state', 'mud_recall', 'mud_send', 'world_patch', 'mud_move', 'mud_look', 'mud_status',
+  'mud_state', 'mud_send', 'world_patch', 'mud_move', 'mud_look', 'mud_status',
   'mud_flow_list', 'mud_flow_disable', 'mud_flow_enable',
 ])
 
@@ -94,7 +94,7 @@ describe('强制判定矩阵 (evaluateToolCall)', () => {
 
   it('只读档: 零发送通路放行, 其余命令拒绝', () => {
     expect(verdict({ name: 'mud_state', tier: 'observe' })).toBe('allow')
-    expect(verdict({ name: 'mud_recall', tier: 'observe' })).toBe('allow')
+    expect(verdict({ name: 'mud_help', tier: 'observe' })).toBe('allow')
     // world_patch 是 T1 置位通道 (登录完成/失败), 非发送 → 放行。
     expect(verdict({ name: 'world_patch', args: { patch: { logged_in: true } }, tier: 'observe' })).toBe('allow')
     // mud_captcha 是 fullme 流程的解析工具 (不发游戏命令) → 所有档位都放行。

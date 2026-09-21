@@ -11,12 +11,11 @@
  *
  * v6.2 保留: 匹配功能抽离为独立服务，支持 state/event 双桶; 行号由 AnsiStreamParser
  * 分配 (MudLine.abs)。多行是 Mudlet 逐条件状态机 (每条件测单一行), 不拼窗。
- * v6.6 增补 (匹配类型三分 + 折叠语义):
+ * v6.6 增补 (匹配类型三分):
  *   - MatchSpec: regex (锚定整行, seed 预筛) / text (字面子串, 本身即预筛) /
  *     func (每行谓词, 无预筛全量跑); 构造校验 fail fast。
  *   - window: 单行规则声明命中窗口, 批内切片装配 MatchRecord.before/after。
- *   - 折叠 (hit.foldLines): 单行 regex/text = 仅锚点行; 单行 func = 不折叠
- *     (房间抓取类复合提取, 全部行进 agent); multiline = 全部被捕获的条件行。
+ * v6.6 的折叠语义已于 W10.3 整体删除 (命中不改行流, 无折叠行)。
  * v6.7 (准入语义收紧): ruleHit 改合取式 —— 命中 = 主判据(regex/text/func) ∧
  *   color(声明时, 命中后补充判定) ∧ guard。删除旧回退 (regex 未中仍以 color/extract
  *   准入): 曾使 func+extract 规则 (state:look) 每行命中并污染 world, 且使"同词异色"
@@ -395,8 +394,6 @@ export class Perceptor<TAction = unknown> {
       id: rule.id,
       eventType: rule.eventType,
       lineNumber: line.abs,
-      // 折叠语义: regex/text 折叠锚点行 (窗口行不折叠); func 不折叠 (房间抓取类全行进 agent)。
-      foldLines: rule.kind === 'func' ? [] : [line.abs],
       data: rule.extract
         ? (rule.extract(record) ?? null)
         : this.collectSingleData(rule, line.text),
@@ -508,8 +505,6 @@ export class Perceptor<TAction = unknown> {
       id: rule.id,
       eventType: rule.eventType,
       lineNumber: line.abs,
-      // 折叠语义: multiline 折叠全部被捕获的条件行 (行序列即窗口)。
-      foldLines: st.captures.map(c => c.abs),
       reason: 'multiline',
       data: rule.extract
         ? (rule.extract(record) ?? null)
@@ -525,7 +520,7 @@ export class Perceptor<TAction = unknown> {
  * 每个实例维护独立的 MatchContext (多行状态机运行态)。
  *
  * 典型用法:
- *   - stateInstance: 预匹配折叠 (状态/观察 → world)
+ *   - stateInstance: 状态抓取 (状态/观察 → world; 独立桶, 不改行流)
  *   - eventInstance: T1 渲染 (事件/决策 → agent)
  */
 export class TriggerMatchService<TAction = unknown> {

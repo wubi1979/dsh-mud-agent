@@ -370,7 +370,11 @@ describe('打断与排队 (§19.4)', () => {
     expect(h.runtime.diag().flow).toMatchObject({ flowId: 'login', stepId: 'name' })
     expect(h.delivered.some(msg => msg.actions.some(a => a.ruleId === 'test:combat'))).toBe(false)
     expect(h.logs.join('\n')).toContain('无打断权 → 排队')
+    // name 步未声明 GA 判据（声明才计 GA）⇒ 窗口仍挂起；dispose 的 close() 会以 error
+    // 拒绝它 —— 先挂住拒绝，避免 Unhandled Rejection（测试卫生，非生产语义变化）。
+    const held = first.pending.catch(() => {})
     h.runtime.dispose()
+    await held
   })
 
   it('被打断的序列命令不再发剩下几条 (半截序列不发出)', async () => {

@@ -264,37 +264,34 @@ describe('命中窗口 (window): before/after 批内装配', () => {
   })
 })
 
-describe('折叠语义 (hit.foldLines)', () => {
-  it('单行 regex: 仅折叠锚点行 (窗口行不折叠)', () => {
-    const s = new TriggerMatchService([{
+describe('无折叠面 (W10.3: 命中不改行流)', () => {
+  it('三种匹配类型的命中都不携带折叠集 (foldLines 已整体删除)', () => {
+    const regexSvc = new TriggerMatchService([{
       id: 'r', eventType: 'p:r', match: { kind: 'regex', patterns: [/^锚点$/] },
       window: { before: 2, after: 2 },
     }])
-    const hit = s.match(toLines(['a', 'b', '锚点', 'd']))[0]!
-    expect(hit.lineNumber).toBe(2)
-    expect(hit.foldLines).toEqual([2])
-  })
+    const regexHit = regexSvc.match(toLines(['a', 'b', '锚点', 'd']))[0]!
+    expect(regexHit.lineNumber).toBe(2)
+    expect('foldLines' in regexHit).toBe(false)
 
-  it('单行 func: 不折叠 (房间抓取类全行进 agent)', () => {
-    const s = new TriggerMatchService([{
+    const funcSvc = new TriggerMatchService([{
       id: 'f', eventType: 'p:f', match: { kind: 'func', test: (l) => l.text === '锚点' },
       window: { before: 1, after: 1 },
     }])
-    const hit = s.match(toLines(['a', '锚点', 'b']))[0]!
-    expect(hit.foldLines).toEqual([])
-  })
+    const funcHit = funcSvc.match(toLines(['a', '锚点', 'b']))[0]!
+    expect(funcHit.lineNumber).toBe(1)
+    expect('foldLines' in funcHit).toBe(false)
 
-  it('multiline: 折叠全部被捕获的条件行 (行序列即窗口)', () => {
-    const s = new TriggerMatchService([{
+    const mlSvc = new TriggerMatchService([{
       id: 'ml', eventType: 'p:ml', multiline: true,
       match: { kind: 'regex', patterns: [] },
       patterns: [{ kind: 'substring', text: 'A' }, { kind: 'substring', text: 'B' }],
     }])
     const feed = makeFeed()
-    s.match(feed(['x', 'A'])) // A 捕获 (abs=1), 未完成
-    const hit = s.match(feed(['y', 'B']))[0]! // B 完成 (abs=3)
-    expect(hit.lineNumber).toBe(3)
-    expect(hit.foldLines).toEqual([1, 3])
+    mlSvc.match(feed(['x', 'A'])) // A 捕获 (abs=1), 未完成
+    const mlHit = mlSvc.match(feed(['y', 'B']))[0]! // B 完成 (abs=3)
+    expect(mlHit.lineNumber).toBe(3)
+    expect('foldLines' in mlHit).toBe(false)
   })
 })
 
@@ -398,7 +395,6 @@ describe('准入语义 (v6.7): color/extract 不参与准入', () => {
     const hits = s.match(toLines(['描述行', '这里明显的出口是 north。', '店小二(xiao er)']))
     expect(hits).toHaveLength(1)
     expect(hits[0]?.lineNumber).toBe(1) // 窗口行不触发, 只有锚点行命中
-    expect(hits[0]?.foldLines).toEqual([]) // func 不折叠
     expect(calls).toBe(1)
   })
 

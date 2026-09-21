@@ -8,8 +8,9 @@
  *     不跨会话共享（不变量 I8）。
  *   - **状态持久**：逐行推进真实匹配器（非镜像克隆），多行规则可跨文本块、跨窗口
  *     完成捕获；因此 `holdDelivery` 的"半截捕获"判定是真实状态而非探测。
- *   - **产出**：本块命中 + 消费边界（最后一次带动作命中的锚点行 abs）+ state 折叠行。
- *     折叠只决定"哪些行不进 agent"，不参与消费边界。
+ *   - **产出**：本块命中 + 消费边界（最后一次带动作命中的锚点行 abs）+ state 抓取命中。
+ *     **无折叠**（W10.3）：本层只判定"命中什么"，从不决定"哪些行不进 agent" ——
+ *     state 抓取只把抽取产物交给装配方同步 world，命中行照常留在行流里。
  *
  * 本层不认识连接、agent、会话日志 —— 只有行进、判定出。
  * @module @deepseek-ai/dsh-mud-core/perceive/engine
@@ -40,16 +41,14 @@ export interface FeedResult {
   /**
    * 本块**直接执行**类命中 (动作声明 `direct: true`; 见 `ActionSpec.direct`)。
    *
-   * 这些命中不进 T1: 命中行已折叠进 `foldedAbs`, 动作由运行时自己执行 —— 装配方
-   * 收到后立即执行, 不投递给 agent。
+   * 这些命中不进 T1: 动作由运行时自己执行 (纯反射)，装配方收到后立即执行, 不投递给
+   * agent。**命中行照常进行流** (W10.3: 不折叠、不消费、不推水位)。
    */
   directHits: EngineHit[]
   /** 本块全部命中 (含无动作的; 供日志/诊断)。 */
   allHits: PerceptHit[]
-  /** state 桶命中 (装配方据此 applyPatch 落库)。 */
+  /** state 抓取桶命中 (装配方据此 applyPatch 落库; 独立桶: 不改行流)。 */
   stateHits: PerceptHit[]
-  /** state 桶折叠的行 abs + 直接执行命中的锚点行 abs (这些行进 world/被运行时消费, 不进 agent)。 */
-  foldedAbs: ReadonlySet<number>
   /** 消费边界: 最后一次带动作命中的锚点 abs; 无命中 = -1。 */
   consumeTo: number
   /** holdDelivery 规则当前仍有未完成捕获 (投递方据此暂缓本块)。 */
@@ -58,7 +57,7 @@ export interface FeedResult {
 
 /** PerceptionEngine 构造参数。 */
 export interface PerceptionEngineOptions {
-  /** state 桶规则 (预匹配折叠入库)。 */
+  /** state 桶规则 (状态抓取 → world)。 */
   stateRules: readonly PerceptionRule[]
   /** event 桶规则 (T1 渲染 / 判类)。 */
   eventRules: readonly PerceptionRule[]
@@ -68,7 +67,7 @@ export interface PerceptionEngineOptions {
 
 /**
  * 装配期投影 (纯函数, 无运行态): 把完整感知规则集拆成引擎构造输入 ——
- * `lane` 分双桶 (state 折叠 / event 渲染) + 提取 `holdDelivery` 规则 id 集。
+ * `lane` 分双桶 (state 抓取 / event 渲染) + 提取 `holdDelivery` 规则 id 集。
  * 调用方是包级装配方 (引擎构造前投一次影)。曾住独立的 `perceive/service.ts`
  * ("装配服务"名不副实), 并入本模块 —— 它就是引擎构造输入的投影。
  * @param rules 完整感知规则集 (默认规则 + 装配方追加)。
@@ -98,17 +97,16 @@ export class PerceptionEngine {
   /**
    * 喂入一个文本块的行 (逐行推进多行状态机)。
    * @param lines 本块的行 (已由 AnsiStreamParser 分配单调 abs)。
-   * @returns 命中、折叠集、消费边界与 hold 判定。
+   * @returns 命中、消费边界与 hold 判定。
    */
   feed(lines: readonly MudLine[]): FeedResult {
     const rows = lines as MudLine[]
     if (rows.length === 0) {
       return {
-        hits: [], directHits: [], allHits: [], stateHits: [], foldedAbs: new Set(), consumeTo: -1, holding: false,
+        hits: [], directHits: [], allHits: [], stateHits: [], consumeTo: -1, holding: false,
       }
     }
     const stateHits = this.state.match(rows)
-    const foldedAbs = new Set<number>(stateHits.flatMap(h => h.foldLines))
     const allHits = this.event.match(rows)
     const hits: EngineHit[] = []
     const directHits: EngineHit[] = []
@@ -122,11 +120,10 @@ export class PerceptionEngine {
         data: hit.data,
         ...(hit.reason === undefined ? {} : { reason: hit.reason }),
       }
-      // 直接执行 (类似 state 桶): 命中行折叠, 动作交给运行时, 不进 T1 渲染队列,
-      // 也不设消费边界 (折叠行不参与单流切分 —— 它根本不到投递层)。
+      // 直接执行 (纯反射): 动作交给运行时, 不进 T1 渲染队列 —— 但**命中行照常进行流**
+      // (W10.3: 不折叠、不消费、不推水位; 它只是顺带被反射执行的一条普通行)。
       if (hit.action.direct === true) {
         directHits.push(engineHit)
-        foldedAbs.add(hit.lineNumber)
         continue
       }
       hits.push(engineHit)
@@ -137,7 +134,6 @@ export class PerceptionEngine {
       directHits,
       allHits,
       stateHits,
-      foldedAbs,
       consumeTo,
       holding: this.event.hasPendingCapture(this.holdRuleIds),
     }

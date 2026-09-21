@@ -48,7 +48,7 @@ describe('WatchdogTable 起停规则', () => {
 
     table.reevaluate()
     vi.advanceTimersByTime(600)
-    table.reevaluate()          // 状态变化点被多次调用 (例如每个文本块折叠后)
+    table.reevaluate()          // 状态变化点被多次调用 (例如每个文本块抓取后)
     table.reevaluate()
     vi.advanceTimersByTime(400) // 距首次布防恰好 1000ms
     expect(state.fires).toBe(1)

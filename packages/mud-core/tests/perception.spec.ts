@@ -5,6 +5,7 @@
  *   - 行级判定与文本块/截断无关 (I7); 多行状态在引擎内跨块持久;
  *   - 每会话一实例 (I8): 两个引擎的运行态互不影响;
  *   - 消费边界 = 最后一次带动作命中的锚点;
+ *   - **无折叠面** (W10.3): state 抓取与 direct 命中都不改行流 (结果里没有折叠集);
  *   - 单流切分不变量 (I5): 反射段 + 遗留段 == 原序列, 且历次投递拼接 == 完整流。
  */
 
@@ -91,7 +92,7 @@ describe('PerceptionEngine (L1)', () => {
     expect(result.consumeTo).toBe(-1)
   })
 
-  it('state 桶折叠: 折叠行 abs 上报, 且事件规则仍能看到原始行 (命中不因折叠丢失)', () => {
+  it('state 抓取独立桶: 抽取产物上报, 命中行不折叠 (事件规则仍能看到原始行)', () => {
     const engine = new PerceptionEngine({
       stateRules: [{
         id: 'state:hp',
@@ -106,15 +107,16 @@ describe('PerceptionEngine (L1)', () => {
 
     const result = engine.feed([line('气血 10/100', 0)])
 
-    expect([...result.foldedAbs]).toEqual([0])
     expect(result.stateHits.map(h => h.id)).toEqual(['state:hp'])
     expect(result.stateHits[0]?.data).toEqual({ 'hp.cur': '10', 'hp.max': '100' })
-    // 同一行既被折叠, 又能触发事件规则 (L1 按原始行判定)。
+    // 同一行既被抓取, 又能触发事件规则 (L1 按原始行判定)。
     expect(result.hits.map(h => h.ruleId)).toEqual(['low-hp'])
     expect(result.consumeTo).toBe(0)
+    // 独立桶: 结果里没有折叠面 —— 状态行照常作为普通行进行流 (W10.3)。
+    expect('foldedAbs' in result).toBe(false)
   })
 
-  it('直接执行动作 (direct): 命中进 directHits 并折叠锚点行, 不进渲染队列也不设消费边界', () => {
+  it('直接执行动作 (direct): 命中进 directHits, 不进渲染队列也不设消费边界, 且不改行流', () => {
     const direct: PerceptionRule = {
       id: 'save:prompt',
       eventType: 'p:save',
@@ -129,11 +131,10 @@ describe('PerceptionEngine (L1)', () => {
 
     const result = engine.feed([line('请保存档案', 0)])
 
-    // 直接执行: 动作由运行时执行 → 命中只在 directHits 里, 且锚点行折叠 (不进 agent)。
+    // 直接执行: 动作由运行时执行 → 命中只在 directHits 里; 但命中行**照常进行流** (W10.3)。
     expect(result.directHits.map(h => h.ruleId)).toEqual(['save:prompt'])
-    expect([...result.foldedAbs]).toEqual([0])
+    expect('foldedAbs' in result).toBe(false)
     expect(result.hits.map(h => h.ruleId)).toEqual(['other'])
-    // 折叠行不参与单流切分 → 只有非 direct 命中构成消费边界。
     expect(result.consumeTo).toBe(0)
     expect(result.allHits.map(h => h.id)).toEqual(['save:prompt', 'other'])
   })

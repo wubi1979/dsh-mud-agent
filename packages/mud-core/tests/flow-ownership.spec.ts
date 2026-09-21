@@ -62,8 +62,9 @@ describe('结算归属 (W7.2: 配对移交在途窗口)', () => {
     const flow = runtime(logs)
     armed(flow)
 
-    // ok:[{kind:'ga'}] → 关窗结局 ok; 无行判据、无 boundary/timeout 覆盖。
-    expect(flow.windowSpecFor('dazuo 10')).toEqual({ gaOutcome: 'ok' })
+    // ok:[{kind:'ga'}] → 声明了 GA 判据 ⇒ gaCount = 命令条数 (声明才计 GA, PLAN §D3);
+    // 关窗结局 ok; 无行判据、无 boundary/timeout 覆盖。
+    expect(flow.windowSpecFor('dazuo 10')).toEqual({ gaCount: 1, gaOutcome: 'ok' })
     flow.dispose()
   })
 
@@ -74,7 +75,7 @@ describe('结算归属 (W7.2: 配对移交在途窗口)', () => {
 
     expect(flow.windowSpecFor('lian sword')).toBeNull()
     // 拒绝不消费归属: 本步命令仍然有效。
-    expect(flow.windowSpecFor('dazuo 10')).toEqual({ gaOutcome: 'ok' })
+    expect(flow.windowSpecFor('dazuo 10')).toEqual({ gaCount: 1, gaOutcome: 'ok' })
     flow.dispose()
   })
 
@@ -101,10 +102,10 @@ describe('结算归属 (W7.2: 配对移交在途窗口)', () => {
       notifyFail: () => {},
     })
     flow.offer([ml('你盘膝坐下，开始打坐。', 0)], false)
-    expect(flow.windowSpecFor('halt')).toEqual({ gaOutcome: 'ok' })
-    expect(flow.windowSpecFor('dazuo 10')).toEqual({ gaOutcome: 'ok' })
+    expect(flow.windowSpecFor('halt')).toEqual({ gaCount: 2, gaOutcome: 'ok' })
+    expect(flow.windowSpecFor('dazuo 10')).toEqual({ gaCount: 2, gaOutcome: 'ok' })
     // 序列整体比对: 同长度逐条一致才算本步的窗口。
-    expect(flow.windowSpecFor(['halt', 'dazuo 10'])).toEqual({ gaOutcome: 'ok' })
+    expect(flow.windowSpecFor(['halt', 'dazuo 10'])).toEqual({ gaCount: 2, gaOutcome: 'ok' })
     expect(flow.windowSpecFor(['halt', 'lian sword'])).toBeNull()
     flow.dispose()
   })
@@ -180,7 +181,7 @@ describe('结算归属 (W7.2: 配对移交在途窗口)', () => {
     })
     flow.offer([ml('你盘膝坐下，开始打坐。', 0)], false)
     // 插值后一致 → 本步的窗口; 占位符未填 (原样) 或值不对 → null。
-    expect(flow.windowSpecFor('fullme 1234', { captcha: '1234' })).toEqual({ gaOutcome: 'ok' })
+    expect(flow.windowSpecFor('fullme 1234', { captcha: '1234' })).toEqual({ gaCount: 1, gaOutcome: 'ok' })
     expect(flow.windowSpecFor('fullme {captcha}', { captcha: '1234' })).toBeNull()
     expect(flow.windowSpecFor('fullme 9999', { captcha: '1234' })).toBeNull()
     flow.dispose()

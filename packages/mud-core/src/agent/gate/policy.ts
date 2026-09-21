@@ -91,7 +91,7 @@ export function evaluateToolCall(input: ToolCallVerdictInput): ToolVerdict {
     if (input.tier === 'observe') {
       return {
         kind: 'deny',
-        reason: `权限档位「${spec.name}」只读: 命令未发送 (用 mud_state/mud_recall 读取; 需要操作请切换到「读写」档)`,
+        reason: `权限档位「${spec.name}」只读: 命令未发送 (用 mud_state 读取世界模型; 需要操作请切换到「读写」档)`,
       }
     }
   }

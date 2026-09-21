@@ -4,8 +4,9 @@
  * world 的**写入统一入口**: 无论数据来自哪条通路, 落库都经本模块
  * (变化 → onChanged → 装配方节流广播 UI 快照)。写入通路全景:
  *   - **GMCP 直连** (`onGmcp`): telnet 回调直连 → applyGmcp, 权威结构化数据 (置信度 1.0);
- *   - **感知 state 折叠** (`patch(..., 'percept')`): 触发规则抓取的 extract 产物落库
- *     (消费链站①, §8.2);
+ *   - **感知状态抓取** (`patch(..., 'percept')`): 触发规则 state 桶的 extract 产物落库
+ *     (**独立桶**: 只观察 + 同步 world，不折叠内容、不消费行、不推水位 —— 状态行照常
+ *     作为普通行进行流，W10.3; 消费链站①, §8.2);
  *   - **流程 `onEnter.patch`** (`patch(..., 'flow')`);
  *   - **连接生命周期** (`patch(..., 'lifecycle')`: connected/awaiting 等护栏位);
  *   - agent `world_patch` 工具: 工具集闭包持有**同一 WorldModel** 直写 (文本语义路径
@@ -54,7 +55,7 @@ export class StateService {
   }
 
   /**
-   * 通用补丁入口 (感知折叠 / 流程 onEnter / 生命周期护栏位): applyPatch 落库。
+   * 通用补丁入口 (状态抓取 / 流程 onEnter / 生命周期护栏位): applyPatch 落库。
    * @param patch 补丁 (null/undefined = 无操作)。
    * @param why 写入通路归因。
    * @returns 变化的字段列表。

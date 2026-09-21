@@ -1,13 +1,13 @@
 /**
  * dsh-mud-core — 直接执行类动作测试 (`ActionSpec.direct`, `doc/ARCHITECTURE.md` §7)。
  *
- * 用户定案: `save` 这类触发**无状态、无需返回**, 与 state 桶同类 —— 命中不投给 agent,
- * 运行时直接按规则声明的动作执行 (命令入队即走)。这样既省一个 T1 回合, 也不再有
- * "帧内命中等不到反射回合而被丢掉"的问题 (§18.12)。
+ * 用户定案: `save` 这类触发**无状态、无需返回**, 运行时直接按规则声明的动作执行
+ * (命令入队即走)。这样既省一个 T1 回合, 也不再有"帧内命中等不到反射回合而被丢掉"
+ * 的问题 (§18.12)。
  *
  * 本文件固定三条契约:
- *   1. 命中行**折叠** (模型看不到提醒行), 命令**立即入队**;
- *   2. 不产生任何投递给 agent 的消息 (反射/批次都没有);
+ *   1. 命令**立即入队**; 命中行**照常进行流** (W10.3: 不折叠、不消费、不推水位);
+ *   2. 不产生任何 T1 动作消息 (反射不渲染 tool-call);
  *   3. 危险命令硬边界照旧生效 (直接执行不是"绕过安全"), 人工环节期间不执行。
  */
 
@@ -142,7 +142,7 @@ describe('直接执行类动作 (无状态、无需返回的触发)', () => {
   beforeEach(() => { vi.useFakeTimers() })
   afterEach(() => { vi.useRealTimers() })
 
-  it('save 提醒 → 直接入队 save; 提醒行折叠 (不投递给 agent)', async () => {
+  it('save 提醒 → 直接入队 save; 提醒行照常进行流 (不折叠)', async () => {
     const h = await connected('session-direct-save')
 
     h.sink().onLines([ml(SAVE_PROMPT, 0)])
@@ -150,10 +150,10 @@ describe('直接执行类动作 (无状态、无需返回的触发)', () => {
     vi.advanceTimersByTime(1)
 
     expect(h.sent).toContain('save')            // 命令直接发出
-    expect(h.delivered).toEqual([])             // 命中不投给 agent
     expect(h.decisions).toContain('rule/direct-exec/直接执行')
-    // 折叠: 提醒行不进回看缓冲的"未投递"部分 (交付水位已前移)。
-    expect(h.runtime.recall(10)).toEqual([])
+    // W10.3: 反射不改行流 —— 提醒行照常作为普通行进诊断缓冲与 T2 批次 (无隐藏行)。
+    expect(h.runtime.recall(10)).toEqual([SAVE_PROMPT])
+    expect(h.delivered).toEqual([SAVE_PROMPT])
     h.runtime.dispose()
   })
 
@@ -168,11 +168,12 @@ describe('直接执行类动作 (无状态、无需返回的触发)', () => {
     h.sink().onLines([ml(PAGER_PROMPT, 1)])
     h.sink().onBoundary('ga')
     vi.advanceTimersByTime(1)
-    // 节流内的第二次提示**不再是命中** (guard 拒绝): 不重复翻页, 该行照常作为 T2 文本
-    // 投给模型 (由模型自己决定是否再翻)。
+    // 节流内的第二次提示**不再是命中** (guard 拒绝): 不重复翻页。
     expect(h.sent).toEqual([' '])
-    expect(h.delivered).toHaveLength(1)
+    // 两次提示行都照常作为 T2 文本投给模型 (W10.3: 反射不折叠命中行)。
+    expect(h.delivered).toHaveLength(2)
     expect(h.delivered[0]).toContain('未完继续')
+    expect(h.delivered[1]).toContain('未完继续')
     h.runtime.dispose()
   })
 

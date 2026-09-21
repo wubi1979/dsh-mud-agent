@@ -16,7 +16,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   InflightWindowTable,
-  ABANDON_TEXT,
   ABORT_TEXT,
   type WindowResult,
 } from '../src/agent/inflight.ts'
@@ -62,7 +61,8 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
 
   it('窗口型: 注册→发送(replyId/noGate)→confirmSent→GA 关窗 = 成功 (窗口行 = 工具结果)', async () => {
     const h = makeTable()
-    const p = h.windows.register({ cmds: ['look'], label: 'mud_look' })
+    // 声明才计 GA (PLAN §D3): GA 关窗必须显式声明 gaCount。
+    const p = h.windows.register({ cmds: ['look'], label: 'mud_look', gaCount: 1 })
     expect(h.sent).toEqual([{ cmd: 'look', meta: { replyId: 'w1', noGate: true } }])
     expect(h.gates).toEqual([true])   // 窗口开启 → 直发延后 gate (§2.8)
     h.windows.confirmSent('w1')
@@ -80,7 +80,7 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
 
   it('无回看 (W10.2 A2): sending 期不吸收; span = confirmSent 水位之后的行', async () => {
     const h = makeTable({ absWatermark: () => 5 })
-    const p = h.windows.register({ cmds: ['look'] })
+    const p = h.windows.register({ cmds: ['look'], gaCount: 1 })
     // 还没 confirmSent (sending): 行不吸收 —— 命令发出前已在缓冲的行不进窗口。
     h.windows.feedLines([mlAbs('命令发出前已在缓冲的行', 4)])
     h.windows.confirmSent('w1')   // spanStartAbs = 5
@@ -105,9 +105,9 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
     await expect(p).resolves.toMatchObject({ ok: true, settled: 'ga', outcome: 'ok' })
   })
 
-  it('命令序列: 同一 replyId 逐条穿透, 缺省 gaCount = 命令条数', async () => {
+  it('命令序列: 同一 replyId 逐条穿透; 显式 gaCount = 命令条数', async () => {
     const h = makeTable()
-    const p = h.windows.register({ cmds: ['', 'look'] })
+    const p = h.windows.register({ cmds: ['', 'look'], gaCount: 2 })
     expect(h.sent.map(s => s.cmd)).toEqual(['', 'look'])
     expect(h.sent.every(s => s.meta.replyId === 'w1' && s.meta.noGate === true)).toBe(true)
     h.windows.confirmSent('w1')
@@ -115,7 +115,7 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
     let settled = false
     void p.then(() => { settled = true })
     await vi.advanceTimersByTimeAsync(1)
-    expect(settled).toBe(false)   // gaCount 缺省 2, 第一次 GA 不关窗
+    expect(settled).toBe(false)   // gaCount 2, 第一次 GA 不关窗
     h.windows.boundary('ga')
     await expect(p).resolves.toMatchObject({ ok: true, cmd: '命令序列' })
   })
@@ -164,10 +164,37 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
     expect(h.disarmed).toEqual(['win-1:ok', 'win-1:fail', 'win-1:branch:alt'])
   })
 
-  it('判据型 GA 关窗未命中 → 失败 ("判据未等到")', async () => {
+  it('判据型 GA 关窗 (W10.2 口径): onSettle 缺省 = ok, 不再隐式判 fail', async () => {
     const h = makeTable()
-    const p = h.windows.register({ cmds: ['dz'], criteria: { ok: /站了起来/ } })
+    const p = h.windows.register({ cmds: ['dz'], criteria: { ok: /站了起来/ }, gaCount: 1 })
     h.windows.confirmSent('w1')
+    h.windows.boundary('ga')
+    await expect(p).resolves.toMatchObject({ ok: true, settled: 'ga', outcome: 'ok' })
+  })
+
+  it('声明才计 GA (PLAN §D3): 未声明 gaCount 的窗口, GA 到达不关窗', async () => {
+    const h = makeTable()
+    const p = h.windows.register({ cmds: ['look'], timeoutMs: 5_000 })
+    h.windows.confirmSent('w1')
+    h.windows.boundary('ga')
+    h.windows.boundary('ga')
+    let settled = false
+    void p.then(() => { settled = true })
+    await vi.advanceTimersByTimeAsync(1)
+    expect(settled).toBe(false)                       // GA 不关窗
+    expect(h.windows.diag().open!.gaCount).toBeNull() // 未声明 = null
+    await vi.advanceTimersByTimeAsync(5_001)          // 只由 fallback 收口
+    await expect(p).resolves.toMatchObject({ settled: 'timeout' })
+  })
+
+  it('判据型 GA 关窗 + 显式 onSettle:"fail" → 失败 (保守判定须显式写出)', async () => {
+    const h = makeTable()
+    const p = h.windows.register({
+      cmds: ['fullme 1'], gaCount: 3, criteria: { ok: /站了起来/ }, onSettle: 'fail',
+    })
+    h.windows.confirmSent('w1')
+    h.windows.boundary('ga')
+    h.windows.boundary('ga')
     h.windows.boundary('ga')
     await expect(p).resolves.toMatchObject({
       ok: false, settled: 'ga', outcome: 'fail', text: '判据未等到 (窗口在 GA 边界关闭)',
@@ -178,6 +205,7 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
     const h = makeTable({ absWatermark: () => 10 })
     const p = h.windows.register({
       cmds: ['hp'],
+      gaCount: 1,
       captures: [/(?<hp>\d+)\/\d+/, /气定神闲地(?<act>打坐|睡觉)/, /永不匹配(?<miss>x)/],
     })
     h.windows.confirmSent('w1')   // spanStartAbs = 10
@@ -222,12 +250,17 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
     await expect(p).resolves.toMatchObject({ ok: true })
   })
 
-  it('超时: 放弃 resolve ABANDON_TEXT (窗口行不随结果返回); 连续 3 次 → reject', async () => {
-    const h = makeTable()
+  it('兜底到期 (PLAN §D4 定案 A): resolve 带回已累积内容 (状态仍 timeout); 连续 3 次 → reject', async () => {
+    const h = makeTable({ absWatermark: () => 0 })
     const p1 = h.windows.register({ cmds: ['a'], timeoutMs: 50 })
     h.windows.confirmSent('w1')
+    h.windows.feedLines([mlAbs('第一行', 1), mlAbs('第二行', 2)])
     await vi.advanceTimersByTimeAsync(51)
-    await expect(p1).resolves.toMatchObject({ ok: false, text: ABANDON_TEXT, settled: 'timeout', outcome: 'fail' })
+    const r1 = await p1
+    // 状态仍 timeout (不属于 ok/fail), 但**内容带回** —— T2 裸调用据此自读批内容决策。
+    expect(r1).toMatchObject({ ok: false, settled: 'timeout', outcome: 'fail' })
+    expect(r1.text).toBe('第一行\n第二行')
+    expect(r1.lines.map(l => l.text)).toEqual(['第一行', '第二行'])
     // 连续放弃计数: 非超时结算前累计; 第 3 次 → reject (DSH 失败终态)。
     const p2 = h.windows.register({ cmds: ['b'], timeoutMs: 50 })
     h.windows.confirmSent('w2')
@@ -248,7 +281,7 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
     h.windows.confirmSent('w1')
     await vi.advanceTimersByTimeAsync(51)
     await p1
-    const p2 = h.windows.register({ cmds: ['b'] })
+    const p2 = h.windows.register({ cmds: ['b'], gaCount: 1 })
     h.windows.confirmSent('w2')
     h.windows.boundary('ga')   // 非超时结算 → 计数复位
     await p2
@@ -284,7 +317,7 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
     await expect(h.windows.register({ cmds: ['look'] })).rejects.toThrow(/已关闭/)
     // 重连复位: 终止语义解除, 窗口 id 序号延续 (w2)。
     h.windows.reset()
-    const p2 = h.windows.register({ cmds: ['look'] })
+    const p2 = h.windows.register({ cmds: ['look'], gaCount: 1 })
     h.windows.confirmSent('w2')
     h.windows.boundary('ga')
     await expect(p2).resolves.toMatchObject({ ok: true })
@@ -318,7 +351,7 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
     expect(h.gates.at(-1)).toBe(false)
     // 批量结算不泄漏下一个窗口 (旧桥 interruptInFlight 的缺陷, 此处钉住): 打断后
     // 注册的新窗口正常走完。
-    const p3 = h.windows.register({ cmds: ['c'] })
+    const p3 = h.windows.register({ cmds: ['c'], gaCount: 1 })
     expect(h.sent.filter(s => s.cmd === 'c')).toHaveLength(1)
     h.windows.confirmSent('w3')
     h.windows.boundary('ga')
@@ -328,7 +361,7 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
   it('diag/hasOpen: 在途窗口 / 人工等待 / 结局计数 (§2.9 取代旧桥活动表)', async () => {
     const h = makeTable()
     expect(h.windows.hasOpen()).toBe(false)
-    const p = h.windows.register({ cmds: ['look'], label: 'mud_look' })
+    const p = h.windows.register({ cmds: ['look'], label: 'mud_look', gaCount: 1 })
     expect(h.windows.hasOpen()).toBe(true)
     h.windows.beginHuman('mud_captcha')
     let d = h.windows.diag()
@@ -356,7 +389,7 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
       onDisarm: () => {},
       onGate: (active) => { queue.setGate(active) },
     })
-    const p = windows.register({ cmds: ['follow x'] })
+    const p = windows.register({ cmds: ['follow x'], gaCount: 1 })
     await vi.advanceTimersByTimeAsync(5)   // pump → 队列 (noGate 豁免) → 写 socket
     windows.confirmSent('w1')
     expect(sentToSocket).toEqual(['follow x'])

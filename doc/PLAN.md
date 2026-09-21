@@ -19,7 +19,7 @@
 |---|---|---|
 | T4 | 流程内部并行分支 | 同流程多 driver 并行推进的语义与结算归属；先确认是否有真实消费方（login/fullme 都是严格串行），无则维持 §18 的非目标口径 |
 | T5 | W5 尾款 | `pendingEntry` 端到端用例；`hpbrief` 应答折叠进 world（§19.7 待定 1/2） |
-| T6 | 并发调度分类器（I11 边界） | `isConcurrencySafe` 是我们在 `defineTool` 里自己可加的字段（非上游依赖）：给 `mud_state`/`mud_recall`/`mud_help` 这类零发送只读工具声明并发安全时，必须同时重估 I11 |
+| T6 | 并发调度分类器（I11 边界） | `isConcurrencySafe` 是我们在 `defineTool` 里自己可加的字段（非上游依赖）：给 `mud_state`/`mud_help` 这类零发送只读工具声明并发安全时，必须同时重估 I11 |
 | T7 | 窗口期分页被延后 | 明确窗口内插话命令的归属判据（§8.3）+ 翻页命令（`pager:continue`）的直发豁免策略（gateRank） |
 | T8 | `halt` 无条件豁免直发延后 gate | 豁免收紧为打断路径专用并留痕（§18.8：非打断路径 halt 应答 GA 可能污染在途窗口计数） |
 | T9 | 装配层测试基建（§18.9） | vitest 管线加载不了 TC39 装饰器模块 → 是否引入 esbuild/swc 变换链，或继续把可测策略从装配层抽出来（W9 的 `session/credential-source.ts` 即后者） |
@@ -28,7 +28,7 @@
 
 ## 计划：T1 从「无状态渲染器」改为「有状态流程驱动器」
 
-> 状态：**草案（2026-09-21 三次修订；契约未冻结）**。方向已定案（D0 核实：官方无流程管理插件，T1 必须保留流程所有权）；架构决策见第 2 章 D1–D11。**契约（流程表 schema / tool-call 参数 schema / 裁决器接口 / T1 槽结构）仍在第 6 章待定稿** —— 未冻结前不得据其改代码。本轮修订同时：① 把原文件末尾的散文评审 9 条按四分类并入第 6 章（对照表见 6.5）；② 修正 6 处与源码不符的表述（清单见元信息修正表）；③ **收口/分类结构分离**（settle 改 `mode:'inline'|'stream'` 判别式联合、time kind 删除、fallback 缺省 3000 且到期恒 timeout、`classify.onSettle` 取代 `ref:'settle'`、取消 text/onMatch/priority/captureScope，D3/3.1）、**三水位归一为单水位**（回看结算取消、recall 改历史查询，3.7）、**flow 目录整体迁入 agent**（W10.0）。
+> 状态：**草案（2026-09-21 三次修订；契约未冻结）**。方向已定案（D0 核实：官方无流程管理插件，T1 必须保留流程所有权）；架构决策见第 2 章 D1–D11。**契约（流程表 schema / tool-call 参数 schema / 裁决器接口 / T1 槽结构）仍在第 6 章待定稿** —— 未冻结前不得据其改代码。本轮修订同时：① 把原文件末尾的散文评审 9 条按四分类并入第 6 章（对照表见 6.5）；② 修正 6 处与源码不符的表述（清单见元信息修正表）；③ **收口/分类结构分离**（settle 改 `mode:'inline'|'stream'` 判别式联合、time kind 删除、fallback 缺省 3000 且到期恒 timeout、`classify.onSettle` 取代 `ref:'settle'`、取消 text/onMatch/priority/captureScope，D3/3.1）、**三水位归一为单水位**（回看结算取消、交付水位废除、recall 取消，3.7）、**flow 目录整体迁入 agent**（W10.0）。
 >
 > 本计划实施后按文件头约定同步正式章节并删除本节。
 
@@ -63,7 +63,7 @@
 > **与早期草案的口径推翻**（修正理由见 D3 / D5）：
 > - 早期 v0.10.2 登记过「**GA 全域无缺省**」→ 二次修订定为「**收口缺省 time/3s 全局统一**：工具层两 lane 一致缺省兜底；T2 命令类工具显式声明 `settle ga:1`；流程表/规则表步级仍须显式声明（装配期报错）」→ 三次修订形态收敛：**time kind 删除**，缺省 = `{mode:'stream'}` + `fallback:{ms:3000}`，到期恒 timeout（D3）。
 > - 早期 v0.10.1/v0.10.4 登记过「**defer 面全删**」→ 本计划收窄为「**只删 T1 流程步进对 defer 的依赖；保留判据 A 服务 T2 批次与规则动作的在途投递**」。
-> - 二次修订另废除「**三水位 + 回看结算**」→ 归一为**单一水位线**（回看结算系概念性错误，取消；recall 改历史查询，交付水位废除，见 3.7）。
+> - 二次修订另废除「**三水位 + 回看结算**」→ 归一为**单一水位线**（回看结算系概念性错误，取消；交付水位废除、recall 取消（T2 上下文 = 会话历史），见 3.7）。
 
 **本轮修正的 6 处与源码不符表述**（实施前必须按此口径，不得照抄早期草案）：
 
@@ -80,7 +80,7 @@
 - T1 从无状态动作渲染器改为有状态流程驱动器；流程回合内的"上下文注入 / 助手 / 工具"三件套消解为"入口投递 1 次 + 助手/工具交替"。
 - **收口与分类结构分离**：收口为 `mode:'inline'|'stream'` 判别式联合，缺省 stream + `fallback:{ms:3000}`，窗口恒有界（到期恒 timeout）；分类只支持自填正则（`onSettle` 承载收口关窗时的裁决）；流程表 / 规则表步级仍须显式声明收口（装配期报错，工具层不报错）。
 - 行流守恒可测：每行恰好被消费一次，无折叠、无移交、无隐藏行。
-- **T2 能力零回归**（D9）：`mud_recall` / `mud_state` / `mud_look` / `mud_status` 的既有语义与量级不退化；T2 可见的技能文本与流程所有权保持一致。
+- **T2 能力零回归**（D9）：`mud_state` / `mud_look` / `mud_status` 的既有语义与量级不退化（`mud_recall` 取消，其职能由会话历史承担）；T2 可见的技能文本与流程所有权保持一致。
 
 **非目标**：
 - 不做断线后流程挂起续接（已迁 §19.7 待定 #3，真实需求出现时再立项）。
@@ -114,11 +114,20 @@
 - 判定顺序：**fail → 分支 → ok**，固定不可配（`priority` 字段 MVP 删除——同帧多命中按此序取一，其余留痕，不靠调序消音；表编写 bug 由作者自查，不做装配期特异性告警；与 login `replace` 分支同帧实录一致）。
 - **收口（settle）与分类（classify）结构分离，不得混杂**：settle 为判别式联合——`{ mode:'inline' }`（本步工具结果即收口，不经行流）或 `{ mode:'stream', on?, fallback? }`（行流窗口）；`on` = **提前关窗条件**，kind 全集 = `regex` / `ga`（**time kind 删除**——纯计时窗 = stream 无 `on`，时间恒由 fallback 管）；分类只支持**自填正则**（`RegexSpec`）；`text` kind 取消（正则转义覆盖），`{ref:'settle'}` 引用机制取消（由 `onSettle` 取代，见下）。旧"判据数组内混排 regex/ga/tool"形态废除，GA/tool 不再是分类 kind。
 - **收口缺省 `{ mode:'stream' }` + `fallback:{ms:3000}`，窗口恒有界**：`on` 命中提前关窗；`fallback` 兜底时长恒在。**fallback time 兜底收口即 timeout 行为**：缺省 3000 是 T2 量级的短超时；**T1 流程表步级按实际步骤耗时填写**（dz 等长命令步写大值）。**兜底到期恒为 `timeout` 结果，不属于 ok/fail**（"到点即成功"用法废除——须以 `on:{kind:'regex'}` 证据关窗）。
-- **收口关窗时的裁决 = `classify.onSettle`（缺省 `'ok'`，可 `'fail'`）**：`on` 条件关窗、分类未命中时的裁决由它承载。**fullme `stale` 三连罚站 = `settle:{mode:'stream',on:{kind:'ga',count:3}}` + `classify:{onSettle:'fail'}`，显式写出**（旧口径依赖缺省 `gaCount = cmds.length = 3` 的隐式行为、二次修订的 `fail:{ref:'settle'}` 引用、及"GA 到达 + 判据存在但未命中 → fail"的隐式分类缺省，一并废除——保守判定必须显式写 `onSettle:'fail'`）。
+- **收口关窗时的裁决 = `classify.onSettle`（缺省 `'ok'`，可 `'fail'`）**：`on` 条件关窗、该路径无分类可判时的裁决由它承载。**fullme `stale` 三连罚站 = `settle:{mode:'stream',on:{kind:'ga',count:3}}` + `classify:{onSettle:'fail'}`，显式写出**（旧口径依赖缺省 `gaCount = cmds.length = 3` 的隐式行为、二次修订的 `fail:{ref:'settle'}` 引用、及"GA 到达 + 判据存在但未命中 → fail"的隐式分类缺省，一并废除——保守判定必须显式写 `onSettle:'fail'`）。
 - **`mode:'inline'` 收口**：本步工具结果即收口（不开行流窗口），服务"只调工具、不发游戏命令"的步骤（fullme `prompt` 取图）；裁决固定映射（工具 ok→ok / error→fail）；**inline 下声明 `classify`/`captures` 报错**（无行内容可分类，fail-loud）。
-- **两 lane 缺省统一**：工具层缺省 stream + fallback 3s 对 T1/T2 一致，调用期不报错；**流程表 / 规则表步级仍须显式声明 settle，漏写在装配期报错**（fail-loud 作者纪律，防笔误静默吃 3 秒）。T2 命令类工具（`mud_look`/`mud_status`/`mud_move`）在工具 schema **显式声明 `settle:{mode:'stream',on:{kind:'ga',count:1}}`**（现行 `gaCount:1` 声明自然迁移）；**GA 隐式早关废除**——未声明收口的窗口 GA 早到不提前关窗（`inflight.ts` 的 `gaCount ?? cmds.length` 隐式缺省废除）。
+- **两 lane 同型收口（2026-09-21 定案，取代此前"两 lane 缺省统一"的写法）**：
+  - **T2：调用时不做任何收口声明** ⇒ 缺省 `{mode:'stream'}` + fallback，**恒等满 fallback 后以 `timeout` 返回**；不计 GA、不做匹配。
+  - **T1：组装期校验必须显式声明 settle**，漏写在装配期报错（fail-loud 作者纪律，防笔误静默吃 3 秒）。
+  - **声明才计 GA 数、才做匹配**：仅显式声明 `on:{kind:'ga',count:N}` 才进行 GA 计数关窗；**GA 隐式早关废除** —— `inflight.ts` 的 `gaCount ?? cmds.length` 隐式缺省**必须删除**（现行代码与测试仍保留该缺省，见 §6.8 代码增量）。
+  - **收口 ≠ 判据（2026-09-21 二次定案，定义澄清）**：**收口只回答"窗口何时关闭"**（释放工具调用，**不解释内容**）；**判据只回答"内容指向哪个 next"**（**由 flow 持有**）。只有声明收口类型为"判据"时两者才重合；其余情况二者**正交、可共存**。
+  - **三触发同一路径（单一收口器）**：① **判据命中**（flow 持有并评估，命中即收口 —— 实现为 `closeForFlow()`，见 3.5）② **GA 计数**（**仅显式声明时**）③ **`fallback` 到期**（恒在）。三路经同一个 `settle()` 收口 ⇒ 窗口恒有界（I4）。**GA 不声明 ⇒ 不参与收口**。
+  - **层内唯一类型**（取代同日"跨层互斥"口径）：收口触发层 `settle.on` 只允许单 kind；判据层 `classify` 只收正则。**层间不互斥**。
+  - **判据不中** ⇒ 等 `fallback` 到期以 `timeout` 返回，**无隐式 fail 裁决**。
+  - T2 三个查询工具（`mud_look`/`mud_status`/`mud_move`）在**工具 schema** 显式声明 `settle:{mode:'stream',on:{kind:'ga',count:1}}`（现行 `gaCount:1` 自然迁移）—— 属工具自带声明，故 T2 侧仍享 GA 早关。
 - 规则动作 = 显式声明（载体为规则表 / 活动表条目；活动表从"N-GA 缺省 + 判据命中结算"重定义为"规则 / 直发命令的显式收口声明载体"）。
 - **回看结算取消（概念性错误）**：命令发出前已在缓冲里的行不是本命令的应答，不参与本步结算，留给后续消费批；同帧到达的"本步结果行 + 后继 driver"由**本步 `classify.branch`** 承接（判定序当场取一）。旧"发送水位 + 回看区间"机制整体删除，6.1 原"回看数据源"未决随之消解。
+- **迟到的 driver 行 = 没到（2026-09-21 定案）**：窗口关闭（GA 早关 / 兜底到期 / 判据命中）**之后**才到达的 driver 行，**对流程来说就是没到** —— 流程不回头认领，该行按普通行进入后续消费批（→ T2 批次）。这是取消"后继 driver 一起 arm"与回看的必然代价，已确认为可接受口径（不再列为风险）。
 - span = **水位 → 触发行（含）**（单水位，3.7）；触发行之后的同帧行、GA、迟到行落后续消费区间作前置噪声。**非空结算约束**：命中结算的 span 至少含触发行一行（GA 行计入），禁止空值结算；兜底到期且零行 = 无应答事实，留痕收束，不产出空 span。
 - **状态抓取为独立桶**：抓取结果**只同步 world**；**不推进水位、不折叠内容**——状态行作为普通行被后续 span/批次包含，行流无隐藏行（#2 取代原 U3"折叠但不推进水位、不进 span"口径；2026-09-21 确认：状态抓取行不推进水位，否则会把水位推过尚未武装的入口/规则触发行）。
 - capture 规格随分类集注册（**2026-09-21 定案**：正则用 JS RegExp 写法；**槽名 = 命名捕获组** `(?<name>…)`，`captures` 由 `{槽名: 正则}` 映射简化为正则数组；**未匹配不报错**——该槽如实缺省、工具正常返回），**逐行扫 span（到达序），每槽先到先得**，命中经回调把抽取值送回工具 → 工具结果 `captures` → T1 存槽；`captureScope` 字段 MVP 删除（'window' 跨行抽取随多行分类扩展延后）。占位符三类通道：`{name}`/`{pass}` 原样传参、工具经凭据 seam 发送瞬间插值（明文不落转录/日志/tool-call 参数）；`{captcha}` 工具内部闭环；capture 槽 / `{lastFail}` 由 T1 组装时直写值。
@@ -126,6 +135,7 @@
 
 **D4 兜底到期与失败**（原 P7 + P8 + #3；**失败出口按原则 1 修正**）
 - **兜底到期不做最后判定**：`fallback` time 兜底收口即 `timeout` 行为（无独立"到点成功"结算形态）——到期（`fallback` 耗尽且无分类命中）即**提交全部窗口内容**（水位 → 缓冲头），**记为当前调用者消费**（水位推进到缓冲头）；随后流程失败收束。到期不进 retry（retry 仅由 fail 分类驱动）。
+  - **定案 A（2026-09-21 作者裁决）**：`timeout` 结算**带回已累积内容**（span 行进结果的 `lines`/`text`；状态仍是 `timeout`，不属于 ok/fail）。理由：T2 不声明收口 ⇒ 恒等满 `fallback`，若 `timeout` 不带内容，T2 的任意命令就**拿不到回显**，与 §D3「T2 自读批内容决策」冲突。行仍计当前调用者消费（单水位记账，不会重复随批次投递）。旧 `ABANDON_TEXT`（放弃文案、不带内容）已删除。
 - **T2 不接受移交**：T2 批次永远自行从水位起消费，不接收流程侧移交内容（原"超时窗口内容自然移交给 T2"口径废除）。
 - **步骤 fail**（分类命中 fail 类）→ 表内分支 / 重试（决策者职责）；fail 命中且无重试/分支 → 流程失败。
 - **流程失败必须对 T2 可见**（**修正早期"T2 从下一条投递接手"的被动口径**）：现行 §19.5 明文"失败/超时 → 留痕 + **交 T2 决策一次**，不静默停住"，实现载体是 `failPolicy.notify`（缺省 `'t2'`，`flow/engine.ts` 在失败时投递一次唤醒 T2；login/fullme 现配置为 `notify:'none'`）。新模型保留该能力与字段：
@@ -167,8 +177,8 @@
 
 | # | T2 面 | 风险 | 定案 | 验收 |
 |---|---|---|---|---|
-| 1 | `mud_look`/`mud_status`/`mud_move` 的 GA 提前收口；`mud_recall`/`mud_state` 不注册窗口 | T2 失去 GA 缺省 → 查询响应延迟回退 | **T2 命令类工具显式声明 `settle:{mode:'stream',on:{kind:'ga',count:1}}`**（现行 `gaCount:1` 迁移）；全局缺省 stream + fallback 3s 仅兜底（D3） | R1 |
-| 2 | `mud_recall`/`mud_state` 的"尚未投递给你"语义 = 交付水位 | 交付水位废除 → 语义变化 | **recall 改历史查询**（3.7）：查 PerceptionBuffer 保留行，覆盖面较交付水位只增不减 | R2（改写） |
+| 1 | `mud_look`/`mud_status`/`mud_move` 的 GA 提前收口；`mud_state` 不注册窗口 | T2 失去 GA 缺省 → 查询响应延迟回退 | **T2 命令类工具显式声明 `settle:{mode:'stream',on:{kind:'ga',count:1}}`**（现行 `gaCount:1` 迁移）；全局缺省 stream + fallback 3s 仅兜底（D3） | R1 |
+| 2 | `mud_recall`/`mud_state` 的"尚未投递给你"语义 = 交付水位 | 取消 recall 会失去"拉取未投递行"的能力 | **recall 取消**（3.7）：T2 的上下文 = 会话历史本身，**不提供 pull 通路**（不查 pending、不查缓存帧）；`mud_state` 去掉 `lines` 参数只留 world 快照 | R2（改写） |
 | 3 | T2 批次在工具在途时随结果进同一回合（判据 A） | 删 defer → T2 回合边界改变 | **保留判据 A**（D5） | R3 |
 | 4 | 流程失败时"交 T2 决策一次" | 被动口径 → 零行时 T2 静默 | **保留 `failPolicy.notify` 能力与字段**（D4） | R4 |
 
@@ -193,17 +203,18 @@ mud_send {
 
   // ① 收口：只回答"窗口何时关闭"，不回答"内容算哪一类"
   settle?:                       // 缺省 { mode:'stream' } + fallback 3000
+                                 // **不声明 ⇒ 恒等满 fallback**：不计 GA、不做匹配，到期以 timeout 返回
     | { mode: 'inline' }         // 本步工具结果即收口：不开行流窗口（ok→ok / error→fail）
     | { mode: 'stream',
-        on?:       { kind:'regex', pattern } | { kind:'ga', count }   // 提前关窗条件
+        on?:       { kind:'regex', pattern } | { kind:'ga', count }   // 提前关窗条件（**唯一类型**）
         fallback?: { ms } }      // 兜底时长：缺省 3000（T2 量级短超时），T1 表内按实际步骤耗时填写；到期恒为 timeout 结果
 
-  // ② 分类：只回答"行内容算哪一类"，与关窗解耦
+  // ② 分类：只回答"行内容算哪一类"（判据，由 flow 持有 → 指向哪个 next）；与收口正交、可共存
   classify?: {
     ok?      : RegexSpec[]       // 自填正则；命中即关窗（fail-fast，MVP 唯一语义）
     fail?    : RegexSpec[]
     branch?  : { id, pattern }[] // 条件分支 driver
-    onSettle?: 'ok' | 'fail'     // on 条件关窗、分类未命中时的裁决，缺省 'ok'
+    onSettle?: 'ok' | 'fail'     // 仅走 settle.on 关窗路径时的裁决，缺省 'ok'（无判据可判，故不涉及分类）
   }
 
   // ③ 抽取：独立于分类（2026-09-21 定案：JS RegExp 写法；命名捕获组 (?<name>…) 即槽，未匹配不报错、如实缺省）
@@ -212,13 +223,21 @@ mud_send {
 ```
 
 - **settle 为判别式联合**：`mode:'inline'` = 不开行流窗口、工具结果即结算（服务"只调工具、不发游戏命令"的步，fullme `prompt` 用；裁决固定映射 ok→ok / error→fail；**inline 下声明 `classify`/`captures` 报错**，fail-loud）；`mode:'stream'` = 行流窗口，`on` 承载提前关窗条件（kind 全集 = `regex` / `ga`；**time kind 删除**——纯计时窗 = 无 `on`，时间恒由 `fallback` 管），`fallback` 兜底时长恒在（缺省 3000，dz 等长命令步写大值）。旧 `text` kind 与 `{ref:'settle'}` 引用取消（§19.1 四类 kind 在 W10.1 同步改写）。
-- **分类形态只有自填正则**（`RegexSpec`，空类 = 跳过）；GA/tool 不再是分类 kind（**修正元信息表 #1**）；`onSettle` 承载"on 条件关窗、分类未命中"时的裁决（缺省 `'ok'`；fullme `stale` 显式 `'fail'`）。
+- **分类形态只有自填正则**（`RegexSpec`，空类 = 跳过）；GA/tool 不再是分类 kind（**修正元信息表 #1**）。
+- **层内唯一类型**（2026-09-21 二次定案；**撤销同日"`settle.on` 与 `classify` 互斥"口径**——那是把两个正交概念当一层）：收口触发层 `settle.on` 单 kind（结构已保证）；判据层 `classify` 只收正则。**层间不互斥**（`settle.on ga:N` + `classify` 可共存：GA 关窗、正则判 next）。
+- **`onSettle`** 只在 `settle.on` 关窗路径生效（该路径无分类可判），缺省 `'ok'`；fullme `stale` 显式 `'fail'`。
 - **MVP 删除字段**：`onMatch`（'tag' 延后——分类命中即关窗是 MVP 唯一语义）、`priority`（定序固定 fail→分支→ok）、`captureScope`（capture 恒逐行，'window' 随多行分类扩展延后）。
 - **窗口恒有界**：`on` 命中提前关窗；**`fallback` 到期恒为 `timeout` 结果，不属于 ok/fail**（"到点即成功"废除——须以 `on:{kind:'regex'}` 证据关窗）；分类正则命中即提前关窗（fail-fast），同帧定序 fail→分支→ok。
-- **分类来源解析（工具侧，按序）**：① tool-call 参数（T1 流程步）→ ② 命令的显式声明（规则表 / 活动表条目，规则动作与直发命令）→ ③ 都无：走**收口缺省 stream + fallback 3s**（工具层缺省，两 lane 一致，调用期不报错）。
-- **表级显式校验（fail-loud）**：工具层有缺省，但流程表 / 规则表**步级仍须显式声明 settle**，漏写在装配期报错（防笔误静默吃 3 秒）。
+- **收口来源解析（工具侧，按序）**：① tool-call 参数（T1 流程步）→ ② 命令的显式声明（规则表 / 活动表条目，规则动作）。**都没有 ⇒ 恒等满 fallback**（`{mode:'stream'}` + 3000；不计 GA、不做匹配，到期以 `timeout` 返回）。
+  - **T2 收口 = 调用时不声明**（2026-09-21 定案）：一律走缺省、等满 fallback 后返回 `timeout`——**声明才计 GA 数、才做匹配**。三个查询工具（`mud_look`/`mud_status`/`mud_move`）的 `on:{kind:'ga',count:1}` 由**工具 schema 侧自带声明**（不是模型调用参数），故仍享 GA 早关，不受本条影响。
+  - **T1 收口 = 必须显式声明**：流程步漏写 settle 在**装配期报错**（见下条）。
+- **表级显式校验（fail-loud）**：流程表 / 规则表**步级仍须显式声明 settle**，漏写在装配期报错（防笔误静默吃 3 秒）。**T1 是唯一必须显式声明的一侧**；T2 不声明是常态、不是缺陷。
 - **I15 要求（设计级，不是实现细节）**：参数必须能写进工具描述让模型读懂（T2 拿到同一条 tool-call 也能自行决定）；`settle`/`classify`/`captures` 的模型可见措辞在 W10.1 定稿时一并给出，并做 I15 检验。
-- `action.direct: true` 的直发命令**显式 GA 收口**（2026-09-21 定案，MVP 形态）：direct 发送后同样注册收口窗口 `on:{kind:'ga',count:1}`——服务器反馈（GA）到达即结算 `hit: ok`，**不管反馈内容**（无分类匹配需求）；GA 未到仍由 `fallback` 兜底。校验对象 = 所有注册窗口的发送（**direct 不再豁免**，漏写 GA 收口装配期报错）。**direct 结算参与单水位消费**：span = 开窗水位 → GA 行（含），水位随结算推进、span 行记为 direct 的消费；受 **I12 直发延后 gate** 约束，任一窗口（流程 / T2 / direct 自身）开启期间 direct 延后到结算后才发出 ⇒ 窗口互不并存，direct 的 span 不可能覆盖他者未消费的应答行（**halt 豁免除外，T8 口径不变**）。
+- **`action.direct: true` = 纯反射，不属于收口/窗口体系**（2026-09-21 定案，**取代同日早先的"显式 GA 收口"口径**）：
+  - **豁免收口声明校验**：direct 不参与 §3.9 的收口声明校验（校验对象 = 所有**注册窗口**的发送；direct 不注册窗口）。
+  - **不开窗、不消费、不推水位**：发完即走、不等应答、不结算、不产生 span；其应答文本是**无主帧内容**，按普通行进入行流（→ T2 批次 / 后续消费批）。
+  - **归属触发器层**：direct 由规则（触发器）声明与执行，从在途窗口 / 单水位 / 分类体系中**剥离**，只保留"命中规则 → 直发命令"这一反射路径；仍受危险命令硬边界（§7 门禁，actor `system`）与 **I12 直发延后 gate** 约束（**halt 豁免除外，T8 口径不变**）。
+  - 动机：direct 的"决策"在规则里已写全，把它接进收口体系只会引入第二套结算语义与水位消费面，得不偿失。
 - T1 / T2 使用相同工具、相同结果形态（既有口径不变）。
 
 #### 3.2 工具返回契约
@@ -230,7 +249,7 @@ mud_send {
   captures?: { 槽名: 值 } }
 ```
 
-- `hit` → T1 查表推进；`timeout`（= `fallback` 到期，恒定结果，不属于 ok/fail）→ 内容已提交并记当前调用者消费，T1 收束流程；`interrupted` → T1 收束流程槽；`canceled` → 回合取消（槽被动复位）。`mode:'inline'` 结算返回 `settled:'hit'` + `hit.class`（工具 ok→ok / error→fail）。
+- `hit` → T1 查表推进；`timeout`（= `fallback` 到期，恒定结果，不属于 ok/fail）→ **内容随结果返回**（定案 A：`lines`/`text` = span 行）并记当前调用者消费，T1 收束流程；`interrupted` → T1 收束流程槽；`canceled` → 回合取消（槽被动复位）。`mode:'inline'` 结算返回 `settled:'hit'` + `hit.class`（工具 ok→ok / error→fail）。
 - **判定以 hit 为准**：T1 信任工具判定，不重复匹配；span 供留痕 / 审计 / 自描述。
 - I15：结果文本只描述"发生了什么 + 等到了什么"，不携带"下一步该怎么走"的私有指令。
 
@@ -257,6 +276,8 @@ Schema 沿 §19.1 骨架，增补（分类/收口口径按 3.1 重写）：
 
 #### 3.5 裁决器（`SessionAdjudicator` 增量）
 
+- **单一收口器（2026-09-21 落地）**：三触发 —— **判据命中** / **GA 计数**（仅显式声明时） / **`fallback` 到期**（恒在）—— 全部经同一个 `settle()` 收口，窗口恒有界（I4）。判据由 **flow 持有并评估**，命中即调 **`closeForFlow()`** 收口在途窗口：结果带 `settled='flow'` —— **只释放工具调用、不携带判定**；引擎侧 `noteToolResult` 对 `'flow'` 直接返回（防双推进，该步推进已由 flow 的 arming 路径在命中当场完成）。
+- **声明才计 GA（落地）**：未显式声明 `on:{kind:'ga',count:N}` ⇒ `gaCount` 未定义 ⇒ `boundary()` 直接返回，**GA/EOR 到达不构成本窗口的边界**。`flow/engine.ts#windowSpecFor` 仅在**本步声明了 GA 判据**（`ok`/`fail` 含 `kind:'ga'`，或显式 `boundary`）时供给 `gaCount`（= 命令条数）—— 声明是"GA 判据"本身，不是隐式缺省。
 - **收口 + 分类 owner 化挂窗口**：confirmSent 时注册（owner = 在途窗口）；confirmSent → 写 socket 零间隙。
 - **四路结算**：实时命中（分类正则 / `on` 条件） / 兜底到期 / 打断 / 断线。**无回看结算**——命令发出前已在缓冲的行不参与本步结算，留给后续消费批（D3）。
 - **结算产出**：span（水位 → 触发行，含）+ capture 回调回送 + 水位推进到触发行。
@@ -268,16 +289,20 @@ Schema 沿 §19.1 骨架，增补（分类/收口口径按 3.1 重写）：
 - **不推进水位、不折叠内容**（2026-09-21 确认）：状态行保留在行流中，作为普通行被后续 span/批次原样包含；行流无隐藏行。状态抓取若推进水位，会把水位推过尚未武装的入口/规则触发行，导致流程或规则永不触发。
 - **`direct` 命中行的归属定案**（**修正元信息表 #4**）：`foldedAbs` 原承担两类——state 折叠行与 `action.direct` 命中行。取消折叠后：
   - state 抓取行 → 普通行，被后续 span / T2 批次包含（不消费）；
-  - **direct 命中行 → 归消费者 ①（命中行，匹配即消费）**，水位推进到命中行；不再折叠、不再隐藏。
+  - **direct 命中行 → 同样不消费、不推水位**（2026-09-21 修正，**取代同日"归消费者 ①"口径**）：direct 属触发器层的纯反射，其命中行与应答行按普通行进入行流（→ T2 批次），不再折叠、不再隐藏，也不计入消费记账。
 - 与 §5 现行差异：现行折叠消费会隐藏行并前移 `deliveredAbs`（span 空洞、多行分类失真的动因）；新口径下该机制整体删除。
+- **落地状态（2026-09-21，W10.3）**：✅ 已落地。折叠集 `FeedResult.foldedAbs` 与 `MatchHit.foldLines` 一并删除（生产面 + 消费面），裁决器站① 只 `patch` 不再隐藏行、站⑤ 的 `pending`/`recallLines` 收全行；`direct` 命中行随之照常进行流。可测不变量新增一例（`tests/runtime-delivery.spec.ts` 末节：投递拼接 == 完整入站行流，含被抓取行与被反射行），完整不变量套件（含 span 记账）归 W10.6。
 
 #### 3.7 单一水位线（2026-09-21 修订：三水位归一）
 
-> 早期草案曾有三水位（消费 / 交付 / 发送）与"回看结算"。经复核：**回看结算是概念性错误**——命令发出前已在缓冲的行不是本命令的应答，拿它结算窗口语义不成立（同帧场景已由 `classify.branch` 承接，D3）；交付水位的"尚未投递给你"语义被 **recall 历史查询**取代且覆盖面只增不减。归一为每会话一条水位线。
+> 早期草案曾有三水位（消费 / 交付 / 发送）与"回看结算"。经复核：**回看结算是概念性错误**——命令发出前已在缓冲的行不是本命令的应答，拿它结算窗口语义不成立（同帧场景已由 `classify.branch` 承接，D3）；交付水位的"尚未投递给你"语义不再需要替代品——**T2 的上下文就是会话历史本身**（2026-09-21 定案，`mud_recall` 取消）。归一为每会话一条水位线。
 
-- **水位线（每会话一条）**：行流消费进度的**唯一**记账。四类消费者，全部推进：① 入口/规则/direct 命中行（→ 命中行）② 流程 span / 兜底到期与打断提交（→ 触发行 / 缓冲头）③ T2 攒批收口（→ 缓冲头）④ 仍带原文的投递（→ 原文行）。
+- **水位线（每会话一条）**：行流消费进度的**唯一**记账。四类消费者，全部推进：① 入口 / 规则 / 分类命中行（→ 命中行）② 流程 span / 兜底到期与打断提交（→ 触发行 / 缓冲头）③ T2 批次（→ 缓冲头）④ 仍带原文的投递（→ 原文行）。**`direct` 不推水位**（3.6 定案）。
 - **状态抓取不推进**（独立桶，3.6）：只同步 world；若推进会把水位推过尚未武装的入口/规则触发行。
-- **回看（recall）= T2 查历史**：当当前会话中的行内容不足以做出有效判断时，T2 用 `mud_recall` / `mud_state` 查询**历史**——不依赖水位记账，已投递/已消费行同样可查。历史物理范围 = PerceptionBuffer 保留行（2000 上限）；更久远历史的日志持久化为独立事项，不进本计划。
+- **T2 的上下文 = 会话历史本身（2026-09-21 定案）**：T2 需要的游戏输出就是它自己会话里已投递的内容。**本计划不提供任何"拉取"通路** —— 不查 `pending`（尚未投递的行）、不查缓存帧、不做历史缓冲查询。
+  - `mud_recall` 工具**取消**。理由：其旧语义"尚未投递给你"本质是让 T2 越过 `t2DeliverIntervalMs` 的推送节奏去拉 `pending`，与"推送节奏是唯一节拍"冲突；且实测出现过 `mud_state(lines:60)` 把连接至今全部输出重复塞进 session 的退化（§5）。
+  - `mud_state` **保留**（只读档的信息源，§10），但**去掉 `lines` 参数**，只返回 world 快照。
+  - 残留边界（不构成 pull 通路）：批次裁剪（`MAX_INJECT_TAIL_LINES`/`MAX_INJECT_TAIL_CHARS`）会在 session 里留下 `[观察窗截断]` 标记；`pending` 超 `MAX_PARKED_LINES` 丢最旧行并记日志 —— 两者都是**有痕迹的降级**，不额外给 T2 恢复通路。
 - **span = 水位 → 触发行（含）**：唯一坐标，`deliveredAbs` 随三水位废除一并删除。
 
 #### 3.8 状态机与时序
@@ -314,13 +339,13 @@ T1：hit → 查表（fail → 分支 → ok 已由裁决器定序取一）→ �
 
 #### 3.9 配置、默认值与校验
 
-- **装配期校验（fail loud）**：流程表——分类全显式（自填正则，空类 = 跳过；`ref` 引用取消）、**settle 步级显式（漏写报错）**、`on` 条件显式（ga 的 N / regex 的 pattern）、inline 步声明 `classify`/`captures` 报错、`next` 引用存在、入口消息 `flow.id` 必须存在于流程表（D1 区分面定案）、占位符三类、capture 命名捕获组名唯一；规则表 / 活动表——**注册窗口的**规则 / 直发命令显式收口声明，未声明报错（**direct 亦须显式 GA 收口**，3.1 定案）。
+- **装配期校验（fail loud）**：流程表——分类全显式（自填正则，空类 = 跳过；`ref` 引用取消）、**settle 步级显式（漏写报错）**、`on` 条件显式（ga 的 N / regex 的 pattern）、inline 步声明 `classify`/`captures` 报错、`next` 引用存在、入口消息 `flow.id` 必须存在于流程表（D1 区分面定案）、占位符三类、capture 命名捕获组名唯一；规则表 / 活动表——**注册窗口的**规则动作显式收口声明，未声明报错。**`action.direct` 豁免本校验**（不开窗、不消费，纯反射，3.1 定案；2026-09-21 修正，取代"direct 亦须显式 GA 收口"）。**层内唯一类型**：`settle.on` 单 kind、`classify` 只收正则（**层间不互斥**，2026-09-21 二次定案）。
 - **调用期校验**：capture 正则编译失败 → error；`GenerateOptions.sessionId` 缺失 → error。（工具层收口缺省 stream + fallback 3s，调用期不再因缺声明报错。）
 - 配置项与默认值（fallback 兜底时长缺省 3000、T2 攒批上限、步数/重试预算）见第 6 章（数值待校准）。
 
 #### 3.10 行流唯一归属与不变量
 
-- **每行恰好被消费一次**（单水位记账，3.7）。消费者枚举：① 规则 / 入口 / 分类 / **direct** 命中行（匹配即消费）② 流程 span（含兜底到期/打断提交区间）③ T2 批次 ④ 仍带原文的投递（原文行未被 ①–③ 覆盖时，如排队出队 pendingEntry）。
+- **每行恰好被消费一次**（单水位记账，3.7）。消费者枚举：① 规则 / 入口 / 分类命中行（匹配即消费）② 流程 span（含兜底到期 / 打断提交区间）③ T2 批次 ④ 仍带原文的投递（原文行未被 ①–③ 覆盖时，如排队出队 pendingEntry）。**`direct` 不在消费者枚举内**（不开窗、不消费、不推水位；其命中行与应答行按普通行落入 ③/④）—— 2026-09-21 修正。
 - 无折叠：行流无隐藏行；状态抓取不消费行（只观察 + 同步 world）。
 - 流程失败未结算行：留在缓冲，作为下一批入口原文或 T2 批次被消费（不丢弃、不移交，#8）。
 - **可测不变量**：`① + ② + ③ + ④ == 完整入站行流`（替代 §5 现行"按序拼接投递消息体"口径；折叠类目移除）。pendingEntry 的行流归属沿 §19.7 待定（T5），不在本计划内定。
@@ -340,14 +365,14 @@ T1：hit → 查表（fail → 分支 → ok 已由裁决器定序取一）→ �
 
 | 位置 | 内容 |
 |---|---|
-| `agent/tools-schema.ts` / `agent/tools-build.ts` | 发送工具契约：settle / classify / captures 参数；**工具层收口缺省 stream + fallback 3s（两 lane 一致）**；分类来源解析三序；`direct` 显式 GA 收口（不豁免校验）；T2 命令类工具显式声明 `settle:{mode:'stream',on:{kind:'ga',count:1}}` |
-| `agent/tools-build.ts`（recall 面） | `mud_recall` / `mud_state` 改**历史查询**语义（3.7），工具描述同步改写（I15 面） |
-| `deliver/adjudicator.ts` | 收口+分类 owner 化挂窗口、实时匹配 + 兜底到期结算、span 交付、capture 回调、结算优先级与同帧定序；**无回看结算、无发送水位**；`deliveredAbs`/`recall`/`noteDelivered` 交付水位面**整体废除**（单水位，3.7） |
-| `agent/inflight.ts` | 窗口绑定收口+分类 owner；删除配对移交面（`windowSpecFor` / `noteToolResult` 的窗口侧）；**隐式缺省废除**——`gaCount ?? cmds.length` 被全局 stream + fallback 3s 缺省取代，`outcome ?? (hasCriteria?'fail':'ok')` 显式化为 `classify.onSettle`（D3） |
-| `perceive/engine.ts` / `deliver/state-track.ts` | 状态抓取改独立桶：抽取 → 同步 world；**`direct` 命中行归消费者 ①**；删除折叠消费；`deliveredAbs` 随单水位整体废除 |
+| `agent/tools-schema.ts` / `agent/tools-build.ts` | 发送工具契约：settle / classify / captures 参数；**收口缺省 stream + fallback 3s（T1/T2 同型）**；收口来源解析；**层内唯一类型（层间不互斥）**；`onSettle` 缺省 `'ok'` 恒透传；**`direct` 豁免校验**；T2 命令类工具显式声明 `settle:{mode:'stream',on:{kind:'ga',count:1}}` |
+| `agent/tools-build.ts`（读工具面） | **删除 `mud_recall` 工具**；`mud_state` **去掉 `lines` 参数**（只返回 world 快照）；工具描述与 diag 同步（I15 面）（3.7） |
+| `deliver/adjudicator.ts` | 收口+分类 owner 化挂窗口、实时匹配 + 兜底到期结算、span 交付、capture 回调、结算优先级与同帧定序；**无回看结算、无发送水位**；`deliveredAbs`/`noteDelivered` 交付水位面**整体废除**（单水位，3.7）；`recall()` 与 `recallLines` 缓冲**降级为诊断通路**（`/mud/diag` + log-service，不进模型工具面） |
+| `agent/inflight.ts` | 窗口绑定收口+分类 owner；删除配对移交面（`windowSpecFor` / `noteToolResult` 的窗口侧）；**隐式缺省废除**——**删除 `gaCount ?? cmds.length`（未声明即不关窗）**，`outcome ?? (hasCriteria?'fail':'ok')` 改为 `onSettle`（缺省 `'ok'`）单一裁决（D3 / §6.8） |
+| `perceive/engine.ts` / `deliver/state-track.ts` | 状态抓取改独立桶：抽取 → 同步 world；**`direct` 命中行不消费、不推水位**（direct 面从窗口 / 水位体系剥离）；删除折叠消费；`deliveredAbs` 随单水位整体废除 |
 | `session/session.ts` / `session/mount.ts` | 入口投递复位重开；入口投递消息新增 `flow:{id}` 字段（D1 区分面定案）；回合结束接线（`agent/turn-stopping` + `agent/status` idle + `whenIdle()`）；装配期校验接线 |
 | `session/preset.ts` / `agent/skills.ts` | **T2 可见技能文本与流程所有权保持一致**（**修正元信息表：早期草案漏列**）：断线口径改"复位重开"后，`默认技能` 里"断线或自动登录失效时由你诊断并按步骤重连"、以及"确定性登录流程待重建为触发器 → lite"两处措辞需同步；技能目录经 `systemPrompt.section` 注入的路径不变 |
-| `assemble.ts` | 流程表 / 规则表装配期校验：分类全显式、**settle 步级显式（漏写报错）**、`on` 条件显式（ga 的 N / regex 的 pattern）、direct 显式 GA 收口 |
+| `assemble.ts` | 流程表 / 规则表装配期校验：分类全显式、**settle 步级显式（漏写报错）**、`on` 条件显式（ga 的 N / regex 的 pattern）、**层内唯一类型**、**`direct` 豁免校验** |
 | `agent/flow/engine.ts` | 收缩：判定 / 推进 / 挂起 / 唤醒职责移交 T1 与窗口；保留流程表声明、装配校验、`onSuccess` / 收束副作用、**`failPolicy.notify` 出口** |
 | `deliver/delivery-channel.ts` | **收窄而非清空**：删判据 B 面（`shouldConcludeTurn` 及其投递尺寸记账，现行符号为 `size` / `rememberDelivery` / `actionCount`，**非早期草案写的 `deliverySizes`**）；**保留判据 A（defer 槽 / `deferContext`）服务 T2 批次与规则动作** |
 
@@ -359,8 +384,9 @@ T1：hit → 查表（fail → 分支 → ok 已由裁决器定序取一）→ �
 | `session/session.ts` / `deliver/adjudicator.ts` | `syncArming()` 的**流程分类重放面**——分类正则由 T1 按步供给（**注**：`syncArming()` 本身是武装标记机制总入口，打断常驻标记 + 直发判据投影共用 `arm()`，总入口与那两面**保留**，不随本计划删除） |
 | `deliver/delivery-channel.ts` / `session/*` | **判据 B 全套**（`shouldConcludeTurn` 及其投递尺寸记账）——新模型下 T1 无动作即 `finish stop` 自然收束。**判据 A 不在删除面**（D5） |
 | `agent/t1.ts` | 无状态渲染器的流程部分（被 flow-driver 取代；规则动作渲染职责保留） |
-| `perceive/*` / `deliver/state-track.ts` | §5 折叠机制（折叠行 / 折叠消费）——状态抓取改独立桶；**`deliveredAbs` 随单水位整体废除**，recall 改历史查询（3.7）。§5 流程步"投递消息携带原文"——原文在 span 里 |
-| `deliver/adjudicator.ts` / `agent/inflight.ts` | **N-GA 隐式缺省收口整体废除（含 T2 lane——被全局 stream + fallback 3s 缺省取代，GA 早到不隐式提前关窗）**；静态 `activityTable` 的 N-GA 缺省与分类命中结算职责——重定义为规则 / 直发命令的显式收口声明载体 |
+| `perceive/*` / `deliver/state-track.ts` | §5 折叠机制（折叠行 / 折叠消费）——状态抓取改独立桶；**`deliveredAbs` 随单水位整体废除**（3.7）；**`mud_recall` 取消、`mud_state` 去 `lines`**。§5 流程步"投递消息携带原文"——原文在 span 里。**（2026-09-21：折叠行与折叠消费 ✅ 均已随 W10.3 删除——W10.5 只需核查零残留；`deliveredAbs` 已在 W10.2 删除；post-recall 三项亦已落地）** |
+| `deliver/adjudicator.ts` / `agent/inflight.ts` | **N-GA 隐式缺省收口整体废除（T1/T2 同型——被 stream + fallback 3s 缺省取代，GA 早到不隐式提前关窗；`gaCount ?? cmds.length` 删除）**；静态 `activityTable` 的 N-GA 缺省与分类命中结算职责——重定义为规则动作的显式收口声明载体 |
+| `deliver/adjudicator.ts`（direct 面）/ `agent/flow/flow-spec.ts` | **`action.direct` 从收口 / 在途窗口 / 单水位体系中剥离**（3.1 定案）：不注册窗口、不结算、不产生 span、不推水位、豁免收口声明校验；`runDirectHits` 只保留"命中规则 → 直发命令"反射路径（危险命令硬边界与 I12 直发延后 gate 不变） |
 
 ### 5. 实施切片与测试验收
 
@@ -372,38 +398,38 @@ T1：hit → 查表（fail → 分支 → ok 已由裁决器定序取一）→ �
 |---|---|---|---|
 | **W10.0 目录搬迁** | `flow/` 整体迁入 `agent/flow/`（纯路径变更，无语义变更，后续切片 diff 干净） | 无 | tsc 清零 |
 | **W10.1 契约与表** | tool-call 参数 schema（settle 判别式联合 / classify+`onSettle` / captures）+ 流程表按新口径重写（login / fullme settle 步级显式、分类自填正则、GA 移入收口 `on`、fullme `prompt` 用 `mode:'inline'`、`answer` 用 stream + ok/fail 分类 + `fallback 180s`、`stale` 显式 `on ga:3` + `onSettle:'fail'`、`fallback.ms` 按实际步骤耗时填写）+ 装配期校验（双形：新形步骤表级 settle 显式，旧形步骤 legacy 校验兼容，W10.5 收紧）+ **工具层收口缺省 stream + fallback 3000（两 lane 一致，提前自 W10.4 落地）** + **T2 命令工具显式声明 `settle:{mode:'stream',on:{kind:'ga',count:1}}`**。落地文件（W10.1 定稿修订）：`agent/flow/flow-spec.ts`（类型 + 双形校验 + `normalizeFlowSpecs` 过渡桥）/ `agent/flow/engine.ts`（构造器接线）/ `agent/flow/flows/{login,fullme}.ts`（表重写）/ `agent/tools-build.ts`（参数 + 缺省 + T2 显式 settle） | W10.0 | A1 / A6 / R1 |
-| **W10.2 裁决器与水位** | 收口+分类 owner 化挂窗口 + 实时匹配与兜底到期结算 + span 交付 + capture 回调 + 结算优先级与同帧定序 + **单一水位线（交付水位废除、无回看结算）** + recall 历史查询改写（`deliver/adjudicator.ts` / `agent/inflight.ts` / `tools-build.ts` recall 面） | W10.1 | A2 / A3 / A7 / R2 |
-| **W10.3 状态抓取与折叠** | 状态抓取独立桶 + `direct` 命中行归消费者 ① + 取消折叠消费（交付水位废除面归 W10.2）（`perceive/engine.ts` / `deliver/state-track.ts`） | W10.2 | A3 / A9 |
+| **W10.2 裁决器与水位** | 收口+分类 owner 化挂窗口 + 实时匹配与兜底到期结算 + span 交付 + capture 回调 + 结算优先级 + **单一水位线（交付水位废除、无回看结算）** + **取消 `mud_recall`、`mud_state` 去 `lines` 参数（T2 上下文 = 会话历史，不提供 pull 通路）** + **收口口径落地四项**：① 删除 `gaCount ?? cmds.length` 隐式缺省（**声明才计 GA**）② `onSettle` 缺省 `'ok'` 生效（废除 `hasCriteria ? 'fail' : 'ok'` 隐式裁决）③ **层内唯一类型**（原"`settle.on` 与 `classify` 互斥"已于同日二次定案撤销） ④ `direct` 从收口/水位体系**剥离**（豁免校验、不开窗、不消费）（`deliver/adjudicator.ts` / `agent/inflight.ts` / `tools-build.ts`）。**状态（2026-09-21 实施回填，全部落地）**：①②③④ 与 recall 取消**均已落地**（32 文件 / 361 例绿 + tsc 清零 + vitest exit 0）。① 的解封方式是**单一收口路径**（判据命中 / GA / fallback 三触发同一 `settle()`，见 §D3 与 §3.5），不是「分类 owner 化」（该形态留给 W10.4） | W10.1 | A3 / A7 / R2 |
+| **W10.3 状态抓取与折叠** | 状态抓取独立桶 + **`direct` 面折叠删除（不消费、不推水位）** + 取消折叠消费（交付水位废除面归 W10.2）。**状态（2026-09-21 实施回填，全部落地）**：折叠机制**整体删除**（消费面 + 生产面，第 4 章删除清单的"折叠"项就此闭项，W10.5 只做零残留核查）—— `perceive/types.ts` 删 `MatchHit.foldLines`、`perceive/matcher.ts` 删两处构造、`perceive/engine.ts` 删 `FeedResult.foldedAbs`（`state.flatMap(foldLines)` 与 direct 锚点两处写法）、`deliver/adjudicator.ts` 站①注释 / 站⑤ recall 与 `pending` 过滤 / diag 折叠计数全删；`deliver/state-track.ts` 与 `perceive/rules.ts` 文档改"状态抓取桶"（**行为零变更**——state 抓取本来就只 `patch(...,'percept')`，本次落地的是"它不再折叠"）。**实际动到的文件比本行原列的多**（原列漏 `deliver/adjudicator.ts`；`deliver/state-track.ts` 仅文档）：`perceive/{types,matcher,engine,rules}.ts` / `deliver/{adjudicator,state-track}.ts` + 4 个测试文件；32 文件 / 360 例绿 + `tsc` 清零 + vitest exit 0 | W10.2 | A3 / A9 |
 
 **轨 B —— T1 状态化（后行）**
 
 | 切片 | 源码范围 | 依赖 | 对应验收 |
 |---|---|---|---|
-| **W10.4 T1 状态机** | **第一步：loop-sim 账目**（回合 / 步骤 / 模型请求，确认不退化为 followup 基线，并量化打断改 followup 的代价）；`flow-driver` 替换渲染器流程部分；槽表（会话作用域，I8）+ 定位键 `sessionId`；工具层收口缺省 stream + fallback 3s（两 lane 一致）；回合结束接线（`agent/t1.ts` / `tools-build.ts` / `session`） | 轨 A 完成 + 账目 | A4 / A5 / A8 |
-| **W10.5 删除旧路径** | 第 4 章删除清单（**判据 A 不在内**）+ 回合结束监听接线收尾 | W10.4 | A8 / R3 |
-| **W10.6 测试对齐** | `tests/loop-sim.ts`、`t1-adapter.spec.ts`、`flow-*.spec.ts`、`runtime-delivery.spec.ts`、`frame-splitter.spec.ts` + 新增行流守恒用例 | W10.5 | A9 |
+| **W10.4 T1 状态机** | **第一步：loop-sim 账目**（回合 / 步骤 / 模型请求，确认不退化为 followup 基线，并量化打断改 followup 的代价）；`flow-driver` 替换渲染器流程部分；槽表（会话作用域，I8）+ 定位键 `sessionId`；工具层收口缺省 stream + fallback 3s；**跨行同帧定序（fail → 分支 → ok 批量匹配收口，A2 归属本切片）**；回合结束接线（`agent/t1.ts` / `tools-build.ts` / `session`） | **轨 A 已完成**（W10.0–W10.3 全绿）+ 账目 | **A2** / A4 / A5 / A8 |
+| **W10.5 删除旧路径** | 第 4 章删除清单（**判据 A 不在内**；**折叠项已随 W10.3 提前闭项**，此处只核查零残留）+ 回合结束监听接线收尾 | W10.4 | A8 / R3 |
+| **W10.6 测试对齐** | `tests/loop-sim.ts`、`t1-adapter.spec.ts`、`flow-*.spec.ts`、`runtime-delivery.spec.ts`、`frame-splitter.spec.ts` + 新增行流守恒用例（**已随 W10.3 起步**：`runtime-delivery.spec.ts` 末节固定"抓取行 + 反射行都照常进行流"；本切片补 span 记账面） | W10.5 | A9 |
 | **W10.7 文档同步** | §1（含 I8、新增 I16）/ §5 / §7 / §8 / §9 / §19 改写 + 术语表 + §17 登记 + `doc/CHANGELOG.md` 登记 + **技能文本同步** | W10.6 | A10 / R4 |
 
 > 切片编号统一用 `W10.*`。**早期草案在第 4/6 章与 CHANGELOG v0.10.1 里用了 `S1–S6`，而 `S1–S4` 已被 §8.8 用于 v0.9 W7 切片 —— 同一仓库内 S 编号撞车，本次统一为 W10.\***（**修正元信息表之外的第 7 处，属编号一致性**）。
 
 **验收场景**：
 
-- **A1 收口校验**：流程表 / 规则表步级未声明 settle 在**装配期**报错（fail-loud）；工具层缺省 stream + fallback 3s 生效——未声明 settle 的调用不报错、窗口按 3s 兜底；`direct` 直发必须显式 GA 收口（GA 到达即 `hit: ok`，3.1 定案）。
-- **A2 同帧与无回看**：登录 `replace` 分支在"本步结果行 + 后继 driver 同帧"场景判定正确（由 `classify.branch` 承接）；命令发出前已在缓冲的行不参与本步结算（无回看结算）。
-- **A3 span 与状态桶**：命中结算 span ≥ 1 行（触发行必在），空值结算被拒；状态抓取结果同步 world、不推进水位、不折叠内容；`direct` 命中行归消费者 ①；行流无隐藏行、span 无空洞。
+- **A1 收口校验**：**T1** 流程步与注册窗口的规则动作未声明 settle 在**装配期**报错（fail-loud）；**T2 调用不声明是常态** —— 缺省 stream + fallback 3s 生效，**恒等满 fallback 后以 `timeout` 返回**（不计 GA、不做匹配）；`settle.on` 与 `classify` 同声明被拒；**`direct` 豁免校验**（不开窗、不消费，3.1 定案）。
+- **A2 同帧与无回看**（**归属 W10.4**）：登录 `replace` 分支在"本步结果行 + 后继 driver 同帧"场景判定正确（由 `classify.branch` 承接）；**同帧跨行多类命中按 fail → 分支 → ok 取一**（现行为是到达序，W10.4 批量匹配收口）；命令发出前已在缓冲的行不参与本步结算（无回看）；**窗口关闭后到达的 driver 行视为没到**。
+- **A3 span 与状态桶**：命中结算 span ≥ 1 行（触发行必在），空值结算被拒；状态抓取结果同步 world、不推进水位、不折叠内容；**`direct` 不消费、不推水位**（其命中行与应答行按普通行进入 T2 批次）；行流无隐藏行、span 无空洞。
 - **A4 会话形状**：一个流程 = 一个回合、全程 T1；回合内不出现投递消息（除入口）；入口 1 次 + 助手/工具交替（三件套消解）；**loop-sim 账目**与设计一致。
 - **A5 打断与失败**：打断 → `interrupted` → 流程槽复位 → finish stop → 事件动作 followup 新回合；流程失败（超时 / fail 无出口 / 预算耗尽）→ `failPolicy.notify='t2'` 时投递一条 T2 可见失败消息 → 回合结束，T2 接手。
 - **A6 兜底到期**：到期即 `timeout` 结算（不属于 ok/fail），提交全部窗口内容并记当前调用者消费（水位 → 缓冲头）；随后流程失败收束。
 - **A7 优先级**：打断 > 分类/on 命中 > 超时 > 断线；打断与分类同帧时分类作废留痕。
 - **A8 删除回归**：第 4 章删除面无残留引用（tsc 清零）；既有用例对齐后全绿。
-- **A9 行流守恒**：可测不变量用例（span + T2 批次 + 命中行 + 带原文投递 == 完整入站行流）；流程失败未结算行计入后续消费批。
+- **A9 行流守恒**：可测不变量用例（span + T2 批次 + 命中行 + 带原文投递 == 完整入站行流）；流程失败未结算行计入后续消费批。（**W10.3 已固定其中一例**：状态抓取行与 `direct` 反射行都原样投出；span 记账面归 W10.6。）
 - **A10 文档一致**：正式章节与实现一致；§17 / CHANGELOG 大版本登记。
 - **长命令**：dz / sleep 以结束标记正则（分类 / `on`）收口、`fallback.ms` 表内按实际步骤耗时写大值（GA 仅显式声明收口时使用；哨兵探测步为实验功能，不进验收）。
 
 **T2 回归验收（D9，与轨 A/B 并行跑）**：
 
-- **R1 T2 查询收口**：`mud_look` / `mud_status` / `mud_move` 经工具 schema **显式声明 `settle:{mode:'stream',on:{kind:'ga',count:1}}`**，结算行为与量级与改动前一致（对照用例而非目测）；裸 `mud_send` 未声明收口按 stream + fallback 3s 兜底，GA 早到不隐式提前关窗（已定性为接受的行为变化）。
-- **R2 T2 读工具语义（改写）**：`mud_recall` / `mud_state` 改**历史查询**后覆盖：batch 裁剪行、帧内工具应答行、限流/人工滞留的 `pending` 行三种场景逐一对照；已投递/已消费行同样可查（较交付水位增量）。
+- **R1 T2 查询收口**：`mud_look` / `mud_status` / `mud_move` 经工具 schema **显式声明 `settle:{mode:'stream',on:{kind:'ga',count:1}}`**，结算行为与量级与改动前一致（对照用例而非目测）；**裸 `mud_send`（T2 不声明收口）恒等满 fallback 后以 `timeout` 返回、GA 早到不提前关窗** —— 已定性为**接受的行为变化**（2026-09-21 定案），W10.2 落地后需实测 T2 任意命令的实际等待量级并记录。
+- **R2 T2 读工具语义（改写）**：`mud_recall` **已删除**——验收改为确认"T2 仅凭会话历史即可获得所需输出"（推一个批次后，模型无需任何工具即可看到该批内容）；`mud_state` 去 `lines` 后只返回 world 快照，其世界模型字段与改动前逐字段一致。**并确认不存在任何 pull 通路**（无查询 pending / 缓存帧的工具）。
 - **R3 T2 回合边界**：T2 工具在途期间到达的批次/规则动作**仍随该工具结果进同一回合**（判据 A 未删）；对照 `runtime-defer.spec.ts`。
 - **R4 T2 失败可见性**：流程失败时 T2 能收到失败原因（`notify='t2'` 路径）；`notify='none'` 时行为与现行 login/fullme 一致。
 
@@ -418,7 +444,7 @@ T1：hit → 查表（fail → 分支 → ok 已由裁决器定序取一）→ �
 - 流程表新 schema、tool-call 参数 schema（settle/classify 定稿）、裁决器接口、T1 槽结构（W10.1 / W10.2 定稿）；**其中参数 schema 的模型可见措辞须过 I15 检验**。
 - `connectionGen` 从哪读（现行等价物是"`abs` 每连接重置 + `reset()` 全清"）。
 - span 审计的时间窗与 `PerceptionBuffer`（2000 行上限）驱逐策略的关系 —— span 只有 `fromAbs/toAbs`，留痕回读受缓冲驱逐约束。
-- recall 历史查询的参数形状（模式 / 时间范围 / 条数上限）与驱逐约束（W10.1 定稿）。
+- `recallLines` 缓冲**降级为诊断通路**（2026-09-21 定案）：`/mud/diag` + log-service 可读，**不进模型工具面**；保留行数沿用 2000 行上限与自然驱逐（W10.2 定稿）。
 - 窗口缓冲上限、每窗口最大分类数（分类正则 + `on` 条件）。
 - 打断 / 断线时在途窗口已收内容的消费口径（缺省：留痕消费，水位推进到缓冲头）。
 
@@ -427,6 +453,7 @@ T1：hit → 查表（fail → 分支 → ok 已由裁决器定序取一）→ �
 - 步数 / 时间 / 重试预算的默认值与配置位置。
 - fallback 兜底时长缺省 **3000ms**（T2 量级短超时）的实测校准；T1 流程表 `fallback.ms` 按实际步骤耗时填写（各步耗时分布实测见 6.4）。
 - T2 攒批上限时长（若保留攒批机制，此处只校准数值）。
+- **批次裁剪阈值** `MAX_INJECT_TAIL_LINES = 64` / `MAX_INJECT_TAIL_CHARS = 8000`（`session/types.ts`）—— 取消 recall 后它成为"单批能给模型多少内容"的唯一闸门，需实测校准；`MAX_PARKED_LINES = 512`（`pending` 丢最旧行的口子）是否随调。
 
 #### 6.4 待实测
 
@@ -443,20 +470,20 @@ T1：hit → 查表（fail → 分支 → ok 已由裁决器定序取一）→ �
 | 原评审 # | 事项 | 本轮落点 | 性质 |
 |---|---|---|---|
 | 1 | T2 攒批与 GA 的关系 | **D3 / D9 定案（三次修订形态）**：T2 命令工具显式声明 `settle on ga:1`，全局缺省 stream + fallback 3s 兜底 | 语义已定 |
-| 2 | `mud_recall` 与交付水位的去向 | **3.7 / D9 / 第 4 章修改清单（二次修订）**：交付水位废除，recall 改历史查询 | 已定案 + 补改清单 |
+| 2 | `mud_recall` 与交付水位的去向 | **3.7 / D9 / 第 4 章修改清单（三次修订）**：交付水位废除；**`mud_recall` 取消**（T2 上下文 = 会话历史，不提供 pull 通路）、`mud_state` 去 `lines` | 已定案 + 补改清单 |
 | 3 | 消费水位的物理载体未指认 | **已消解（二次修订）**：回看结算取消，单水位下无"回看数据源/双消费"问题 | 已消解 |
 | 4 | 打断 followup 新回合的触发点未写 | **D5 定案（2026-09-21）**：`agent/status` idle + `whenIdle()` | 已定案 |
 | 5 | 流程回合与动作渲染回合的区分面 | **D1 定案（2026-09-21）**：消息 `flow?:{id}` 字段 + 槽 `pendingCallId` 配对，lane 不加值 | 已定案 |
-| 6 | 直发命令与纯工具步的收口声明豁免 | **3.1（direct 显式 GA 收口，2026-09-21 定案）/ 3.3 / 3.1（纯工具步 `mode:'inline'` 收口）** | 已定案 |
+| 6 | 直发命令与纯工具步的收口声明豁免 | **3.1（direct 豁免校验、不开窗不消费，2026-09-21 二次定案）/ 3.3 / 3.1（纯工具步 `mode:'inline'` 收口）** | 已定案 |
 | 7 | 入口投递"复位重开"与 I10 互斥共存 | **D1 定案（2026-09-21）**：出队 = 入口投递，同样复位重开 | 已定案 |
-| 8 | direct-exec 命中行的行流归属 | **3.6 定案**：归消费者 ① | 已定案 |
+| 8 | direct-exec 命中行的行流归属 | **3.6 定案（2026-09-21 二次修订）**：不消费、不推水位，按普通行进入批次 | 已定案 |
 | 9 | `connectionGen` 来源 + span 可审计时间窗 | **3.4 / 6.2** | 实现待定 |
 
 #### 6.6 文档同步（W10.7）
 
 - §5 / §7 / §8 / §9 / §19 对应改写；§1 不变量按第 2 / 3 章口径落稿。
 - **§1 不变量改动范围**：I2 / I4 / I11 / I12 / I13 按新口径改写；**I8 纳入覆盖章节**（D10 的槽表归属）；**I15 原文保持不变**，新增 **I16**（T1 私有状态不进 T2 可见面）。
-- 术语表：新增（收口-分类分离 / 单一水位线 / 历史查询 / 状态抓取桶 / 流程驱动器）；删除或改写（判据-only / 配对移交 / arming 集 / 唤醒 / 折叠 / 三水位 / 发送水位 / 交付水位 / 回看结算）；defer 保留。
+- 术语表：新增（收口-分类分离 / 单一水位线 / 状态抓取桶 / 流程驱动器 / 触发器反射（direct））；删除或改写（判据-only / 配对移交 / arming 集 / 唤醒 / 折叠 / 三水位 / 发送水位 / 交付水位 / 回看结算 / **历史查询**）；defer 保留。
 - §17 新增切片行（W10.0–W10.7）；`doc/CHANGELOG.md` 按版本号规则登记（本计划属核心重构，升大版本 v0.11.0）。
 - **D0 结论同步进正式章节**（§19 或 §17），避免"官方有无流程插件"被反复重新提出。
 
@@ -467,6 +494,39 @@ T1：hit → 查表（fail → 分支 → ok 已由裁决器定序取一）→ �
 - 正式章节同步完成、术语表与 §17 登记完成、`doc/CHANGELOG.md` 大版本登记完成。
 - 此后按文件头约定删除本节，不留档。
 
+#### 6.8 W10.2 代码增量（与现行代码的差异清单，2026-09-21 口径裁决后新增）
+
+> 依据：作者 2026-09-21 五条裁决（T1/T2 同型收口、判据唯一类型、direct 剥离、A2 归属 W10.4、迟到 driver=没到）。
+>
+> **落地状态（2026-09-21 实施回填；全包 32 文件 / 361 例绿 + tsc 清零 + vitest exit 0）**：
+> - ✅ 第 1 项（**声明才计 GA**）：删除 `gaCount ?? cmds.length` 隐式缺省。解封方式是**单一收口路径**（见下方"设计修订"），不是「分类 owner 化挂窗口」。
+> - ✅ 第 2 项（`onSettle` 缺省 `'ok'` 生效、废除 `hasCriteria ? 'fail' : 'ok'`）：`inflight.ts` 的 `boundary()` / `settle()` 结局链改为 `gaOutcome ?? onSettle ?? 'ok'`；`tools-build.resolveSettleWindow` 恒透传 `onSettle`。
+> - ⛔→✅ 第 3 项（**跨层互斥已撤销**）：原「`settle.on` ∧ `classify` 互斥」是**错口径** —— 把两个正交概念当一层。工具层与装配期的互斥校验已移除，改为**层内唯一类型**；`settle.on ga:N` + `classify` 现可共存。
+> - ✅ 第 4 项（`direct` 剥离）：核查确认 direct 现行即 `fireAndForget: true`、**从不注册窗口**（`adjudicator.runDirectHits`），故不消费、不推水位 —— 本项无需改动；折叠面（`foldedAbs` 里的 direct 命中行）删除**已随 W10.3 落地**。
+> - ✅ 第 6 项（测试对齐）：`tools.spec` / `response.spec` / `permission.spec` / `preset-agent.spec` 老口径断言已反转或重写；新增「`onSettle` 显式 `'fail'` 才判失败」与「`mud_recall` 已删除」用例。
+> - ✅ 第 7 项（recall 取消）：删除 `mud_recall` 工具、`mud_state` 去 `lines` 参数（只返回 world 快照）、`recall()` / `recallLines` 降级为诊断通路；档位工具清单与提示文本、policy 拒绝文案同步。
+> - ✅ 第 5 项（direct 面核查见第 4 项；**折叠面删除已随 W10.3 落地**）。
+>
+> **设计修订（2026-09-21 二次定案；执行中发现的缺陷，作者定性）**：
+> - **缺陷**：三条收口触发（判据 / GA / timeout）原本**不在同一路径** —— 流程判据走 `armOwnJudgements` 的帧文本 arming 路径推进流程、**不关窗**；窗口只靠 GA 关。所以"删隐式 GA"必然挂死，而"把判据搬给窗口"又会与 arming 路径**双重推进**。
+> - **定案**：**收口 ≠ 判据**。收口只回答"窗口何时关闭"（**不解释内容**）；判据由 **flow 持有**，回答"内容指向哪个 next"。**判据 / GA / timeout 三触发收敛到同一个 `settle()`**，保证无论如何都能收口（I4）。由此 §D3/§3.1 的"跨层互斥"作废，改为**层内唯一类型**。
+> - **形态 A（本次落地）**：flow 保留 arming 评估，命中即调 **`closeForFlow()`** 关窗；结果带 `settled='flow'`（只释放工具调用、不携带判定），`noteToolResult` 对该值直接返回 ⇒ **不双推进**。`windowSpecFor` 同步改为"**声明了 GA 判据才供给 `gaCount`**"。
+> - **形态 B（归 W10.4）**：判据注册进窗口（`win-` 标记）、`offer()` 退化为"入口匹配 + 喂行"、推进点收敛到 `noteToolResult` 单点（`settled='flow'` 随之退役）。
+>
+> **✅ 原遗留待裁决项已裁决（2026-09-21，作者定案 A）**：`timeout` 结算**带回已累积内容**（span 行进结果的 `lines`/`text`；状态仍 `timeout`）。已落地：`inflight.ts` 的 `'timeout'` 分支改为 `text: textOfLines(spanLines)` / `lines: spanLines`，`ABANDON_TEXT` 常量删除；`response.spec` 与 `runtime-delivery.spec` 各补一例断言"兜底到期带回内容"（含 T2 裸调用拿到回显）。
+
+| # | 位置 | 现状（旧口径） | 目标（新口径） |
+|---|---|---|---|
+| 1 | `agent/inflight.ts` `register()` | `const gaCount = spec.gaCount ?? cmds.length` —— 未声明也计 GA、GA 早到即关窗 | 未显式声明 `on:{kind:'ga',count:N}` ⇒ **不做 GA 计数关窗**（`boundary()` 直接返回）；**删除隐式缺省**（**✅ 已落地**；`windowSpecFor` 同步改为"声明了 GA 判据才供给 `gaCount`"） |
+| 2 | `agent/inflight.ts` `boundary()` / `settle()` | 结局链 `w.gaOutcome ?? w.onSettle ?? (hasCriteria ? 'fail' : 'ok')` —— 保留"GA 到达 + 判据未命中 → fail"隐式裁决 | 走 `settle.on` 关窗路径时恒由 **`onSettle`（缺省 `'ok'`）** 裁决；**删除 `hasCriteria ? 'fail'` 隐式** |
+| 3 | `agent/tools-build.ts` `resolveSettleWindow()` | `let onSettle = 'ok'` 但仅在等于 `'fail'` 时才透传给窗口 ⇒ 缺省 `'ok'` 丢失 | **恒透传** `onSettle`（缺省 `'ok'` 必须落到窗口） |
+| 4 | ~~装配期（`agent/flow/flow-spec.ts`）+ 工具层校验：`settle.on` ∧ `classify` 互斥~~ | ⛔ **已撤销**（错口径：把正交两层当一层） | 改为**层内唯一类型**（`settle.on` 单 kind、`classify` 只收正则）；**层间不互斥** |
+| 5 | `deliver/adjudicator.ts` direct 出口 + 站⑤ | direct 命中行经 `foldedAbs` 折叠，不进交付视图 | direct **不消费、不推水位**：命中行与应答行按普通行进入行流（→ T2 批次）；direct 从窗口 / 结算 / span 体系剥离（**✅ 折叠面已随 W10.3 删除**；direct 不注册窗口本即现状，见第 4 项） |
+| 6 | `tests/tools.spec.ts`、`tests/response.spec.ts` | `tools.spec.ts` 断言"缺省由窗口表取 `cmds.length`"；`response.spec.ts` 只覆盖显式 `onSettle:'fail'` | 断言反转（未声明 ⇒ 不关窗）；补 `onSettle` 缺省 `'ok'` 用例与 T2 裸 `mud_send` 等满 fallback 用例 |
+| 7 | `agent/tools-build.ts`（读工具面）+ `deliver/adjudicator.ts` | `mud_recall` 存在（"最近 N 行历史输出"）；`mud_state` 带 `lines` 参数 | **删除 `mud_recall`**；`mud_state` 去掉 `lines`（只 world 快照）；`recall()` / `recallLines` **降级为诊断通路**（§6.2 已定：`/mud/diag` + log-service 可读，不进模型工具面） |
+
+> 已确认无需改动的部分：`agent/t1.ts`（无状态渲染器，W10.4 才动）、`deliver/lane.ts`（lane 取值不加值）、`agent/flow/flows/{login,fullme}.ts`（W10.1 已按新口径重写）。
+
 > 处置注：原 U1（断线后流程整体挂起续接）已迁 §19.7 待定 #3；原 U2（断线复位重开）定案进 D6；原 U3（折叠口径）**经两轮反复**（v0.10.3"折叠但不推进水位" → v0.10.4"彻底取消折叠"）最终定案进 D3 / 3.6；原 U4（前置噪声容忍）常规化进 D3（判据特异性纪律）；原 U5（按 owner 汇总命中）随判据-only 模型消解。
 >
 > 2026-09-21 二次修订登记：① 收口/判据结构分离——收口 kind = time/regex/ga/tool、缺省 `{kind:'time', ms:3000}`、判据只支持自填正则 + `ref:'settle'`、取消 text、表级 settle 显式校验保留、T2 命令工具显式 `settle ga:1`、GA 隐式早关废除；② 三水位归一为单一水位线——回看结算取消（概念性错误：命令发出前已在缓冲的行不是本命令的应答）、recall 改历史查询、交付水位废除、状态抓取行确认不推进水位；③ `flow/` 目录整体迁入 `agent/flow/`（W10.0 纯搬迁先行）。
@@ -474,3 +534,16 @@ T1：hit → 查表（fail → 分支 → ok 已由裁决器定序取一）→ �
 > 2026-09-21 三次修订登记：① tool-call 契约形态收敛——settle 改 `mode:'inline'|'stream'` 判别式联合（`tool` 收口 → `mode:'inline'`、GA 移入 `on` 提前关窗条件、time kind 删除——纯计时窗 = stream 无 `on`）、分类只支持自填正则（`classify.onSettle` 取代 `{ref:'settle'}`，fullme `stale` 显式 `on ga:3` + `onSettle:'fail'`）、取消 `onMatch`/`priority`/`captureScope` 三字段、`fallback` 缺省 3000（T2 量级短超时；T1 表内按实际步骤耗时填写）且到期恒 `timeout` 结果、inline 下声明 `classify`/`captures` 报错；② 契约语境术语改名：判据 → 分类（判据 A/B 与直发判据投影不改名）；③ 判定顺序固定 fail → 分支 → ok（`priority` 字段删除，同帧多命中按序取一、其余留痕；装配期不做特异性检查——正则写错属配置问题）。
 >
 > 2026-09-21 **W10.1 定稿修订登记**（实施完成；上面三处 `prompt`/`answer` 表述按本条同步修正）：① **fullme `answer` 收口形态定稿**（作者定案"stream + classify"）：`settle:{mode:'stream'}` + `classify:{ok:[成功句], fail:[答错句]}` + `fallback:{ms:180_000}`（等人工 + 答错重来 + 收结果共用一份步预算），`retry`/`awaitExternal` 保留；**inline 只保留给 `prompt`**（取图、ask-human 工具结果即收口）——此前三处"`prompt`/`answer` 都用 inline"的写法作废；`prompt` 保留显式 `timeoutMs:180_000` 过渡（W10.4 定稿步预算形态），`stale` 按 D3 落 `on ga:3` + `onSettle:'fail'`（旧 fail `why` 文案随之丢失，可接受）；② **流程表 `captures` 两面区分**：流程表字段 `captures`（JS RegExp 数组、命名捕获组 `(?<name>…)` 即槽名、未匹配不报错）经 `normalizeFlowSpecs` 过渡桥映射回 legacy `capture` 映射（引擎按进入判定行抽取，行为逐字段保持）；tool-call 参数 `captures` 在 inline 收口下工具拒绝——两者的作用面（driver 命中行 vs 窗口 span）不同，3.1 "inline 下 captures 报错"条文不改；**capture 抽取与 captures 参数的窗口透传延后 W10.2**（与 capture 回调一起做）；③ **装配期校验双形**：新形步骤（有 `settle`）走新校验（**inline 拒 `classify`——流程表 `captures` 合法**，其作用于 driver 命中行抽取；tool-call 参数面"inline 拒 captures/classify"由工具层 `resolveSettleWindow` 承担、装配期不管、`on` 条件显式、`fallback.ms` 正数、classify 正则编译 + `branch.id` 存在性、captures 编译 + 命名组槽名唯一且**先于占位符校验**收集）；旧形步骤（无 `settle`，测试夹具用）沿用 legacy 校验，W10.5 收紧为必填；`stepBudget` 仅声明 + 形态校验（W10.4 消费）；④ **工具层（tools-build.ts）落地**：`mud_send` 新增 `settle`/`classify`/`captures` 参数（I15 措辞）、`until`（legacy）与 `settle` 互斥拒绝、非法声明 **fail-closed 拒绝**、缺省 stream + fallback 3000（两 lane 一致，调用期不报错）、inline 收口直发 + 立即返回、活动表仅无判据时附加（dz/sleep 90s 行为保持）、`until` 路径不吃 3000 缺省（保持 120s 声明超时）；T2 三工具显式 `T2_QUERY_SETTLE`（on ga:1，R1）；⑤ **类型归属**：新契约类型落 `agent/flow/flow-spec.ts`（原清单写 flow-types.ts，避免循环 import）；⑥ **已接受的行为变化**：裸 `mud_send` 与 T2 三工具的放弃计时 10s→3s（GA 正常到达时行为量级一致）；引擎/裁决器/inflight **零改动**（过渡桥映射，W10.2/W10.4 拆桥）。
+>
+> 2026-09-21 **口径裁决登记（作者，W10.2 期；落实清单见 §6.8）**：
+> ① **T1/T2 同型收口**：T2 调用时不做任何收口声明 ⇒ 缺省恒等满 `fallback` 后以 `timeout` 返回；T1 组装期校验必须显式声明、漏写报错。**声明才计 GA 数、才做匹配**，判据不中即 timeout —— `inflight.ts` 的 `gaCount ?? cmds.length` 隐式缺省属旧口径，**必须删除**（推翻 v0.10.5 期"T2 lane 保留 GA 缺省关窗"的写法；T2 三查询工具改由工具 schema 自带 `on ga:1` 声明保住 GA 早关）。
+> ② **判据唯一类型**（⚠️ **已被同日二次定案撤销** —— 收口与判据是两层正交概念，见文末"收口/判据二层分清"登记）：同一步的 `settle.on` 与 `classify` 正则判据**互斥**，不允许"既判 regex 又计 GA"；判据不中直接等超时，**废除"GA 到达 + 判据未命中 → fail"的隐式裁决**（`onSettle` 缺省 `'ok'` 必须真正生效）。
+> ③ **`direct` 剥离**：direct **豁免配置校验**，**不开窗、不消费、不推水位**，是只属于触发器层的纯反射行为，从收口 / 在途窗口 / 单水位体系中剥离 —— **取代同日"direct 显式 GA 收口 + span 消费"口径**，同时消解 §3.1/§3.6/§3.10 三处互斥。
+> ④ **A2 归属**：同帧定序（fail → 分支 → ok 批量匹配）定给 **W10.4**（现行为是到达序，代码注释亦标 W10.4 收口）。
+> ⑤ **迟到 driver = 没到**：窗口关闭后到达的 driver 行，对流程即视为没到，按普通行进入后续消费批；确认为可接受口径（不再列为风险）。
+>
+> 2026-09-21 **recall 取消裁决登记（作者）**：取消 `mud_recall`，**T2 的上下文 = 会话历史本身**；**不提供任何 pull 通路**（不查 `pending`、不查缓存帧）。`mud_state` 保留但去掉 `lines` 参数，只返回 world 快照。**取代二次修订的"recall 改历史查询"口径**（历史查询仍是 pull 的一种，与"推送节奏是唯一节拍"冲突）。残留边界仅两处、都有痕迹、都不额外给恢复通路：批次裁剪（session 内留 `[观察窗截断]` 标记）、`pending` 超 `MAX_PARKED_LINES` 丢最旧（记日志）；两者阈值列入 §6.3 待校准。
+>
+> 2026-09-21 **收口/判据二层分清 + 单一收口路径（作者定性，W10.2 落地）**：① 定义澄清 —— **收口只回答"窗口何时关闭"（不解释内容），判据由 flow 持有、回答"内容指向哪个 next"**，只有声明收口类型为判据时两者才重合；② 由此**撤销**同日"`settle.on` ∧ `classify` 互斥"口径（把正交两层当一层），改为**层内唯一类型**；③ **三触发（判据命中 / GA 计数〔仅显式声明时〕 / fallback 到期）收敛到同一 `settle()`**，窗口恒有界（I4）；④ 形态 A 落地：flow 命中即调 `closeForFlow()` 关窗（结果 `settled='flow'` 只释放工具调用、不携带判定，`noteToolResult` 直接返回 ⇒ 不双推进），`windowSpecFor` 改为"声明了 GA 判据才供给 `gaCount`"，**`gaCount ?? cmds.length` 隐式缺省删除**；⑤ 形态 B（判据注册进窗口、推进点收敛单点）归 W10.4；⑥ 全包 32 文件 / 361 例绿 + `tsc` 清零 + vitest exit 0。
+>
+> 2026-09-21 **W10.3 落地登记（轨 A 收官）**：① **折叠机制整体删除**（不是"只删消费面"）—— `perceive/types.ts` 的 `MatchHit.foldLines`、`perceive/matcher.ts` 两处构造、`perceive/engine.ts` 的 `FeedResult.foldedAbs`、`deliver/adjudicator.ts` 站⑤ 三处过滤与 diag 折叠计数全部移除；**理由**：`foldedAbs` 一旦不再被读，`foldLines` 就成了只写不读的死数据，且 `match-service.spec.ts` 会留下一组断言"死概念"的用例。第 4 章删除清单的"§5 折叠机制（折叠行 / 折叠消费）"项**就此闭项**，W10.5 对该项只做零残留核查（属**切片边界微调**：折叠行生产面原可留到 W10.5，实做并入 W10.3，理由是二者是同一概念的读写两面）。② **实际动到的文件比 W10.3 原列多**：原列 `perceive/engine.ts` / `deliver/state-track.ts` 漏了真正的消费点 `deliver/adjudicator.ts`；`deliver/state-track.ts` 本次**行为零变更**（state 抓取本来就只 `patch(...,'percept')`），只改文档口径。③ **已接受的行为变化（D9 面，须记）**：状态抓取行与 `direct` 命中行从"不进 agent"变为"照常作为普通行进入 T2 批次"—— T2 由此**多看到**被 state 规则抓取的行（如气血/房间描述）与 `save`/分页提示行。这是**增信息**（非能力回归，R1–R4 不受影响），但确实改变 T2 可见文本，故按⑦已接受变化的口径显式登记。④ **测试面**：`match-service.spec` 三例折叠语义 → 合一例"无折叠面"（`'foldLines' in hit === false`，防回潮）；`perception.spec` 两例改断言"结果里没有折叠面"; `runtime-direct-action.spec` 两例反转为"提醒行照常投出"；`runtime-delivery.spec` 新增行流守恒末节（A9 起步）。32 文件 / 360 例绿 + `tsc` 清零 + vitest exit 0。

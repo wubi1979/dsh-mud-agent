@@ -135,4 +135,12 @@ export interface FlowRuntimeOptions {
    * 起停就是看门狗的起停时点（活跃流程期间不布防；流程结束才布防）。
    */
   onTransition?: () => void
+  /**
+   * **本步判据命中**（`applyMatch` 判定发生的当场；可选）。
+   *
+   * 运行时接它去**收口在途窗口**（PLAN §D3「单一收口路径」形态 A）：判据由 flow 持有并
+   * 评估，命中即释放工具调用，使"判据 / GA / fallback"三触发走同一条收口路径。
+   * 只在**本步判据**命中时触发（入口 driver 匹配不触发 —— 那时没有属于本流程的窗口）。
+   */
+  onStepJudged?: () => void
 }

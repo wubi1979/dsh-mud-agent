@@ -11,14 +11,16 @@
  *     → 返回 WindowResult (窗口行 / 判据结算 / 放弃原因)
  * ```
  *
- * 结算优先级 (§2.3): **判据命中 > 窗口关闭 (N-GA) > 超时 > 断线**; 每个窗口必有
- * 结局 (I4 无静默)。两种形态:
- *   - **窗口型** (无判据; look/hp 等查询): GA 关窗 = 成功, 窗口内行 = 工具结果;
- *   - **判据型** (ok/fail 行判据 + gaCount 兜底关窗): 判据命中 = 成功/失败 (hitText
- *     = 命中行原文, 供流程 `{lastFail}` 等槽插值); 关窗未命中 = 失败 ("判据未等到")。
+ * 结算优先级 (§2.3): **分类/on 命中 > GA 关窗 (仅显式声明时) > 兜底到期 > 断线**; 每个窗口
+ * 必有结局 (I4 无静默)。两种形态:
+ *   - **窗口型** (无分类判据; look/hp 等查询): 显式声明的 GA 关窗 = 成功, 窗口内行 = 工具结果;
+ *   - **分类型** (ok/fail 正则判据): 判据命中 = 成功/失败 (hitText = 命中行原文, 供流程
+ *     `{lastFail}` 等槽插值); 判据不中 ⇒ 等 `fallback` 到期以 `timeout` 返回。
  *
- * N-GA 边界 (§2.2): 第 N 个 GA/EOR 后关窗; `gaCount` 缺省 = 命令条数 (每命令至少
- * 1 个 GA); `gaOutcome` 显式覆盖关窗结局 (step.ok/fail 含 ga 判据时由 flow 声明)。
+ * N-GA 边界 (§2.2, 2026-09-21 定案): **只有显式声明 `on:{kind:'ga',count:N}` 的窗口**才在
+ * 第 N 个 GA/EOR 后关窗 —— **声明才计 GA 数**; 未声明窗口对 GA/EOR 完全不敏感, 只由
+ * `fallback` 到期 / 分类命中 / 打断 / 断线结算 (`gaOutcome` 显式覆盖关窗结局)。
+ * 旧"`gaCount` 缺省 = 命令条数"的隐式早关**已废除**。
  *
  * 直发延后 (§2.8): 在途窗口开启 ⇒ 直发命令队列延后 (queue gate, `onGate(true)`);
  * 窗口自身命令 `noGate:true` 豁免, halt 优先级豁免 —— GA 计数从此不被直发应答污染。
@@ -54,7 +56,7 @@ export type BoundaryKind = 'ga' | 'eor'
 
 /** 结算方式: 边界 (ga/eor) / 判据命中 (until) / 超时放弃 (timeout) /
  *  中止 (abort, signal) / 流程打断 (interrupted) / 连接错误 (error, 断线)。 */
-export type ReplySettle = BoundaryKind | 'until' | 'timeout' | 'abort' | 'interrupted' | 'error'
+export type ReplySettle = BoundaryKind | 'until' | 'timeout' | 'abort' | 'interrupted' | 'error' | 'flow'
 
 /** 窗口判据 (ok/fail 行判据; 命中经武装标记结算)。 */
 export interface WindowCriteria {
@@ -116,7 +118,7 @@ export interface WindowResult {
   ok: boolean
   /** 实际发出的命令展示形 (序列 = '命令序列')。 */
   cmd: string
-  /** 窗口内累积文本 (超时/放弃为留痕文案)。 */
+  /** 窗口内累积文本（`timeout` 也带回，见 §8.4 定案 A）。 */
   text: string
   /** 纯应答行 (MudLine[], 行号/style 保真 — T1 规则续步判定的唯一来源)。 */
   lines: MudLine[]
@@ -142,8 +144,8 @@ export interface WindowDiag {
     tool: string
     /** 等待的判据 ('ok'/'fail'/'ok+fail'; 窗口型 = null)。 */
     criteria: string | null
-    /** N-GA 边界与已见 GA 数。 */
-    gaCount: number
+    /** N-GA 边界与已见 GA 数 (未声明 GA 关窗基数 = null)。 */
+    gaCount: number | null
     gaSeen: number
     /** 已等待时长。 */
     elapsedMs: number
@@ -184,8 +186,12 @@ export interface InflightWindowDeps {
   absWatermark?: () => number
 }
 
-/** v0.6.0 §8.4: timeout 放弃语义文本 (放弃 = 未等到权威边界)。 */
-export const ABANDON_TEXT = '[应答超时，边界未命中，请决策]'
+/**
+ * 兜底到期（`settled='timeout'`）的语义（PLAN §D4 定案 A，2026-09-21）：
+ * **带回已累积内容**（span 行进结果的 `lines`/`text`）—— 状态仍是 `timeout`（不属于
+ * ok/fail），但调用者（尤其 T2 裸调用）能"自读批内容决策"。原先"放弃即不带内容"会让
+ * T2 的任意命令拿不到回显，与 §D3 的 T2 口径冲突。
+ */
 /** 中止文本。 */
 export const ABORT_TEXT = '（已中止）'
 /** 流程打断的缺省原因 (工具结果文本; `interrupt` 用)。 */
@@ -197,6 +203,7 @@ export function parseWindowMarkerId(markerId: string): { n: number; kind: 'ok' |
   const m = /^win-(\d+):(ok|fail|branch:([^:]+))$/.exec(markerId)
   if (m === null) return null
   if (m[2] === 'ok' || m[2] === 'fail') return { n: Number(m[1]), kind: m[2] }
+  if (m[3] === undefined) return null
   return { n: Number(m[1]), kind: 'branch', branchId: m[3] }
 }
 
@@ -230,7 +237,8 @@ interface WindowEntry {
   /** 实际命令列表 (序列逐条同 replyId 穿透到队列)。 */
   cmds: string[]
   criteria?: WindowCriteria
-  gaCount: number
+  /** 显式声明的 GA 关窗基数 (未声明 = 不做 GA 关窗; 2026-09-21 定案: 声明才计 GA)。 */
+  gaCount?: number
   gaOutcome?: 'ok' | 'fail'
   timeoutMs?: number
   signal?: AbortSignal
@@ -324,9 +332,14 @@ export class InflightWindowTable {
     if (spec.signal?.aborted) {
       return Promise.resolve({ ok: false, cmd: display, text: ABORT_TEXT, lines: [], settled: 'abort', outcome: 'fail' })
     }
-    // 注册期校验 (§2.8): gaCount 须为 >=1 整数。
-    const gaCount = spec.gaCount ?? cmds.length
-    if (!Number.isInteger(gaCount) || gaCount < 1) {
+    // 注册期校验 (§2.8): gaCount **显式声明时**须为 >=1 整数。
+    //
+    // **声明才计 GA**（PLAN §D3，2026-09-21 定案；第 1 项落地）：未显式声明
+    // `on:{kind:'ga',count:N}` ⇒ `gaCount` 为 undefined ⇒ `boundary()` 直接返回，
+    // GA/EOR 到达不构成本窗口的边界。窗口仍恒有界：三触发收敛到同一 `settle()`
+    // —— ① 流程判据命中（`closeForFlow`）② GA 计数（仅声明时）③ fallback 到期。
+    const gaCount = spec.gaCount
+    if (gaCount !== undefined && (!Number.isInteger(gaCount) || gaCount < 1)) {
       return Promise.resolve({
         ok: false,
         cmd: display,
@@ -343,7 +356,7 @@ export class InflightWindowTable {
       cmd: display,
       cmds,
       ...(spec.criteria !== undefined ? { criteria: spec.criteria } : {}),
-      gaCount,
+      ...(gaCount !== undefined ? { gaCount } : {}),
       ...(spec.gaOutcome !== undefined ? { gaOutcome: spec.gaOutcome } : {}),
       ...(spec.timeoutMs !== undefined ? { timeoutMs: spec.timeoutMs } : {}),
       ...(spec.signal !== undefined ? { signal: spec.signal } : {}),
@@ -449,18 +462,39 @@ export class InflightWindowTable {
   }
 
   /**
-   * GA/EOR 边界 (§2.2 N-GA 关窗信号): 仅 **armed** 窗口计数 —— gaSeen 达 gaCount
-   * 即关窗结算 (结局链: gaOutcome 覆盖 > onSettle 裁决 > 有判据 = fail ("判据未等到")
-   * > 无判据 = ok)。sending 期与无主边界不计数 (无主帧走裁决器消费链的投递结算)。
+   * 流程判据命中 → 收口当前在途窗口（PLAN §D3「单一收口路径」形态 A）。
+   *
+   * 三触发（判据命中 / GA 计数 / fallback 到期）收敛到同一个 `settle()`；本方法是
+   * 触发①的入口：flow 持有并评估判据，命中即调本方法释放工具调用。**判定不随结果回传**
+   * （`settled='flow'`）—— 该步的推进已由 flow 在 arming 路径完成，`noteToolResult`
+   * 对 `'flow'` 直接返回，避免双推进。
+   *
+   * 无在途窗口时是 no-op（如判定节点 `awaiting-branch` 期间命中后继 driver）。
+   * @returns 是否确有在途窗口被收口。
+   */
+  closeForFlow(): boolean {
+    const w = this.live
+    if (!w || w.state !== 'armed') return false
+    this.settle(w, 'flow')
+    return true
+  }
+
+  /**
+   * GA/EOR 边界 (§2.2 N-GA 关窗信号): **只有显式声明了 `on:{kind:'ga',count:N}` 的窗口**
+   * 才计数 —— gaSeen 达 gaCount 即关窗结算。未声明 ⇒ GA/EOR 到达不构成本窗口的边界
+   * (2026-09-21 定案: 声明才计 GA, 隐式早关废除; 未声明窗口只由 fallback 到期 / 分类命中 /
+   * 打断 / 断线结算)。sending 期与无主边界不计数 (无主帧走裁决器消费链的投递结算)。
    */
   boundary(kind: BoundaryKind): void {
     void kind
     const w = this.live
     if (!w || w.state !== 'armed') return
+    // 未声明 GA 关窗基数 ⇒ 本窗口对 GA/EOR 不敏感。
+    if (w.gaCount === undefined) return
     w.gaSeen += 1
     if (w.gaSeen < w.gaCount) return
-    const hasCriteria = w.criteria?.ok !== undefined || w.criteria?.fail !== undefined
-    const outcome = w.gaOutcome ?? w.onSettle ?? (hasCriteria ? 'fail' : 'ok')
+    // 结局: 显式 gaOutcome 覆盖 > onSettle (缺省 'ok')。旧"有判据未命中 = fail"隐式裁决废除。
+    const outcome = w.gaOutcome ?? w.onSettle ?? 'ok'
     this.settle(w, 'ga', undefined, undefined, outcome)
   }
 
@@ -554,7 +588,7 @@ export class InflightWindowTable {
           criteria: live.criteria === undefined
             ? null
             : ([live.criteria.ok !== undefined ? 'ok' : null, live.criteria.fail !== undefined ? 'fail' : null].filter(x => x !== null).join('+') || null),
-          gaCount: live.gaCount,
+          gaCount: live.gaCount ?? null,
           gaSeen: live.gaSeen,
           elapsedMs: Date.now() - live.startedAt,
           status: live.state === 'settled' ? 'armed' : live.state,
@@ -667,13 +701,15 @@ export class InflightWindowTable {
         w.reject(new Error(`连续 ${limit} 次应答超时 (边界未命中), 回合失败终止`))
         return
       }
-      // timeout = 放弃 (§8.4): 窗口行不随结果返回 (已在交付水位内), 回放只进诊断日志;
-      // span 留痕 (D4 最小化: 不带 captures)。
+      // 兜底到期（三触发之③，PLAN §D4 定案 A 2026-09-21）：**带回已累积内容** ——
+      // 状态仍是 `timeout`（不属于 ok/fail），但 span 行随结果返回，使调用者（尤其 T2
+      // 裸调用）能"自读批内容决策"，不再拿不到回显。行仍计当前调用者消费（单水位记账，
+      // 不会重复随批次投递）。
       w.resolve({
         ok: false,
         cmd: w.cmd,
-        text: ABANDON_TEXT,
-        lines: [],
+        text: textOfLines(spanLines),
+        lines: spanLines,
         settled: 'timeout',
         outcome: 'fail',
         ...(span !== undefined ? { span } : {}),
@@ -730,13 +766,30 @@ export class InflightWindowTable {
         })
         return
       }
+      case 'flow': {
+        // 流程判据命中即收口（PLAN §D3「单一收口路径」形态 A）：flow 已在本帧自行判定该步
+        // 并推进（arming 路径），本窗口只负责**释放工具调用** —— 不携带判定，引擎侧忽略
+        // （`noteToolResult` 对 `settled==='flow'` 直接返回）。三触发（判据 / GA / fallback）
+        // 经同一个 `settle()` 收口，保证窗口恒有界（I4）。
+        this.counters.ok += 1
+        w.resolve({
+          ok: true,
+          cmd: w.cmd,
+          text: textOfLines(spanLines),
+          lines: spanLines,
+          settled: 'flow',
+          outcome: 'ok',
+          ...(span !== undefined ? { span } : {}),
+          ...(captures !== undefined ? { captures } : {}),
+        })
+        return
+      }
       default: {
         // 'ga' | 'eor': N-GA 关窗 (§2.3)。结局链 (W10.2): untilOutcome ?? gaOutcome ??
         // onSettle ?? (有判据 = fail, 无判据 = ok)。窗口型 = 成功 (窗口行 = 工具结果);
         // 判据型关窗未命中 = 失败 ("判据未等到")。跨行同帧定序过渡语义: 同行同类命中
         // 靠武装序 (fail → branch → ok), 跨行 = 到达序 (W10.4 窗口表批量匹配收口)。
-        const hasCriteria = w.criteria?.ok !== undefined || w.criteria?.fail !== undefined
-        const outcome = untilOutcome ?? (w.gaOutcome ?? w.onSettle ?? (hasCriteria ? 'fail' : 'ok'))
+        const outcome = untilOutcome ?? (w.gaOutcome ?? w.onSettle ?? 'ok')
         const ok = outcome === 'ok'
         if (ok) this.counters.ok += 1
         else this.counters.fail += 1

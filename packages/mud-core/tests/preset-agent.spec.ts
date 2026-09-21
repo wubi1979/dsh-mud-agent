@@ -189,10 +189,10 @@ describe('preset 行 (mud-player 的能力面)', () => {
     const { kit, calls, notes } = makeKit({ known: false })
     const { ctx, tools } = makeScope(kit)
     applyPresetAgent(ctx)
-    const recall = tools.find(t => t.name === 'mud_recall')
+    const state = tools.find(t => t.name === 'mud_state')
 
-    const other = await recall!.execute({ count: 5 }, { agent: { id: 's2' } })
-    const noAgent = await recall!.execute({ count: 5 }, {})
+    const other = await state!.execute({}, { agent: { id: 's2' } })
+    const noAgent = await state!.execute({}, {})
 
     expect(other).toMatchObject({ ok: false, cmd: '' })
     expect(String((other as { note: string }).note)).toContain('未绑定 MUD 运行时')

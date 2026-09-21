@@ -16,13 +16,13 @@
  * 窗口语义 (v6.6): 单行规则可声明 `window: { before, after }` — 命中时装配锚点行
  * 前后的**批内**上下文 (跨批不追, 丢弃) 供 extract 复合提取。
  *
- * 折叠语义 (v6.6, hit.foldLines): 单行 regex/text = 仅折叠锚点行 (窗口行照常进
- * agent, 两份信息并存); 单行 func = 不折叠 (房间抓取类, 全部行进 agent);
- * multiline = 折叠全部被捕获的条件行。
+ * 命中不改行流 (W10.3: v6.6 的折叠语义已整体删除): 命中只判定"命中什么" ——
+ * 无折叠行、无隐藏行, 每行照常被后续 span / T2 批次包含。
  *
  * 按 `lane` 属性分流:
- *   lane: 'state' (预匹配折叠) — 状态/观察类文本。文本到达预处理层时预匹配:
- *     命中行 **折叠** (不再进 agent), 捕获组/map/extract 产物 applyPatch 落 world。
+ *   lane: 'state' (状态抓取桶) — 状态/观察类文本。文本到达预处理层时预匹配:
+ *     捕获组/map/extract 产物 applyPatch 落 world; **只观察, 不改行流**
+ *     (不折叠、不消费、不推水位, W10.3)。
  *   lane: 'event' (T1 渲染, 缺省) — 事件/决策类文本。进 agent, 由 mud-t1 本地
  *     模拟适配器在 agent loop 内匹配, 命中渲染 action (output 文本 + tool-call 执行)。
  *
@@ -44,7 +44,7 @@
  *             - output: 渲染文本 (event = 渲染给 agent 的文本)
  *             - tool:   可选工具调用 (name + args), 由 loop 官方工具管道执行
  *             state 规则的 action 为预留的联动接口 (当前 state 桶无消费方,
- *             仅占位; 折叠入库走 hit.data → applyPatch)。
+ *             仅占位; 落库走 hit.data → applyPatch)。
  * @module @deepseek-ai/dsh-mud-core/perceive/rules
  */
 
@@ -67,9 +67,9 @@ function isNpcLine(t: string): boolean {
 /** 上次自动翻页的时间戳 (pager:continue 节流用, 模块级闭包, 跨规则共享)。 */
 let lastPageFlipAt = 0
 
-/** 触发规则表 (state 预匹配折叠 + event T1 渲染双通道, 缺省 event)。 */
+/** 触发规则表 (state 抓取桶 + event T1 渲染双通道, 缺省 event)。 */
 const defaultPerceptionRules: readonly PerceptionRule[] = [
-  // ══ state: 预匹配折叠 (状态/观察 → world) ═══════════════════════════
+  // ══ state: 状态抓取 (状态/观察 → world; 只观察, 不改行流) ═══════════════
   //   捕获组 + map 组装 char.* 点分键; 锚定整行正则 (近似文本, 依真实输出修正)。
   {
     id: 'state:hp',
@@ -100,7 +100,7 @@ const defaultPerceptionRules: readonly PerceptionRule[] = [
     priority: 30,
     // 房间抓取: func 谓词做出口行准入锚点 (无预筛全量跑), 窗口装配批内上下文:
     //   before 16 行 (ASCII 地图 + 房间名 + 描述), after 8 行 (NPC 列表)。
-    // func 类型不折叠 — 出口行/窗口行全部进 agent (结构化提取与 agent 自理解并存)。
+    // func 类型承载复合提取 — 出口行/窗口行照常进行流 (结构化提取与 agent 自理解并存)。
     match: { kind: 'func', test: l => /^这里明显的出口(?:是|有)/.test(l.text) },
     window: { before: 16, after: 8 },
     extract: (record) => {
@@ -227,7 +227,7 @@ const defaultPerceptionRules: readonly PerceptionRule[] = [
     action: {
       output: '正在保存...',
       tool: { name: 'mud_send', args: { cmd: 'save' } },
-      // 无状态、无需返回: 提醒行折叠 (模型不必看到"建议经常 save"), save 由运行时直接发出。
+      // 无状态、无需返回: save 由运行时直接发出; 提醒行照常进行流 (模型也看得到)。
       direct: true,
     },
   },
@@ -237,8 +237,8 @@ const defaultPerceptionRules: readonly PerceptionRule[] = [
   //    翻下一页 (非序列, 防 P2-2 GA 计数失衡); 逐批最多一次; 规则作者不能假设
   //    "帧必以 prompt 行结尾" — 分页 GA 前一行可能无 prompt (抓包实证)。
   //    -- more -- 为通用 MUD 变体 (低风险附带支持)。
-  //    **直接执行**: 翻页是"照做即可"的反射, 提示行折叠 (模型不必逐页读分页提示),
-  //    空格由运行时立即发出 —— 也让分页不必等一个 T1 回合。
+  //    **直接执行**: 翻页是"照做即可"的反射 —— 空格由运行时立即发出, 不必等一个
+  //    T1 回合; 提示行照常进行流 (模型也看得到当前页脚)。
   {
     id: 'pager:continue',
     eventType: 'p:pager',

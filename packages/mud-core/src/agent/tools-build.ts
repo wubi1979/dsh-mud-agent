@@ -232,7 +232,7 @@ function resolveSettleWindow(
       ...(hasCriteria ? { criteria } : {}),
       ...(branch !== undefined ? { branch } : {}),
       ...(captureRes !== undefined ? { captures: captureRes } : {}),
-      ...(onSettle === 'fail' ? { onSettle } : {}),
+      onSettle,
       timeoutMs: SETTLE_FALLBACK_MS,
     }
   }
@@ -251,6 +251,10 @@ function resolveSettleWindow(
   if (settle.mode !== 'stream') {
     return { error: '工具拒绝: settle.mode 只能是 "inline"/"stream"' }
   }
+  // ⚠️ 层间不互斥（2026-09-21 二次定案，**撤销同日"settle.on 与 classify 互斥"口径**）：
+  // `settle` 只回答"窗口何时关闭"（收口触发：on 条件 / fallback），`classify` 只回答
+  // "内容指向哪个 next"（判据，由 flow 持有）—— 两层正交，可共存。
+  // 唯一约束是**层内唯一类型**：`settle.on` 是单 kind（结构已保证），`classify` 只收正则。
   // ③ stream: on 条件 → 提前关窗 (ga 的 count / regex 的 pattern)。
   let gaCount: number | undefined
   const criteria: WindowCriteria = {}
@@ -298,7 +302,7 @@ function resolveSettleWindow(
     ...(gaCount !== undefined ? { gaCount } : {}),
     ...(branch !== undefined ? { branch } : {}),
     ...(captureRes !== undefined ? { captures: captureRes } : {}),
-    ...(onSettle === 'fail' ? { onSettle } : {}),
+    onSettle,
     timeoutMs,
   }
 }
@@ -401,8 +405,6 @@ export function mudToolSchemaTable(): readonly MudToolSchema[] {
  * @param opts.humanWindow 人工等待诊断通道 (mud_captcha 挂起段 begin/end 包裹;
  *   进在途窗口表 diag 的人工等待条目, 仅诊断不参与 gate)。
  * @param opts.log  (text) => void 活动日志 (WebUI 决策通道)。
- * @param opts.recall (n) => string[] 最近 n 行游戏输出**历史查询** (mud_recall/mud_state;
- *   W10.2 R2: 无水位过滤, 已投递/已消费的行同样可查)。
  * @param opts.flowControl 触发器组开关/状态 (mud_flow_*; M4 落地前缺省不可用)。
  * @param opts.onWorldChange 世界模型被工具改写后的回调 (装配方据此重评估看门狗)。
  */
@@ -411,7 +413,6 @@ export function buildMudTools({
   registerWindow,
   humanWindow,
   log = () => {},
-  recall = () => [],
   flowControl,
   world,
   resolveCredentials,
@@ -428,7 +429,6 @@ export function buildMudTools({
   /** 人工等待诊断 (mud_captcha 挂起段 begin/end 包裹; 缺省不记)。 */
   humanWindow?: { begin(label: string): void; end(): void }
   log?: (text: string) => void
-  recall?: (count: number) => string[]
   flowControl?: {
     enable: (groupId: string) => boolean
     disable: (groupId: string) => boolean
@@ -472,7 +472,8 @@ export function buildMudTools({
   )
   /**
    * 发命令类工具的统一窗口路径 (§2.4 T1/T2 同形): 注册窗口 → await 结算 → 结果透传。
-   * WindowResult 已含全部结算语义映射 (timeout = ABANDON_TEXT 放弃文案), 工具层直取。
+   * WindowResult 已含全部结算语义映射 (timeout **带回已累积内容**, PLAN §D4 定案 A),
+   * 工具层直取。
    */
   const viaWindow = async (spec: WindowRequest): Promise<MudToolResult> => {
     const r = await registerWindow!(spec)
@@ -733,30 +734,6 @@ export function buildMudTools({
       },
     },
 
-    /** 回看: 最近 n 行游戏输出历史 (含命令回显; W10.2 R2 — 已投递/已消费行同样可查)。 */
-    mud_recall: {
-      name: 'mud_recall',
-      description: '读取最近 count 行游戏输出历史 (含命令回显; 已投递/已消费的行同样可查——历史查询, 要回顾刚刚错过的内容时用)。不发送任何命令。',
-      parameters: {
-        count: {
-          type: 'integer',
-          description: '最多读取多少行历史输出 (1-200, 缺省 20)',
-        },
-      },
-      output: { schema: OUT_SCHEMA, render: OUT_RENDER },
-      execute: (args, _opts) => {
-        const raw = Number(args.count ?? 20)
-        const count = Number.isFinite(raw) ? Math.max(1, Math.min(200, Math.floor(raw))) : 20
-        const lines = recall(count)
-        log(`[工具] mud_recall → 最近 ${lines.length} 行`)
-        // 空结果显式反馈 (静默空串会让 agent 误判工具异常/反复重试)。
-        if (lines.length === 0) {
-          return { ok: true, note: '（暂无可查询的历史输出）', cmd: '' }
-        }
-        return { ok: true, note: lines.map(l => l.replace(/\x1b\[[0-9;]*m/g, '')).join('\n'), cmd: '' }
-      },
-    },
-
     /**
      * mud_captcha: **ask-human 工具** —— 解析 fullme 验证码页面、推前台弹窗并**回合内
      * 挂起等人工提交**（系统流程工具，不发游戏命令）。
@@ -816,26 +793,19 @@ export function buildMudTools({
 
     /**
      * mud_state: **零发送**信息通路 (只读档的唯一信息源, §10)。
-     * 读世界模型快照 + 最近输出 + 连接状态; 不碰 socket (`mud_look`/`mud_status`
-     * 本身都发命令, 只读档不能用)。
+     * 只读世界模型快照 + 连接状态; 不碰 socket (`mud_look`/`mud_status` 本身都发命令,
+     * 只读档不能用)。
+     *
+     * **不含"最近输出"** (2026-09-21 定案): T2 的上下文就是会话历史本身, 本插件不提供
+     * 任何拉取通路 —— 原 `lines` 参数 (历史输出查询) 随 `mud_recall` 一并删除。
      */
     mud_state: {
       name: 'mud_state',
-      description: '读取当前会话的已知状态: 世界模型快照 (房间/出口/气血/内力/标志位) + 最近的游戏输出历史 (含已投递/已消费行)。不发送任何命令 (只读通路)。',
-      parameters: {
-        lines: {
-          type: 'integer',
-          description: '附带读取的历史输出行数 (0-100, 缺省 20; 0 = 只看世界模型)',
-        },
-      },
+      description: '读取当前会话的已知状态: 世界模型快照 (房间/出口/气血/内力/标志位) + 连接状态。不发送任何命令; 不返回游戏输出历史 (近期输出已在你的会话上下文里) (只读通路)。',
+      parameters: {},
       output: { schema: OUT_SCHEMA, render: OUT_RENDER },
-      execute: (args, _opts) => {
-        const raw = Number(args.lines ?? 20)
-        const lines = Number.isFinite(raw) ? Math.max(0, Math.min(100, Math.floor(raw))) : 20
+      execute: (_args, _opts) => {
         const snapshot = world ? worldSnapshot(world) : null
-        const recent = lines > 0
-          ? recall(lines).map(l => l.replace(/\x1b\[[0-9;]*m/g, ''))
-          : []
         const parts: string[] = [
           `连接: ${isConnected === undefined ? '未知' : (isConnected() ? '已连接' : '未连接')}`,
         ]
@@ -844,9 +814,7 @@ export function buildMudTools({
         } else {
           parts.push(`世界模型: ${JSON.stringify(snapshot)}`)
         }
-        if (recent.length > 0) parts.push(`最近 ${recent.length} 行输出:\n${recent.join('\n')}`)
-        else if (lines > 0) parts.push('（缓冲暂无游戏输出）')
-        log(`[工具] mud_state → 快照${recent.length > 0 ? ` + ${recent.length} 行` : ''}`)
+        log('[工具] mud_state → 快照')
         return { ok: true, note: parts.join('\n'), cmd: '' }
       },
     },

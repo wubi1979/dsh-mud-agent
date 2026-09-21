@@ -98,8 +98,8 @@ export type MatchSpec =
 
 /** 命中窗口声明 (单行规则; multiline 状态机的行序列本身就是窗口, 不支持)。
  *  单行命中时装配锚点行前后的**批内**上下文供 extract 复合提取 (房间抓取等):
- *  before/after 均为批内尽力 (跨批不追, 丢弃); 折叠移除只针对锚点行,
- *  窗口行照常进 agent (结构化提取与 agent 自理解两份信息并存)。 */
+ *  before/after 均为批内尽力 (跨批不追, 丢弃); 窗口只服务于**提取**, 不改变行流 ——
+ *  锚点行与窗口行一律照常进行流 (W10.3: 无折叠、无隐藏行)。 */
 export interface WindowSpec {
   /** 锚点行之前最多回看的行数 (本批内)。 */
   before: number
@@ -169,12 +169,6 @@ export interface MatchHit<TAction = unknown> {
   eventType: string
   /** 锚点行 (单行 = 命中行; multiline = 完成行)。排序/留痕用。 */
   lineNumber: number
-  /** 需折叠移除的行 (abs)。v6.6 折叠语义:
-   *  - multiline: 全部被捕获的条件行 (行序列即窗口, 整段折叠);
-   *  - 单行 regex/text: 仅锚点行 (声明 window 的窗口行不折叠, 照常进 agent);
-   *  - 单行 func: 不折叠 (空数组) — 房间抓取类复合提取, 全部行进 agent。
-   *  装配方按此集过滤, 未声明的命中 (event 桶) 不使用。 */
-  foldLines: number[]
   data: Record<string, unknown> | null
   reason?: string
   /** 命中规则携带的动作 (泛占位; 无 action 时缺省)。 */
@@ -204,14 +198,15 @@ export interface ActionSpec {
   /**
    * **直接执行** (无状态、无需返回的触发): 命中由运行时**自己执行动作**, 不投递给 agent。
    *
-   * 语义 = "类似 state 桶": 命中行**折叠**(不进 agent), 动作的工具调用由运行时立即执行
-   * (`mud_send` 入队即走, **不等应答**; `world_patch` 直接落库), 归属 actor `system`
-   * —— 不受权限档位可见性约束 (它不是模型的动作), 但危险命令硬边界照旧
-   * (`ask` 无审批通道 = 拒绝)。
+   * 语义 = 触发器层的**纯反射**: 动作的工具调用由运行时立即执行 (`mud_send` 入队即走,
+   * **不等应答**; `world_patch` 直接落库), 归属 actor `system` —— 不受权限档位可见性
+   * 约束 (它不是模型的动作), 但危险命令硬边界照旧 (`ask` 无审批通道 = 拒绝)。
+   *
+   * **不改变行流**(W10.3): 命中行与应答行照常作为普通行进行流 (→ T2 批次) —— 不折叠、
+   * 不消费、不推水位、不开在途窗口; 直发只是"顺带把命令发出去", 不向行流记账。
    *
    * 适用: `save` 提醒 → 发 `save`; 分页提示 → 发翻页命令 —— 都是"照做即可"的反射,
-   * 让它们绕开 agent 既省一个 T1 回合, 也避免"帧内命中等不到回合而被丢掉"
-   * (`doc/ARCHITECTURE.md` §7/§18.12)。不适用: 需要模型判断的动作 (登录分支、fullme 答案)。
+   * 让它们绕开 agent 省一个 T1 回合。不适用: 需要模型判断的动作 (登录分支、fullme 答案)。
    */
   direct?: boolean
   /**
@@ -230,9 +225,11 @@ export interface ActionSpec {
   interrupts?: number
 }
 
-/** 规则通道 (v6.1): 预匹配折叠与 agent 内 T1 渲染的分流属性。
- *  - 'state'  状态/观察类: 预处理层预匹配 → 命中行折叠入库 (extract 产物 applyPatch),
- *             不进 agent、不进 T1。action 承担「占位描述」角色, tool.args 可省略。
+/** 规则通道 (v6.1): 状态抓取与 agent 内 T1 渲染的分流属性。
+ *  - 'state'  状态/观察类: 预处理层预匹配 → **抽取产物同步 world** (applyPatch),
+ *             不进 agent、不进 T1。**独立桶**: 不折叠内容、不消费行、不推水位
+ *             (W10.3) —— 命中行照常作为普通行进行流。action 承担「占位描述」角色,
+ *             tool.args 可省略。
  *  - 'event'  事件/决策类 (缺省): 进 agent, 由级联 provider T1 渲染 action。 */
 export type TriggerLane = 'state' | 'event'
 
@@ -245,7 +242,7 @@ export const CONTROL_PREFIX = '[系统] '
  * 感知规则 (配置来源, perceive/rules.ts)。策略面: 机制层 `MatcherRule` 的超集。
  */
 export type PerceptionRule = MatcherRule<ActionSpec> & {
-  /** 规则通道 (v6.1): 'state' = 预处理层预匹配折叠入库; 'event' = agent 内 T1 渲染 (缺省)。 */
+  /** 规则通道 (v6.1): 'state' = 预处理层状态抓取入库 (独立桶, 不折叠不消费); 'event' = agent 内 T1 渲染 (缺省)。 */
   lane?: TriggerLane
   /**
    * 投递原子性 (仅对 `multiline` 有意义): 该规则捕获**未完成**时暂缓本窗口投递,

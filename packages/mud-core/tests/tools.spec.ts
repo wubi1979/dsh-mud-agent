@@ -118,15 +118,9 @@ describe('mud_send 兜底', () => {
     expect((await bare.mud_send!.execute({ cmd: '{pass}' })).ok).toBe(true)
     expect(sent.at(-1)).toBe('{pass}')
   })
-  it('mud_recall: 取最近 count 行; 空缓冲显式反馈 (不静默空串)', () => {
-    const buffer = ['房间描述', '这里明显的出口是 north。', '> ']
-    const tools = buildMudTools({ recall: (n) => buffer.slice(-n) })
-    expect(tools.mud_recall!.execute({ count: 2 }).note)
-      .toBe('这里明显的出口是 north。\n> ')
-    const empty = buildMudTools() // 缺省 recall = () => []
-    const r = empty.mud_recall!.execute({})
-    expect(r.ok).toBe(true)
-    expect(r.note).toContain('没有尚未投递的游戏输出')
+  it('mud_recall 已删除 (2026-09-21 定案): T2 上下文 = 会话历史, 不提供 pull 通路', () => {
+    const tools = buildMudTools()
+    expect(tools.mud_recall).toBeUndefined()
   })
 })
 
@@ -328,7 +322,7 @@ describe('在途窗口装配 (registerWindow; W7.2 取代命令-应答桥)', () 
     // 无 opts → 不传信号 (窗口按自己的超时/关窗结算)。
     await tools.mud_send!.execute({ cmd: 'look' })
     // 非 send 工具只读本地状态, 不注册窗口。
-    expect(tools.mud_recall!.execute({ count: 1 }, { signal: controller.signal })).toMatchObject({ cmd: '' })
+    expect(tools.mud_state!.execute({}, { signal: controller.signal })).toMatchObject({ cmd: '' })
 
     expect(signals).toHaveLength(5)
     expect(signals.slice(0, 4).every(s => s === controller.signal)).toBe(true)
@@ -388,29 +382,29 @@ describe('危险命令策略表 (取代静态黑名单)', () => {
 })
 
 describe('mud_state 零发送通路 (只读档信息源)', () => {
-  it('读世界快照 + 最近输出, 不发任何命令 (未连接也可用)', () => {
+  it('只读世界快照 + 连接状态, 不含输出历史, 不发任何命令 (未连接也可用)', () => {
     const sent: string[] = []
     const tools = buildMudTools({
       send: c => sent.push(c),
-      recall: () => ['北大街 - 北大侠客行', '这里明显的出口是 south。'],
       world: createWorld(),
       isConnected: () => false,
     })
-    const r = tools.mud_state!.execute({ lines: 2 })
+    const r = tools.mud_state!.execute({})
     expect(r.ok).toBe(true)
     expect(r.cmd).toBe('')
     expect(r.note).toContain('连接: 未连接')
     expect(r.note).toContain('世界模型:')
-    expect(r.note).toContain('这里明显的出口是 south。')
+    // 2026-09-21 定案: 不返回游戏输出历史 (T2 上下文 = 会话历史, 无 pull 通路)。
+    expect(r.note).not.toContain('最近')
+    expect(r.note).not.toContain('这里明显的出口是 south。')
     expect(sent).toEqual([])
   })
 
-  it('lines=0 只读世界模型; 无 world 装配时显式说明', () => {
-    const tools = buildMudTools({ recall: () => ['x'] })
-    const r = tools.mud_state!.execute({ lines: 0 })
+  it('无 world 装配时显式说明', () => {
+    const tools = buildMudTools()
+    const r = tools.mud_state!.execute({})
     expect(r.ok).toBe(true)
     expect(r.note).toContain('世界模型: 未装配')
-    expect(r.note).not.toContain('x')
   })
 })
 

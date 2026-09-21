@@ -203,6 +203,12 @@ export class FlowRuntime {
       this.debug('工具结果 interrupted（流程已复位, 忽略）')
       return hits
     }
+    if (settled === 'flow') {
+      // 窗口由流程判据命中收口（PLAN §D3 单一收口路径形态 A）：本步判定与推进已由
+      // arming 路径在命中当场完成，本结果**不携带判定**，不得二次判定（防双推进）。
+      this.debug('窗口由流程判据收口（settled=flow, 不作判据）')
+      return hits
+    }
     if (settled === 'ga' || settled === 'eor') {
       const ga = this.gaCriteriaOf(this.active.step)
       if (ga === null) {
@@ -299,8 +305,13 @@ export class FlowRuntime {
     const step = this.active.step
     const gaFail = (step.fail ?? []).some(match => match.kind === 'ga')
     const gaOk = (step.ok ?? []).some(match => match.kind === 'ga')
+    // **声明才计 GA**（PLAN §D3，2026-09-21）：显式 `boundary` 优先；否则**本步声明了 GA
+    // 判据**（ok/fail 含 `kind:'ga'`）时，GA 计数即"每命令至少 1 个 GA"（= 本步命令条数）。
+    // 未声明 GA 判据的步 ⇒ 不给 `gaCount` ⇒ GA 到达**不关窗**（收口只由判据命中 /
+    // fallback 到期承担）—— 这正是"收口条件不完全等于判据"的另一半。
+    const gaCount = step.boundary ?? ((gaOk || gaFail) ? expected.length : undefined)
     return {
-      ...(step.boundary !== undefined ? { gaCount: step.boundary } : {}),
+      ...(gaCount !== undefined ? { gaCount } : {}),
       ...(gaFail ? { gaOutcome: 'fail' as const } : gaOk ? { gaOutcome: 'ok' as const } : {}),
       ...(step.timeoutMs !== undefined ? { timeoutMs: step.timeoutMs } : {}),
     }
@@ -503,6 +514,10 @@ export class FlowRuntime {
 
   /** 应用一次判据命中（失败 / 条件分支 / 重试 / 成功）。 */
   private applyMatch(armed: ArmedMatch, line: MudLine, framed: boolean, hits: FlowActionHit[]): void {
+    // 本步判据命中 ⇒ 通知运行时收口在途窗口（PLAN §D3 单一收口路径形态 A：判据 / GA /
+    // fallback 三触发同一条收口路径）。判定与推进仍在本方完成（arming 路径），
+    // 收口只负责释放工具调用（`settled='flow'`，引擎侧忽略，见 noteToolResult）。
+    this.opts.onStepJudged?.()
     if (armed.role === 'fail') {
       // 声明了 `retry.on: ['fail']` 的步骤：答错**重来**而不是收场（§19.2）。
       if (this.tryRetry('fail', line, framed, hits)) return

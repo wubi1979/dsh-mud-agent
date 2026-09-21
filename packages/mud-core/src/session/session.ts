@@ -234,6 +234,10 @@ export class MudSessionRuntime {
       // 构造期 flow.armEntries() 即触发, 此时裁决器尚未建立 → 可选链吞掉, 由
       // 裁决器 register() 末尾的 syncArming() 全量重放补上 (W7.3 唯一注册入口)。
       onArmSync: (markers) => { this.adjudicator?.syncFlowMarkers(markers) },
+      // §D3「单一收口路径」形态 A: 本步判据命中 → 收口在途窗口（判据由 flow 持有并评估，
+      // 命中即释放工具调用 —— 使判据 / GA / fallback 三触发走同一条收口路径）。
+      // 判定与推进仍由 flow 的 arming 路径完成；工具结果带 `settled='flow'`，引擎侧忽略。
+      onStepJudged: () => { this.windows?.closeForFlow() },
       // 流程实例状态变化 → 重评估看门狗（dead-air 的启动条件含"无活跃流程"；§11），
       // 并兜住"流程自己结束了但人工环节还挂着"（人工预算超时 / 打断 / 断线都会走这里）。
       onTransition: () => {
@@ -326,13 +330,13 @@ export class MudSessionRuntime {
   }
 
   /**
-   * 最近 n 行游戏输出的**历史查询** (mud_recall / mud_state 数据源; W10.2 R2)。
+   * 最近 n 行游戏输出缓冲 —— **诊断通路**（2026-09-21 定案）。
    *
-   * 交付水位已废除 —— recall 改为无过滤的历史查询: 已投递/已消费的行同样可查,
-   * 按 `RECALL_HISTORY_ROWS` (2000) 上限保留最近行。模型要回顾更早的内容时不必再
-   * 依赖会话历史里有没有 —— 工具结果里被截断或已被后续行冲掉的文本也能翻回来。
+   * 不再是模型工具面：`mud_recall` 已删除、`mud_state` 去 `lines` 参数 —— T2 的上下文
+   * 就是会话历史本身，本插件不提供任何"拉取"通路（不查 pending、不查缓存帧）。
+   * 保留本方法与 `adjudicator.recall()` 仅供 `/mud/diag` 与日志排障使用。
    * @param count 最多返回行数 (取最新的 count 行)。
-   * @returns 历史行纯文本 (可能为空)。
+   * @returns 缓冲行纯文本 (可能为空)。
    */
   recall(count: number): string[] {
     return this.adjudicator.recall(count)
@@ -378,7 +382,6 @@ export class MudSessionRuntime {
         end: () => { this.windows.endHuman() },
       },
       log: (t) => this.log(t),
-      recall: (count) => this.recall(count),
       world: this.world,
       resolveCredentials: () => this.conn.credentials ?? undefined,
       // 未连接时工具快速拒绝 (不注册窗口): agent 提前被唤醒也不会把命令塞进队列
@@ -790,7 +793,7 @@ export class MudSessionRuntime {
 
   /**
    * L1+L2 入口 (v0.9 W7.1 重组): telnet 'parsed' 粒度的入站行**只进行流裁决器** (行流
-   * 缓冲 + 网络装配)。消费链五站 (§8.2: ①状态折叠 → ②规则触发 → ③事务结算 → ④流程判据
+   * 缓冲 + 网络装配)。消费链五站 (§8.2: ①状态抓取 → ②规则触发 → ③事务结算 → ④流程判据
    * → ⑤残余记账/投递) 全部在裁决器的**帧提交点**单遍执行 —— 裁决器是唯一的边界裁决者,
    * 静默/超时不是边界 (§8.7 删除), 本方法不再有任何判定/投递逻辑。
    */
@@ -873,7 +876,7 @@ export class MudSessionRuntime {
   /**
    * 世界模型变化后的**唯一入口** (幂等): 看门狗起停 + 登录流程收尾。
    *
-   * 所有写世界的路径都调它: 连接建立/关闭、GMCP、感知 state 折叠、`world_patch` 工具
+   * 所有写世界的路径都调它: 连接建立/关闭、GMCP、感知状态抓取、`world_patch` 工具
    * (`buildMudTools.onWorldChange`)、`onAgentReady`。集中一处是为了不再"哪里漏了就补
    * 一次布防" —— 实测连踩两次 (登录完成不布防断流 / 断线后仍空转)。
    */

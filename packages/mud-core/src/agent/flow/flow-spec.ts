@@ -350,6 +350,8 @@ export function validateFlows(flows: readonly FlowSpec[]): string[] {
               const compiled = tryCompileRegex(on.pattern)
               if (compiled.ok === false) errors.push(`${where}: settle.on regex 编译失败 (${compiled.error})`)
             }
+            // 层间不互斥（2026-09-21 二次定案）：收口触发（settle.on）与判据（classify）
+            // 是两层正交概念，可共存；唯一约束是层内唯一类型（settle.on 单 kind 已结构保证）。
           }
           if (settle.fallback !== undefined && (!Number.isFinite(settle.fallback.ms) || settle.fallback.ms <= 0)) {
             errors.push(`${where}: settle.fallback.ms 必须是正数`)

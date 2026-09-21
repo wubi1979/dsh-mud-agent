@@ -366,15 +366,15 @@ describe('登录流程端到端 (流程表 → T1 动作 → 桥挂起 → 判�
     expect(h.sent).toContain('tester')
 
     // 只有 GA（命令被接受），**没有任何后续提示行**（服务器异常）：
-    // name 不写 `ok` ⇒ GA 不结算本步（"本步未声明 GA 判据"），流程继续等提示行。
+    // name **不声明 GA 判据** ⇒ **GA 到达不关窗**（"声明才计 GA", PLAN §D3）——
+    // 窗口挂起等判据命中或 fallback 兜底，工具调用不返回。
     h.sink().onBoundary('ga')
-    await first.pending
-    vi.advanceTimersByTime(1)
+    await vi.advanceTimersByTimeAsync(1)
     expect(h.runtime.diag().flow).toMatchObject({ flowId: 'login', stepId: 'name', phase: 'awaiting-result' })
-    expect(h.logs.join('\n')).toContain('本步未声明 GA 判据')
 
-    // 本步计时器（30s）到点 → 流程超时失败收束（I4: 没有"静默等下去"）。
-    vi.advanceTimersByTime(30_000)
+    // 本步兜底（30s）到期 → 窗口以 timeout 收口（三触发之③）→ 流程超时失败收束（I4）。
+    await vi.advanceTimersByTimeAsync(30_000)
+    await first.pending
     expect(h.runtime.diag().flow).toBeNull()
     expect(h.logs.join('\n')).toContain('本步超时 (30000ms)')
     expect(h.logs.join('\n')).toContain('[流程] login/name 失败')

@@ -29,7 +29,7 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 export type LogChannel =
   | 'runtime'   // 系统/连接/生命周期/执行队列
   | 'network'   // telnet 网络层 (协商/断线/字节)
-  | 'perception' // 感知: 文本块/折叠/命中/投递路由
+  | 'perception' // 感知: 文本块/状态抓取/命中/投递路由
   | 'send'      // 命令发送/回显 (已掩码)
   | 'decision'  // 决策事件 (规则命中/agent 动作/投递选路)
 

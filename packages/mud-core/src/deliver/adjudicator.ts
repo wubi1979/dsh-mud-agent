@@ -9,7 +9,7 @@
  *   行流 (telnet 'parsed' 行)  ─┐
  *   元事件 (GA/EOR 边界)       ─┴→ 行流缓冲半区 (开放帧累积 + 武装标记 + 内存阀/装配阀)
  *        → 帧提交 (commit) → 五站链 (站序严格不变 — 禁止重排):
- *            ① state 折叠 → state 落库
+ *            ① 状态抓取   → state 落库 (只同步 world, 不改行流)
  *            ② event 规则 → direct-exec 直发 / park 待人工 / admit 打断准入
  *            ③ 在途结算   → 在途窗口表 (帧并集 + GA/EOR 关窗 + win- 判据标记路由)
  *            ④ 流程判据   → 唤醒/打断/排队
@@ -21,7 +21,8 @@
  * —— GA/EOR 关窗结算会翻转 `windows.hasOpen()` 并清 live (spanFloor 变 +Infinity);
  * 站④⑤使用③前取样值。
  *
- * 不变量: I5 每行恰被认领一次 (折叠/直发/抓取/投递); I6 一个结算点 ≤ 一条投递消息
+ * 不变量: I5 每行恰被认领一次 (命中行 / span / T2 批次 / 带原文投递; W10.3 起无折叠
+ * 类目 —— 状态抓取与 direct 直发都不改行流); I6 一个结算点 ≤ 一条投递消息
  * (standalone 先于批次); I7 多行状态机 (engine 求值器); I8 计时器全归本类 (settle
  * 重试 / hold 兜底 / 帧装配阀)。
  *
@@ -292,7 +293,7 @@ function testRe(re: RegExp, text: string): boolean {
  * 一次** (打断标记 + flow arming + 引擎重建), 替换旧实现的散点补刀。
  */
 export interface AdjudicatorRegistration {
-  /** ① state 桶 (命中折叠进 world, 不进 agent)。 */
+  /** ① state 抓取桶 (抽取产物同步 world; 独立桶: 不改行流、不进 agent)。 */
   stateRules: readonly PerceptionRule[]
   /** ② event 桶 (含 direct:true 直发 / interrupts 打断档位 / awaitExternal 人工挂起)。 */
   eventRules: readonly PerceptionRule[]
@@ -316,7 +317,7 @@ export interface AdjudicatorDeps {
   channel: DeliveryChannel
   /** 命令队列 (direct 直发 / 打断 onInterrupt)。 */
   queue: CommandQueue
-  /** 感知状态服务 (站① state 折叠落库)。 */
+  /** 感知状态服务 (站① 状态抓取落库)。 */
   state: StateService
   /** 会话工具集 (direct-exec 执行体; 惰性取, 壳持缓存)。 */
   tools: () => MudTools
@@ -505,16 +506,17 @@ export class SessionAdjudicator {
     // span 过滤水位 (W10.2 单一水位线): live armed 窗口的 span 起点 (无 = +Infinity)。
     // 必须在 ③ 之前取样 —— 结算会清 live; abs ≤ 水位的行 = 命令发出前已在缓冲的前置噪声。
     const spanFloor = this.deps.windows.spanFloor()
-    // ① 状态折叠 → world 落库。
+    // ① 状态抓取 → world 落库 (独立桶: 只观察, **不改行流** —— 命中行照常进 ⑤ 的
+    //    待决/批次; W10.3 起无折叠集)。
     const result = lines.length > 0 ? this.engine.feed(lines) : null
     if (result !== null) {
       for (const hit of result.stateHits) {
         if (hit.data) this.deps.state.patch(hit.data, 'percept')
       }
-      // 本帧折叠可能翻转 `logged_in` (state 规则) → 重评估看门狗起停 (见 watchdogs.ts)。
+      // 本帧抓取可能翻转 `logged_in` (state 规则) → 重评估看门狗起停 (见 watchdogs.ts)。
       if (result.stateHits.length > 0) this.deps.onWorldChange()
     }
-    // ② 规则触发 → 动作/direct-exec: 直接执行类先跑 (命中行已折叠, 不进投递);
+    // ② 规则触发 → 动作/direct-exec: 直接执行类先跑 (纯反射, 命中行照常进行流);
     //    其余命中 park (待人工) / admit (打断准入, I14/§19.4)。
     if (result !== null && result.directHits.length > 0) this.runDirectHits(result.directHits)
     const parkedRuleHits = result !== null ? this.parkExternalHits(result.hits) : []
@@ -532,12 +534,10 @@ export class SessionAdjudicator {
     if (flowHits.length > 0) this.queueFlowActions(flowHits)
     // 结算 (onSettle) / 判据命中可能让流程到达终态 → 排队的动作此时出队投递。
     this.drainFlowQueue()
-    // ⑤ 残余记账 → 投递视图 (批次/recall): 只记**可能投递给模型**的行 —— 折叠行
-    //    (state 入库 / 直接执行) 已被处理过, `mud_recall` 不再倒出模型本看不到的原文
-    //    (R2: recall 已改历史查询, 已投递/已消费行同样保留在缓冲里可查)。
+    // ⑤ 残余记账 → 投递视图 (批次/recall): 记**全部**到达的行 (W10.3 起无折叠行,
+    //    无隐藏行); W10.2 起 recall 缓冲仅作诊断通路 (`/mud/diag`), 不再有工具消费它。
     if (result !== null) {
       for (const line of lines) {
-        if (result.foldedAbs.has(line.abs)) continue
         this.recallLines.push({ text: line.text, abs: line.abs })
       }
       if (this.recallLines.length > RECALL_HISTORY_ROWS) {
@@ -556,7 +556,6 @@ export class SessionAdjudicator {
       }
       for (const line of lines) {
         if (line.abs > spanFloor) continue
-        if (result !== null && result.foldedAbs.has(line.abs)) continue
         this.pending.push(line)
       }
     } else {
@@ -564,13 +563,11 @@ export class SessionAdjudicator {
       const requests = readyRuleHits.map(hit => actionOf(hit.ruleId, hit.action))
       if (requests.length > 0) this.pendingActions.push(...requests)
       if (result !== null && result.consumeTo > this.consumeTo) this.consumeTo = result.consumeTo
-      for (const line of lines) {
-        if (result !== null && !result.foldedAbs.has(line.abs)) this.pending.push(line)
-      }
+      for (const line of lines) this.pending.push(line)
     }
     this.deps.debug('perception',
       `[感知] 帧消费 ${lines.length} 行 (${frame.marker}${frame.markerId !== undefined ? `:${frame.markerId}` : ''}, ` +
-      `${inFrame ? '帧内' : '无主'}, 折叠 ${result?.foldedAbs.size ?? 0}, 规则命中 ${readyRuleHits.length}, ` +
+      `${inFrame ? '帧内' : '无主'}, 规则命中 ${readyRuleHits.length}, ` +
       `流程动作 ${flowHits.length}, 待决 ${this.pending.length})`)
     // hold 门 (holdDelivery 投递原子性): GA/EOR 是权威边界, 无条件结算 (沿用旧 onBoundary
     // 语义); armed/valve 帧尊重捕获 hold —— 半截捕获留待决, 等捕获完成 (后续帧合并投出)
@@ -589,10 +586,13 @@ export class SessionAdjudicator {
   /**
    * 执行本块的直接执行类命中 (`ActionSpec.direct`, 见 `doc/ARCHITECTURE.md` §7)。
    *
-   * 语义 = "类似 state 桶": 命中行已折叠 (不进 agent), 动作由**运行时自己执行** ——
-   * `mud_send` 入队即走 (不等应答, 否则回复文本会变成无主的帧内容), `world_patch` 直接
-   * 落库。归属 actor `system`: 不是模型的动作, 因此**不受档位可见性约束**; 危险命令硬边界
-   * 照旧生效 (`ask` 没有审批通道 → 等同拒绝, §10)。
+   * 语义 = 触发器层的**纯反射**: 动作由**运行时自己执行** —— `mud_send` 入队即走
+   * (不等应答, 否则回复文本会变成无主的帧内容), `world_patch` 直接落库。归属 actor
+   * `system`: 不是模型的动作, 因此**不受档位可见性约束**; 危险命令硬边界照旧生效
+   * (`ask` 没有审批通道 → 等同拒绝, §10)。
+   *
+   * **不改行流** (W10.3): 命中行照常走站⑤ 待决/批次, 与应答行一起进入 T2 批次 ——
+   * 直发只是"顺带把命令发出去", 不消费行、不推水位、不开在途窗口。
    *
    * 人工环节 (等验证码) 期间不执行: 那段时间会话整体暂停 (§11)。
    */
@@ -788,10 +788,11 @@ export class SessionAdjudicator {
   // ── 站⑤: 投递记账与节拍 ───────────────────────────────
 
   /**
-   * **历史查询** (mud_recall / mud_state 数据源, W10.2 R2 改写): 最近 n 行游戏输出。
+   * **诊断通路**（2026-09-21 定案；原 `mud_recall` / `mud_state(lines)` 已删除）：
+   * 最近 n 行游戏输出，仅供 `/mud/diag` 与日志排障，**不进模型工具面**。
    * 交付水位已废除 (单一水位线 = 行流缓冲半区的 absWatermark), 已投递/已消费的行
    * 同样保留在缓冲里可查 —— 模型要回顾最近上下文时直接查, 不必翻会话历史; 缓冲按
-   * `RECALL_HISTORY_ROWS` 上限驱逐最旧行 (折叠行不入缓冲, 见站⑤)。
+   * `RECALL_HISTORY_ROWS` 上限驱逐最旧行 (W10.3 起**全部**到达行入缓冲, 无折叠行)。
    */
   recall(count: number): string[] {
     return this.recallLines.slice(-count).map(e => e.text)

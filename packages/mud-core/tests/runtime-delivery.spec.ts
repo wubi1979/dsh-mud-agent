@@ -6,7 +6,14 @@
  *      交付水位, 已经随 T1 反射消息 / T2 批次 / 工具应答帧进过 session 的行被重复给出;
  *   2. 帧首机制把"在途请求期间到达的行"同时留在本帧与下一帧 —— `look` 的应答里混进
  *      上一次 look / MXP 检测的旧行。
- * 这里把两条不变量固定在 runtime 层: 行只交付一次; 回看只给未交付的行。
+ * 这里把不变量固定在 runtime 层: 行只交付一次。
+ *
+ * W10.2 R2 (2026-09): 交付水位废除, `mud_recall` 改**历史查询** (PLAN 3.7) —
+ * 已投递/已消费的行同样可查 (2000 行上限), 重连时回看缓冲随连接作废。
+ * 下面的用例按 R2 语义书写 (旧"回看只给未交付行"用例已随交付水位一起废除)。
+ *
+ * W10.3 (2026-09): 折叠机制整体删除 —— 状态抓取与 `direct` 反射都**不改行流**。
+ * 末节固定行流守恒 (A9): 投递拼接 == 完整入站行流, 无隐藏行。
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -15,6 +22,7 @@ import { MudSessionRuntime } from '../src/session/session.ts'
 import type { MudRuntimeConfig, MudRuntimeSink } from '../src/session/types.ts'
 import type { MudConnectionManager, MudConnectionSink } from '../src/network/manager.ts'
 import type { MudLine } from '../src/network/ansi.ts'
+import type { PerceptionRule } from '../src/perceive/types.ts'
 
 /** 构造一行 (abs 单调; 与 AnsiStreamParser 的分配一致)。 */
 function ml(text: string, abs: number): MudLine {
@@ -26,6 +34,10 @@ function harness(sessionId: string, options: {
   t2DeliverIntervalMs?: number
   /** 一条带动作的 event 规则（用于验证"T1 动作投递不受 T2 限流影响"）。 */
   rule?: boolean
+  /** 一条 state 抓取规则 (行流守恒用例: 抓取行也必须照常投出)。 */
+  stateRule?: boolean
+  /** 一条 `direct` 反射规则 (行流守恒用例: 反射命中行也必须照常投出)。 */
+  directRule?: boolean
 } = {}): {
   runtime: MudSessionRuntime
   sink: () => MudConnectionSink
@@ -82,15 +94,32 @@ function harness(sessionId: string, options: {
     loginExitCommands: [],
     ...(options.t2DeliverIntervalMs === undefined ? {} : { t2DeliverIntervalMs: options.t2DeliverIntervalMs }),
   }
+  const eventRules: PerceptionRule[] = []
+  if (options.rule === true) {
+    eventRules.push({
+      id: 'test:action',
+      match: { kind: 'text' as const, includes: ['需要动作'] },
+      action: { output: '测试动作', tool: { name: 'mud_send', args: { cmd: 'look' } } },
+    })
+  }
+  if (options.directRule === true) {
+    eventRules.push({
+      id: 'test:direct',
+      match: { kind: 'text' as const, includes: ['请保存档案'] },
+      action: { output: '保存', tool: { name: 'mud_send', args: { cmd: 'save' } }, direct: true },
+    })
+  }
+  const stateRules: PerceptionRule[] = options.stateRule === true
+    ? [{
+      id: 'test:state',
+      lane: 'state',
+      match: { kind: 'regex' as const, patterns: [/^【 气血 】 (?<cur>\d+)\/(?<max>\d+)$/] },
+      map: { cur: 'char.hp', max: 'char.maxhp' },
+    }]
+    : []
   const runtime = new MudSessionRuntime(sessionId, config, sink, connections, {
-    stateRules: [],
-    eventRules: options.rule === true
-      ? [{
-        id: 'test:action',
-        match: { kind: 'text' as const, includes: ['需要动作'] },
-        action: { output: '测试动作', tool: { name: 'mud_send', args: { cmd: 'look' } } },
-      }]
-      : [],
+    stateRules,
+    eventRules,
     holdRuleIds: new Set(),
   })
   return {
@@ -104,13 +133,12 @@ function harness(sessionId: string, options: {
   }
 }
 
-describe('回看水位: 只给尚未交付的行', () => {
+describe('回看历史查询 (W10.2 R2): 已投递/已消费行同样可查', () => {
   beforeEach(() => { vi.useFakeTimers() })
   afterEach(() => { vi.useRealTimers() })
 
-  it('T2 批次交付后, recall 不再重复给出这批行; 新行仍可见', () => {
-    // v0.6.0 S3: 消费链在帧提交点单遍执行 (§8.2 站⑤ 记账/recall); 未交付状态用
-    // T2 限流构造 (帧提交即结算投递, 没有"行到了但不结算"的中间态)。
+  it('T2 批次交付后, recall 仍可查这批行 (交付不影响历史); 新行同进历史', () => {
+    // W10.2 R2: 交付水位废除, recall 改历史查询 (PLAN 3.7) — 已投递行不再被过滤。
     const h = harness('session-recall', { t2DeliverIntervalMs: 5_000 })
     h.runtime.connect()
     h.sink().onConnect()
@@ -120,34 +148,35 @@ describe('回看水位: 只给尚未交付的行', () => {
     expect(h.delivered).toHaveLength(1)
     expect(h.delivered[0]).toContain('欢迎使用北大侠客行')
 
-    // 已交付 → 回看为空 (不再把连接至今的全部输出倒一遍)。
-    expect(h.runtime.recall(60)).toEqual([])
+    // 已投递 → 历史仍可查 (R2: recall 覆盖面较旧交付水位只增不减)。
+    expect(h.runtime.recall(60)).toEqual(['欢迎使用北大侠客行', '这里明显的出口是 south。'])
 
-    // 未交付的新行 → 只回看这些 (帧提交点记账; 交付被 T2 限流压住 → 行留在待决)。
+    // 新行未交付 (T2 限流压住) → 同样进历史。
     h.sink().onLines([ml('你捡起一把长剑。', 2)])
     h.sink().onBoundary('ga')
     expect(h.delivered).toHaveLength(1)
-    expect(h.runtime.recall(60)).toEqual(['你捡起一把长剑。'])
+    expect(h.runtime.recall(60)).toEqual(['欢迎使用北大侠客行', '这里明显的出口是 south。', '你捡起一把长剑。'])
 
-    // 限流窗口过后交付 → 回看再次为空。
+    // 限流窗口过后交付 → 交付只影响投递节奏, 历史不变。
     vi.advanceTimersByTime(5_000)
     expect(h.delivered).toHaveLength(2)
-    expect(h.runtime.recall(60)).toEqual([])
+    expect(h.runtime.recall(60)).toEqual(['欢迎使用北大侠客行', '这里明显的出口是 south。', '你捡起一把长剑。'])
     h.runtime.dispose()
   })
 
-  it('重连后 abs 从 0 重来: 水位与回看缓冲一起复位 (否则永远为空)', () => {
+  it('重连复位: 回看缓冲随连接作废 (旧连接历史不可查, 新连接行重新积累)', () => {
     const h = harness('session-recall-reconnect', { t2DeliverIntervalMs: 5_000 })
     h.runtime.connect()
     h.sink().onConnect()
     h.sink().onLines([ml('第一连接的行', 0)])
     h.sink().onBoundary('ga')
-    expect(h.runtime.recall(10)).toEqual([])
+    expect(h.runtime.recall(10)).toEqual(['第一连接的行'])
 
     h.sink().onClose()
     h.sink().onConnect()
-    // 重连后 abs 从 0 起: 若交付水位不清, 新行 (abs=0) 会被旧水位全部滤掉。
-    // T2 限流把交付压住 → 行留在待决 (未交付) → recall 可见。
+    // 重连复位 (resetForReconnect): abs 从 0 重来, 回看缓冲一起清空 —— 旧连接
+    // 历史与新连接行号空间冲突, 不可查 (新连接行重新积累)。
+    expect(h.runtime.recall(10)).toEqual([])
     h.sink().onLines([ml('第二连接的第一行', 0)])
     h.sink().onBoundary('ga')
     expect(h.runtime.recall(10)).toEqual(['第二连接的第一行'])
@@ -159,28 +188,49 @@ describe('帧内容: 只进本帧, 不漏进下一帧', () => {
   beforeEach(() => { vi.useFakeTimers() })
   afterEach(() => { vi.useRealTimers() })
 
-  it('命令应答帧的行进 tool result, 且不再出现在后续回看里', async () => {
+  it('命令应答帧的行进 tool result (声明 on ga:1 后 GA 关窗)', async () => {
     const h = harness('session-frame')
     h.runtime.connect()
     h.sink().onConnect()
 
-    const pending = h.runtime.tools().mud_send!.execute({ cmd: 'look' })
+    // 声明才计 GA（PLAN §D3）：要 GA 关窗就得显式声明；未声明的窗口 GA 不关窗。
+    const settle = { mode: 'stream', on: { kind: 'ga', count: 1 } } as const
+    const pending = h.runtime.tools().mud_send!.execute({ cmd: 'look', settle })
     await vi.advanceTimersByTimeAsync(1)          // 队列写出 → armed
     expect(h.sent).toContain('look')
     h.sink().onLines([ml('北大街 -', 3), ml('这里明显的出口是 south。', 4)])
     h.sink().onBoundary('ga')
     const reply = await pending
     expect(reply.note).toContain('北大街')
-    // 帧行已作为 tool result 进过模型 → 回看不再重复给出。
-    expect(h.runtime.recall(10)).toEqual([])
 
     // 下一条命令的帧里只有它自己的应答。
-    const pending2 = h.runtime.tools().mud_send!.execute({ cmd: 'inventory' })
+    const pending2 = h.runtime.tools().mud_send!.execute({ cmd: 'inventory', settle })
     await vi.advanceTimersByTimeAsync(1)
     h.sink().onLines([ml('你身上带着:', 5)])
     h.sink().onBoundary('ga')
     const reply2 = await pending2
     expect(reply2.note).toBe('你身上带着:')
+    h.runtime.dispose()
+  })
+
+  it('未声明收口的 T2 裸调用: GA 不关窗, 只由 fallback 兜底收口 (到期带回内容)', async () => {
+    const h = harness('session-frame-nodeclared')
+    h.runtime.connect()
+    h.sink().onConnect()
+
+    const pending = h.runtime.tools().mud_send!.execute({ cmd: 'look' })
+    await vi.advanceTimersByTimeAsync(1)
+    h.sink().onLines([ml('北大街 -', 3)])
+    h.sink().onBoundary('ga')
+    let settled = false
+    void pending.then(() => { settled = true })
+    await vi.advanceTimersByTimeAsync(1)
+    expect(settled).toBe(false)                    // GA 不关窗（声明才计 GA）
+    await vi.advanceTimersByTimeAsync(3_001)       // 缺省 fallback 3000ms 到期
+    const r = await pending
+    expect(r).toMatchObject({ settled: 'timeout', ok: false })
+    // PLAN §D4 定案 A: 兜底到期**带回已累积内容** —— T2 裸调用仍拿得到回显。
+    expect(r.note).toContain('北大街')
     h.runtime.dispose()
   })
 })
@@ -224,6 +274,36 @@ describe('T2 投递限流: 间隔内的批次留待决, 到期合并投出', () 
     vi.advanceTimersByTime(2_000)
     expect(h.delivered).toHaveLength(3)
     expect(h.delivered[2]).toContain('第二段输出')
+    h.runtime.dispose()
+  })
+})
+
+/**
+ * **行流守恒** (A9 / W10.3): 无折叠、无移交、无隐藏行 ——
+ * `① 命中行 + ② span + ③ T2 批次 + ④ 带原文投递 == 完整入站行流`。
+ *
+ * 本用例固定其中最容易退化的一条: 站① 状态抓取与站② `direct` 反射**只有副作用**
+ * (同步 world / 顺带发命令), 它们命中的行照样原样落入下游投递。
+ */
+describe('行流守恒 (W10.3 无折叠: 抓取行与反射行都照常进行流)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('状态抓取行 + direct 命中行全部原样投出 (投递拼接 == 完整入站行流)', () => {
+    const h = harness('session-conserve', { stateRule: true, directRule: true })
+    h.runtime.connect()
+    h.sink().onConnect()
+
+    const stream = ['第一行', '【 气血 】 100/200', '请保存档案', '最后一行']
+    h.sink().onLines(stream.map((t, i) => ml(t, i)))
+    h.sink().onBoundary('ga')
+    vi.advanceTimersByTime(1)
+
+    expect(h.sent).toContain('save')             // direct 反射照常发命令
+    expect(h.delivered).toHaveLength(1)
+    // 无反引号/前缀包装: 批次正文即原行按序拼接 (含被抓取与被反射的两行)。
+    expect(h.delivered[0]).toBe(stream.join('\n'))
+    expect(h.runtime.recall(10)).toEqual(stream)
     h.runtime.dispose()
   })
 })
