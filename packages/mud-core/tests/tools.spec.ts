@@ -196,7 +196,7 @@ describe('在途窗口装配 (registerWindow; W7.2 取代命令-应答桥)', () 
     })
     const r = await tools.mud_move!.execute({ direction: 'north' })
     expect(r).toEqual({ ok: true, note: '北大街 - 北大侠客行\n  这里明显的出口是 south。', cmd: 'north', settled: 'ga' })
-    expect(seen).toEqual([{ cmd: 'north', gaCount: 1, label: 'mud_move' }])
+    expect(seen).toEqual([{ cmd: 'north', gaCount: 1, timeoutMs: 3000, label: 'mud_move' }])   // W10.1: fallback 缺省 3000 (D3)
   })
 
   it('mud_send until 声明 → ok 判据 + timeoutMs; 超时结算 ok=false (outcome fail)', async () => {

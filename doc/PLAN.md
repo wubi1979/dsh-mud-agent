@@ -69,7 +69,7 @@
 
 | # | 早期写法 | 源码事实 | 修正 |
 |---|---|---|---|
-| 1 | criteria schema 只有 `ok/fail/branch/ga` | `FlowMatch` 有四种 kind，`kind:'tool'` 存在且 **fullme 3 处在用**（`ok:[{kind:'tool',outcome:'ok'}]`） | `tool` 收口改 `mode:'inline'`、`ga` 移入收口 `on` 条件、`text` 取消（3.1 收口/分类分离）；W10.1 重写 fullme：`prompt`/`answer` 用 `settle:{mode:'inline'}`、`stale` 用 `on ga:3` + `onSettle:'fail'` |
+| 1 | criteria schema 只有 `ok/fail/branch/ga` | `FlowMatch` 有四种 kind，`kind:'tool'` 存在且 **fullme 3 处在用**（`ok:[{kind:'tool',outcome:'ok'}]`） | `tool` 收口改 `mode:'inline'`、`ga` 移入收口 `on` 条件、`text` 取消（3.1 收口/分类分离）；W10.1 重写 fullme：`prompt` 用 `settle:{mode:'inline'}`、`answer` 用 `settle:{mode:'stream'}` + ok/fail 分类 + `fallback 180s`（定案见末尾 W10.1 登记条）、`stale` 用 `on ga:3` + `onSettle:'fail'` |
 | 2 | 删除清单写 `deliverySizes` | `src` 里**已无此符号**（现为 `delivery-channel.ts` 的 `size` / `rememberDelivery` 与 `actionCount`） | 第 4 章按现行符号改写 |
 | 3 | 删除 `syncArming()` 的"流程 arming 重放" | `syncArming()` 是**武装标记机制的总入口**（打断常驻标记 + 流程分类正则 + 直发判据投影共用 `arm()`） | 第 4 章限定删除面为"流程分类重放"，保留总入口 |
 | 4 | "取消折叠"只定 state 抓取行 | `foldedAbs` = **state 折叠行 ∪ direct 命中行**两类并集 | 3.6 定 direct 命中行的新归属 |
@@ -115,7 +115,7 @@
 - **收口（settle）与分类（classify）结构分离，不得混杂**：settle 为判别式联合——`{ mode:'inline' }`（本步工具结果即收口，不经行流）或 `{ mode:'stream', on?, fallback? }`（行流窗口）；`on` = **提前关窗条件**，kind 全集 = `regex` / `ga`（**time kind 删除**——纯计时窗 = stream 无 `on`，时间恒由 fallback 管）；分类只支持**自填正则**（`RegexSpec`）；`text` kind 取消（正则转义覆盖），`{ref:'settle'}` 引用机制取消（由 `onSettle` 取代，见下）。旧"判据数组内混排 regex/ga/tool"形态废除，GA/tool 不再是分类 kind。
 - **收口缺省 `{ mode:'stream' }` + `fallback:{ms:3000}`，窗口恒有界**：`on` 命中提前关窗；`fallback` 兜底时长恒在。**fallback time 兜底收口即 timeout 行为**：缺省 3000 是 T2 量级的短超时；**T1 流程表步级按实际步骤耗时填写**（dz 等长命令步写大值）。**兜底到期恒为 `timeout` 结果，不属于 ok/fail**（"到点即成功"用法废除——须以 `on:{kind:'regex'}` 证据关窗）。
 - **收口关窗时的裁决 = `classify.onSettle`（缺省 `'ok'`，可 `'fail'`）**：`on` 条件关窗、分类未命中时的裁决由它承载。**fullme `stale` 三连罚站 = `settle:{mode:'stream',on:{kind:'ga',count:3}}` + `classify:{onSettle:'fail'}`，显式写出**（旧口径依赖缺省 `gaCount = cmds.length = 3` 的隐式行为、二次修订的 `fail:{ref:'settle'}` 引用、及"GA 到达 + 判据存在但未命中 → fail"的隐式分类缺省，一并废除——保守判定必须显式写 `onSettle:'fail'`）。
-- **`mode:'inline'` 收口**：本步工具结果即收口（不开行流窗口），服务"只调工具、不发游戏命令"的步骤（fullme `prompt` 取图、`answer` 提交）；裁决固定映射（工具 ok→ok / error→fail）；**inline 下声明 `classify`/`captures` 报错**（无行内容可分类，fail-loud）。
+- **`mode:'inline'` 收口**：本步工具结果即收口（不开行流窗口），服务"只调工具、不发游戏命令"的步骤（fullme `prompt` 取图）；裁决固定映射（工具 ok→ok / error→fail）；**inline 下声明 `classify`/`captures` 报错**（无行内容可分类，fail-loud）。
 - **两 lane 缺省统一**：工具层缺省 stream + fallback 3s 对 T1/T2 一致，调用期不报错；**流程表 / 规则表步级仍须显式声明 settle，漏写在装配期报错**（fail-loud 作者纪律，防笔误静默吃 3 秒）。T2 命令类工具（`mud_look`/`mud_status`/`mud_move`）在工具 schema **显式声明 `settle:{mode:'stream',on:{kind:'ga',count:1}}`**（现行 `gaCount:1` 声明自然迁移）；**GA 隐式早关废除**——未声明收口的窗口 GA 早到不提前关窗（`inflight.ts` 的 `gaCount ?? cmds.length` 隐式缺省废除）。
 - 规则动作 = 显式声明（载体为规则表 / 活动表条目；活动表从"N-GA 缺省 + 判据命中结算"重定义为"规则 / 直发命令的显式收口声明载体"）。
 - **回看结算取消（概念性错误）**：命令发出前已在缓冲里的行不是本命令的应答，不参与本步结算，留给后续消费批；同帧到达的"本步结果行 + 后继 driver"由**本步 `classify.branch`** 承接（判定序当场取一）。旧"发送水位 + 回看区间"机制整体删除，6.1 原"回看数据源"未决随之消解。
@@ -211,7 +211,7 @@ mud_send {
 }
 ```
 
-- **settle 为判别式联合**：`mode:'inline'` = 不开行流窗口、工具结果即结算（服务"只调工具、不发游戏命令"的步，fullme `prompt`/`answer` 用；裁决固定映射 ok→ok / error→fail；**inline 下声明 `classify`/`captures` 报错**，fail-loud）；`mode:'stream'` = 行流窗口，`on` 承载提前关窗条件（kind 全集 = `regex` / `ga`；**time kind 删除**——纯计时窗 = 无 `on`，时间恒由 `fallback` 管），`fallback` 兜底时长恒在（缺省 3000，dz 等长命令步写大值）。旧 `text` kind 与 `{ref:'settle'}` 引用取消（§19.1 四类 kind 在 W10.1 同步改写）。
+- **settle 为判别式联合**：`mode:'inline'` = 不开行流窗口、工具结果即结算（服务"只调工具、不发游戏命令"的步，fullme `prompt` 用；裁决固定映射 ok→ok / error→fail；**inline 下声明 `classify`/`captures` 报错**，fail-loud）；`mode:'stream'` = 行流窗口，`on` 承载提前关窗条件（kind 全集 = `regex` / `ga`；**time kind 删除**——纯计时窗 = 无 `on`，时间恒由 `fallback` 管），`fallback` 兜底时长恒在（缺省 3000，dz 等长命令步写大值）。旧 `text` kind 与 `{ref:'settle'}` 引用取消（§19.1 四类 kind 在 W10.1 同步改写）。
 - **分类形态只有自填正则**（`RegexSpec`，空类 = 跳过）；GA/tool 不再是分类 kind（**修正元信息表 #1**）；`onSettle` 承载"on 条件关窗、分类未命中"时的裁决（缺省 `'ok'`；fullme `stale` 显式 `'fail'`）。
 - **MVP 删除字段**：`onMatch`（'tag' 延后——分类命中即关窗是 MVP 唯一语义）、`priority`（定序固定 fail→分支→ok）、`captureScope`（capture 恒逐行，'window' 随多行分类扩展延后）。
 - **窗口恒有界**：`on` 命中提前关窗；**`fallback` 到期恒为 `timeout` 结果，不属于 ok/fail**（"到点即成功"废除——须以 `on:{kind:'regex'}` 证据关窗）；分类正则命中即提前关窗（fail-fast），同帧定序 fail→分支→ok。
@@ -241,7 +241,7 @@ Schema 沿 §19.1 骨架，增补（分类/收口口径按 3.1 重写）：
 - `settle` 步级**显式必填**（装配期校验 fail-loud）；`fallback.ms` **按实际步骤耗时填写**（缺省 3000 仅为 T2 量级兜底，dz 类长命令步写大值）。
 - 旧"`ok`/`fail` 同写 GA → 告警"作废（分类内无 GA，混杂不可能出现）。
 - `on` 条件（ga 的 N / regex 的 pattern）**必须显式**：如 fullme `stale` 写 `settle:{mode:'stream',on:{kind:'ga',count:3}}` + `classify:{onSettle:'fail'}`（**修正元信息表口径**）。
-- `mode:'inline'` 服务只调工具不发命令的步（fullme `prompt`/`answer`）；inline 下声明 `classify`/`captures` 报错。
+- `mode:'inline'` 服务只调工具不发命令的步（fullme `prompt`）；inline 下声明 `classify`/`captures` 报错。
 - capture 逐行扫 span（到达序，每槽先到先得）；步数预算为流程级新字段；多行分类 MVP 不支持（`captureScope:'window'` 随多行扩展一并延后）。
 - `failPolicy.notify` 保留，缺省 `'t2'`（D4）。
 - 新 schema 定稿见第 6 章（实现待定）。
@@ -334,7 +334,7 @@ T1：hit → 查表（fail → 分支 → ok 已由裁决器定序取一）→ �
 | 位置 | 内容 |
 |---|---|
 | `agent/flow-driver.ts`（暂名） | T1 流程驱动器：按 `sessionId` 查写的槽表（**会话作用域持有**，D10）、查表决策、tool-call 组装、每步留痕（arm 了哪些收口与分类、命中哪个、决定了什么） |
-| `agent/flow/flow-types.ts`（增补） | 新契约类型：settle 判别式联合（`inline` / `stream`）/ classify（自填正则 + `onSettle`）/ captures / 步数预算 / tool-call 参数 schema（W10.1 定稿） |
+| `agent/flow/flow-spec.ts`（增补） | 新契约类型：settle 判别式联合（`inline` / `stream`）/ classify（自填正则 + `onSettle`）/ captures / 步数预算 / tool-call 参数 schema（W10.1 定稿）。**类型归属定稿在 flow-spec.ts**（原清单写 flow-types.ts——flow-types.ts 引用 flow-spec.ts 的 FlowMatch，反向放类型会成循环 import） |
 
 **修改**：
 
@@ -371,7 +371,7 @@ T1：hit → 查表（fail → 分支 → ok 已由裁决器定序取一）→ �
 | 切片 | 源码范围 | 依赖 | 对应验收 |
 |---|---|---|---|
 | **W10.0 目录搬迁** | `flow/` 整体迁入 `agent/flow/`（纯路径变更，无语义变更，后续切片 diff 干净） | 无 | tsc 清零 |
-| **W10.1 契约与表** | tool-call 参数 schema（settle 判别式联合 / classify+`onSettle` / captures）+ 流程表按新口径重写（login / fullme settle 步级显式、分类自填正则、GA 移入收口 `on`、fullme `prompt`/`answer` 用 `mode:'inline'`、`stale` 显式 `on ga:3` + `onSettle:'fail'`、`fallback.ms` 按实际步骤耗时填写）+ 装配期校验（表级 settle 显式）+ **T2 命令工具显式声明 `settle:{mode:'stream',on:{kind:'ga',count:1}}`**（`tools-schema` / `agent/flow/flows/index.ts` / `assemble.ts`） | W10.0 | A1 / A6 / R1 |
+| **W10.1 契约与表** | tool-call 参数 schema（settle 判别式联合 / classify+`onSettle` / captures）+ 流程表按新口径重写（login / fullme settle 步级显式、分类自填正则、GA 移入收口 `on`、fullme `prompt` 用 `mode:'inline'`、`answer` 用 stream + ok/fail 分类 + `fallback 180s`、`stale` 显式 `on ga:3` + `onSettle:'fail'`、`fallback.ms` 按实际步骤耗时填写）+ 装配期校验（双形：新形步骤表级 settle 显式，旧形步骤 legacy 校验兼容，W10.5 收紧）+ **工具层收口缺省 stream + fallback 3000（两 lane 一致，提前自 W10.4 落地）** + **T2 命令工具显式声明 `settle:{mode:'stream',on:{kind:'ga',count:1}}`**。落地文件（W10.1 定稿修订）：`agent/flow/flow-spec.ts`（类型 + 双形校验 + `normalizeFlowSpecs` 过渡桥）/ `agent/flow/engine.ts`（构造器接线）/ `agent/flow/flows/{login,fullme}.ts`（表重写）/ `agent/tools-build.ts`（参数 + 缺省 + T2 显式 settle） | W10.0 | A1 / A6 / R1 |
 | **W10.2 裁决器与水位** | 收口+分类 owner 化挂窗口 + 实时匹配与兜底到期结算 + span 交付 + capture 回调 + 结算优先级与同帧定序 + **单一水位线（交付水位废除、无回看结算）** + recall 历史查询改写（`deliver/adjudicator.ts` / `agent/inflight.ts` / `tools-build.ts` recall 面） | W10.1 | A2 / A3 / A7 / R2 |
 | **W10.3 状态抓取与折叠** | 状态抓取独立桶 + `direct` 命中行归消费者 ① + 取消折叠消费（交付水位废除面归 W10.2）（`perceive/engine.ts` / `deliver/state-track.ts`） | W10.2 | A3 / A9 |
 
@@ -472,3 +472,5 @@ T1：hit → 查表（fail → 分支 → ok 已由裁决器定序取一）→ �
 > 2026-09-21 二次修订登记：① 收口/判据结构分离——收口 kind = time/regex/ga/tool、缺省 `{kind:'time', ms:3000}`、判据只支持自填正则 + `ref:'settle'`、取消 text、表级 settle 显式校验保留、T2 命令工具显式 `settle ga:1`、GA 隐式早关废除；② 三水位归一为单一水位线——回看结算取消（概念性错误：命令发出前已在缓冲的行不是本命令的应答）、recall 改历史查询、交付水位废除、状态抓取行确认不推进水位；③ `flow/` 目录整体迁入 `agent/flow/`（W10.0 纯搬迁先行）。
 >
 > 2026-09-21 三次修订登记：① tool-call 契约形态收敛——settle 改 `mode:'inline'|'stream'` 判别式联合（`tool` 收口 → `mode:'inline'`、GA 移入 `on` 提前关窗条件、time kind 删除——纯计时窗 = stream 无 `on`）、分类只支持自填正则（`classify.onSettle` 取代 `{ref:'settle'}`，fullme `stale` 显式 `on ga:3` + `onSettle:'fail'`）、取消 `onMatch`/`priority`/`captureScope` 三字段、`fallback` 缺省 3000（T2 量级短超时；T1 表内按实际步骤耗时填写）且到期恒 `timeout` 结果、inline 下声明 `classify`/`captures` 报错；② 契约语境术语改名：判据 → 分类（判据 A/B 与直发判据投影不改名）；③ 判定顺序固定 fail → 分支 → ok（`priority` 字段删除，同帧多命中按序取一、其余留痕；装配期不做特异性检查——正则写错属配置问题）。
+>
+> 2026-09-21 **W10.1 定稿修订登记**（实施完成；上面三处 `prompt`/`answer` 表述按本条同步修正）：① **fullme `answer` 收口形态定稿**（作者定案"stream + classify"）：`settle:{mode:'stream'}` + `classify:{ok:[成功句], fail:[答错句]}` + `fallback:{ms:180_000}`（等人工 + 答错重来 + 收结果共用一份步预算），`retry`/`awaitExternal` 保留；**inline 只保留给 `prompt`**（取图、ask-human 工具结果即收口）——此前三处"`prompt`/`answer` 都用 inline"的写法作废；`prompt` 保留显式 `timeoutMs:180_000` 过渡（W10.4 定稿步预算形态），`stale` 按 D3 落 `on ga:3` + `onSettle:'fail'`（旧 fail `why` 文案随之丢失，可接受）；② **流程表 `captures` 两面区分**：流程表字段 `captures`（JS RegExp 数组、命名捕获组 `(?<name>…)` 即槽名、未匹配不报错）经 `normalizeFlowSpecs` 过渡桥映射回 legacy `capture` 映射（引擎按进入判定行抽取，行为逐字段保持）；tool-call 参数 `captures` 在 inline 收口下工具拒绝——两者的作用面（driver 命中行 vs 窗口 span）不同，3.1 "inline 下 captures 报错"条文不改；**capture 抽取与 captures 参数的窗口透传延后 W10.2**（与 capture 回调一起做）；③ **装配期校验双形**：新形步骤（有 `settle`）走新校验（**inline 拒 `classify`——流程表 `captures` 合法**，其作用于 driver 命中行抽取；tool-call 参数面"inline 拒 captures/classify"由工具层 `resolveSettleWindow` 承担、装配期不管、`on` 条件显式、`fallback.ms` 正数、classify 正则编译 + `branch.id` 存在性、captures 编译 + 命名组槽名唯一且**先于占位符校验**收集）；旧形步骤（无 `settle`，测试夹具用）沿用 legacy 校验，W10.5 收紧为必填；`stepBudget` 仅声明 + 形态校验（W10.4 消费）；④ **工具层（tools-build.ts）落地**：`mud_send` 新增 `settle`/`classify`/`captures` 参数（I15 措辞）、`until`（legacy）与 `settle` 互斥拒绝、非法声明 **fail-closed 拒绝**、缺省 stream + fallback 3000（两 lane 一致，调用期不报错）、inline 收口直发 + 立即返回、活动表仅无判据时附加（dz/sleep 90s 行为保持）、`until` 路径不吃 3000 缺省（保持 120s 声明超时）；T2 三工具显式 `T2_QUERY_SETTLE`（on ga:1，R1）；⑤ **类型归属**：新契约类型落 `agent/flow/flow-spec.ts`（原清单写 flow-types.ts，避免循环 import）；⑥ **已接受的行为变化**：裸 `mud_send` 与 T2 三工具的放弃计时 10s→3s（GA 正常到达时行为量级一致）；引擎/裁决器/inflight **零改动**（过渡桥映射，W10.2/W10.4 拆桥）。

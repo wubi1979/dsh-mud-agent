@@ -13,8 +13,10 @@
 import { describe, expect, it } from 'vitest'
 import rules from '../src/perceive/rules.ts'
 import {
-  defaultFlows, flowCommands, FULLME_FLOW, LOGIN_FLOW, validateFlows, type FlowSpec,
+  defaultFlows, flowCommands, FULLME_FLOW, FULLME_OK_TEXT, FULLME_WRONG_TEXT,
+  FULLME_COOLDOWN_PATTERN, FULLME_URL_CAPTURE, LOGIN_FLOW, validateFlows, type FlowSpec,
 } from '../src/agent/flow/flows/index.ts'
+import { normalizeFlowSpecs } from '../src/agent/flow/flow-spec.ts'
 import { FlowRuntime } from '../src/agent/flow/engine.ts'
 import type { WorldModel } from '../src/world/state.ts'
 import type { MudLine } from '../src/network/ansi.ts'
@@ -45,43 +47,43 @@ function flowHarness(loggedIn: boolean): { flow: FlowRuntime; logs: string[] } {
 }
 
 describe('fullme 流程表 (声明面)', () => {
-  it('注册期校验通过；五步图与判据分工符合作者定案', () => {
+  it('注册期校验通过; 五步图与收口/分类分工符合作者定案 (W10.1 新口径)', () => {
     expect(validateFlows(defaultFlows)).toEqual([])
     expect(FULLME_FLOW.steps.map(step => step.id)).toEqual(['request', 'stale', 'prompt', 'answer', 'success'])
     const byId = (id: string) => FULLME_FLOW.steps.find(step => step.id === id)!
 
-    // request: **无 ok**（本步结果 = 下一步的新文本）；fail = "刚刚用过"（时长动态）；两条条件分支。
+    // request: **无 ok 分类**（本步结果 = 下一步的新文本）；fail 分类 = "刚刚用过"（时长动态）；两条条件分支。
     const request = byId('request')
-    expect(request.ok).toBeUndefined()
-    expect(request.next).toEqual(['stale', 'prompt'])
-    expect(request.fail).toHaveLength(1)
-    expect(request.fail?.[0]?.kind).toBe('regex')
+    expect(request.settle).toEqual({ mode: 'stream', fallback: { ms: 30_000 } })
     // 时长通配：`还有 3 分 20 秒` 与 `还有 45 秒` 都要命中。
-    const cooldown = request.fail?.[0]
-    expect(cooldown?.kind === 'regex' && cooldown.patterns[0] instanceof RegExp
-      && (cooldown.patterns[0] as RegExp).test('你刚刚用过这个命令不久，还要 3 分 20 秒才能再用。')).toBe(true)
-    expect(cooldown?.kind === 'regex' && cooldown.patterns[0] instanceof RegExp
-      && (cooldown.patterns[0] as RegExp).test('你刚刚用过这个命令不久，还要 45 秒才能再用。')).toBe(true)
+    expect(request.classify?.fail).toEqual([FULLME_COOLDOWN_PATTERN])
+    const cooldown = request.classify?.fail?.[0]
+    expect(cooldown instanceof RegExp && cooldown.test('你刚刚用过这个命令不久，还要 3 分 20 秒才能再用。')).toBe(true)
+    expect(cooldown instanceof RegExp && cooldown.test('你刚刚用过这个命令不久，还要 45 秒才能再用。')).toBe(true)
+    expect(request.next).toEqual(['stale', 'prompt'])
 
-    // stale: 三连发 fullme 1 才能真放弃；以 GA 判定、声明了 why（失败收束文案）。
+    // stale: 三连发 fullme 1 才能真放弃；收口显式 on ga:3 + onSettle:'fail'（保守裁决显式写出）。
     const stale = byId('stale')
     expect(stale.action?.args).toEqual({ cmds: ['fullme 1', 'fullme 1', 'fullme 1'] })
-    expect(stale.fail).toEqual([{ kind: 'ga', why: '放弃上一轮（三连 fullme 1）→ 本轮作废' }])
+    expect(stale.settle).toEqual({ mode: 'stream', on: { kind: 'ga', count: 3 }, fallback: { ms: 5_000 } })
+    expect(stale.classify).toEqual({ onSettle: 'fail' })
     expect(stale.next).toBeUndefined()
 
-    // prompt: 地址判据 + capture 槽 + mud_captcha（工具结果判据，无 GA）。
+    // prompt: 收口 inline（工具结果即收口，不开行流窗口）+ captures 抽 captchaUrl 槽 + mud_captcha（ask-human）。
     const prompt = byId('prompt')
     expect(prompt.action?.tool).toBe('mud_captcha')
     expect(prompt.action?.args).toEqual({ url: '{captchaUrl}', note: '{lastFail}' })
-    expect(prompt.capture).toHaveProperty('captchaUrl')
-    expect(prompt.ok).toEqual([{ kind: 'tool', outcome: 'ok' }])
-    expect(prompt.fail).toEqual([{ kind: 'tool', outcome: 'error' }])
+    expect(prompt.settle).toEqual({ mode: 'inline' })
+    expect(prompt.captures).toEqual([FULLME_URL_CAPTURE])
+    expect(prompt.timeoutMs).toBe(180_000)   // 等人工步预算（过渡保留显式 timeoutMs）
     expect(prompt.next).toEqual(['answer'])
 
-    // answer: 挂起等人工 + **一步总计 3 分钟**预算 + 三步答错重来（步内自环，重试动作 = 重新取图）。
+    // answer: 收口 stream（纯计时窗）+ ok/fail 分类自填正则 + **一步总计 3 分钟**预算 + 三步答错重来
+    // （步内自环，重试动作 = 重新取图）。
     const answer = byId('answer')
     expect(answer.awaitExternal).toEqual(['captcha'])
-    expect(answer.timeoutMs).toBe(180_000)
+    expect(answer.settle).toEqual({ mode: 'stream', fallback: { ms: 180_000 } })
+    expect(answer.classify).toEqual({ ok: [FULLME_OK_TEXT], fail: [FULLME_WRONG_TEXT] })
     expect(answer.retry).toEqual({
       attempts: 3,
       on: ['fail'],
@@ -90,15 +92,38 @@ describe('fullme 流程表 (声明面)', () => {
     expect(answer.action?.args).toEqual({ cmds: ['halt', 'fullme {captcha}'] })
     expect(answer.next).toEqual(['success'])
 
-    // success: 发 hpbrief 补状态，GA 判定，next 空 = 终态。
+    // success: 发 hpbrief 补状态，收口显式 GA（on ga:1 + 5s 兜底），next 空 = 终态。
     const success = byId('success')
     expect(success.action?.args).toEqual({ cmd: 'hpbrief' })
-    expect(success.ok).toEqual([{ kind: 'ga' }])
+    expect(success.settle).toEqual({ mode: 'stream', on: { kind: 'ga', count: 1 }, fallback: { ms: 5_000 } })
     expect(success.next).toBeUndefined()
 
     // 失败只留痕（人工/系统问题，T2 补不了）。
     expect(FULLME_FLOW.priority).toBe(100)
     expect(FULLME_FLOW.failPolicy).toEqual({ notify: 'none' })
+  })
+
+  it('规范化映射 (W10.1 过渡桥): settle/classify/captures → legacy 判据, 引擎零改动消费', () => {
+    const normalized = normalizeFlowSpecs([FULLME_FLOW])[0]!
+    const byId = (id: string) => normalized.steps.find(step => step.id === id)!
+    // stale: on ga:3 + onSettle:'fail' → GA 判据进 fail + boundary 3 (三连发窗口)。
+    const stale = byId('stale')
+    expect(stale.fail).toEqual([{ kind: 'ga' }])
+    expect(stale.ok).toBeUndefined()
+    expect(stale.boundary).toBe(3)
+    // prompt: inline → 工具结果判据 (ok→ok / error→fail); captures → capture 映射 (命名组即槽名)。
+    const prompt = byId('prompt')
+    expect(prompt.ok).toEqual([{ kind: 'tool', outcome: 'ok' }])
+    expect(prompt.fail).toEqual([{ kind: 'tool', outcome: 'error' }])
+    expect(prompt.capture?.captchaUrl).toBeInstanceOf(RegExp)
+    // answer: 分类 → 行判据 (字符串编译为 RegExp); fallback 180s → 步级 timeoutMs (本步无显式 timeoutMs)。
+    const answer = byId('answer')
+    expect(answer.ok).toEqual([{ kind: 'regex', patterns: [new RegExp(FULLME_OK_TEXT)] }])
+    expect(answer.fail).toEqual([{ kind: 'regex', patterns: [new RegExp(FULLME_WRONG_TEXT)] }])
+    expect(answer.timeoutMs).toBe(180_000)
+    // request: fail 分类 → fail 行判据 (冷却正则); 无 on ⇒ 不产生 boundary。
+    expect(byId('request').fail?.[0]?.kind).toBe('regex')
+    expect(byId('request').boundary).toBeUndefined()
   })
 
   it('规则表里不再有 fullme:* 规则（三条已流程化）', () => {

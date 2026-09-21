@@ -31,6 +31,48 @@ export type FlowMatch =
    */
   | { kind: 'tool'; outcome: 'ok' | 'error'; why?: string }
 
+// ── W10.1 新口径：收口/分类/抽取（doc/PLAN.md §3.1；收口与分类分离） ──
+
+/**
+ * 自填正则声明：字符串按 JS `RegExp` 源码编译（编译失败在装配期/调用期报错）或直接给
+ * `RegExp`。`text` kind 已取消（正则转义覆盖，PLAN §3.1）。
+ */
+export type RegexSpec = string | RegExp
+
+/**
+ * 收口的提前关窗条件（PLAN §3.1）。kind 全集 = `regex` / `ga`（**time kind 删除**——
+ * 纯计时窗 = stream 无 `on`，时间恒由 `fallback` 管）；条件必须显式（ga 的 N / regex 的
+ * pattern），缺省关窗兜底由 `fallback` 承担。
+ */
+export type SettleOn =
+  | { kind: 'regex'; pattern: RegexSpec }
+  | { kind: 'ga'; count: number }
+
+/**
+ * **收口声明**（判别式联合，只回答"窗口何时关闭"）：
+ *   - `inline`：本步工具结果即收口（不开行流窗口），服务"只调工具、不发游戏命令"的步
+ *     （fullme `prompt` 取图）；裁决固定映射 工具 ok→ok / error→fail。
+ *   - `stream`：行流窗口；`on` 提前关窗条件（可省——纯计时窗），`fallback.ms` 兜底时长
+ *     （缺省 3000 是 T2 量级短超时，T1 流程表按实际步骤耗时填写；到期恒 `timeout` 结果）。
+ */
+export type SettleSpec =
+  | { mode: 'inline' }
+  | { mode: 'stream'; on?: SettleOn; fallback?: { ms: number } }
+
+/**
+ * **分类声明**（只回答"行内容算哪一类"，与关窗解耦；全显式、形态只支持自填正则；
+ * 空类 = 该类不命中、跳过）。`onSettle` 承载 `on` 条件关窗但分类未命中时的裁决
+ * （缺省 `'ok'`；fullme `stale` 显式 `'fail'`）。GA/tool 不是分类 kind。
+ */
+export interface ClassifySpec {
+  ok?: readonly RegexSpec[]
+  fail?: readonly RegexSpec[]
+  /** 条件分支（branch driver；判定序 fail → 分支 → ok。W10.4 T1 查表消费）。 */
+  branch?: readonly { id: string; pattern: RegexSpec }[]
+  /** `on` 条件关窗、分类未命中时的裁决（缺省 `'ok'`）。 */
+  onSettle?: 'ok' | 'fail'
+}
+
 /** 一步发出的工具调用声明（占位符 `{name}`/`{pass}`/`{captcha}` 在发送瞬间插值）。 */
 export interface FlowAction {
   tool: string
@@ -97,6 +139,27 @@ export interface FlowStep {
   boundary?: number
   /** 被打断时要先发的直发命令（如练功的 halt）。 */
   onInterrupt?: readonly string[]
+
+  // ── W10.1 新口径字段（PLAN §3.1 / §3.3；与上面 legacy 字段双形并存，过渡桥映射） ──
+  /**
+   * **收口声明**（PLAN §3.1；W10.1 新口径）。表级**显式必填**（`validateFlows` 新形校验：
+   * 漏写报错，防笔误静默吃 3 秒）；inline 下声明 `classify` 报错。流程表 `captures` 在
+   * inline 步合法（作用于 driver 命中行抽取；tool-call 参数面的 inline 拒绝在工具层）。
+   * `normalizeFlowSpecs` 将其映射到 legacy `ok`/`fail`/`boundary`/`timeoutMs`。
+   */
+  settle?: SettleSpec
+  /**
+   * **分类声明**（PLAN §3.1；与 `settle` 解耦）。全显式自填正则；`onSettle` 承载
+   * `on` 条件关窗但分类未命中时的裁决（缺省 `'ok'`；fullme `stale` 显式 `'fail'`）。
+   * `normalizeFlowSpecs` 将其映射到 legacy `ok`/`fail` 行判据。
+   */
+  classify?: ClassifySpec
+  /**
+   * **抽取声明**（PLAN §3.1；JS RegExp 数组，槽名 = 命名捕获组 `(?<name>…)`）。
+   * 与 `capture` 映射双形并存：`normalizeFlowSpecs` 从 `captures` 构造等价 `capture` 映射。
+   * 未匹配不报错、如实缺省。
+   */
+  captures?: readonly RegexSpec[]
 }
 
 /** 一条流程的声明。 */
@@ -114,6 +177,11 @@ export interface FlowSpec {
   steps: readonly FlowStep[]
   /** 每步缺省超时（毫秒）。 */
   timeoutMs?: number
+  /**
+   * **步数预算**（流程级新字段，PLAN §3.3 / D4：防 T1 高速空转）。W10.4 T1 状态机消费；
+   * W10.1 仅声明 + 装配期形态校验。
+   */
+  stepBudget?: number
   /** 流程整体成功后的动作。 */
   onSuccess?: FlowEnter & { commands?: readonly string[] }
   /** 失败/超时出口（缺省 `{ notify: 't2' }`）。 */
@@ -173,6 +241,9 @@ export function validateFlows(flows: readonly FlowSpec[]): string[] {
     if (seenFlows.has(flow.id)) errors.push(`流程 id 重复: ${flow.id}`)
     seenFlows.add(flow.id)
     if (!Number.isFinite(flow.priority)) errors.push(`${flow.id}: priority 必须是有限数字`)
+    if (flow.stepBudget !== undefined && (!Number.isInteger(flow.stepBudget) || flow.stepBudget < 1)) {
+      errors.push(`${flow.id}: stepBudget 必须是 >= 1 的整数（步数预算）`)
+    }
     const ids = new Set(flow.steps.map(step => step.id))
     if (ids.size !== flow.steps.length) errors.push(`${flow.id}: 步骤 id 有重复`)
     const entry = flow.entry ?? flow.steps[0]?.id
@@ -186,6 +257,16 @@ export function validateFlows(flows: readonly FlowSpec[]): string[] {
       for (const name of Object.keys(step.capture ?? {})) {
         if (slots.has(name)) errors.push(`${flow.id}: capture 槽名重复 (${name})`)
         slots.add(name)
+      }
+      // W10.1: captures 命名捕获组即槽名 — 与 capture 同期收集（先于占位符校验，
+      // 否则本步 action 里的 {槽名} 会被误报为未知占位符）；编译失败由步级校验报错。
+      for (const pattern of step.captures ?? []) {
+        const compiled = tryCompileRegex(pattern)
+        if (compiled.ok === false) continue
+        for (const name of captureGroupNames(compiled.value)) {
+          if (slots.has(name)) errors.push(`${flow.id}: capture 槽名重复 (${name})`)
+          slots.add(name)
+        }
       }
       for (const key of step.awaitExternal ?? []) externalKeys.add(key)
     }
@@ -248,6 +329,60 @@ export function validateFlows(flows: readonly FlowSpec[]): string[] {
         // 纯终态节点合法（进入即成功）；什么都不做的中间节点是笔误。
         if ((step.next ?? []).length > 0) errors.push(`${where}: 空节点却声明了 next（无判据可触发转移）`)
       }
+      // ── W10.1 新口径校验（PLAN §3.9 装配期校验；双形：有 settle 走新形，无 settle
+      // 沿用 legacy 校验供测试夹具兼容，W10.5 删旧路径后收口收紧为必填）。
+      if (step.settle !== undefined) {
+        const settle = step.settle
+        if (settle.mode === 'inline') {
+          // inline 下声明 classify 报错（无行内容可分类）。**流程表 `captures` 合法**：
+          // 它作用于 driver 命中行的抽取（normalize → `capture`，如 fullme `prompt`），
+          // 与 3.1 tool-call 参数面"inline 拒 captures"是两个面 —— 参数面拒绝在工具层
+          // （tools-build resolveSettleWindow）承担。
+          if (step.classify !== undefined) errors.push(`${where}: mode:'inline' 收口下不能声明 classify（无行内容可分类）`)
+        } else {
+          // stream 形：on 条件显式（ga 的 count / regex 的 pattern），fallback.ms 正数。
+          if (settle.on !== undefined) {
+            const on = settle.on
+            if (on.kind === 'ga' && (!Number.isInteger(on.count) || on.count < 1)) {
+              errors.push(`${where}: settle.on ga count 必须是 >= 1 的整数`)
+            }
+            if (on.kind === 'regex') {
+              const compiled = tryCompileRegex(on.pattern)
+              if (compiled.ok === false) errors.push(`${where}: settle.on regex 编译失败 (${compiled.error})`)
+            }
+          }
+          if (settle.fallback !== undefined && (!Number.isFinite(settle.fallback.ms) || settle.fallback.ms <= 0)) {
+            errors.push(`${where}: settle.fallback.ms 必须是正数`)
+          }
+        }
+        // classify 形态校验（与新口径一致：全 RegexSpec）。
+        if (step.classify !== undefined) {
+          const cls = step.classify
+          for (const pattern of cls.ok ?? []) {
+            const c = tryCompileRegex(pattern)
+            if (c.ok === false) errors.push(`${where}: classify.ok 正则编译失败 (${c.error})`)
+          }
+          for (const pattern of cls.fail ?? []) {
+            const c = tryCompileRegex(pattern)
+            if (c.ok === false) errors.push(`${where}: classify.fail 正则编译失败 (${c.error})`)
+          }
+          for (const branch of cls.branch ?? []) {
+            const c = tryCompileRegex(branch.pattern)
+            if (c.ok === false) errors.push(`${where}: classify.branch[${branch.id}] 正则编译失败 (${c.error})`)
+            if (!ids.has(branch.id)) errors.push(`${where}: classify.branch[${branch.id}] 引用了不存在的步骤`)
+          }
+          if (cls.onSettle !== undefined && cls.onSettle !== 'ok' && cls.onSettle !== 'fail') {
+            errors.push(`${where}: classify.onSettle 只能是 'ok'/'fail' (${String(cls.onSettle)})`)
+          }
+        }
+        // captures 形态校验：正则可编译（命名组槽名已在占位符校验之前收集，此处不重复注册）。
+        if (step.captures !== undefined) {
+          for (const pattern of step.captures) {
+            const c = tryCompileRegex(pattern)
+            if (c.ok === false) errors.push(`${where}: captures 正则编译失败 (${c.error})`)
+          }
+        }
+      }
     }
   }
   return errors
@@ -274,4 +409,116 @@ function actionStrings(action: FlowAction | undefined): string[] {
   }
   if (action !== undefined) walk(action.args)
   return out
+}
+
+// ── normalizeFlowSpecs（W10.1 过渡桥：新口径声明 → 现行引擎原语） ──
+//
+// 新口径（settle/classify/captures，PLAN §3.1）→ legacy 原语（ok/fail FlowMatch /
+// boundary / timeoutMs / capture），引擎与裁决器**零改动、行为逐字段保持**；
+// W10.2（裁决器与水位）/ W10.4（T1 状态机）再拆桥。legacy 步骤原样通过。
+
+/** 编译一个 RegexSpec（validateFlows 已保证可编译；此处失败属内部错误，仍 fail loud）。 */
+function compileRegex(spec: RegexSpec): RegExp {
+  if (spec instanceof RegExp) return spec
+  return new RegExp(spec)
+}
+
+/** 尝试编译 RegexSpec：失败返回 error 文本（装配期/调用期校验用）。 */
+function tryCompileRegex(spec: RegexSpec): { ok: true; value: RegExp } | { ok: false; error: string } {
+  try {
+    return { ok: true, value: compileRegex(spec) }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/** 提取正则源码里的命名捕获组名（`(?<name>…)`；字符串/RegExp 的 source 扫描）。 */
+function captureGroupNames(regex: RegExp): string[] {
+  const names: string[] = []
+  for (const match of regex.source.matchAll(/\(\?<([a-zA-Z_][a-zA-Z0-9_]*)>/g)) {
+    names.push(match[1] as string)
+  }
+  return names
+}
+
+/**
+ * **规范化流程表**（W10.1 过渡桥；FlowRuntime 构造器在 validateFlows 之后调用）。
+ *
+ * 对含新口径字段的流程逐步骤映射：
+ *   - `settle:{mode:'inline'}` → `ok:[tool-ok]` + `fail:[tool-error]`（引擎"工具结果
+ *     即结算"判据；error 结局本就无条件失败，双写只为声明忠实）；
+ *   - `settle:{mode:'stream',on:{kind:'ga',count:N}}` → `boundary:N` + GA 判据进
+ *     `ok`（`onSettle` 缺省/'ok'）或 `fail`（`onSettle:'fail'`，如 fullme `stale`）；
+ *   - `settle:{mode:'stream',on:{kind:'regex',pattern}}` → 同判据的正则行判据（arming；
+ *     W10.2 收口 owner 化后由窗口承担）；
+ *   - `classify.ok`/`fail` 自填正则 → `ok`/`fail` 行判据（正则串在此编译为 RegExp）；
+ *     `branch` 不映射（过渡期流程分支由后继 driver 的 arming 承接）；
+ *   - `captures` → `capture` 映射（命名捕获组即槽名；引擎按进入判定行抽取，行为不变）；
+ *   - `fallback.ms` → 步级 `timeoutMs`（显式 `timeoutMs` 优先——fullme `prompt` 的
+ *     等人工步预算过渡保留）。
+ *
+ * 无新口径字段的步骤/流程**原样返回**（测试夹具的 legacy 表不受影响）。
+ * @param flows 已通过 validateFlows 的流程表。
+ * @returns 规范化后的流程表（新表；不修改入参）。
+ */
+export function normalizeFlowSpecs(flows: readonly FlowSpec[]): FlowSpec[] {
+  return flows.map((flow) => {
+    if (!flow.steps.some(step => step.settle !== undefined || step.classify !== undefined || step.captures !== undefined)) {
+      return flow
+    }
+    return { ...flow, steps: flow.steps.map(step => normalizeStep(step)) }
+  })
+}
+
+/** 单步规范化（见 normalizeFlowSpecs；无新口径字段的步骤原样返回）。 */
+function normalizeStep(step: FlowStep): FlowStep {
+  const settle = step.settle
+  const classify = step.classify
+  if (settle === undefined && classify === undefined && step.captures === undefined) return step
+  const ok: FlowMatch[] = []
+  const fail: FlowMatch[] = []
+  const onSettleFail = classify?.onSettle === 'fail'
+  if (settle?.mode === 'inline') {
+    // inline：工具结果即收口（固定映射 ok→ok / error→fail）。
+    ok.push({ kind: 'tool', outcome: 'ok' })
+    fail.push({ kind: 'tool', outcome: 'error' })
+  } else if (settle?.mode === 'stream' && settle.on !== undefined) {
+    // on 条件关窗：结局由 classify.onSettle 承载（缺省 'ok'）。
+    if (settle.on.kind === 'ga') {
+      const ga: FlowMatch = { kind: 'ga' }
+      if (onSettleFail) fail.push(ga)
+      else ok.push(ga)
+    } else {
+      const match: FlowMatch = { kind: 'regex', patterns: [compileRegex(settle.on.pattern)] }
+      if (onSettleFail) fail.push(match)
+      else ok.push(match)
+    }
+  }
+  // 分类正则 → 行判据（正则命中即结算；同帧定序 fail→分支→ok 由引擎现行判定序承担）。
+  if (classify?.ok !== undefined && classify.ok.length > 0) {
+    ok.push({ kind: 'regex', patterns: classify.ok.map(compileRegex) })
+  }
+  if (classify?.fail !== undefined && classify.fail.length > 0) {
+    fail.push({ kind: 'regex', patterns: classify.fail.map(compileRegex) })
+  }
+  // captures → capture 映射（命名捕获组即槽名；槽在流程内唯一已由 validateFlows 校验）。
+  let capture: Record<string, string | RegExp> | undefined
+  if (step.captures !== undefined) {
+    for (const spec of step.captures) {
+      const regex = compileRegex(spec)
+      const name = captureGroupNames(regex)[0]
+      if (name !== undefined) capture = { ...capture, [name]: regex }
+    }
+  }
+  // fallback.ms → 步级 timeoutMs（显式 timeoutMs 优先——等人工步预算过渡保留）。
+  const timeoutMs = step.timeoutMs ?? (settle?.mode === 'stream' ? settle.fallback?.ms : undefined)
+  const boundary = settle?.mode === 'stream' && settle.on?.kind === 'ga' ? settle.on.count : undefined
+  return {
+    ...step,
+    ...(ok.length > 0 ? { ok } : {}),
+    ...(fail.length > 0 ? { fail } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(boundary !== undefined ? { boundary } : {}),
+    ...(capture !== undefined ? { capture } : {}),
+  }
 }

@@ -17,6 +17,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import defaultPerceptionRules from '../src/perceive/rules.ts'
+import { normalizeFlowSpecs } from '../src/agent/flow/flow-spec.ts'
 import {
   LOGIN_FLOW, defaultFlows, flowCommands, validateFlows,
 } from '../src/agent/flow/flows/index.ts'
@@ -207,19 +208,41 @@ describe('流程表 (login)', () => {
     expect(byId('name').next).toEqual(['pass'])
     expect(byId('pass').next).toEqual(['replace', 'success'])
     expect(byId('replace').next).toEqual(['success'])
-    // **本步结果 = 下一步的新文本**（作者定案）：`name`/`pass` 都不写 `ok`，成功由后继 driver 给出
+    // W10.1 新口径（PLAN §3.1）：settle/classify 步级显式 —— 行流窗口 + 按实际耗时 30s 兜底；
+    // name/pass 的 fail 分类收束失败路径。
+    expect(byId('name').settle).toEqual({ mode: 'stream', fallback: { ms: 30_000 } })
+    expect(byId('name').classify).toEqual({ fail: ['需要创建新人物'] })
+    expect(byId('pass').settle).toEqual({ mode: 'stream', fallback: { ms: 30_000 } })
+    expect(byId('pass').classify?.fail).toHaveLength(3)
+    expect(byId('replace').settle).toEqual({ mode: 'stream', fallback: { ms: 30_000 } })
+    // **本步结果 = 下一步的新文本**（作者定案）：`name`/`pass`/`replace` 都不写 ok 分类，成功由后继 driver 给出
     // （"请输入密码"→pass；"替换人物"→replace；"目前权限/重新连线"→success）。
     expect(byId('name').ok).toBeUndefined()
     expect(byId('pass').ok).toBeUndefined()
     expect(byId('replace').ok).toBeUndefined()
-    // 终态步: 靠"已进入游戏"的成功句进入 → 发空命令 → `ok:[GA]` → `next` 空。
+    // 终态步: 靠"已进入游戏"的成功句进入 → 发空命令 → settle 显式 GA (on ga:1 + 5s 兜底) → `next` 空。
     const success = byId('success')
     expect(success.action).toEqual({ tool: 'mud_send', args: { cmd: '' } })
-    expect(success.ok).toEqual([{ kind: 'ga' }])
+    expect(success.settle).toEqual({ mode: 'stream', on: { kind: 'ga', count: 1 }, fallback: { ms: 5_000 } })
     expect(success.next).toBeUndefined()
     expect(success.onEnter?.patch).toEqual({ logged_in: true })
     // 失败只留痕不唤醒 T2（用户名/密码是人工给的，T2 补不了）。
     expect(LOGIN_FLOW.failPolicy).toEqual({ notify: 'none' })
+  })
+
+  it('规范化映射 (W10.1 过渡桥): settle/classify → legacy 判据, 引擎零改动消费', () => {
+    const normalized = normalizeFlowSpecs([LOGIN_FLOW])[0]!
+    const byId = (id: string) => normalized.steps.find(step => step.id === id)!
+    // 终态步: on ga:1 → ok GA 判据 + boundary 1; fallback 5s → 步级 timeoutMs。
+    const success = byId('success')
+    expect(success.ok).toEqual([{ kind: 'ga' }])
+    expect(success.boundary).toBe(1)
+    expect(success.timeoutMs).toBe(5_000)
+    // name: classify.fail → fail 行判据 (字符串编译为 RegExp); 无 on ⇒ 不产生 boundary;
+    // fallback 30s → timeoutMs (与流程级 timeoutMs 同值, 行为不变)。
+    expect(byId('name').fail).toEqual([{ kind: 'regex', patterns: [/需要创建新人物/] }])
+    expect(byId('name').boundary).toBeUndefined()
+    expect(byId('name').timeoutMs).toBe(30_000)
   })
 })
 

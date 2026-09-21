@@ -1,5 +1,8 @@
 /**
  * dsh-mud-core — 登录流程表 (flows/login)。`doc/ARCHITECTURE.md` §11 / `doc/flows/login.md`。
+ *
+ * W10.1 新口径（doc/PLAN.md §3.1/§3.3）：收口（settle）与分类（classify）分离、步级显式；
+ * 引擎消费走 `normalizeFlowSpecs` 过渡桥（新口径 → legacy 原语，行为逐字段保持）。
  * @module @deepseek-ai/dsh-mud-core/agent/flow/flows/login
  */
 
@@ -32,11 +35,14 @@ export const LOGIN_FLOW: FlowSpec = {
         ],
       },
       action: { tool: 'mud_send', args: { cmd: '{name}' } },
-      // **本步不写 `ok`**（作者定案 2026-09-13）：本步的结果就是**下一步的新文本** ——
-      // "此ID档案已存在，请输入密码："既是 `pass` 的进入判据（driver），也就是 `name` 的成功判据
+      // 收口/分类（W10.1 新口径，步级显式）：行流窗口 + 按实际耗时 30s 兜底；
+      // fail 分类 = "需要创建新人物"（用户名不存在 → 实质失败, 中断流程，(估计) 原文待核对）。
+      // **本步不写 ok 分类**（作者定案 2026-09-13）：本步的结果就是**下一步的新文本** ——
+      // "此ID档案已存在，请输入密码："既是 `pass` 的进入判据（driver），也就是 `name` 的成功
       // （§19.2：命中后继 driver ⇒ 本步成功 + 走该分支）。判据只写一份，不在这里重复声明；
-      // 写成 `ok:[GA]` 反而会让"命令被接受"抢先判定，把密码提示行消费掉、走不到 pass。
-      fail: [{ kind: 'text', includes: ['需要创建新人物'] }],   // (估计) 用户名不存在 → 实质失败, 中断流程
+      // 声明 GA 收口反而会让"命令被接受"抢先判定，把密码提示行消费掉、走不到 pass。
+      settle: { mode: 'stream', fallback: { ms: 30_000 } },
+      classify: { fail: ['需要创建新人物'] },
       next: ['pass'],
     },
     {
@@ -48,14 +54,13 @@ export const LOGIN_FLOW: FlowSpec = {
         patterns: [/^(?:此ID档案已存在，|ID已存在，)?请输入密码[：:]\s*$/],
       },
       action: { tool: 'mud_send', args: { cmd: '{pass}' } },
-      fail: [
-        // 密码错误提示 (估计形态, 原文待作者核对)。实测上密码错常表现为**服务器直接断连**，
-        // 那条路走桥的 `error`（写失败/连接断开）→ 同样失败收束，不依赖这里的文本。
-        { kind: 'regex', patterns: [/^密码错误[^]*$/, /^密码不正确[^]*$/, /^登录失败[^]*$/] },
-      ],
-      // 本步同样**不写 `ok`**：它的结果就是下一步的新文本 —— "替换人物"句 → `replace`，
+      // fail 分类 = 密码错误提示 (估计形态, 原文待作者核对)。实测上密码错常表现为**服务器直接
+      // 断连**，那条路走窗口的 `error`（写失败/连接断开）→ 同样失败收束，不依赖这里的文本。
+      // 本步同样**不写 ok 分类**：它的结果就是下一步的新文本 —— "替换人物"句 → `replace`，
       // "目前权限：(player)"/"重新连线完毕" → `success`。两个后继都带 driver ⇒ 都是条件分支，
       // 谁的行先到谁生效；两条都不来则本步超时失败收束（不静默）。
+      settle: { mode: 'stream', fallback: { ms: 30_000 } },
+      classify: { fail: [/^密码错误[^]*$/, /^密码不正确[^]*$/, /^登录失败[^]*$/] },
       next: ['replace', 'success'],
     },
     {
@@ -69,6 +74,7 @@ export const LOGIN_FLOW: FlowSpec = {
       },
       action: { tool: 'mud_send', args: { cmd: 'y' } },
       // 作者定案 2026-09-13：答完 `y` **不再回头要密码**，直接等"已进入游戏"的成功句。
+      settle: { mode: 'stream', fallback: { ms: 30_000 } },
       next: ['success'],
     },
     {
@@ -90,9 +96,8 @@ export const LOGIN_FLOW: FlowSpec = {
         ],
       },
       action: { tool: 'mud_send', args: { cmd: '' } },
-      // 命令被接受即成功；next 空 = 终态 ⇒ `finishFlow`（§19.2）。
-      ok: [{ kind: 'ga' }],
-      timeoutMs: 5_000,
+      // 收口显式 GA（W10.1 新口径）：命令被接受（1 GA）即成功；next 空 = 终态 ⇒ `finishFlow`（§19.2）。
+      settle: { mode: 'stream', on: { kind: 'ga', count: 1 }, fallback: { ms: 5_000 } },
       onEnter: { patch: { logged_in: true } },
     },
   ],

@@ -366,7 +366,8 @@ describe('fullme 流程 (提醒行 → fullme → ask-human 提问 → 人工回
     expect(h.sent.filter(cmd => cmd === 'fullme 1')).toHaveLength(3)
 
     expect(h.runtime.diag().flow).toBeNull()
-    expect(h.logs.join('\n')).toContain('放弃上一轮（三连 fullme 1）→ 本轮作废')
+    // W10.1 起 stale 的 GA fail 由 classify.onSettle:'fail' 声明（旧 why 文案由引擎缺省承担）。
+    expect(h.logs.join('\n')).toContain('fullme/stale 失败：GA 判据 → 失败 → 复位')
     h.runtime.dispose()
   })
 

@@ -20,7 +20,7 @@ import type { MudLine } from '../../network/ansi.ts'
 import { TriggerMatchService } from '../../perceive/matcher.ts'
 import type { ActionSpec, PerceptionRule } from '../../perceive/types.ts'
 import {
-  isLineMatch, validateFlows,
+  isLineMatch, normalizeFlowSpecs, validateFlows,
   type FlowMatch, type FlowSpec, type FlowStep,
 } from './flow-spec.ts'
 import type { ArmedMatch, FlowActionHit, FlowRuntimeOptions, FlowState, FlowWindowSpec, InterruptOutcome, InterruptRequest } from './flow-types.ts'
@@ -75,7 +75,9 @@ export class FlowRuntime {
     const errors = validateFlows(opts.flows)
     for (const error of errors) this.opts.log(`[缺陷] 流程表校验失败: ${error}`)
     const invalid = new Set(errors.map(error => error.split(':')[0]?.trim() ?? '').filter(Boolean))
-    this.flows = opts.flows.filter(flow => !invalid.has(flow.id))
+    // W10.1 过渡桥：新口径声明（settle/classify/captures）规范化为 legacy 引擎原语
+    // （ok/fail/boundary/timeoutMs/capture），引擎零改动、行为逐字段保持（W10.2/W10.4 拆桥）。
+    this.flows = normalizeFlowSpecs(opts.flows.filter(flow => !invalid.has(flow.id)))
     const entries = new Map<string, FlowSpec>()
     for (const flow of this.flows) {
       const entryId = flow.entry ?? flow.steps[0]?.id

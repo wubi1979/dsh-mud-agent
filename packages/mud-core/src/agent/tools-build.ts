@@ -32,6 +32,7 @@ import { MOVE_ALIASES, MOVE_DIRS, STATUS_CMDS } from '../world/game.ts'
 import type { WindowCriteria, WindowRequest, WindowResult } from './inflight.ts'
 import type { SessionCredentials } from '../session/credentials.ts'
 import { applyPatch, worldSnapshot, type WorldModel } from '../world/state.ts'
+import type { SettleSpec } from './flow/flow-spec.ts'
 import {
   OUT_RENDER, OUT_SCHEMA, type MudToolResult, type MudToolSchema, type MudTools,
 } from './tools-schema.ts'
@@ -93,6 +94,172 @@ export interface ActivityEntry {
   timeoutMs?: number
   /** 一句说明 (抓包依据, 供维护者)。 */
   note?: string
+}
+
+// ── W10.1 收口/分类参数解析 (doc/PLAN.md §3.1: 收口与分类分离) ──────────────
+
+/** 收口缺省兜底时长 (D3: 缺省 `{mode:'stream'}` + fallback 3000, 两 lane 一致的 T2 量级短超时)。 */
+const SETTLE_FALLBACK_MS = 3000
+
+/** T2 命令类工具的显式收口声明 (D3/R1: 现行 `gaCount:1` 迁移为 settle on ga:1)。 */
+const T2_QUERY_SETTLE = { mode: 'stream', on: { kind: 'ga', count: 1 } } as const satisfies SettleSpec
+
+/** resolveSettleWindow 的产出: 在途窗口声明 (或 inline 直发标记)。 */
+interface ResolvedSettle {
+  /** inline 收口: 工具结果即结算, 直发 + 立即返回 (不开窗)。 */
+  inline: boolean
+  criteria?: WindowCriteria
+  gaCount?: number
+  timeoutMs?: number
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** 编译分类正则数组 (JSON 参数: 正则源码字符串) 为单条 alternation 正则。 */
+function compilePatterns(list: unknown, field: string): { ok: true; value: RegExp } | { ok: false; error: string } {
+  if (!Array.isArray(list) || list.length === 0) {
+    return { ok: false, error: `${field} 必须是非空正则源码字符串数组` }
+  }
+  const sources: string[] = []
+  for (const item of list) {
+    if (typeof item !== 'string' && !(item instanceof RegExp)) {
+      return { ok: false, error: `${field} 的每项必须是正则源码字符串` }
+    }
+    sources.push(item instanceof RegExp ? item.source : item)
+  }
+  try {
+    return { ok: true, value: new RegExp(sources.map(s => `(?:${s})`).join('|')) }
+  } catch (error) {
+    return { ok: false, error: `${field} 正则编译失败 (${error instanceof Error ? error.message : String(error)})` }
+  }
+}
+
+/**
+ * 把 tool-call 的 `settle`/`classify`/`captures` 参数解析为在途窗口声明 (PLAN §3.1)。
+ *
+ * **收口缺省** `{mode:'stream'}` + fallback 3000 (两 lane 一致, 调用期不报错); 非法声明
+ * **fail-closed 拒绝** (返回 error 文本, 不静默回退——声明写错不该被 3s 兜底掩盖)。
+ * W10.1 工具层形态: `on regex` → 判据型窗口 (onSettle 定 ok/fail 侧), 分类正则命中即结算
+ * (fail-fast), `on ga` → gaCount, fallback.ms → 放弃计时; capture 抽取与收口 owner 化随
+ * W10.2 落地。
+ */
+function resolveSettleWindow(
+  settle: unknown,
+  classify: unknown,
+  captures: unknown,
+): ResolvedSettle | { error: string } {
+  // ① 分类声明先编译 (inline 下声明分类/抽取拒绝)。
+  let classifyOk: RegExp | undefined
+  let classifyFail: RegExp | undefined
+  let onSettle: 'ok' | 'fail' = 'ok'
+  if (classify !== undefined) {
+    if (!isPlainObject(classify)) return { error: '工具拒绝: classify 必须是对象 ({ok?/fail?/onSettle?})' }
+    if (classify.ok !== undefined) {
+      const c = compilePatterns(classify.ok, 'classify.ok')
+      if (!c.ok) return { error: `工具拒绝: ${c.error}` }
+      classifyOk = c.value
+    }
+    if (classify.fail !== undefined) {
+      const c = compilePatterns(classify.fail, 'classify.fail')
+      if (!c.ok) return { error: `工具拒绝: ${c.error}` }
+      classifyFail = c.value
+    }
+    if (classify.onSettle !== undefined) {
+      if (classify.onSettle !== 'ok' && classify.onSettle !== 'fail') {
+        return { error: "工具拒绝: classify.onSettle 只能是 'ok'/'fail'" }
+      }
+      onSettle = classify.onSettle
+    }
+  }
+  // ② 缺省收口 = stream + fallback 3000; 已编译的分类照常进判据 (分类来源解析三序 ①)。
+  if (settle === undefined) {
+    const criteria: WindowCriteria = {}
+    if (classifyOk !== undefined) criteria.ok = classifyOk
+    if (classifyFail !== undefined) criteria.fail = classifyFail
+    const hasCriteria = criteria.ok !== undefined || criteria.fail !== undefined
+    return { inline: false, ...(hasCriteria ? { criteria } : {}), timeoutMs: SETTLE_FALLBACK_MS }
+  }
+  if (!isPlainObject(settle)) {
+    return { error: '工具拒绝: settle 必须是 {mode:"inline"} 或 {mode:"stream", on?, fallback?}' }
+  }
+  if (settle.mode === 'inline') {
+    if (classify !== undefined) {
+      return { error: '工具拒绝: mode:"inline" 收口下不能声明 classify (工具结果即结算, 无行内容可分类)' }
+    }
+    if (captures !== undefined) {
+      return { error: '工具拒绝: mode:"inline" 收口下不能声明 captures (无行内容可抽取)' }
+    }
+    return { inline: true }
+  }
+  if (settle.mode !== 'stream') {
+    return { error: '工具拒绝: settle.mode 只能是 "inline"/"stream"' }
+  }
+  // ③ stream: on 条件 → 提前关窗 (ga 的 count / regex 的 pattern)。
+  let gaCount: number | undefined
+  const criteria: WindowCriteria = {}
+  let hasCriteria = false
+  if (settle.on !== undefined) {
+    if (!isPlainObject(settle.on)) {
+      return { error: '工具拒绝: settle.on 必须是 {kind:"ga", count} 或 {kind:"regex", pattern}' }
+    }
+    if (settle.on.kind === 'ga') {
+      if (!Number.isInteger(settle.on.count) || (settle.on.count as number) < 1) {
+        return { error: '工具拒绝: settle.on ga count 必须是 >= 1 的整数' }
+      }
+      gaCount = settle.on.count as number
+    } else if (settle.on.kind === 'regex') {
+      if (typeof settle.on.pattern !== 'string' && !(settle.on.pattern instanceof RegExp)) {
+        return { error: '工具拒绝: settle.on regex pattern 必须是正则源码字符串' }
+      }
+      try {
+        const compiled = new RegExp(settle.on.pattern instanceof RegExp ? settle.on.pattern.source : settle.on.pattern)
+        // on 命中关窗 + onSettle 裁决 → 判据型窗口 (W10.2 收口 owner 化后由裁决器承担)。
+        if (onSettle === 'fail') { criteria.fail = compiled } else { criteria.ok = compiled }
+        hasCriteria = true
+      } catch (error) {
+        return { error: `工具拒绝: settle.on regex 编译失败 (${error instanceof Error ? error.message : String(error)})` }
+      }
+    } else {
+      return { error: '工具拒绝: settle.on kind 只能是 "ga"/"regex" (time kind 已删除, 时间恒由 fallback 管)' }
+    }
+  }
+  // 分类正则命中即结算 (fail-fast; MVP 唯一语义)。
+  if (classifyOk !== undefined) { criteria.ok = criteria.ok ?? classifyOk; hasCriteria = true }
+  if (classifyFail !== undefined) { criteria.fail = criteria.fail ?? classifyFail; hasCriteria = true }
+  // ④ fallback: 兜底时长 (缺省 3000; 到期恒 timeout 结算)。
+  let timeoutMs = SETTLE_FALLBACK_MS
+  if (settle.fallback !== undefined) {
+    const fb = settle.fallback as { ms?: unknown }
+    if (!isPlainObject(settle.fallback) || !Number.isFinite(fb.ms) || (fb.ms as number) <= 0) {
+      return { error: '工具拒绝: settle.fallback 必须是 {ms: 正数}' }
+    }
+    timeoutMs = fb.ms as number
+  }
+  return {
+    inline: false,
+    ...(hasCriteria ? { criteria } : {}),
+    ...(gaCount !== undefined ? { gaCount } : {}),
+    timeoutMs,
+  }
+}
+
+/** T2 命令类工具的窗口请求 (显式收口 settle on ga:1 + 统一 fallback 3000, D3/R1)。 */
+function t2QueryRequest(cmd: string, label: string, signal?: AbortSignal): WindowRequest {
+  const settle = resolveSettleWindow(T2_QUERY_SETTLE, undefined, undefined)
+  if ('error' in settle || settle.inline) {
+    // 常量声明错误属编程缺陷 (恒不触发)。
+    throw new Error(`T2 收口常量非法: ${'error' in settle ? settle.error : 'inline'}`)
+  }
+  return {
+    cmd,
+    ...(settle.criteria !== undefined ? { criteria: settle.criteria } : {}),
+    ...(settle.gaCount !== undefined ? { gaCount: settle.gaCount } : {}),
+    ...(settle.timeoutMs !== undefined ? { timeoutMs: settle.timeoutMs } : {}),
+    label,
+    ...(signal !== undefined ? { signal } : {}),
+  }
 }
 
 /** 缺省活动表 (抓包实证 2026-09-10: dz/sleep 均无 GA 无 prompt, 直到完成句)。 */
@@ -280,8 +447,8 @@ export function buildMudTools({
         if (refused !== null) return refused
         log(`[工具] mud_move → ${dir}`)
         if (registerWindow) {
-          // 窗口型 (§2.3): 无判据, 1 GA 关窗 = 成功, 窗口内行 = 工具结果 (T1/T2 同形)。
-          return viaWindow({ cmd: dir, gaCount: 1, label: 'mud_move', ...(opts?.signal !== undefined ? { signal: opts.signal } : {}) })
+          // 窗口型 (§2.3): 显式收口 settle on ga:1 (D3/R1) —— 1 GA 关窗 = 成功, 窗口内行 = 工具结果 (T1/T2 同形)。
+          return viaWindow(t2QueryRequest(dir, 'mud_move', opts?.signal))
         }
         send(dir)
         return { ok: true, note: `向 ${dir} 移动`, cmd: dir }
@@ -309,7 +476,7 @@ export function buildMudTools({
         if (refused !== null) return refused
         log(`[工具] mud_look → ${cmd}`)
         if (registerWindow) {
-          return viaWindow({ cmd, gaCount: 1, label: 'mud_look', ...(opts?.signal !== undefined ? { signal: opts.signal } : {}) })
+          return viaWindow(t2QueryRequest(cmd, 'mud_look', opts?.signal))
         }
         send(cmd)
         return { ok: true, note: cmd, cmd }
@@ -338,7 +505,7 @@ export function buildMudTools({
         if (refused !== null) return refused
         log(`[工具] mud_status → ${cmd}`)
         if (registerWindow) {
-          return viaWindow({ cmd, gaCount: 1, label: 'mud_status', ...(opts?.signal !== undefined ? { signal: opts.signal } : {}) })
+          return viaWindow(t2QueryRequest(cmd, 'mud_status', opts?.signal))
         }
         send(cmd)
         return { ok: true, note: cmd, cmd }
@@ -366,7 +533,22 @@ export function buildMudTools({
         until: {
           type: 'object',
           additionalProperties: true,
-          description: '可选: 声明应答结算判据 (规则动作使用)。声明的正则命中应答文本即结算 (跨帧累积; 慢命令如 dz/fullme), 缺省 GA 主边界关窗结算',
+          description: '可选 (旧口径, 规则动作使用): 声明应答结算判据 {regex, timeout?}。声明的正则命中应答文本即结算 (跨帧累积; 慢命令如 dz/fullme), 缺省 GA 主边界关窗结算。与 settle 不得同时声明',
+        },
+        settle: {
+          type: 'object',
+          additionalProperties: true,
+          description: '可选收口声明 (只回答"窗口何时关闭"): {mode:"inline"} 不等应答立即返回 (工具结果即结算, 不开应答窗口); {mode:"stream", on?, fallback?} 开应答窗口——on 为提前关窗条件 {kind:"ga", count:N} (第 N 个 GA 后关窗) 或 {kind:"regex", pattern} (正则命中即关窗, 正则为源码字符串), fallback={ms} 为兜底超时毫秒。缺省 stream + 3000ms 兜底 (到期即 timeout 结算)',
+        },
+        classify: {
+          type: 'object',
+          additionalProperties: true,
+          description: '可选分类声明 (只回答"应答内容算哪一类", 与关窗解耦): {ok?: 正则源码字符串[], fail?: 正则源码字符串[], onSettle?: "ok"|"fail"}——正则命中应答即结算 (ok=成功 / fail=失败); onSettle 是 on 条件关窗但分类未命中时的裁决 (缺省 ok)',
+        },
+        captures: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '可选抽取声明 (正则源码字符串数组): 逐行扫描应答窗口, 命名捕获组 (?<name>…) 即槽名, 未匹配不报错',
         },
       },
       output: { schema: OUT_SCHEMA, render: OUT_RENDER },
@@ -377,18 +559,54 @@ export function buildMudTools({
         )
         const refused = offline()
         if (refused !== null) return refused
+        // ── W10.1 收口/分类/抽取参数 (PLAN §3.1): 非法声明 fail-closed 拒绝 (不静默回退);
+        // legacy until (规则动作旧口径) 与 settle 互斥。
+        if (args.until !== undefined && args.settle !== undefined) {
+          return { ok: false, note: 'until 与 settle 不得同时声明 (until 为旧口径, 请改用 settle/classify)', cmd: '' }
+        }
+        const settleResolved = resolveSettleWindow(args.settle, args.classify, args.captures)
+        if ('error' in settleResolved) return { ok: false, note: settleResolved.error, cmd: '' }
+        if (settleResolved.inline) {
+          // inline 收口: 工具结果即结算 —— 直发 + 立即 ok 返回 (不开窗、不算应答)。
+          const inlineSeries = Array.isArray(args.cmds) ? args.cmds.map((c) => String(c)) : null
+          if (inlineSeries && inlineSeries.length > 0) {
+            for (const c of inlineSeries) {
+              if (isForbidden(c, denied)) {
+                return { ok: false, note: `安全禁用命令, 拒绝发送: ${String(c).trim()}`, cmd: '' }
+              }
+            }
+            log(`[工具] mud_send 序列(inline) → ${inlineSeries.length} 条命令`)
+            for (const c of inlineSeries) send(wire(c))
+            return { ok: true, note: '命令序列 (inline 收口: 已发出, 工具结果即结算)', cmd: '' }
+          }
+          if (typeof args.cmd !== 'string') return { ok: false, note: '空命令', cmd: '' }
+          const inlineCmd = args.cmd.trim()
+          if (isForbidden(inlineCmd, denied)) {
+            return { ok: false, note: `安全禁用命令, 拒绝发送: ${inlineCmd}`, cmd: '' }
+          }
+          log(`[工具] mud_send(inline) → ${inlineCmd}`)
+          send(wire(inlineCmd))
+          return { ok: true, note: inlineCmd, cmd: inlineCmd }
+        }
         // 声明判据 (规则动作可传): args.until = { regex, timeout? } → ok 判据 (命中 =
         // 成功结算, §2.3 判据型)。非法正则回退无判据 (窗口型, GA 关窗)。
+        // W10.1: 未声明 until 时 criteria/fallback 来自 settle/classify 解析 (缺省
+        // stream + 3000; 活动表附加仅在此无判据时生效, 见下)。
         const untilRaw = args.until as { regex?: unknown; timeout?: unknown } | undefined
         let criteria: WindowCriteria | undefined
         let timeoutMs: number | undefined
-        if (untilRaw && typeof untilRaw.regex === 'string') {
-          try {
-            criteria = { ok: new RegExp(untilRaw.regex) }
-          } catch {
-            criteria = undefined
+        if (untilRaw !== undefined) {
+          if (typeof untilRaw.regex === 'string') {
+            try {
+              criteria = { ok: new RegExp(untilRaw.regex) }
+            } catch {
+              criteria = undefined
+            }
+            if (typeof untilRaw.timeout === 'number') timeoutMs = untilRaw.timeout
           }
-          if (typeof untilRaw.timeout === 'number') timeoutMs = untilRaw.timeout
+        } else {
+          criteria = settleResolved.criteria
+          timeoutMs = settleResolved.timeoutMs
         }
         // 回合取消信号: 随窗口注册传入 (取消 → 优雅结算 settled='abort')。
         const signal = opts?.signal
@@ -408,6 +626,7 @@ export function buildMudTools({
               cmd: series.map(wire),
               ...(criteria !== undefined ? { criteria } : {}),
               ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+              ...(settleResolved.gaCount !== undefined ? { gaCount: settleResolved.gaCount } : {}),
               label: 'mud_send',
               ...(signal !== undefined ? { signal } : {}),
             })
@@ -438,6 +657,7 @@ export function buildMudTools({
             cmd: wiredCmd,
             ...(criteria !== undefined ? { criteria } : {}),
             ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+            ...(settleResolved.gaCount !== undefined ? { gaCount: settleResolved.gaCount } : {}),
             label: 'mud_send',
             ...(signal !== undefined ? { signal } : {}),
           })
