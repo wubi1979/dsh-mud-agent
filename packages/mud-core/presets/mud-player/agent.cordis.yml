@@ -254,6 +254,10 @@
 - id: present
   name: '@deepseek-ai/dsh-tool-present'
 
+- id: tool-plugin-manager
+  name: '@deepseek-ai/dsh-plugin-manager/tools'
+  disabled: true
+
 # ── MUD player (本 preset 相对 standard 的唯一增量) ──────────────────────────
 
 # 本行只注册工具与提示区段、不 provide 服务（挂载审计要求），因此无需 isolate；

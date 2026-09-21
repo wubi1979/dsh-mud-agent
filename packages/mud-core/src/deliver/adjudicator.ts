@@ -45,8 +45,8 @@ import { InflightWindowTable, type ReplySettle } from '../agent/inflight.ts'
 import { DeliveryChannel } from './delivery-channel.ts'
 import { CommandQueue } from '../agent/queue.ts'
 import { StateService } from './state-track.ts'
-import { FlowRuntime } from '../flow/engine.ts'
-import type { FlowActionHit } from '../flow/flow-types.ts'
+import { FlowRuntime } from '../agent/flow/engine.ts'
+import type { FlowActionHit } from '../agent/flow/flow-types.ts'
 import {
   actionOf,
   EMPTY_COMMANDS,

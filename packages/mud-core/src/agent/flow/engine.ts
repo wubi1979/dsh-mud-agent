@@ -1,7 +1,7 @@
 /**
  * dsh-mud-core — 流程运行时 (flow runtime), `doc/ARCHITECTURE.md` §19。
  *
- * 一条流程 = 显式的步骤图（`flow/flows/` 声明）。本类持有**每会话**的流程实例状态:
+ * 一条流程 = 显式的步骤图（`agent/flow/flows/` 声明）。本类持有**每会话**的流程实例状态:
  *   - **arming 集**：当前开着的**行判据**（本步 driver(重试) + 本步 ok/fail 行判据 +
  *     条件分支后继的进入判据；GA/tool 判据不经 arming）；
  *   - **挂起**：命令发出后等结果（实现上就是在途窗口, §8.3 / W7.2 ——
@@ -13,19 +13,19 @@
  *
  * 它**不发命令、不解析帧归属**：要动的动作以"命中"返回给运行时，由运行时走投递与官方工具
  * 路径（T1 渲染 → 闸门 → 工具 → 在途窗口）。所有状态迁移都通过 `onLog`/`onDecision` 留痕。
- * @module @deepseek-ai/dsh-mud-core/flow/engine
+ * @module @deepseek-ai/dsh-mud-core/agent/flow/engine
  */
 
-import type { MudLine } from '../network/ansi.ts'
-import { TriggerMatchService } from '../perceive/matcher.ts'
-import type { ActionSpec, PerceptionRule } from '../perceive/types.ts'
+import type { MudLine } from '../../network/ansi.ts'
+import { TriggerMatchService } from '../../perceive/matcher.ts'
+import type { ActionSpec, PerceptionRule } from '../../perceive/types.ts'
 import {
   isLineMatch, validateFlows,
   type FlowMatch, type FlowSpec, type FlowStep,
 } from './flow-spec.ts'
 import type { ArmedMatch, FlowActionHit, FlowRuntimeOptions, FlowState, FlowWindowSpec, InterruptOutcome, InterruptRequest } from './flow-types.ts'
-import type { ReplySettle } from '../agent/inflight.ts'
-import { lineCriteriaPattern } from '../perceive/criteria.ts'
+import type { ReplySettle } from '../inflight.ts'
+import { lineCriteriaPattern } from '../../perceive/criteria.ts'
 import { commandsOf, entryMatch, interpolate, preview } from './util.ts'
 
 

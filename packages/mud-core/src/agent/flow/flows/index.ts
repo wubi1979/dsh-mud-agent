@@ -5,9 +5,9 @@
  *   - `../flow-spec.ts`：契约 —— 声明面类型 + 判据工具 + 注册期校验（**不含任何具体流程**）；
  *   - 本目录：**纯声明数据** —— `login.ts`/`fullme.ts` 各写各的流程表，驱动句 / ok / fail
  *     **只写这里一份**，不在 trigger 里重复；流程状态（arming 集、挂起、打断、排队）
- *     是运行时状态，归 `../flow.ts` 引擎持有；
- *   - `../flow.ts`：引擎 —— FlowRuntime，依赖契约不依赖本目录数据。
- * @module @deepseek-ai/dsh-mud-core/flow/flows
+ *     是运行时状态，归 `../engine.ts` 引擎持有；
+ *   - `../engine.ts`：引擎 —— FlowRuntime，依赖契约不依赖本目录数据。
+ * @module @deepseek-ai/dsh-mud-core/agent/flow/flows
  */
 
 import type { FlowSpec } from '../flow-spec.ts'
@@ -39,7 +39,7 @@ export function flowCommands(flows: readonly FlowSpec[]): string[] {
   return [...out]
 }
 
-// ── re-export（保持 `flow/flows` 单一数据入口；契约本体在 `../flow-spec.ts`） ──
+// ── re-export（保持 `agent/flow/flows` 单一数据入口；契约本体在 `../flow-spec.ts`） ──
 
 export {
   PRIORITY_NORMAL,

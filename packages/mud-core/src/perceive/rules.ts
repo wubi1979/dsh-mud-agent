@@ -214,7 +214,7 @@ const defaultPerceptionRules: readonly PerceptionRule[] = [
       tool: { name: 'world_patch', args: { patch: { dead: true, in_combat: false } } },
     },
   },
-  // ── fullme 防机器人验证: **已流程化**（`flow/flows` 的 `FULLME_FLOW`, §11）──
+  // ── fullme 防机器人验证: **已流程化**（`agent/flow/flows` 的 `FULLME_FLOW`, §11）──
   // 原 `fullme:request` / `fullme:prompt` / `fullme:done` 三条规则退役：
   // 入口提醒、验证码地址、成功句、答错句、上一轮未完成提示全部成为流程步的 driver/ok/fail
   // （驱动句/动作/判据只在流程表写一份；§16 删除清单）。

@@ -14,8 +14,8 @@ import { describe, expect, it } from 'vitest'
 import rules from '../src/perceive/rules.ts'
 import {
   defaultFlows, flowCommands, FULLME_FLOW, LOGIN_FLOW, validateFlows, type FlowSpec,
-} from '../src/flow/flows/index.ts'
-import { FlowRuntime } from '../src/flow/engine.ts'
+} from '../src/agent/flow/flows/index.ts'
+import { FlowRuntime } from '../src/agent/flow/engine.ts'
 import type { WorldModel } from '../src/world/state.ts'
 import type { MudLine } from '../src/network/ansi.ts'
 

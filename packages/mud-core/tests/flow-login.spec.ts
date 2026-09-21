@@ -19,7 +19,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import defaultPerceptionRules from '../src/perceive/rules.ts'
 import {
   LOGIN_FLOW, defaultFlows, flowCommands, validateFlows,
-} from '../src/flow/flows/index.ts'
+} from '../src/agent/flow/flows/index.ts'
 import { runWithDeliveryChannel } from '../src/session/mount.ts'
 import { MudSessionRuntime } from '../src/session/session.ts'
 import type { MudRuntimeConfig, MudRuntimeSink } from '../src/session/types.ts'

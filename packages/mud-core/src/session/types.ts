@@ -12,8 +12,8 @@ import type { ActivityEntry } from '../agent/tools-build.ts'
 import type { DangerousRule } from '../agent/commands.ts'
 import type { OwnedAction } from '../deliver/lane.ts'
 import type { MudUiItem, MudWorldSnapshot } from '../shell/remote-types.ts'
-import type { FlowState } from '../flow/flow-types.ts'
-import type { FlowSpec } from '../flow/flow-spec.ts'
+import type { FlowState } from '../agent/flow/flow-types.ts'
+import type { FlowSpec } from '../agent/flow/flow-spec.ts'
 import type { WindowDiag } from '../agent/inflight.ts'
 
 /** 一条待投递的动作请求 (与投递消息 `source.actions` 同形; §7)。 */
@@ -31,7 +31,7 @@ export type CommandActor = 'agent' | 'user' | 'system'
 /**
  * 登录流程的**收尾命令**（v0.4.0 起退役）：MXP 探测的"顶一下"与 `look` 现在是流程
  * `login` 的步骤（`mxp` 条件分支 + `look` 顺序步），不再由运行时发固定序列。
- * @deprecated 由 `flow/flows` 的 `LOGIN_FLOW` 声明取代（`doc/ARCHITECTURE.md` §11/§19）。
+ * @deprecated 由 `agent/flow/flows` 的 `LOGIN_FLOW` 声明取代（`doc/ARCHITECTURE.md` §11/§19）。
  */
 export const DEFAULT_LOGIN_EXIT_COMMANDS: readonly string[] = []
 

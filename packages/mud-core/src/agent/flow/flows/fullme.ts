@@ -1,6 +1,6 @@
 /**
  * dsh-mud-core — fullme 流程表 (flows/fullme)。`doc/ARCHITECTURE.md` §11 / `doc/flows/fullme.md`。
- * @module @deepseek-ai/dsh-mud-core/flow/flows/fullme
+ * @module @deepseek-ai/dsh-mud-core/agent/flow/flows/fullme
  */
 
 import type { FlowSpec } from '../flow-spec.ts'

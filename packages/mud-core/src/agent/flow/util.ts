@@ -1,10 +1,10 @@
 /**
- * dsh-mud-core — 流程纯辅助函数 (flow/util)。
+ * dsh-mud-core — 流程纯辅助函数 (agent/flow/util)。
  *
  * 从 `flow.ts` 尾部拆出 (v0.9.3 W8, 纯文件级重组): 步骤进入判据提取、
  * 命令列表解析、占位符插值、文本预览 —— 均为**纯函数** (无 I/O、无运行时
  * 状态), 供 `engine.ts` 的 FlowRuntime 消费。
- * @module @deepseek-ai/dsh-mud-core/flow/util
+ * @module @deepseek-ai/dsh-mud-core/agent/flow/util
  */
 
 import { isLineMatch, type FlowMatch, type FlowStep } from './flow-spec.ts'

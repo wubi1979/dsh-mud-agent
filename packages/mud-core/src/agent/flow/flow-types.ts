@@ -1,12 +1,12 @@
 /**
- * dsh-mud-core — 流程类型 (flow/flow-types), `doc/ARCHITECTURE.md` §19。
+ * dsh-mud-core — 流程类型 (agent/flow/flow-types), `doc/ARCHITECTURE.md` §19。
  *
  * 从 `FlowRuntime` 抽出的**声明面**: 流程命中 / 结算种类 / 实例状态 / 打断协议 /
  * 构造参数。本模块无运行态, 供流程引擎与会话运行时共用。
- * @module @deepseek-ai/dsh-mud-core/flow/flow-types
+ * @module @deepseek-ai/dsh-mud-core/agent/flow/flow-types
  */
 
-import type { WorldModel } from '../world/state.ts'
+import type { WorldModel } from '../../world/state.ts'
 import type { FlowMatch, FlowSpec } from './flow-spec.ts'
 
 /** 流程发出的动作（交给运行时的投递层；字段与规则命中对齐）。 */

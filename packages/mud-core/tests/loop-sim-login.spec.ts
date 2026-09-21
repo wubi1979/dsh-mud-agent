@@ -7,7 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import defaultPerceptionRules from '../src/perceive/rules.ts'
-import { defaultFlows } from '../src/flow/flows/index.ts'
+import { defaultFlows } from '../src/agent/flow/flows/index.ts'
 import { MudSessionRuntime } from '../src/session/session.ts'
 import type { MudRuntimeConfig, MudRuntimeSink } from '../src/session/types.ts'
 import type { MudConnectionManager, MudConnectionSink } from '../src/network/manager.ts'

@@ -1,6 +1,6 @@
 /**
  * dsh-mud-core — 登录流程表 (flows/login)。`doc/ARCHITECTURE.md` §11 / `doc/flows/login.md`。
- * @module @deepseek-ai/dsh-mud-core/flow/flows/login
+ * @module @deepseek-ai/dsh-mud-core/agent/flow/flows/login
  */
 
 import type { FlowSpec } from '../flow-spec.ts'

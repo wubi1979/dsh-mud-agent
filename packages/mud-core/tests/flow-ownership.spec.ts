@@ -13,8 +13,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import type { FlowSpec } from '../src/flow/flows/index.ts'
-import { FlowRuntime } from '../src/flow/engine.ts'
+import type { FlowSpec } from '../src/agent/flow/flows/index.ts'
+import { FlowRuntime } from '../src/agent/flow/engine.ts'
 import type { MudLine } from '../src/network/ansi.ts'
 
 /** 一个两步流程：`start` 发 `dazuo`（ok:[GA]），`done` 靠收功句进入（终态）。 */

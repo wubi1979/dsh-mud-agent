@@ -47,7 +47,7 @@ import type { ActivityEntry } from './agent/tools-build.ts'
 import { commandsIndexForAgent } from './agent/commands.ts'
 import defaultPerceptionRules from './perceive/rules.ts'
 import { splitPerceptionRules } from './perceive/engine.ts'
-import { flowCommands, defaultFlows } from './flow/flows/index.ts'
+import { flowCommands, defaultFlows } from './agent/flow/flows/index.ts'
 import {
   attachMudPersona, attachMudPrompt, attachMudTools,
 } from './session/mount.ts'
