@@ -36,6 +36,7 @@ import { CONTROL_PREFIX } from '../perceive/types.ts'
 import type { PerceptionRule } from '../perceive/types.ts'
 import { MudConnectionManager } from '../network/manager.ts'
 import { WatchdogTable } from './watchdogs.ts'
+import type { FlowSlot } from '../agent/flow/slot.ts'
 import { FlowRuntime } from '../agent/flow/engine.ts'
 import { defaultFlows } from '../agent/flow/flows/index.ts'
 import type { MudWorldSnapshot } from '../shell/remote-types.ts'
@@ -234,10 +235,8 @@ export class MudSessionRuntime {
       // 构造期 flow.armEntries() 即触发, 此时裁决器尚未建立 → 可选链吞掉, 由
       // 裁决器 register() 末尾的 syncArming() 全量重放补上 (W7.3 唯一注册入口)。
       onArmSync: (markers) => { this.adjudicator?.syncFlowMarkers(markers) },
-      // §D3「单一收口路径」形态 A: 本步判据命中 → 收口在途窗口（判据由 flow 持有并评估，
-      // 命中即释放工具调用 —— 使判据 / GA / fallback 三触发走同一条收口路径）。
-      // 判定与推进仍由 flow 的 arming 路径完成；工具结果带 `settled='flow'`，引擎侧忽略。
-      onStepJudged: () => { this.windows?.closeForFlow() },
+      // 形态 C（2026-09-21）：本步判据随窗口走（`closeOn` 关闭触发 + 驱动器在推进点复判），
+      // 会话侧不再有"流程判据命中即收口窗口"的旁路 —— 收口器就在窗口里。
       // 流程实例状态变化 → 重评估看门狗（dead-air 的启动条件含"无活跃流程"；§11），
       // 并兜住"流程自己结束了但人工环节还挂着"（人工预算超时 / 打断 / 断线都会走这里）。
       onTransition: () => {
@@ -342,34 +341,44 @@ export class MudSessionRuntime {
     return this.adjudicator.recall(count)
   }
 
+  /**
+   * **当前流程槽**（形态 C 第 5 步：T1 按 `sessionId` 查表用）。
+   *
+   * 只读投影；槽表归**本会话**（D10 / I8），T1 adapter 自身保持无状态。空闲 = null。
+   */
+  slot(): FlowSlot | null {
+    return this.flow.slot()
+  }
+
+  /** 登记"已渲染但在途"的调用 id（T1 渲染后调用；随下一次迁移点自动复位）。 */
+  markSlotRendered(callId: string): void {
+    this.flow.setPendingCallId(callId)
+  }
+
   /** 本会话的工具集 (闭包绑定本会话的队列/在途窗口/world/凭据)。 */
   tools(): MudTools {
     if (this.toolCache !== null) return this.toolCache
     this.toolCache = buildMudTools({
       send: (cmd) => { this.queue.send(cmd) },
-      // 在途窗口注册 (W7.2): 工具自带声明 (criteria/gaCount/timeoutMs) 与流程表覆盖
+      // 在途窗口注册 (W7.2): 工具自带声明 (closeOn/gaCount/timeoutMs) 与流程表覆盖
       // (windowSpecFor) 在此合并。命令文本的凭据/外部值插值已在工具层 (tools.ts wire())
       // registerWindow 之前完成, 这里不做二次插值 —— values 只供 windowSpecFor 做命令比对。
       registerWindow: (request) => {
         const values = placeholderValues(this.conn.credentials, this.externalValues)
         const override = this.flow.windowSpecFor(request.cmd, values)
+        // 形态 C: 窗口只持**关闭触发 / GA 计数 / 兜底时长**三件 (没有分类/抽取面)。
+        // 流程步在途时用流程覆盖 (含派生触发), 否则用工具自带声明。
         return this.windows.register({
           cmds: Array.isArray(request.cmd) ? [...request.cmd] : [request.cmd],
           ...(override === null
             ? {
-              ...(request.criteria !== undefined ? { criteria: request.criteria } : {}),
+              ...(request.closeOn !== undefined ? { closeOn: request.closeOn } : {}),
               ...(request.gaCount !== undefined ? { gaCount: request.gaCount } : {}),
               ...(request.timeoutMs !== undefined ? { timeoutMs: request.timeoutMs } : {}),
-              // W10.2 收口 owner 化: branch/captures/onSettle 只来自 tool-call 声明
-              // (FlowWindowSpec 无这些字段, 流程覆盖分支不透传)。
-              ...(request.branch !== undefined ? { branch: [...request.branch] } : {}),
-              ...(request.captures !== undefined ? { captures: [...request.captures] } : {}),
-              ...(request.onSettle !== undefined ? { onSettle: request.onSettle } : {}),
             }
             : {
-              ...(override.criteria !== undefined ? { criteria: override.criteria } : {}),
+              ...(override.closeOn !== undefined ? { closeOn: override.closeOn } : {}),
               ...(override.gaCount !== undefined ? { gaCount: override.gaCount } : {}),
-              ...(override.gaOutcome !== undefined ? { gaOutcome: override.gaOutcome } : {}),
               ...(override.timeoutMs !== undefined ? { timeoutMs: override.timeoutMs } : {}),
             }),
           ...(request.label !== undefined ? { label: request.label } : {}),
@@ -808,21 +817,6 @@ export class MudSessionRuntime {
   // 机制 (defer 槽/账本/T2 时刻) 在 DeliveryChannel; 这里只留编排与本类状态耦合的判定。
 
   /**
-   * **判据 B**：本调用能否收束当前回合（`exec.concludeTurn`）。
-   *
-   * 三个条件同时成立才收束：① 本次工具调用是**某投递的最后一条动作**（call-id 形如
-   * `mud-<delivery>-<index>` 且 `index === count-1`；T2 自己发起的调用 id 不匹配 ⇒ 永不收束）；
-   * ② 没有待随结果提交的投递（defer 槽 / 待投递动作 / 暂存的动作投递 / 流程排队动作）；
-   * ③ **流程机已空闲**（`flow.state() === null`）—— 流程还在推进（含等分支/等人工）时，
-   * 收束权归流程自己的计时器与下一步，不能把回合掐掉。
-   * @param callId 本次工具调用的 id。
-   * @returns 是否应当 `concludeTurn()`。
-   */
-  shouldConcludeTurn(callId: string): boolean {
-    return this.adjudicator.shouldConcludeTurn(callId)
-  }
-
-  /**
    * **工具结果 → 流程机**（官方工具结果喂回流程；§19.1 的 `tool` 判据）。
    *
    * 只有本插件确定性 call-id（`mud-<delivery>-<index>`）能定位到投递与动作，
@@ -831,10 +825,10 @@ export class MudSessionRuntime {
    * @param callId 本次工具调用 id。
    * @param outcome 工具结算结局 (ok/fail/error)。
    * @param settled 在途窗口结算方式 (发命令工具携带; 纯校验拒绝 = undefined)。
-   * @param hitText 判据命中行原文 (until 结算; 流程 `{lastFail}` 槽源)。
+   * @returns 本结果是否收束了流程（true ⇒ 包装器转达 `exec.concludeTurn()`，B3 定案）。
    */
-  noteToolResult(callId: string, outcome: 'ok' | 'fail' | 'error', settled?: ReplySettle, hitText?: string): void {
-    this.adjudicator.noteToolResult(callId, outcome, settled, hitText)
+  noteToolResult(callId: string, outcome: 'ok' | 'fail' | 'error', settled?: ReplySettle): boolean {
+    return this.adjudicator.noteToolResult(callId, outcome, settled)
   }
 
   // ── 投递通道委托 (MudDeliveryChannel 接口; `session/mount.ts` §19.6.2) ──

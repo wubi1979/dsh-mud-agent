@@ -67,6 +67,16 @@ interface Asked {
   toolCalls: { id: string; name: string; arguments: string }[]
 }
 
+/**
+ * **官方包装器的早停接线**（W10.4 账目用）：`'conclude-turn'` = 生产现行接线（**B3**：
+ * `noteToolResult` 返回"流程驱动器在本结果上收束了流程" ⇒ `exec.concludeTurn()`）；
+ * `'none'` = 转达关掉的接线 —— 工具结果不收束回合，T1 靠"本步无 tool-call"自然收束
+ * （多出一步 T1 空步）。
+ *
+ * 两者只切换这一处判定，defer / 工具 / 流程 / T1 全是生产实现 —— 量的是"不早停的代价"。
+ */
+export type SimEarlyStop = 'conclude-turn' | 'none'
+
 /** 官方 loop 的最小忠实模拟器。 */
 export class LoopSim {
   /** 模型可见表面（user / assistant / tool-result；`agent/pre-step` 就是从 inbox 认领进这里）。 */
@@ -86,17 +96,22 @@ export class LoopSim {
   private running = false
   private activity: Promise<void> = Promise.resolve()
   private readonly adapter = new TriggerLlmAdapter()
+  private readonly earlyStop: SimEarlyStop
 
   /**
    * @param sessionId 会话 id（= agent id，I1）。
    * @param runtime 被测运行时（工具从它取；`execute` 仿真官方包装器的投递通道接线）。
    * @param log 测试日志收集器（与 sink.log 同源；便于断言"流程完成"等）。
+   * @param options `earlyStop` 选择官方包装器的早停接线（缺省 = 生产现行的 `'conclude-turn'`）。
    */
   constructor(
     readonly sessionId: string,
     private readonly runtime: MudSessionRuntime,
     private readonly log: (text: string) => void,
-  ) {}
+    options: { earlyStop?: SimEarlyStop } = {},
+  ) {
+    this.earlyStop = options.earlyStop ?? 'conclude-turn'
+  }
 
   /** runtime 侧看到的 agent（`MudRuntimeSink.agentOf` 返回它）。 */
   facade(): Agent {
@@ -249,7 +264,8 @@ export class LoopSim {
    *
    *   1. 进出工具调用通知运行时（`beginToolCall`/`endToolCall`）→ 期间产生的投递进 defer 槽；
    *   2. 结果提交前把槽里的投递挂到**本结果**上（`exec.deferContext`）；
-   *   3. `result.ok && shouldConcludeTurn(callId)` ⇒ `exec.concludeTurn()`（判据 B）。
+   *   3. **流程驱动器说"本结果收束了流程"** ⇒ `exec.concludeTurn()`（B3；
+   *      `earlyStop:'none'` 时跳过转达 —— 量"不早停"的账）。
    *
    * 这三步正是生产包装器的接线，所以 `loop-sim` 测的是**真行为**（而不是测试内建模）。
    */
@@ -270,17 +286,21 @@ export class LoopSim {
     this.note('tool/call', `${call.name} ${JSON.stringify(args)}`)
     this.runtime.beginToolCall()
     let result: Record<string, unknown>
+    let concluded = false
     try {
       result = await tool.execute(args, {}) as Record<string, unknown>
       // 流程判定要在"工具仍算在途"时做（W7.2: `noteToolResult` 驱动单步推进 —— 生产
       // 包装器 `runWithDeliveryChannel` 的接线, 缺了它流程步永远等不到工具结果）。
-      const r = result as { ok?: boolean; outcome?: 'ok' | 'fail' | 'error'; settled?: ReplySettle; hitText?: string }
-      this.runtime.noteToolResult(call.id, r.outcome ?? (r.ok === true ? 'ok' : 'error'), r.settled, r.hitText)
+      // 返回值 = 驱动器是否在本结果上收束了流程（B3 的早停判据）。
+      const r = result as { ok?: boolean; settled?: ReplySettle }
+      concluded = this.runtime.noteToolResult(
+        call.id, r.ok === true ? 'ok' : 'error', r.settled,
+      )
     } finally {
       this.runtime.endToolCall()
     }
     const deferred = this.runtime.takeDeferredDeliveries()
-    const conclude = result.ok === true && this.runtime.shouldConcludeTurn(call.id)
+    const conclude = this.earlyStop === 'conclude-turn' && concluded
     if (deferred.length > 0) this.stats.deferred += deferred.length
     if (conclude) this.stats.concludedTurns += 1
     return {

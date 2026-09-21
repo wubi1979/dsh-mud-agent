@@ -193,7 +193,7 @@ describe('在途窗口装配 (registerWindow; W7.2 取代命令-应答桥)', () 
     expect(seen).toEqual([{ cmd: 'north', gaCount: 1, timeoutMs: 3000, label: 'mud_move' }])   // W10.1: fallback 缺省 3000 (D3)
   })
 
-  it('mud_send until 声明 → ok 判据 + timeoutMs; 超时结算 ok=false (outcome fail)', async () => {
+  it('mud_send until 声明 → 关闭触发 + timeoutMs; 超时结算 ok=false', async () => {
     const seen: WindowRequest[] = []
     const tools = buildMudTools({
       registerWindow: async (req) => {
@@ -204,10 +204,11 @@ describe('在途窗口装配 (registerWindow; W7.2 取代命令-应答桥)', () 
     const r = await tools.mud_send!.execute({ cmd: 'dz', until: { regex: '^你开始打坐', timeout: 120 } })
     expect(r.ok).toBe(false)
     expect(r.note).toContain('应答超时')
-    expect(seen[0]!.criteria).toEqual({ ok: new RegExp('^你开始打坐') })
+    // 形态 C：`until` 是**关闭触发**（命中即关窗，不判类）—— 不再是"ok 判据"。
+    expect(seen[0]!.closeOn).toEqual(new RegExp('^你开始打坐'))
+    expect(seen[0]!.criteria).toBeUndefined()
     expect(seen[0]!.timeoutMs).toBe(120)
     expect((r as { settled?: string }).settled).toBe('timeout')
-    expect((r as { outcome?: string }).outcome).toBe('fail')
   })
 
   it('P1-1: 窗口超时结果 render 不加 "工具拒绝:" 前缀 (窗口失败语义 ≠ 工具层校验拒绝)', async () => {
@@ -219,14 +220,14 @@ describe('在途窗口装配 (registerWindow; W7.2 取代命令-应答桥)', () 
       }),
     })
     const r = await tools.mud_send!.execute({ cmd: 'dz' })
-    expect(r).toEqual({ ok: false, note: '你开始打坐\n你一无所获。\n[应答超时，边界未命中，请决策]', cmd: 'dz', settled: 'timeout', outcome: 'fail' })
+    expect(r).toEqual({ ok: false, note: '你开始打坐\n你一无所获。\n[应答超时，边界未命中，请决策]', cmd: 'dz', settled: 'timeout' })
     expect(r.note.startsWith('工具拒绝:')).toBe(false)
     // 工具层校验拒绝仍加前缀 (对照; settled 未定义 = 未结算)。
     const rej = tools.mud_move!.execute({ direction: 'xyz' })
     expect(rej.ok).toBe(false)
   })
 
-  it('§8 活动表: 每条声明的每个命令自动附带完成句 ok 判据 (表驱动)', async () => {
+  it('§8 活动表: 每条声明的每个命令自动附带完成句关闭触发 (表驱动)', async () => {
     const seen: WindowRequest[] = []
     const tools = buildMudTools({
       registerWindow: async (req) => { seen.push(req); return winResult({ cmd: String(req.cmd), text: '完成' }) },
@@ -241,25 +242,26 @@ describe('在途窗口装配 (registerWindow; W7.2 取代命令-应答桥)', () 
     expect(seen).toHaveLength(cases.length)
     cases.forEach((c, i) => {
       expect(seen[i]!.cmd).toBe(c.cmd)
-      expect(seen[i]!.criteria?.ok?.source).toBe(c.entry.until)
+      // 形态 C：完成句是**关闭触发**（命中即关窗），不判类。
+      expect(seen[i]!.closeOn?.source).toBe(c.entry.until)
       if (c.entry.timeoutMs !== undefined) expect(seen[i]!.timeoutMs).toBe(c.entry.timeoutMs)
     })
     // 覆盖抓包实证的两条关键正则 (活动表被改坏时能立刻看出来)。
     expect(DEFAULT_ACTIVITY_TABLE.map(e => e.id)).toContain('meditate')
-    expect(seen.find(s => s.cmd === 'dz')!.criteria?.ok?.source).toContain('你将运转于全身经脉间的内息收回丹田')
-    expect(seen.find(s => s.cmd === 'sleep')!.criteria?.ok?.source).toContain('你一觉醒来，精神抖擞地活动了几下手脚')
+    expect(seen.find(s => s.cmd === 'dz')!.closeOn?.source).toContain('你将运转于全身经脉间的内息收回丹田')
+    expect(seen.find(s => s.cmd === 'sleep')!.closeOn?.source).toContain('你一觉醒来，精神抖擞地活动了几下手脚')
   })
 
-  it('§8 活动表: 显式 until 优先; 未声明的命令不带判据; 部署可整体覆盖', async () => {
+  it('§8 活动表: 显式 until 优先; 未声明的命令不带触发; 部署可整体覆盖', async () => {
     const seen: WindowRequest[] = []
     const tools = buildMudTools({
       registerWindow: async (req) => { seen.push(req); return winResult({ cmd: String(req.cmd) }) },
     })
     await tools.mud_send!.execute({ cmd: 'dz', until: { regex: '^自定义$', timeout: 120 } })
     await tools.mud_send!.execute({ cmd: 'look' })
-    expect(seen[0]!.criteria).toEqual({ ok: new RegExp('^自定义$') })
+    expect(seen[0]!.closeOn).toEqual(new RegExp('^自定义$'))
     expect(seen[0]!.timeoutMs).toBe(120)
-    expect(seen[1]!.criteria).toBeUndefined()
+    expect(seen[1]!.closeOn).toBeUndefined()
 
     // 覆盖表: 只有 pray 带完成句; dz 不再自动附带 (配置即事实)。
     const custom = buildMudTools({
@@ -268,8 +270,8 @@ describe('在途窗口装配 (registerWindow; W7.2 取代命令-应答桥)', () 
     })
     await custom.mud_send!.execute({ cmd: 'pray' })
     await custom.mud_send!.execute({ cmd: 'dz' })
-    expect(seen[2]!.criteria?.ok?.source).toBe('^你祈祷完毕。$')
-    expect(seen[3]!.criteria).toBeUndefined()
+    expect(seen[2]!.closeOn?.source).toBe('^你祈祷完毕。$')
+    expect(seen[3]!.closeOn).toBeUndefined()
   })
 
   it('§11 插值先于窗口注册: registerWindow 拿到的是插值后的命令 (凭据/外部值)', async () => {
@@ -413,10 +415,8 @@ describe('工具结果字段必须全部在 OUT_SCHEMA 中声明', () => {
   // 工具**实际已执行** (命令已发出、应答已收到) 却回给模型一条失败帧。
   const declared = new Set(Object.keys(OUT_SCHEMA.properties))
 
-  it('OUT_SCHEMA 声明 settled/outcome/hitText (在途窗口结算语义)', () => {
-    expect(declared).toContain('settled')
-    expect(declared).toContain('outcome')
-    expect(declared).toContain('hitText')
+  it('OUT_SCHEMA 只声明 {ok, note, cmd, settled} (形态 C: 无分类/命中行/抽取面)', () => {
+    expect(declared).toEqual(new Set(['ok', 'note', 'cmd', 'settled']))
     expect(OUT_SCHEMA.additionalProperties).toBe(false)
   })
 

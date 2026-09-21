@@ -408,7 +408,28 @@ describe('登录流程端到端 (流程表 → T1 动作 → 桥挂起 → 判�
     h.runtime.dispose()
   })
 
-  it('GA 归属: 上一条命令的 GA 不会唤醒下一步声明的 GA 判据', async () => {
+  it('形态 C: 判据行只在窗口内被判 —— 本步动作没执行（无在途窗口）时行不推进流程', async () => {
+    const h = harness('session-flow-login-nowindow')
+    h.runtime.connect('example.invalid', 8081, { name: 'tester', pass: 'secret' })
+    h.sink().onConnect()
+    vi.advanceTimersByTime(10)
+
+    // 入口命中 → 进入 name 步 → 投递 {name} 动作，但**不执行它**（没有在途窗口）。
+    h.sink().onLines([ml(NAME_PROMPT, 0)])
+    h.sink().onBoundary('ga')
+    vi.advanceTimersByTime(1)
+    expect(h.runtime.diag().flow).toMatchObject({ stepId: 'name' })
+
+    // 后继 driver 行（pass 提示）到达：**没有窗口可关** ⇒ 不推进（形态 C：判据只经窗口；
+    // 这些行按普通行留给后续消费批）。本步最终由自己的 fallback 预算收束。
+    h.sink().onLines([ml(PASS_PROMPT, 1)])
+    h.sink().onBoundary('ga')
+    vi.advanceTimersByTime(1)
+    expect(h.runtime.diag().flow).toMatchObject({ stepId: 'name' })
+    h.runtime.dispose()
+  })
+
+  it('GA 归属: 上一条命令的 GA 不会结算下一步（GA 只数本步在途窗口自己的）', async () => {
     const h = harness('session-flow-login-ga')
     h.runtime.connect('example.invalid', 8081, { name: 'tester', pass: 'secret' })
     h.sink().onConnect()
@@ -431,13 +452,21 @@ describe('登录流程端到端 (流程表 → T1 动作 → 桥挂起 → 判�
     await second.pending
     vi.advanceTimersByTime(1)
     expect(h.delivered.at(-1)!.actions.map(a => a.ruleId)).toEqual(['flow:login/success'])
-    // 此刻空命令还没写出 → 该步不应被上一条命令的 GA 结算。W7.2 起归属按 stepId 判定:
-    // 工具结果解析出的 stepId 不是当前步 → 点名忽略（日志只含 stepId, 不含命令文本,
-    // 密码/用户名不会出现在日志里）。
     expect(h.runtime.diag().flow).toMatchObject({ stepId: 'success' })
-    expect(h.logs.join('\n')).toContain('工具结果属于步骤 pass（非当前步 success）: 不作本步结算判据')
-    // 同理：name 步发完 {name} 后，它的 GA 在 pass 步到达时也按 stepId 归属挡掉。
-    expect(h.logs.join('\n')).toContain('工具结果属于步骤 name（非当前步 pass）: 不作本步结算判据')
+
+    // 此刻空命令还没写出（没有在途窗口）→ 此时到达的 GA 无窗口可结算，success 步不被打动。
+    // **形态 C**：GA 计数只发生在 `confirmSent` 武装过的窗口内，且窗口由**本步自己的命令**
+    // 注册 —— 上一条命令的 GA 结构上到不了下一步（归属不再靠 stepId 事后比对）。
+    h.sink().onBoundary('ga')
+    vi.advanceTimersByTime(10)
+    expect(h.runtime.diag().flow).toMatchObject({ stepId: 'success' })
+
+    // 本步自己的命令 + 它自己的 GA 才收束（终态 → 复位到空闲）。
+    const third = await runLatestAction(h)
+    h.sink().onBoundary('ga')
+    await third.pending
+    vi.advanceTimersByTime(1)
+    expect(h.runtime.diag().flow).toBeNull()
     expect(h.logs.join('\n')).not.toContain('secret')
     h.runtime.dispose()
   })

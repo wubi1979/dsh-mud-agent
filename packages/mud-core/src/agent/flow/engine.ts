@@ -27,7 +27,42 @@ import type { ArmedMatch, FlowActionHit, FlowRuntimeOptions, FlowState, FlowWind
 import type { ReplySettle } from '../inflight.ts'
 import { lineCriteriaPattern } from '../../perceive/criteria.ts'
 import { commandsOf, entryMatch, interpolate, preview } from './util.ts'
+import { FlowSlotTable, type FlowSlot } from './slot.ts'
 
+
+/**
+ * 一批**行判据**编译为单个 any-of 正则（无可用判据 = null）。
+ *
+ * 两处消费：① **关闭触发**（`closeTrigger`）② **复判单元**（`judgementUnits` 的 fail/ok 类）。
+ * 两者同源同编译，故"窗口在触发行关掉"与"驱动器复判认出该类"不会分歧。
+ */
+function anyOfPattern(matches: readonly FlowMatch[]): RegExp | null {
+  const sources: string[] = []
+  for (const match of matches) {
+    if (!isLineMatch(match)) continue
+    const one = lineCriteriaPattern(match)
+    if (one !== null) sources.push(`(?:${one.source})`)
+  }
+  if (sources.length === 0) return null
+  try {
+    return new RegExp(sources.join('|'))
+  } catch {
+    return null // 源正则均已编译过, 实际不可达; 保守退回"不派生"（窗口仍由 GA/fallback 关）
+  }
+}
+
+/** 一条可复判的判据单元（形态 C：类序固定 retry → fail → 分支 → ok；类内 any-of 正则）。 */
+interface JudgementUnit {
+  role: 'retry' | 'fail' | 'branch' | 'ok'
+  /** 留痕标签（`fail:login/name` / `branch:pass` 等）。 */
+  label: string
+  /** 类内 any-of 行判据（null = 该类无行判据，跳过）。 */
+  pattern: RegExp | null
+  /** 分支类的目标步骤 id。 */
+  target?: string
+  /** 失败类的声明文案（作者写的 `why`）。 */
+  why?: string
+}
 
 /**
  * 每会话的流程运行时。
@@ -61,6 +96,8 @@ export class FlowRuntime {
   private matcher: TriggerMatchService<ActionSpec> | null = null
   /** 空闲入口匹配器（活跃期间仍用于记录其它流程入口 → pending entry）。 */
   private entryMatcher: TriggerMatchService<ActionSpec> | null = null
+  /** **T1 流程槽**（会话作用域，W10.4 第 3 步；第 5 步起 T1 按它渲染下一步 tool-call）。 */
+  private readonly slotTable = new FlowSlotTable()
   private readonly pendingActions: InterruptRequest[] = []
   private readonly pendingEntry: MudLine[] = []
   private timer: ReturnType<typeof setTimeout> | null = null
@@ -117,6 +154,65 @@ export class FlowRuntime {
   /** 流程实例槽快照（运行时在**投递前**按它插值动作参数；空闲 = 空表）。 */
   slots(): Readonly<Record<string, string>> {
     return this.active?.slots ?? {}
+  }
+
+  /**
+   * **当前流程槽**（T1 渲染下一步 tool-call 的数据源；空闲 = null）。
+   *
+   * 只读投影：迁移点由 `publishSlot()` 发布（进入步骤 / 成功 / 复位 / 释放）。
+   * 第 5 步起 T1 按它渲染；今天唯一消费者是本文件的发布点与测试。
+   */
+  slot(): FlowSlot | null {
+    return this.slotTable.get()
+  }
+
+  /** 登记"已渲染但结果未回"的 tool-call id（D1：callId ↔ 步骤配对；第 5 步起 T1 调用）。 */
+  setPendingCallId(callId: string | null): void {
+    this.slotTable.setPendingCallId(callId)
+  }
+
+  /**
+   * **callId → 步骤 id**（D1 配对；形态 C 第 5 步起 T1 按槽渲染, 不再经投递账本）。
+   * @param callId 工具调用 id。
+   * @returns 该调用所属步骤；槽里没有这个在途调用 = null。
+   */
+  stepIdForCall(callId: string): string | null {
+    const slot = this.slotTable.get()
+    return slot !== null && slot.pendingCallId === callId ? slot.stepId : null
+  }
+
+  /**
+   * **发布流程槽**（迁移点唯一写入口）：把当前实例状态投影成公开槽。
+   *
+   * 只在 `awaiting-result` 且本步有动作时带 `render`（T1 要发的 tool-call，含**未插值**参数
+   * 与收口三件 —— 与 `windowSpecFor` 同一次 `windowSpecOf` 派生，保证两侧不可能分歧）。
+   */
+  private publishSlot(): void {
+    const active = this.active
+    if (active === null) {
+      this.slotTable.clear()
+      return
+    }
+    const action = active.step.action
+    const renderable = action !== undefined && active.phase === 'awaiting-result'
+    this.slotTable.publish({
+      flowId: active.flow.id,
+      stepId: active.step.id,
+      phase: active.phase,
+      ...(renderable
+        ? {
+          render: {
+            tool: action.tool,
+            args: action.args,
+            ...this.windowSpecOf(active.step, commandsOf(action.args).length),
+          },
+        }
+        : {}),
+      // 每次发布都是"新的一步 / 新相位" ⇒ 上一次的在途调用 id 作废（结果已回或已弃用）。
+      pendingCallId: null,
+      retries: active.retries,
+      captureSlots: { ...active.slots },
+    })
   }
 
   /**
@@ -180,16 +276,16 @@ export class FlowRuntime {
    *     ok → tool-ok 判据或本步无 ok 判据 → 成功; fail → 重试或失败; error → 失败;
    *   - `interrupted`：打断由运行时先复位流程 → 到这里已是新上下文, 忽略（防御）。
    * @param stepId 该工具调用所属的步骤 id（`flow:<delivery>-<index>` → 动作 ruleId）。
-   * @param outcome 结算结局（窗口判据/关窗结局, 或工具结果 ok→ok/失败→error）。
+   * @param outcome 结算结局（窗口因证据关闭 / 工具结果 ok→ok、失败→error）。
    * @param settled 窗口结算方式（经在途窗口的工具带; 纯工具结果不带）。
-   * @param hitText 判据命中行原文（until 结算; `{lastFail}` 槽源）。
+   * @param contentLines 窗口带回的 span 行（形态 C：**复判判据的唯一输入**；纯工具结果为空）。
    * @returns 判定产生的下一步动作（运行时负责投递；可能为空）。
    */
   noteToolResult(
     stepId: string,
     outcome: 'ok' | 'fail' | 'error',
     settled?: ReplySettle,
-    hitText?: string,
+    contentLines?: readonly MudLine[],
   ): FlowActionHit[] {
     const hits: FlowActionHit[] = []
     if (this.disposed || this.active === null) return hits
@@ -203,53 +299,18 @@ export class FlowRuntime {
       this.debug('工具结果 interrupted（流程已复位, 忽略）')
       return hits
     }
-    if (settled === 'flow') {
-      // 窗口由流程判据命中收口（PLAN §D3 单一收口路径形态 A）：本步判定与推进已由
-      // arming 路径在命中当场完成，本结果**不携带判定**，不得二次判定（防双推进）。
-      this.debug('窗口由流程判据收口（settled=flow, 不作判据）')
-      return hits
-    }
-    if (settled === 'ga' || settled === 'eor') {
-      const ga = this.gaCriteriaOf(this.active.step)
-      if (ga === null) {
-        // 本步没声明 GA 判据 ⇒ GA 关窗不是结果（窗口型/判据未等到）: 后继 driver 推进。
-        this.debug(`窗口关窗 ${settled}（本步未声明 GA 判据, 忽略）`)
-        return hits
-      }
-      if (ga.role === 'fail') {
-        // `why` 是作者写的声明文案（如 stale 步的"放弃上一轮 → 本轮作废"）。
-        if (!this.tryRetry('fail', undefined, true, hits)) {
-          this.failStep(ga.why ?? 'GA 判据 → 失败')
-        }
-        return hits
-      }
-      this.succeedStep(ga.why ?? 'GA 判据命中')
-      // 判定发生在批次之外：顺序兜底后继在这里补跑（帧内容已作为命令应答投过）。
-      this.flushSequential([], true, hits)
-      return hits
-    }
-    if (settled === 'until') {
-      if (outcome === 'ok') {
-        this.succeedStep(`判据命中${hitText === undefined ? '' : ` (${preview(hitText)})`}`)
-        this.flushSequential([], true, hits)
-        return hits
-      }
-      // 判据 fail 命中：声明 retry 的步骤答错重来（{lastFail} = 命中行原文）。
-      if (!this.tryRetry('fail', hitText === undefined ? undefined : { text: hitText }, true, hits)) {
-        this.failStep(`命中失败判据${hitText === undefined ? '' : ` (${preview(hitText)})`}`)
-      }
-      return hits
-    }
-    if (settled === 'timeout') {
-      this.failStep('本步超时（窗口放弃）')
-      return hits
+    if (settled === 'evidence' || settled === 'ga' || settled === 'eor' || settled === 'timeout') {
+      // **形态 C 复判点**（2026-09-21 定案）：窗口因证据关闭（`evidence` = 关闭触发命中 /
+      // `ga`/`eor` = N-GA 到齐）或 `timeout` 到期，都只带回**内容**、不携带分类 ——
+      // 本步算哪一类由驱动器在此按自己的判据走一遍（固定类序 retry → fail → 分支 → ok）。
+      return this.judgeStep(settled, contentLines ?? [], hits)
     }
     if (settled === 'abort') {
       this.failStep('回合取消（abort）')
       return hits
     }
     if (settled === 'error') {
-      this.failStep(`发送失败/连接断开${hitText === undefined ? '' : ` (${preview(hitText)})`}`)
+      this.failStep('发送失败/连接断开')
       return hits
     }
     // settled 缺省 = 纯工具结果（mud_captcha 等不经过在途窗口的工具; §19.1 tool 判据）。
@@ -276,13 +337,158 @@ export class FlowRuntime {
   }
 
   /**
+   * **本步复判**（形态 C 定案，2026-09-21）：窗口只带回**内容**，本方法按本步声明的判据
+   * 对内容走一遍 —— 固定类序 **retry driver → fail → 分支（后继 driver）→ ok**（D3），
+   * 类内按行序取首个；命中即按角色推进（重试 / 失败 / 进分支 / 成功）。同一份内容里
+   * 多类命中按此序**取一**后再继续扫（同帧定序由此天然正确，A2）。
+   *
+   * 一次都没命中时的兜底：`timeout` → 流程失败（无应答事实）；证据关闭（`evidence` / GA）
+   * → 本步声明的 **GA 判据**优先（保守判定，如 fullme `stale` 的 `onSettle:'fail'`），
+   * 否则按"证据关闭即成功"（`onSettle` 缺省 `'ok'`）。
+   * @param kind 窗口结算方式。
+   * @param lines 窗口带回的 span 行（复判的唯一输入）。
+   * @param hits 动作出口（进分支/重试会追加）。
+   * @returns 本步判定产生的动作。
+   */
+  private judgeStep(
+    kind: 'evidence' | 'ga' | 'eor' | 'timeout',
+    lines: readonly MudLine[],
+    hits: FlowActionHit[],
+  ): FlowActionHit[] {
+    const active = this.active
+    if (active === null || active.phase !== 'awaiting-result') {
+      // 本步已被判定（或流程已换步/收束）：窗口结局不重复判定。
+      this.debug(`窗口结算 ${kind}（当前非 awaiting-result, 不重复判定）`)
+      return hits
+    }
+    const units = this.judgementUnits(active.step)
+    let from = 0
+    let judged = false
+    const limit = this.flows.reduce((sum, flow) => sum + flow.steps.length, 0) + 4
+    for (let guard = 0; guard <= limit; guard += 1) {
+      const found = this.judgeFrom(units, lines, from)
+      if (found === null) break
+      from = found.index + 1
+      judged = true
+      this.applyJudgement(found.unit, found.line, true, hits)
+      // 判定可能换步/收束：旧 units 随之作废（新步另等自己的窗口）。
+      if (this.active === null || this.active !== active) break
+    }
+    if (!judged) this.settleFallback(active.step, kind, hits)
+    this.flushSequential(lines, true, hits)
+    return hits
+  }
+
+  /** 本步的可复判判据单元（固定类序；每类编译为一个 any-of 正则）。 */
+  private judgementUnits(step: FlowStep): JudgementUnit[] {
+    const units: JudgementUnit[] = []
+    if (step.driver !== undefined && step.retry !== undefined && isLineMatch(step.driver)) {
+      units.push({ role: 'retry', label: `retry:${step.id}`, pattern: lineCriteriaPattern(step.driver) })
+    }
+    const fail = (step.fail ?? []).filter(isLineMatch)
+    if (fail.length > 0) {
+      const why = fail.find(match => match.why !== undefined)?.why
+      units.push({
+        role: 'fail',
+        label: `fail:${step.id}`,
+        pattern: anyOfPattern(fail),
+        ...(why === undefined ? {} : { why }),
+      })
+    }
+    for (const entry of this.successors(step).conditional) {
+      if (!isLineMatch(entry.match)) continue
+      units.push({
+        role: 'branch',
+        target: entry.step.id,
+        label: `branch:${entry.step.id}`,
+        pattern: lineCriteriaPattern(entry.match),
+      })
+    }
+    const ok = (step.ok ?? []).filter(isLineMatch)
+    if (ok.length > 0) units.push({ role: 'ok', label: `ok:${step.id}`, pattern: anyOfPattern(ok) })
+    return units
+  }
+
+  /** 在内容里按**类序优先、类内行序**取首个命中（无命中 = null）。 */
+  private judgeFrom(
+    units: readonly JudgementUnit[],
+    lines: readonly MudLine[],
+    from: number,
+  ): { unit: JudgementUnit; line: MudLine; index: number } | null {
+    for (const unit of units) {
+      if (unit.pattern === null) continue
+      for (let i = from; i < lines.length; i += 1) {
+        const line = lines[i]
+        if (line === undefined) continue
+        unit.pattern.lastIndex = 0
+        if (unit.pattern.test(line.text)) return { unit, line, index: i }
+      }
+    }
+    return null
+  }
+
+  /** 复判未命中任何判据时的兜底裁决（证据关闭 / 到期）。 */
+  private settleFallback(step: FlowStep, kind: 'evidence' | 'ga' | 'eor' | 'timeout', hits: FlowActionHit[]): void {
+    if (kind === 'timeout') {
+      this.failStep('本步超时（兜底到期，无判据命中）')
+      return
+    }
+    const ga = this.gaCriteriaOf(step)
+    if (ga !== null) {
+      if (ga.role === 'fail') {
+        if (!this.tryRetry('fail', undefined, true, hits)) this.failStep(ga.why ?? 'GA 判据 → 失败')
+        return
+      }
+      this.succeedStep(ga.why ?? 'GA 判据命中')
+      return
+    }
+    // 关闭触发 / GA 关窗而判据未命中 ⇒ `onSettle`（缺省 `'ok'`）：证据关闭即成功。
+    this.succeedStep(`窗口因证据关闭 (${kind}, 无判据命中)`)
+  }
+
+  /** 应用一次复判命中（推进 / 重试 / 失败）。 */
+  private applyJudgement(unit: JudgementUnit, line: MudLine, framed: boolean, hits: FlowActionHit[]): void {
+    if (unit.role === 'retry') {
+      // 命中本步 driver（步内重试判据）：声明了 retry 才重发本步动作，否则失败。
+      if (this.tryRetry('driver', line, framed, hits)) return
+      this.failStep(`命中本步 driver 但没有声明 retry (${unit.label})`)
+      return
+    }
+    if (unit.role === 'fail') {
+      // 声明了 `retry.on: ['fail']` 的步骤：答错**重来**而不是收场（§19.2）。
+      if (this.tryRetry('fail', line, framed, hits)) return
+      this.failStep(unit.why ?? `命中失败判据 ${unit.label} (${preview(line.text)})`)
+      return
+    }
+    if (unit.role === 'branch' && unit.target !== undefined) {
+      const flowId = this.active?.flow.id
+      const from = this.active?.step.id ?? '?'
+      // 命中行原文一起留痕：作者按实录核对判据、以及"到底哪一句唤醒了流程"都靠它。
+      this.opts.log(`[流程] 命中后继 ${unit.target} 的进入判据 → 唤醒 ${from} = 成功 (分支 ${unit.target}; 行: ${preview(line.text)})`)
+      this.opts.decision?.({
+        actor: 'flow',
+        ...(flowId === undefined ? {} : { flow: flowId }),
+        eventType: 'step-success',
+        ruleId: `${flowId ?? '?'}/${from}`,
+        action: '流程步骤成功',
+        result: `分支 ${unit.target}`,
+        text: `[流程] ${from} → 成功（进入 ${unit.target}）`,
+      })
+      this.enterStep(unit.target, hits, framed, line)
+      return
+    }
+    this.succeedStep(`命中成功判据 ${unit.label} (${preview(line.text)})`)
+  }
+
+  /**
    * **窗口声明覆盖**（W7.2 §4; 壳装配在 `registerWindow` 入口调用）：流程步动作 tool
    * 在途时, 本步的**命令绑定判据**（GA/N-GA/放弃计时）随窗口注册（单步的命令-应答配对
    * 移交窗口）。
    *
-   * **行判据不在此移交**（§8.5/§19.3 判据分流）：text/regex 判据由 `armOwnJudgements`
-   * 常驻布防（帧文本先到、GA 后到是常态，窗口要等命令写出后才武装）；这里只给
-   * **命令绑定**的三项：`boundary`→gaCount、GA 判据→gaOutcome、`timeoutMs`。
+   * **本步判据由此移交窗口（形态 C 定案，2026-09-21）**：`closeOn` = 本步行判据派生的
+   * any-of 触发（命中即关窗，只表示"内容到了"、不判类）；窗口另带命令绑定的
+   * `gaCount`（显式 GA 判据时）与 `timeoutMs`。**判类不随窗口走** —— 窗口带回内容后由
+   * `noteToolResult` 在推进点复判（`judgeStep`）。
    * 工具自带的判据/超时（活动表 `until` 等）由壳做**字段级合并**保留（未覆盖即沿用），
    * 因此本方法未声明的字段不影响工具声明。
    *
@@ -302,19 +508,50 @@ export class FlowRuntime {
       ? given.length === expected.length && given.every((one, index) => one === expected[index])
       : expected.includes(given[0] ?? '')
     if (!matches) return null
-    const step = this.active.step
+    return this.windowSpecOf(this.active.step, expected.length)
+  }
+
+  /**
+   * 本步的**收口三件**派生（`windowSpecFor` 与槽发布**共用同一份**，保证"T1 渲染的 tool-call"
+   * 与"窗口注册"不可能分歧）：关闭触发（行判据派生）/ GA 计数 / 兜底时长。
+   * @param step 目标步骤。
+   * @param commandCount 本步命令条数（GA 计数即"每命令至少 1 个 GA"时的基数）。
+   * @returns 窗口覆盖（字段缺省 = 不覆盖）。
+   */
+  private windowSpecOf(step: FlowStep, commandCount: number): FlowWindowSpec {
     const gaFail = (step.fail ?? []).some(match => match.kind === 'ga')
     const gaOk = (step.ok ?? []).some(match => match.kind === 'ga')
     // **声明才计 GA**（PLAN §D3，2026-09-21）：显式 `boundary` 优先；否则**本步声明了 GA
     // 判据**（ok/fail 含 `kind:'ga'`）时，GA 计数即"每命令至少 1 个 GA"（= 本步命令条数）。
-    // 未声明 GA 判据的步 ⇒ 不给 `gaCount` ⇒ GA 到达**不关窗**（收口只由判据命中 /
+    // 未声明 GA 判据的步 ⇒ 不给 `gaCount` ⇒ GA 到达**不关窗**（收口只由关闭触发命中 /
     // fallback 到期承担）—— 这正是"收口条件不完全等于判据"的另一半。
-    const gaCount = step.boundary ?? ((gaOk || gaFail) ? expected.length : undefined)
+    const gaCount = step.boundary ?? ((gaOk || gaFail) ? commandCount : undefined)
+    const trigger = this.closeTrigger(step)
     return {
+      ...(trigger !== null ? { closeOn: trigger } : {}),
       ...(gaCount !== undefined ? { gaCount } : {}),
-      ...(gaFail ? { gaOutcome: 'fail' as const } : gaOk ? { gaOutcome: 'ok' as const } : {}),
       ...(step.timeoutMs !== undefined ? { timeoutMs: step.timeoutMs } : {}),
     }
+  }
+
+  /**
+   * **关闭触发派生**（形态 C 定案，2026-09-21）：把本步的**行判据**编译成**单个 any-of
+   * 正则**，交给在途窗口当"关闭触发" —— 命中即关窗（`settled:'evidence'`），
+   * **窗口不解释内容**（不判类、不带 hit）。
+   *
+   * 来源与 arming 集**完全同源**（入口 driver 不在内）：retry driver + 本步 fail + 本步 ok
+   * + **直接后继的 driver**。**派生而非另声明** ⇒ 收口与判据不可能分歧（同一批正则，
+   * 一份声明）。非行判据（ga/tool/func）不进触发：ga 由 `gaCount` 管、tool 由工具结果管。
+   * @param step 当前步。
+   * @returns any-of 触发正则；本步无行判据 = null（窗口只由 GA / fallback 关）。
+   */
+  private closeTrigger(step: FlowStep): RegExp | null {
+    const matches: FlowMatch[] = []
+    if (step.driver !== undefined && step.retry !== undefined) matches.push(step.driver)
+    for (const match of step.fail ?? []) matches.push(match)
+    for (const match of step.ok ?? []) matches.push(match)
+    for (const entry of this.successors(step).conditional) matches.push(entry.match)
+    return anyOfPattern(matches)
   }
 
   /** 本步 ok/fail 里的 GA 判据（fail 优先; 无 = null）。 */
@@ -395,6 +632,8 @@ export class FlowRuntime {
     this.matcher = null
     this.pendingActions.length = 0
     this.pendingEntry.length = 0
+    // 会话释放即清槽（D10：槽表归会话作用域，释放即作废）。
+    this.slotTable.clear()
     this.syncArmingToHost()
   }
 
@@ -489,7 +728,7 @@ export class FlowRuntime {
       const hit = this.matchFrom(lines, from)
       if (hit === null) break
       from = hit.lineIndex + 1
-      this.applyMatch(hit.armed, lines[hit.lineIndex] as MudLine, framed, hits)
+      this.applyBranchMatch(hit.armed, lines[hit.lineIndex] as MudLine, framed, hits)
       if (this.active === null) break
     }
     // 批处理结束：本节点成功且无条件分支命中 → 执行顺序兜底后继。
@@ -512,42 +751,19 @@ export class FlowRuntime {
     return null
   }
 
-  /** 应用一次判据命中（失败 / 条件分支 / 重试 / 成功）。 */
-  private applyMatch(armed: ArmedMatch, line: MudLine, framed: boolean, hits: FlowActionHit[]): void {
-    // 本步判据命中 ⇒ 通知运行时收口在途窗口（PLAN §D3 单一收口路径形态 A：判据 / GA /
-    // fallback 三触发同一条收口路径）。判定与推进仍在本方完成（arming 路径），
-    // 收口只负责释放工具调用（`settled='flow'`，引擎侧忽略，见 noteToolResult）。
-    this.opts.onStepJudged?.()
-    if (armed.role === 'fail') {
-      // 声明了 `retry.on: ['fail']` 的步骤：答错**重来**而不是收场（§19.2）。
-      if (this.tryRetry('fail', line, framed, hits)) return
-      this.failStep(armed.match.why ?? `命中失败判据 ${armed.label} (${preview(line.text)})`)
+  /**
+   * 应用一次**分支等待期**判据命中（形态 C 定案，2026-09-21）。
+   *
+   * 本相位**没有在途窗口**（本步工具已结算），本步判据由窗口带走，会话侧只剩一件事要盯：
+   * 后继 driver（步已成功、在等哪条分支的进入判据）。故这里只可能是分支角色；
+   * 其余角色（fail/ok/retry）在本相位不该出现 —— 出现即留痕忽略（不推进）。
+   */
+  private applyBranchMatch(armed: ArmedMatch, line: MudLine, framed: boolean, hits: FlowActionHit[]): void {
+    if (armed.role !== 'driver' || armed.target === undefined) {
+      this.debug(`分支等待期命中非分支判据 ${armed.label}（形态 C 不该出现, 不推进）`)
       return
     }
-    if (armed.role === 'driver' && armed.target !== undefined) {
-      const flowId = this.active?.flow.id
-      const from = this.active?.step.id ?? '?'
-      // 命中行原文一起留痕：作者按实录核对判据、以及"到底哪一句唤醒了流程"都靠它。
-      this.opts.log(`[流程] 命中后继 ${armed.target} 的进入判据 → 唤醒 ${from} = 成功 (分支 ${armed.target}; 行: ${preview(line.text)})`)
-      this.opts.decision?.({
-        actor: 'flow',
-        ...(flowId === undefined ? {} : { flow: flowId }),
-        eventType: 'step-success',
-        ruleId: `${flowId ?? '?'}/${from}`,
-        action: '流程步骤成功',
-        result: `分支 ${armed.target}`,
-        text: `[流程] ${from} → 成功（进入 ${armed.target}）`,
-      })
-      this.enterStep(armed.target, hits, framed, line)
-      return
-    }
-    if (armed.role === 'driver') {
-      // 命中本步 driver：声明了 `retry.on`（含 'driver'，缺省值）才重发本步动作，否则失败。
-      if (this.tryRetry('driver', line, framed, hits)) return
-      this.failStep(`命中本步 driver 但没有声明 retry (${armed.label})`)
-      return
-    }
-    this.succeedStep(`命中成功判据 ${armed.label} (${preview(line.text)})`)
+    this.applyJudgement({ role: 'branch', target: armed.target, label: armed.label, pattern: null }, line, framed, hits)
   }
 
   /** 本节点成功：arm 条件分支后继 + 记下顺序兜底（批尾执行）。 */
@@ -578,6 +794,7 @@ export class FlowRuntime {
     // 窗口 = 该步 timeoutMs ?? 流程 timeoutMs。
     const window = active.step.timeoutMs ?? active.flow.timeoutMs ?? 30_000
     this.armTimer(active.flow.id, active.step.id, window, `等待后继判据超时 (${window}ms)`)
+    this.publishSlot()
   }
 
   /** 批尾：执行待定的顺序兜底后继。 */
@@ -619,13 +836,14 @@ export class FlowRuntime {
     this.opts.log(`[流程] ${flow.id} 进入步骤 ${step.id}`)
     this.applyEnter(step)
     this.captureSlots(step, line)
+    // **形态 C：进入步骤时不布防本步判据** —— 本步判据随窗口（`closeOn`）走，由窗口关窗、
+    // 驱动器复判。清空会话侧判据集（入口 arm 在空闲时才有效；活跃期间不 arm 入口）。
+    this.setArmed([])
     if (step.action === undefined) {
       // 判定节点：进入判据刚命中 ⇒ 视为成功；随后 arm 它的条件分支 + 待定顺序兜底。
-      this.armOwnJudgements(step)
       this.succeedStep(`进入判定节点 ${step.id}（进入判据命中）`)
       return
     }
-    this.armOwnJudgements(step)
     hits.push({
       ruleId: `flow:${flow.id}/${step.id}`,
       output: `流程 ${flow.id}/${step.id}: ${step.action.tool}`,
@@ -644,9 +862,11 @@ export class FlowRuntime {
       const keys = (step.awaitExternal ?? []).map(key => `{${key}}`).join('/')
       this.opts.log(`[流程] ${flow.id}/${step.id} 等人工输入 (${keys}; 预算 ${timeout}ms)`)
       this.armTimer(flow.id, step.id, timeout, `人工未在 ${timeout}ms 内提交（本步预算耗尽）`)
+      this.publishSlot()
       return
     }
     this.armTimer(flow.id, step.id, timeout)
+    this.publishSlot()
   }
 
   /** 把本步命中行按 `capture` 声明抽进流程实例槽（答错重试不重新抽取，沿用首次的值）。 */
@@ -668,39 +888,15 @@ export class FlowRuntime {
   private pendingFlow: FlowSpec | undefined
 
   /**
-   * 布防本步 arming：本步 driver 的**重试**判据 + 本步 ok/fail 的**行判据**（text/regex）
-   * + 条件分支后继的进入判据。
+   * arm 条件分支后继（形态 C：**唯一**会话侧判据面）。
    *
-   * **判据分流（§8.5 / §19.3）**：
-   *   - **行判据**（text/regex）走 arming 路径 —— 帧文本**先到、GA 后到**是常态，判据行
-   *     不能等窗口（窗口要等工具真正执行、命令写出后才武装，`win-` 标记在 `confirmSent`
-   *     才挂）；命中 → 帧立即提交 → 本步判定当场发生；
-   *   - **GA 判据**经窗口关窗结算（`windowSpecFor` 的 `gaOutcome` + `boundary`），
-   *     工具结果回到 `noteToolResult`；
-   *   - **tool 判据**由工具结果判定（`noteToolResult`，不经窗口）。
-   * 任何来源都只判定**一次**（同一步骤的判据集互斥由装配期校验保证，I13）。
+   * 本步判据已随窗口走（`windowSpecFor` 的 `closeOn` + 驱动器复判），会话侧只剩"本步已成功、
+   * 在等哪条分支的进入判据"这一件事要盯 —— 那一刻**没有在途窗口**可关，只能由行流当场判。
+   * 在**步骤成功时**（`succeedStep`）布防，不在进入步骤时布防：进入时窗口尚未武装，
+   * 提前 arm 会让 `flow-arm:*` 抢走帧切分、把窗口关窗权从 `win-close` 手里拿走。
+   * @param conditional 条件分支后继（带各自进入判据）。
+   * @param baseOrder 起始声明序（保序用）。
    */
-  private armOwnJudgements(step: FlowStep): void {
-    const armed: ArmedMatch[] = []
-    let order = 0
-    if (step.driver !== undefined && step.retry !== undefined) {
-      armed.push({ role: 'driver', match: step.driver, order: order++, label: `retry:${step.id}` })
-    }
-    // 失败判据先于成功判据（同类内按声明顺序取首；fail/ok 互斥由装配期校验保证）。
-    for (const match of step.fail ?? []) {
-      if (!isLineMatch(match)) continue
-      armed.push({ role: 'fail', match, order: order++, label: `fail:${step.id}` })
-    }
-    for (const match of step.ok ?? []) {
-      if (!isLineMatch(match)) continue
-      armed.push({ role: 'ok', match, order: order++, label: `ok:${step.id}` })
-    }
-    this.setArmed(armed)
-    // 条件分支后继：进入判据一起 arm（同批行不漏）。
-    this.armConditional(this.successors(step).conditional, order)
-  }
-
-  /** arm 条件分支后继（`baseOrder` 之后，保证本步判据优先）。 */
   private armConditional(
     conditional: { step: FlowStep; match: FlowMatch; order: number }[],
     baseOrder = 0,
@@ -855,7 +1051,8 @@ export class FlowRuntime {
       active.phase = 'awaiting-human'
       return true
     }
-    // ③ 不等人工的步骤：缺省重发本步动作（旧语义）并重布防判据；计时器不动。
+    // ③ 不等人工的步骤：缺省重发本步动作（旧语义）；计时器不动。
+    // 形态 C：本步判据随窗口走，重投动作后由新窗口的 `closeOn` 接管 —— 不放回会话侧判据。
     if (pre === undefined && step.action !== undefined) {
       hits.push({
         ruleId,
@@ -866,7 +1063,7 @@ export class FlowRuntime {
         framed,
       })
     }
-    this.armOwnJudgements(step)
+    this.setArmed([])
     return true
   }
 
@@ -887,6 +1084,8 @@ export class FlowRuntime {
     this.active = null
     this.armed = []
     this.matcher = null
+    // 终态收束 = 流程实例结束 ⇒ 槽作废（D10：会话释放/实例结束即清槽）。
+    this.slotTable.clear()
     this.opts.log(`[流程] ${flow.id} 完成（终态）`)
     this.opts.decision?.({
       actor: 'flow',
@@ -948,6 +1147,7 @@ export class FlowRuntime {
     this.active = null
     this.armed = []
     this.matcher = null
+    this.slotTable.clear()
     this.armEntries()
     // 已回到空闲 → 通知运行时（看门狗据"无活跃流程"重新起表；§11）。
     this.opts.onTransition?.()

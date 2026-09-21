@@ -72,10 +72,28 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
     expect(r.ok).toBe(true)
     expect(r.cmd).toBe('look')
     expect(r.settled).toBe('ga')
-    expect(r.outcome).toBe('ok')
     expect(r.text).toContain('北大街')
     // 排空后 gate 放行。
     expect(h.gates.at(-1)).toBe(false)
+  })
+
+  it('**关闭触发** (形态 C): win-<n>:close 命中即关窗 —— settled=evidence, 不解释内容', async () => {
+    const h = makeTable()
+    // 关闭触发只回答"窗口何时关闭"; 不判类 (无 criteria)。
+    const p = h.windows.register({ cmds: ['fullme'], closeOn: /精神一振/, timeoutMs: 5_000 })
+    h.windows.confirmSent('w1')
+    // 武装一个关闭触发器 (区别于类标记 win-<n>:ok/:fail/:branch:<id>)。
+    expect(h.armed.map(a => a.id)).toEqual(['win-1:close'])
+    h.windows.feedLines([mlAbs('你突然感到精神一振，浑身似乎又充满了力量！', 6)])
+    h.windows.settleCriteria('win-1:close')
+    const r = await p
+    expect(r.settled).toBe('evidence')   // 与 GA **同形不同名**
+    expect(r.ok).toBe(true)
+    expect(r.hit).toBeUndefined()        // 不携带分类
+    expect(r.outcome).toBeUndefined()
+    expect(r.hitText).toBeUndefined()
+    expect(r.text).toContain('精神一振')
+    expect(h.disarmed).toContain('win-1:close')
   })
 
   it('无回看 (W10.2 A2): sending 期不吸收; span = confirmSent 水位之后的行', async () => {
@@ -102,7 +120,7 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
     await vi.advanceTimersByTimeAsync(1)
     expect(settled).toBe(false)
     h.windows.boundary('ga')
-    await expect(p).resolves.toMatchObject({ ok: true, settled: 'ga', outcome: 'ok' })
+    await expect(p).resolves.toMatchObject({ ok: true, settled: 'ga' })
   })
 
   it('命令序列: 同一 replyId 逐条穿透; 显式 gaCount = 命令条数', async () => {
@@ -120,58 +138,6 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
     await expect(p).resolves.toMatchObject({ ok: true, cmd: '命令序列' })
   })
 
-  it('判据型: confirmSent 武装 win-<n>:ok/:fail; 命中 → until 结算 + hitText + 标记注销', async () => {
-    const h = makeTable()
-    const p = h.windows.register({ cmds: ['dz'], criteria: { ok: /站了起来/, fail: /你无法/ } })
-    h.windows.confirmSent('w1')
-    // 武装序 fail → branch → ok (D3 同帧同类命中定序: splitter.testLine 按声明序取首)。
-    expect(h.armed).toEqual([
-      { id: 'win-1:fail', pattern: /你无法/ },
-      { id: 'win-1:ok', pattern: /站了起来/ },
-    ])
-    h.windows.settleCriteria('win-1:ok', '你站了起来')
-    const r = await p
-    expect(r).toMatchObject({ ok: true, settled: 'until', outcome: 'ok', hitText: '你站了起来' })
-    // 任何结算都注销两标记 (不留脏标记)。
-    expect(h.disarmed).toEqual(['win-1:ok', 'win-1:fail'])
-  })
-
-  it('fail 判据命中 → ok:false / outcome fail (hitText 供流程 {lastFail} 槽)', async () => {
-    const h = makeTable()
-    const p = h.windows.register({ cmds: ['fullme 1234'], criteria: { fail: /验证码不对/ } })
-    h.windows.confirmSent('w1')
-    h.windows.settleCriteria('win-1:fail', '你的验证码不对。')
-    await expect(p).resolves.toMatchObject({ ok: false, settled: 'until', outcome: 'fail', hitText: '你的验证码不对。' })
-  })
-
-  it('branch 分支判据 (W10.2): 武装序 fail→branch→ok; 命中 → until 结算 hit={class:branch,id}', async () => {
-    const h = makeTable()
-    const p = h.windows.register({
-      cmds: ['look'],
-      criteria: { ok: /你看到/, fail: /什么也没有/ },
-      branch: [{ id: 'alt', pattern: /特殊的替代行/ }],
-    })
-    h.windows.confirmSent('w1')
-    expect(h.armed.map(a => a.id)).toEqual(['win-1:fail', 'win-1:branch:alt', 'win-1:ok'])
-    h.windows.feedLines([mlAbs('一行特殊的替代行', 1)])
-    h.windows.settleCriteria('win-1:branch:alt', '一行特殊的替代行')
-    const r = await p
-    expect(r).toMatchObject({
-      ok: true, settled: 'until', hit: { class: 'branch', id: 'alt' }, hitText: '一行特殊的替代行',
-    })
-    expect(r.text).toContain('替代行')   // until text = span 行文本
-    // 任何结算注销全部标记 (含 branch, 不留脏标记)。
-    expect(h.disarmed).toEqual(['win-1:ok', 'win-1:fail', 'win-1:branch:alt'])
-  })
-
-  it('判据型 GA 关窗 (W10.2 口径): onSettle 缺省 = ok, 不再隐式判 fail', async () => {
-    const h = makeTable()
-    const p = h.windows.register({ cmds: ['dz'], criteria: { ok: /站了起来/ }, gaCount: 1 })
-    h.windows.confirmSent('w1')
-    h.windows.boundary('ga')
-    await expect(p).resolves.toMatchObject({ ok: true, settled: 'ga', outcome: 'ok' })
-  })
-
   it('声明才计 GA (PLAN §D3): 未声明 gaCount 的窗口, GA 到达不关窗', async () => {
     const h = makeTable()
     const p = h.windows.register({ cmds: ['look'], timeoutMs: 5_000 })
@@ -187,67 +153,19 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
     await expect(p).resolves.toMatchObject({ settled: 'timeout' })
   })
 
-  it('判据型 GA 关窗 + 显式 onSettle:"fail" → 失败 (保守判定须显式写出)', async () => {
+  it('settleCriteria: 非 win- 标记 / 非 close 类 / 非本窗 id → 无操作 (自过滤)', async () => {
     const h = makeTable()
-    const p = h.windows.register({
-      cmds: ['fullme 1'], gaCount: 3, criteria: { ok: /站了起来/ }, onSettle: 'fail',
-    })
-    h.windows.confirmSent('w1')
-    h.windows.boundary('ga')
-    h.windows.boundary('ga')
-    h.windows.boundary('ga')
-    await expect(p).resolves.toMatchObject({
-      ok: false, settled: 'ga', outcome: 'fail', text: '判据未等到 (窗口在 GA 边界关闭)',
-    })
-  })
-
-  it('captures 抽取 (W10.2): 只扫 span 行 + 命名捕获组即槽名 + 先到先得', async () => {
-    const h = makeTable({ absWatermark: () => 10 })
-    const p = h.windows.register({
-      cmds: ['hp'],
-      gaCount: 1,
-      captures: [/(?<hp>\d+)\/\d+/, /气定神闲地(?<act>打坐|睡觉)/, /永不匹配(?<miss>x)/],
-    })
-    h.windows.confirmSent('w1')   // spanStartAbs = 10
-    h.windows.feedLines([
-      mlAbs('你气定神闲地打坐', 11),
-      mlAbs('气血 80/100', 12),
-      mlAbs('气血 70/100', 13),   // 先到先得: hp 不被后到覆盖
-      mlAbs('命令前的行', 9),      // abs ≤ 10: 不进 span, 不参与抽取
-    ])
-    h.windows.boundary('ga')
-    const r = await p
-    expect(r.captures).toEqual({ hp: '80', act: '打坐' })
-  })
-
-  it('onSettle 显式化 (W10.2): on ga:N + onSettle fail → GA 关窗 outcome=fail (缺省裁决不再恒 ok)', async () => {
-    const h = makeTable()
-    const p = h.windows.register({ cmds: ['fullme 1234'], gaCount: 3, onSettle: 'fail' })
-    h.windows.confirmSent('w1')
-    h.windows.boundary('ga')
-    h.windows.boundary('ga')
-    let settled = false
-    void p.then(() => { settled = true })
-    await vi.advanceTimersByTimeAsync(1)
-    expect(settled).toBe(false)
-    h.windows.boundary('ga')
-    await expect(p).resolves.toMatchObject({
-      ok: false, settled: 'ga', outcome: 'fail', hit: { class: 'fail' },
-    })
-  })
-
-  it('settleCriteria: 非 win- 标记 / 非本窗 id → 无操作 (自过滤)', async () => {
-    const h = makeTable()
-    const p = h.windows.register({ cmds: ['dz'], criteria: { ok: /站了起来/ } })
+    const p = h.windows.register({ cmds: ['dz'], closeOn: /站了起来/, timeoutMs: 5_000 })
     h.windows.confirmSent('w1')
     h.windows.settleCriteria('rule-int:xyz')   // 非 win- 标记
-    h.windows.settleCriteria('win-9:ok')       // id 不匹配
+    h.windows.settleCriteria('win-9:close')    // id 不匹配
+    h.windows.settleCriteria('win-1:ok')       // 已删除的类标记 → 不认
     let settled = false
     void p.then(() => { settled = true })
     await vi.advanceTimersByTimeAsync(1)
     expect(settled).toBe(false)
-    h.windows.settleCriteria('win-1:ok', '你站了起来')
-    await expect(p).resolves.toMatchObject({ ok: true })
+    h.windows.settleCriteria('win-1:close')
+    await expect(p).resolves.toMatchObject({ ok: true, settled: 'evidence' })
   })
 
   it('兜底到期 (PLAN §D4 定案 A): resolve 带回已累积内容 (状态仍 timeout); 连续 3 次 → reject', async () => {
@@ -258,7 +176,7 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
     await vi.advanceTimersByTimeAsync(51)
     const r1 = await p1
     // 状态仍 timeout (不属于 ok/fail), 但**内容带回** —— T2 裸调用据此自读批内容决策。
-    expect(r1).toMatchObject({ ok: false, settled: 'timeout', outcome: 'fail' })
+    expect(r1).toMatchObject({ ok: false, settled: 'timeout' })
     expect(r1.text).toBe('第一行\n第二行')
     expect(r1.lines.map(l => l.text)).toEqual(['第一行', '第二行'])
     // 连续放弃计数: 非超时结算前累计; 第 3 次 → reject (DSH 失败终态)。
@@ -365,7 +283,7 @@ describe('在途窗口表 (InflightWindowTable; W7.2 取代命令-应答桥)', (
     expect(h.windows.hasOpen()).toBe(true)
     h.windows.beginHuman('mud_captcha')
     let d = h.windows.diag()
-    expect(d.open).toMatchObject({ tool: 'mud_look', criteria: null, gaCount: 1, gaSeen: 0, status: 'sending' })
+    expect(d.open).toMatchObject({ tool: 'mud_look', trigger: null, gaCount: 1, gaSeen: 0, status: 'sending' })
     expect(d.human).toMatchObject({ label: 'mud_captcha' })
     h.windows.endHuman()
     expect(h.windows.diag().human).toBeNull()

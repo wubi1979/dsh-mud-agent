@@ -18,6 +18,7 @@ import type { MudRuntimeConfig, MudRuntimeSink } from '../src/session/types.ts'
 import type { MudConnectionSink, MudConnectionManager } from '../src/network/manager.ts'
 import type { MudDecisionRecord } from '../src/session/types.ts'
 import type { MudLine } from '../src/network/ansi.ts'
+import { runWithDeliveryChannel } from '../src/session/mount.ts'
 
 /** 单步探针流程：`开始` 进入（发一条命令）→ `结束` 命中 `ok` → 无后继 = 终态。 */
 const PROBE_FLOW: FlowSpec = {
@@ -43,20 +44,34 @@ function ml(text: string, abs: number): MudLine {
 interface FakeAgent {
   agent: Agent
   messages: { text: string; lane: string }[]
+  /** 投递里的动作请求（形态 C：本步判据随窗口走，测试要真执行本步动作才有窗口）。 */
+  actions: { callId: string; tool: { name: string; args: Record<string, unknown> } }[]
 }
 
 function makeAgent(sessionId: string): FakeAgent {
   const messages: { text: string; lane: string }[] = []
+  const actions: { callId: string; tool: { name: string; args: Record<string, unknown> } }[] = []
   const agent = {
     id: sessionId,
     status: 'idle',
     inbox: { nextTurn: [] },
-    followup: (message: { content: readonly { type: string; text?: string }[]; source: { lane?: string } }) => {
+    followup: (message: {
+      content: readonly { type: string; text?: string }[]
+      source: {
+        lane?: string
+        delivery?: string
+        actions?: readonly { tool: { name: string; args?: Record<string, unknown> } }[]
+      }
+    }) => {
       const text = message.content.find(block => block.type === 'text')?.text ?? ''
       messages.push({ text, lane: String(message.source.lane) })
+      const delivery = message.source.delivery ?? 'd0'
+      ;(message.source.actions ?? []).forEach((action, index) => {
+        actions.push({ callId: `mud-${delivery}-${index}`, tool: { name: action.tool.name, args: action.tool.args ?? {} } })
+      })
     },
   } as unknown as Agent
-  return { agent, messages }
+  return { agent, messages, actions }
 }
 
 /** 假连接管理器: 只回答 id/状态, 不开 socket; 同时把 sink 交出来 (测试要喂行)。 */
@@ -186,7 +201,7 @@ describe('MudSessionRuntime 看门狗 (世界变化 → 重评估)', () => {
    */
   it('活跃流程期间不布防断流; 流程收束后才布防', async () => {
     const sessionId = 'session-flow-deadair'
-    const { agent, messages } = makeAgent(sessionId)
+    const { agent, messages, actions } = makeAgent(sessionId)
     const captured: { sink?: MudConnectionSink } = {}
     const runtime = makeRuntime({
       sessionId, agent, deadAirMs: 1_000, decisions: [], flows: [PROBE_FLOW], captured,
@@ -206,8 +221,22 @@ describe('MudSessionRuntime 看门狗 (世界变化 → 重评估)', () => {
     vi.advanceTimersByTime(5_000)
     expect(deadAir()).toBe(1)
 
-    // 流程收束（ok 命中、无后继 = 终态）→ 重新布防 → 窗口到点再唤醒。
+    // 流程收束（本步命令的结果行命中 ok、无后继 = 终态）→ 重新布防 → 窗口到点再唤醒。
+    // **形态 C**：本步判据随窗口走，故先按官方包装器执行本步动作（真发命令、武装窗口），
+    // 再喂结果行 —— 结果行命中窗口的关闭触发 → 驱动器复判 → ok → 终态。
+    const action = actions.at(-1)
+    expect(action).toBeDefined()
+    const pending = runWithDeliveryChannel({
+      channel: runtime,
+      callId: action!.callId,
+      exec: { deferContext: () => {}, concludeTurn: () => {} },
+      run: async () => await runtime.tools()[action!.tool.name]!.execute({ ...action!.tool.args }),
+    })
+    vi.advanceTimersByTime(1)          // 命令队列写出 → confirmSent 武装
     captured.sink!.onLines([ml('结束', 1)])
+    captured.sink!.onBoundary('ga')
+    await pending
+    vi.advanceTimersByTime(1)
     expect(runtime.diag().flow).toBeNull()
     vi.advanceTimersByTime(1_000)
     expect(deadAir()).toBeGreaterThan(1)

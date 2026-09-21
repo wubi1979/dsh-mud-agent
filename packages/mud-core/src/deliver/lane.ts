@@ -43,6 +43,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { LlmCallConfig, Message } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { TriggerLlmAdapter } from '../agent/t1.ts'
+import type { FlowSlot } from '../agent/flow/slot.ts'
 
 /** T1 provider 标识 (本地模拟模型注册名)。 */
 export const T1_PROVIDER = 'mud-t1' as const
@@ -143,9 +144,18 @@ export interface TriggerProvider {
  */
 export function registerTriggerProvider(ctx: Context, opts: {
   log?: (text: string) => void
+  /**
+   * **读流程槽**（形态 C 第 5 步）：按会话 id 取当前流程实例的公开槽 —— T1 据此渲染流程步的
+   * 下一步 tool-call（续步没有投递消息）。槽表归**会话作用域**（D10 / I8），adapter 只查表。
+   */
+  slotOf?: (sessionId: string) => FlowSlot | null
+  /** **登记已渲染**：T1 渲染后把 callId 写进槽（D1 配对）。 */
+  markRendered?: (sessionId: string, callId: string) => void
 } = {}): TriggerProvider {
   const adapter = new TriggerLlmAdapter({
     ...(opts.log === undefined ? {} : { onLog: opts.log }),
+    ...(opts.slotOf === undefined ? {} : { slotOf: opts.slotOf }),
+    ...(opts.markRendered === undefined ? {} : { markRendered: opts.markRendered }),
   })
   const disposeAdapter = ctx.llm.registerAdapter([T1_PROVIDER], adapter)
   return { dispose: () => { disposeAdapter() } }

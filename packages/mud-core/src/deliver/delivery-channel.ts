@@ -2,10 +2,13 @@
  * dsh-mud-core — 投递通道 (DeliveryChannel), host half. 会话层。
  *
  * 会话投递的**传输机制**收拢: 工具在途判定与 defer 槽（官方 `deferContext`/`followup`
- * 通道, §19.6.2 判据 A）、投递账本（size/rule/pending —— 判据 B 的收束判定与流程
- * `tool` 判据的解析依据）、T2 投递时刻（限流用）。**编排不在这里**: 何时构造消息、
- * 何时结算投递 (settle)、`shouldConcludeTurn`/`noteToolResult` 的流程联动仍归
+ * 通道, §19.6.2 判据 A）、投递账本（rule/pending —— 流程判据解析依据）、T2 投递时刻（限流用）。
+ * **编排不在这里**: 何时构造消息、何时结算投递 (settle)、`noteToolResult` 的流程联动仍归
  * `MudSessionRuntime` —— 本类只做"账本 + 通道", 不认识流程机与 agent 解析。
+ *
+ * **判据 B 已删除**（B3 定案，2026-09-21）：收束回合的判据不再由本类/裁决器按"投递尺寸 +
+ * 流程空闲"推断，而是由**流程驱动器**在 `noteToolResult` 上给出 —— 账本的"动作总数"字段与
+ * "defer 槽长度"读数随之删除；`rule`/`pending` 保留，服务流程判据解析与账本驱逐）。
  *
  * 账本驱逐策略（实测演进而来）: **按完成驱逐**（只清结果收齐的投递）+ **安全上限 32**
  * （在途投递被逐出只是少一次收束/少一条 tool 判据, 不会结构性出错）。
@@ -23,9 +26,7 @@ export interface DeliveryChannelOptions {
 
 /** 投递账本条目 (per 投递消息)。 */
 interface DeliveryLedger {
-  /** 动作总数 (判据 B: call-id index === count-1 ⇒ 最后一条)。 */
-  size: number
-  /** 动作来源 ruleId (按 index 对齐; `flow:<flowId>/<stepId>` → 流程 tool 判据)。 */
+  /** 动作来源 ruleId (按 index 对齐; `flow:<flowId>/<stepId>` → 流程判据解析依据)。 */
   rules: readonly string[]
   /** 未收结果的动作数 (每条工具结果 -1; 0 = 收齐 → 下次 rememberDelivery 驱逐)。 */
   pending: number
@@ -91,12 +92,7 @@ export class DeliveryChannel {
     return this.deferSlot.splice(0)
   }
 
-  /** defer 槽长度 (收束判据 B 用: 槽非空 ⇒ 不收束)。 */
-  get deferCount(): number {
-    return this.deferSlot.length
-  }
-
-  // ── 投递账本 (判据 B + 流程 tool 判据) ─────────────────
+  // ── 投递账本 (流程判据解析依据) ────────────────────────
 
   /** 下一个投递 id (`d<N>`; T1 据此生成确定性 call-id `mud-<delivery>-<index>`)。 */
   nextId(): string {
@@ -104,34 +100,27 @@ export class DeliveryChannel {
   }
 
   /**
-   * 记下一条投递的动作（动作数 = 判据 B; 来源 = 工具结果 → 流程步骤的解析依据）。
-   * 驱逐策略见类头。
+   * 记下一条投递的动作（来源 = 工具结果 → 流程步骤的解析依据）。驱逐策略见类头。
    */
   rememberDelivery(delivery: string, actions: readonly { ruleId: string }[]): void {
     this.ledger.set(delivery, {
-      size: actions.length,
       rules: actions.map(action => action.ruleId),
       pending: actions.length,
     })
     // **按完成驱逐**：只清"结果已收齐"的投递, 在途的（T2 限速 / defer 连串 / 人工等值,
-    // 结果可能很晚才回）必须保留 —— 收束判据与流程 tool 判据都靠账本里的 size/rule 解析。
+    // 结果可能很晚才回）必须保留 —— 流程判据解析靠账本里的 rule。
     for (const [key, entry] of this.ledger) {
       if (key === delivery || entry.pending > 0) continue
       this.ledger.delete(key)
     }
     // **安全上限**：极端场景（结果长期不回 / 投递爆发）也不让账本无界增长; 超限从最旧的
-    // 开始丢（在途投递被丢后只是"少一次收束/少一条 tool 判据"，不会造成结构性错误）。
+    // 开始丢（在途投递被丢后只是"少一条流程判据解析"，不会造成结构性错误）。
     const safetyCap = 32
     while (this.ledger.size > safetyCap) {
       const oldest = this.ledger.keys().next().value
       if (oldest === undefined) break
       this.ledger.delete(oldest)
     }
-  }
-
-  /** 投递的动作总数 (未知投递 = undefined; 判据 B)。 */
-  actionCount(delivery: string): number | undefined {
-    return this.ledger.get(delivery)?.size
   }
 
   /** 投递第 `index` 条动作的来源 ruleId (未知 = undefined)。 */

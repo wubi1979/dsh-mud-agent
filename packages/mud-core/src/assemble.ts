@@ -623,9 +623,11 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
   // ── T1 provider (mud-t1) 装配: 官方 llm 扩展点 ───────────
   ctx.inject(['llm'], (llmCtx) => {
     provider = registerTriggerProvider(llmCtx, {
-      // T1 是**无状态动作渲染器** (v0.4.0 §7): 渲染依据是投递消息自带的动作请求,
-      // 不再回查运行时的命中队列 (I15)。
+      // T1 渲染依据 = 投递消息自带的动作请求（规则动作 / 入口回合）**或**流程槽
+      // （形态 C 第 5 步：流程步的续步没有投递消息，T1 按槽渲染下一步；槽表归会话作用域）。
       log: (text) => { tuiLog(view.lastActive() ?? GLOBAL_SESSION, text) },
+      slotOf: (sessionId) => runtimes.get(sessionId)?.slot() ?? null,
+      markRendered: (sessionId, callId) => { runtimes.get(sessionId)?.markSlotRendered(callId) },
     })
     tuiLog(GLOBAL_SESSION, `[触发] T1 provider (mud-t1) 装配就绪 (state ${stateRules.length} / event ${eventRules.length})`)
     return () => {

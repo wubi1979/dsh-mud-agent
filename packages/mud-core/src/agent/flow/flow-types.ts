@@ -29,16 +29,19 @@ export interface FlowActionHit {
 /**
  * 流程步的**在途窗口声明覆盖**（W7.2 §4; `FlowRuntime.windowSpecFor` 返回）。
  *
- * 单步的命令-应答配对**移交在途窗口**（取代命令-应答桥）: 流程步动作 tool 在途时,
- * 本步 ok/fail 判据随窗口注册（动态）, 命中经 `noteToolResult` 判定推进。
+ * **形态 C（2026-09-21 定案）**：本步判据**不随窗口注册**（窗口不解释内容）—— 这里只给
+ * 窗口三件：**关闭触发**（由本步判据派生）、GA 计数、兜底时长。判类由驱动器在推进点
+ * （`noteToolResult`）对窗口带回的 span 内容复判。
  */
 export interface FlowWindowSpec {
-  /** 行判据（本步 ok/fail 首个行判据经 `lineCriteriaPattern` 编译; 无行判据 = 无）。 */
-  criteria?: { ok?: RegExp; fail?: RegExp }
+  /**
+   * **关闭触发**（形态 C 定案，2026-09-21）：由本步判据**派生**的 any-of 正则
+   * （retry driver + fail + ok + 直接后继 driver）。命中即关窗（`settled:'evidence'`），
+   * **窗口不解释内容**；判类由驱动器在推进点对 content 复判。
+   */
+  closeOn?: RegExp
   /** N-GA 兜底关窗（step.boundary 覆盖工具内置声明; 缺省 = 命令条数）。 */
   gaCount?: number
-  /** 关窗结局覆盖（ok/fail 含 ga 判据时声明; 缺省: 有判据 = fail, 无 = ok）。 */
-  gaOutcome?: 'ok' | 'fail'
   /** 放弃计时覆盖（step.timeoutMs 覆盖工具内置）。 */
   timeoutMs?: number
 }
@@ -135,12 +138,4 @@ export interface FlowRuntimeOptions {
    * 起停就是看门狗的起停时点（活跃流程期间不布防；流程结束才布防）。
    */
   onTransition?: () => void
-  /**
-   * **本步判据命中**（`applyMatch` 判定发生的当场；可选）。
-   *
-   * 运行时接它去**收口在途窗口**（PLAN §D3「单一收口路径」形态 A）：判据由 flow 持有并
-   * 评估，命中即释放工具调用，使"判据 / GA / fallback"三触发走同一条收口路径。
-   * 只在**本步判据**命中时触发（入口 driver 匹配不触发 —— 那时没有属于本流程的窗口）。
-   */
-  onStepJudged?: () => void
 }

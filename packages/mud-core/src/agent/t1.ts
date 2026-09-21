@@ -26,6 +26,7 @@ import type {
   StreamChunk,
   ToolCallId,
 } from '@deepseek-ai/dsh-llm'
+import type { FlowSlot } from './flow/slot.ts'
 
 /** 一条动作请求（与 `deliver/lane` 的 `OwnedAction` 同形；用字面量避免循环依赖）。 */
 export interface RenderedAction {
@@ -41,6 +42,15 @@ export interface RenderedAction {
 export interface TriggerLlmAdapterHooks {
   /** 诊断/留痕日志。 */
   onLog?: (text: string) => void
+  /**
+   * **读流程槽**（形态 C 第 5 步；可选）：按会话 id 取当前流程实例的公开槽。
+   *
+   * T1 只按 `sessionId` 查表（D10 / I8：槽表归会话作用域，adapter 自身保持无状态）。
+   * 缺省 = 不接线 ⇒ 退回"只渲染投递里的动作"的旧行为（测试夹具用）。
+   */
+  slotOf?: (sessionId: string) => FlowSlot | null
+  /** **登记已渲染**：把本次渲染的 callId 写进槽（D1 配对；随下一次迁移点自动复位）。 */
+  markRendered?: (sessionId: string, callId: string) => void
 }
 
 /** 本插件投递消息的来源标记 (与 deliver/lane 的 MessageSourceMap 同字面量)。 */
@@ -101,6 +111,12 @@ function actionId(delivery: string, index: number): ToolCallId {
   return `mud-${slug}-${index}` as unknown as ToolCallId
 }
 
+/** 槽渲染的确定性 call-id 片段（`flow-<flowId>-<stepId>-<retries>`；与投递式 id 区分开）。 */
+function flowCallSlug(flowId: string, stepId: string, retries: number): string {
+  const clean = (text: string): string => text.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 24)
+  return `flow-${clean(flowId)}-${clean(stepId)}-${retries}`
+}
+
 /**
  * 会话里是否已有该 call-id 的工具结果（= 这条动作已执行过）。
  *
@@ -147,23 +163,74 @@ export class TriggerLlmAdapter extends LlmAdapter {
       yield { type: 'finish', reason: { kind: 'stop' } }
       return
     }
-    if (context.kind === 'none') {
-      this.hooks.onLog?.(`[t1] 本步无动作可渲染 (${context.why}) → 收束回合`)
-      yield { type: 'finish', reason: { kind: 'stop' } }
-      return
-    }
     // 只渲染"尚未执行"的动作：它的工具结果若已在会话里，说明这一步已经跑完。
-    const pending = context.actions
-      .map((action, index) => ({ action, index, id: actionId(context.delivery, index) }))
-      .filter(entry => !alreadyAnswered(options?.messages, entry.id, context.index))
+    let pending: { action: RenderedAction; index: number; id: ToolCallId }[] = []
+    if (context.kind === 'actions') {
+      const { actions, delivery, index: at } = context
+      pending = actions
+        .map((action, index) => ({ action, index, id: actionId(delivery, index) }))
+        .filter(entry => !alreadyAnswered(options?.messages, entry.id, at))
+    }
     if (pending.length === 0) {
+      // **形态 C 续步（W10.4 第 5 步）**：本步没有认领到（或已渲染完）投递动作 —— 流程步的
+      // 下一步由 **T1 按槽自己渲染**（不再有逐步投递消息）。规则动作回合与入口回合仍走上面的
+      // `source.actions` 通路（那条优先，规则动作因此不会被槽顶掉）。
+      const fromSlot = this.slotCall(options)
+      if (fromSlot !== null) {
+        this.hooks.onLog?.(`[t1] 按流程槽渲染下一步 (${fromSlot.label})`)
+        if (fromSlot.sessionId !== null) this.hooks.markRendered?.(fromSlot.sessionId, fromSlot.id)
+        yield* this.renderActions([{ action: fromSlot.action, index: 0, id: fromSlot.id }])
+        return
+      }
       const tail = options?.messages?.at(-1)
-      this.hooks.onLog?.(`[t1] 本次投递的动作都已执行 → 收束 (尾部: ${preview(tail)})`)
+      const why = context.kind === 'none' ? context.why : '本次投递的动作都已执行'
+      this.hooks.onLog?.(`[t1] 本步无动作可渲染 (${why}) → 收束 (尾部: ${preview(tail)})`)
       yield { type: 'finish', reason: { kind: 'stop' } }
       return
     }
-    this.hooks.onLog?.(`[t1] 渲染 ${pending.length} 条动作 (delivery=${context.delivery})`)
+    const deliveryLabel = context.kind === 'actions' ? context.delivery : '?'
+    this.hooks.onLog?.(`[t1] 渲染 ${pending.length} 条动作 (delivery=${deliveryLabel})`)
     yield* this.renderActions(pending)
+  }
+
+  /**
+   * **按流程槽取下一步 tool-call**（形态 C 第 5 步）。
+   *
+   * 条件（缺一不可）：接线了 `slotOf`；请求带 `sessionId`；槽在 `awaiting-result` 且**本步已
+   * 发布可渲染的调用**；且**尚未渲染过**（`pendingCallId === null` —— 渲染后由 `markRendered`
+   * 写入，随下一次迁移点自动复位，故不会重复渲染同一步）。
+   *
+   * 参数**原样透传**（`{name}`/`{pass}`/`{captcha}` 由工具在发送瞬间插值，D7.2）；收口三件
+   * **不在这里下发** —— 流程步的收口由壳侧的 `windowSpecFor` 在注册窗口时给出（单一来源，
+   * 与槽内 `render` 同一次派生）。
+   * @param options 本次请求（取 `sessionId`）。
+   * @returns 渲染项（callId + 动作 + 显示标签）；不该由槽渲染 = null。
+   */
+  private slotCall(options: GenerateOptions): {
+    id: ToolCallId
+    action: RenderedAction
+    label: string
+    sessionId: string | null
+  } | null {
+    const read = this.hooks.slotOf
+    const sessionId = options?.sessionId
+    if (read === undefined || typeof sessionId !== 'string' || sessionId === '') return null
+    const slot = read(sessionId)
+    if (slot === null || slot.phase !== 'awaiting-result' || slot.render === undefined) return null
+    if (slot.pendingCallId !== null) return null   // 已渲染、结果未回 → 等结果
+    const label = `flow:${slot.flowId}/${slot.stepId}`
+    return {
+      // 确定性 call-id：同一 (流程, 步骤, 重试轮次) 恒等 —— 与投递式 call-id 区分开。
+      id: `mud-${flowCallSlug(slot.flowId, slot.stepId, slot.retries)}` as unknown as ToolCallId,
+      action: {
+        ruleId: label,
+        // **不发 output 文本块**：流程步是"把命令发出去"，tool-call 本身就是全部内容；
+        // 合成的说明文本只会变成助手消息里的噪声（A4：助手/工具交替，无注入）。
+        tool: { name: slot.render.tool, args: slot.render.args },
+      },
+      label,
+      sessionId,
+    }
   }
 
   /** 渲染动作：每条先 output 文本块，后 tool-call 块（与真实 LLM 同构）。 */

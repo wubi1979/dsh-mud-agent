@@ -9,6 +9,8 @@
  *
  *   - `windowSpecFor(cmd)`：只有**本步声明的命令**（插值后）才拿到判据覆盖 —— 归属
  *     即注册路径，别的命令根本进不了本步的窗口；
+ *   - `windowSpecFor` 同时给出**关闭触发**（形态 C 定案 2026-09-21：由本步行判据派生的
+ *     any-of 正则；命中即关窗、不判类 —— 本文件按行为断言派生结果）；
  *   - `noteToolResult(stepId, …)`：stepId 不匹配（上一步的迟到结果等）→ 忽略并留痕。
  */
 
@@ -56,6 +58,18 @@ function armed(runtime: FlowRuntime): void {
   expect(runtime.state()).toMatchObject({ flowId: 'test', stepId: 'start', phase: 'awaiting-result' })
 }
 
+/**
+ * 断言**关闭触发派生**（形态 C）：`closeOn` 由本步行判据派生（retry driver + fail + ok +
+ * 直接后继 driver）。这里按**行为**断言（命中谁、不命中谁），不钉死正则源码 ——
+ * 派生是投影，源码随判据声明变化，钉源码只会变成假测试。
+ */
+function expectCloseOn(spec: { closeOn?: RegExp } | null | undefined, hit: string, miss: readonly string[] = []): void {
+  const re = spec?.closeOn
+  expect(re).toBeInstanceOf(RegExp)
+  expect((re as RegExp).test(hit)).toBe(true)
+  for (const text of miss) expect((re as RegExp).test(text)).toBe(false)
+}
+
 describe('结算归属 (W7.2: 配对移交在途窗口)', () => {
   it('本步的命令 → windowSpecFor 返回判据覆盖 (gaOutcome ok)', () => {
     const logs: string[] = []
@@ -63,8 +77,11 @@ describe('结算归属 (W7.2: 配对移交在途窗口)', () => {
     armed(flow)
 
     // ok:[{kind:'ga'}] → 声明了 GA 判据 ⇒ gaCount = 命令条数 (声明才计 GA, PLAN §D3);
-    // 关窗结局 ok; 无行判据、无 boundary/timeout 覆盖。
-    expect(flow.windowSpecFor('dazuo 10')).toEqual({ gaCount: 1, gaOutcome: 'ok' })
+    // 关窗结局 ok; 无 boundary/timeout 覆盖。
+    // 关闭触发 (形态 C): 本步无行判据 (ok 是 GA), 触发只来自**直接后继 driver** (done 的收功句)。
+    const spec = flow.windowSpecFor('dazuo 10')
+    expect(spec).toMatchObject({ gaCount: 1 })
+    expectCloseOn(spec, '你站了起来。', ['dazuo 10', '无关行'])
     flow.dispose()
   })
 
@@ -75,7 +92,7 @@ describe('结算归属 (W7.2: 配对移交在途窗口)', () => {
 
     expect(flow.windowSpecFor('lian sword')).toBeNull()
     // 拒绝不消费归属: 本步命令仍然有效。
-    expect(flow.windowSpecFor('dazuo 10')).toEqual({ gaCount: 1, gaOutcome: 'ok' })
+    expect(flow.windowSpecFor('dazuo 10')).toMatchObject({ gaCount: 1 })
     flow.dispose()
   })
 
@@ -102,10 +119,12 @@ describe('结算归属 (W7.2: 配对移交在途窗口)', () => {
       notifyFail: () => {},
     })
     flow.offer([ml('你盘膝坐下，开始打坐。', 0)], false)
-    expect(flow.windowSpecFor('halt')).toEqual({ gaCount: 2, gaOutcome: 'ok' })
-    expect(flow.windowSpecFor('dazuo 10')).toEqual({ gaCount: 2, gaOutcome: 'ok' })
+    expect(flow.windowSpecFor('halt')).toMatchObject({ gaCount: 2 })
+    expect(flow.windowSpecFor('dazuo 10')).toMatchObject({ gaCount: 2 })
     // 序列整体比对: 同长度逐条一致才算本步的窗口。
-    expect(flow.windowSpecFor(['halt', 'dazuo 10'])).toEqual({ gaCount: 2, gaOutcome: 'ok' })
+    const series = flow.windowSpecFor(['halt', 'dazuo 10'])
+    expect(series).toMatchObject({ gaCount: 2 })
+    expectCloseOn(series, '你站了起来。')
     expect(flow.windowSpecFor(['halt', 'lian sword'])).toBeNull()
     flow.dispose()
   })
@@ -181,7 +200,7 @@ describe('结算归属 (W7.2: 配对移交在途窗口)', () => {
     })
     flow.offer([ml('你盘膝坐下，开始打坐。', 0)], false)
     // 插值后一致 → 本步的窗口; 占位符未填 (原样) 或值不对 → null。
-    expect(flow.windowSpecFor('fullme 1234', { captcha: '1234' })).toEqual({ gaCount: 1, gaOutcome: 'ok' })
+    expect(flow.windowSpecFor('fullme 1234', { captcha: '1234' })).toMatchObject({ gaCount: 1 })
     expect(flow.windowSpecFor('fullme {captcha}', { captcha: '1234' })).toBeNull()
     expect(flow.windowSpecFor('fullme 9999', { captcha: '1234' })).toBeNull()
     flow.dispose()

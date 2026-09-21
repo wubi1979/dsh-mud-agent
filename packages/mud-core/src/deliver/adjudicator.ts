@@ -527,7 +527,7 @@ export class SessionAdjudicator {
     this.deps.windows.feedLines(lines)
     if (frame.marker === 'ga' || frame.marker === 'eor') this.deps.windows.boundary(frame.marker)
     else if (frame.marker === 'armed' && frame.markerId !== undefined) {
-      this.deps.windows.settleCriteria(frame.markerId, frame.lines.at(-1)?.text)
+      this.deps.windows.settleCriteria(frame.markerId)
     }
     // ④ 流程判据 → 唤醒/打断/排队 (与静态规则同帧行; inFrame 用 ③ 前取样值)。
     const flowHits = lines.length > 0 ? this.deps.flow.offer(lines, inFrame) : []
@@ -1023,21 +1023,32 @@ export class SessionAdjudicator {
    *
    * 只有本插件确定性 call-id（`mud-<delivery>-<index>`）能定位到投递与动作，
    * 进而定位到流程步骤（动作 `ruleId` = `flow:<flowId>/<stepId>`）；T2 自己发起的调用
-   * 解析失败 ⇒ 什么都不做。结算方式/结局/命中行由工具结果携带（窗口结算在
-   * `WindowResult` 上，随工具返回透传）。
+   * 解析失败 ⇒ 什么都不做（返回 false）。
+   *
+   * **终态判定（B3 定案，2026-09-21）**：本方法**返回"流程驱动器是否在本结果上把流程收束了"**
+   * —— 判据 = 本结果之前流程活跃、之后 `flow.state() === null`（终态 / 失败 / 打断复位）。
+   * 包装器据此转达 `exec.concludeTurn()`，**取代旧判据 B**（"本调用是投递最后一条动作 +
+   * 流程机空闲"的投递尺寸推断）。**决策者是流程驱动器，运行时只转达**（D8 合规：不做流程推断）。
+   * @returns 本结果是否收束了流程（true ⇒ 包装器应 `exec.concludeTurn()`）。
    */
-  noteToolResult(callId: string, outcome: 'ok' | 'fail' | 'error', settled?: ReplySettle, hitText?: string): void {
+  noteToolResult(callId: string, outcome: 'ok' | 'fail' | 'error', settled?: ReplySettle): boolean {
     const parsed = parseDeliveryCallId(callId)
-    if (parsed === null) return
-    // 记账：该投递的一条动作已收到结果（无论成败）。减到 0 = 收齐，交给下一次
-    // `rememberDelivery` 按完成驱逐；这里**先不删**——同一次工具调用里 `shouldConcludeTurn`
-    // 还要读账本 size 判"最后一条动作"。
-    this.deps.channel.recordResult(parsed.delivery)
-    const ruleId = this.deps.channel.actionRule(parsed.delivery, parsed.index)
-    if (ruleId === undefined || !ruleId.startsWith('flow:')) return
-    const stepId = ruleId.slice('flow:'.length).split('/')[1]
-    if (stepId === undefined || stepId === '') return
-    const hits = this.deps.flow.noteToolResult(stepId, outcome, settled, hitText)
+    if (parsed !== null) {
+      // 记账：该投递的一条动作已收到结果（无论成败）—— 账本据此"按完成驱逐"。
+      this.deps.channel.recordResult(parsed.delivery)
+    }
+    // **步骤归属（形态 C 第 5 步）**：优先按**槽**配对（T1 按槽渲染的调用没有投递消息可查，
+    // D1 的 `pendingCallId` 即配对依据）；否则回落到投递账本（入口步等仍带投递的调用）。
+    const slotStep = this.deps.flow.stepIdForCall(callId)
+    const stepId = slotStep ?? (parsed === null ? undefined : this.stepIdOfDelivery(parsed.delivery, parsed.index))
+    if (stepId === undefined || stepId === '') return false
+    const before = this.deps.flow.state() !== null
+    // **形态 C 复判输入**：窗口带回的 span 行（在途窗口表的单槽，取一次即清）。
+    // 内容是驱动器的判据输入，因此**不进模型可见的工具结果**。
+    const contentLines = this.deps.windows.takeSettledLines()
+    const hits = this.deps.flow.noteToolResult(
+      stepId, outcome, settled, contentLines ?? [],
+    )
     if (hits.length > 0) {
       this.queueFlowActions(hits)
       // 工具结果驱动的 lined 动作没有帧链 ⑤ 兜底 (待决缓冲不会再有新行): 无行可带时
@@ -1049,33 +1060,21 @@ export class SessionAdjudicator {
       this.settle()
     }
     this.drainFlowQueue()
+    return before && this.deps.flow.state() === null
   }
 
   /**
-   * **判据 B**：本调用能否收束当前回合（`exec.concludeTurn`）。
-   *
-   * 三个条件同时成立才收束：① 本次工具调用是**某投递的最后一条动作**（call-id 形如
-   * `mud-<delivery>-<index>` 且 `index === count-1`；T2 自己发起的调用 id 不匹配 ⇒ 永不收束）；
-   * ② 没有待随结果提交的投递（defer 槽 / 待投递动作 / 暂存的动作投递 / 流程排队动作）；
-   * ③ **流程机已空闲**（`flow.state() === null`）—— 流程还在推进（含等分支/等人工）时，
-   * 收束权归流程自己的计时器与下一步，不能把回合掐掉。
+   * 投递账本 → 步骤 id（`flow:<flowId>/<stepId>` 的动作来源解析；非流程动作 = undefined）。
+   * 形态 C 第 5 步起 T1 按槽渲染的调用不再经此路（槽配对优先）。
    */
-  shouldConcludeTurn(callId: string): boolean {
-    if (this.deps.config.agentMode === 'off') return false
-    const parsed = parseDeliveryCallId(callId)
-    if (parsed === null) return false
-    const count = this.deps.channel.actionCount(parsed.delivery)
-    if (count === undefined || parsed.index !== count - 1) return false
-    if (this.deps.channel.deferCount > 0) return false
-    if (this.pendingActions.length > 0) return false
-    if (this.standalone !== null) return false
-    if (this.deps.flow.hasQueuedActions()) return false
-    if (this.deps.flow.state() !== null) return false
-    return true
+  private stepIdOfDelivery(delivery: string, index: number): string | undefined {
+    const ruleId = this.deps.channel.actionRule(delivery, index)
+    if (ruleId === undefined || !ruleId.startsWith('flow:')) return undefined
+    const stepId = ruleId.slice('flow:'.length).split('/')[1]
+    return stepId === '' ? undefined : stepId
   }
 
   // ── 生命周期 (由壳在连接事件/释放时驱动) ────────────────
-
   /**
    * 重连复位 (socket connect): 行流缓冲与武装标记随连接作废 (win- 标记由窗口表
    * settle 的 onDisarm 同步注销, 打断规则重挂); 投递记账 (待决/动作/暂存/消费边界/

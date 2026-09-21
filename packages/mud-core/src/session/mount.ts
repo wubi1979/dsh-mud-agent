@@ -84,8 +84,8 @@ export function attachMudPrompt(agentCtx: Context, sections: MudPromptSections):
  *   - `beginToolCall` / `endToolCall`：告诉运行时"有工具在途" ⇒ 期间产生的投递**改走
  *     defer 槽**（判据 A），由本次调用的结果带进**同一回合的下一步**；
  *   - `takeDeferredDeliveries`：取走槽里的消息（包装器逐条 `exec.deferContext`）；
- *   - `shouldConcludeTurn`：判据 B —— 本调用是某投递的最后一条动作、且流程机已空闲、
- *     且没有待投递 ⇒ 可以 `exec.concludeTurn()`（省掉一次"空续步"）。
+ *   - `noteToolResult`：把结果喂回流程机，并**返回流程驱动器是否在本结果上收束了流程**
+ *     （B3 定案）—— 包装器据此 `exec.concludeTurn()`。判据由驱动器给，运行时只转达。
  */
 export interface MudDeliveryChannel {
   /** 工具调用进入（与 `endToolCall` 配对）。 */
@@ -93,7 +93,7 @@ export interface MudDeliveryChannel {
   /** 工具调用离开。 */
   endToolCall: () => void
   /**
-   * **工具结果 → 流程机**（可选；§19.1 的 `tool` 判据）。
+   * **工具结果 → 流程机**（可选；§19.1 的 `tool` 判据 + B3 终态判定）。
    *
    * 只有"只调工具、不发游戏命令"的步骤（如 fullme 的取图步）才需要它：这类步骤没有
    * GA 可判，靠工具结果是成功还是失败收尾。运行时会用 call-id 解析出步骤 id，
@@ -101,13 +101,11 @@ export interface MudDeliveryChannel {
    * @param callId 本次工具调用 id（`mud-<delivery>-<index>`）。
    * @param outcome 工具结算结局 (ok/fail/error)。
    * @param settled 在途窗口结算方式 (发命令工具携带; 纯校验拒绝 = undefined)。
-   * @param hitText 判据命中行原文 (until 结算; 流程 `{lastFail}` 槽源)。
+   * @returns 流程驱动器是否在本结果上收束了流程（true ⇒ 应 `exec.concludeTurn()`）。
    */
-  noteToolResult?: (callId: string, outcome: 'ok' | 'fail' | 'error', settled?: ReplySettle, hitText?: string) => void
+  noteToolResult?: (callId: string, outcome: 'ok' | 'fail' | 'error', settled?: ReplySettle) => boolean
   /** 取走本步待随结果进下一步的投递（顺序保持）。 */
   takeDeferredDeliveries: () => ReturnType<typeof ownedGameMessage>[]
-  /** 本调用能否收束当前回合。 */
-  shouldConcludeTurn: (callId: string) => boolean
 }
 
 /**
@@ -120,10 +118,11 @@ export interface MudDeliveryChannel {
  * 三步：
  *   1. 进出工具调用通知运行时（期间产生的投递进 defer 槽）；
  *   2. 结果提交前把槽里的投递逐条 `exec.deferContext`（随本结果进下一步，同一回合）；
- *   3. `result.ok && shouldConcludeTurn(callId)` ⇒ `exec.concludeTurn()`（判据 B / 判据 C）。
+ *   3. **流程驱动器说"本结果收束了流程"** ⇒ `exec.concludeTurn()`（B3 定案：判据由驱动器给，
+ *      包装器只转达 —— 取代旧判据 B 的"投递尺寸 + 流程空闲"推断）。
  *
- * 另有一步**在 `endToolCall` 之前**：把工具结果喂回流程机（`noteToolResult`，`tool` 判据）——
- * 这样判定产出的下一步动作仍在"在途"窗口里，会随本结果 defer 出去（判据 A），而不是另开回合。
+ * 喂回流程机（`noteToolResult`）在 **`endToolCall` 之前**：这样判定产出的下一步动作仍在
+ * "在途"窗口里，会随本结果 defer 出去（判据 A），而不是另开回合；**它的返回值就是第 3 步的判据**。
  * @param input 通道（缺省 = 完全不接线，退回旧行为）、本次调用 id、官方 exec、以及工具执行体。
  * @returns 工具结果（原样透传）。
  */
@@ -137,15 +136,19 @@ export async function runWithDeliveryChannel(input: {
   if (channel === undefined) return run()
   channel.beginToolCall()
   let result: MudToolResult
+  let concluded = false
   try {
     result = await run()
     // 流程判定要在"工具仍算在途"时做（判据 A）：判定产出的投递随本结果进下一步。
-    channel.noteToolResult?.(callId, result.outcome ?? (result.ok ? 'ok' : 'error'), result.settled, result.hitText)
+    // 返回值 = 流程驱动器是否在本结果上收束了流程（B3：终态 / 失败 / 打断复位）。
+    concluded = channel.noteToolResult?.(
+      callId, result.ok ? 'ok' : 'error', result.settled,
+    ) === true
   } finally {
     channel.endToolCall()
   }
   for (const message of channel.takeDeferredDeliveries()) exec.deferContext(message)
-  if (result.ok && channel.shouldConcludeTurn(callId)) exec.concludeTurn()
+  if (concluded) exec.concludeTurn()
   return result
 }
 

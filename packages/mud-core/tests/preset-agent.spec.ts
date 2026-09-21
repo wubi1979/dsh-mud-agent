@@ -130,14 +130,15 @@ describe('preset 行 (mud-player 的能力面)', () => {
    * **preset 路径的投递通道接线**（§19.6.2；实测踩过：漏接它 ⇒ defer 只在宿主路径生效，
    * preset 部署下投递仍走 `followup`，login 账目停在 3 回合 / 6 次请求）。
    */
-  it('工具执行接投递通道: 进出工具调用 → defer 槽 → 成功时收束 (preset 路径同样接线)', async () => {
+  it('工具执行接投递通道: 进出工具调用 → defer 槽 → 驱动器判终态时收束 (preset 路径同样接线)', async () => {
     const events: string[] = []
     const deferred = [{ content: [{ type: 'text', text: '下一步投递' }] }]
     const channel: MudDeliveryChannel = {
       beginToolCall: () => { events.push('begin') },
       endToolCall: () => { events.push('end') },
       takeDeferredDeliveries: () => { events.push('take'); return deferred as never },
-      shouldConcludeTurn: (callId) => { events.push(`conclude?${callId}`); return true },
+      // B3：终态由**流程驱动器**在 `noteToolResult` 上给出，包装器只转达 concludeTurn。
+      noteToolResult: (callId) => { events.push(`note?${callId}`); return true },
     }
     const { kit } = makeKit({ known: true, channel })
     const { ctx, tools } = makeScope(kit)
@@ -154,18 +155,18 @@ describe('preset 行 (mud-player 的能力面)', () => {
     })
 
     expect(result).toMatchObject({ ok: true })
-    expect(events).toEqual(['begin', 'end', 'take', 'conclude?mud-d1-0'])
+    expect(events).toEqual(['begin', 'note?mud-d1-0', 'end', 'take'])
     expect(contexts).toEqual(deferred)   // 投递随本结果进下一步
-    expect(concluded).toBe(1)            // 判据 B 成立 ⇒ 收束回合
+    expect(concluded).toBe(1)            // 驱动器判终态 ⇒ 包装器转达 concludeTurn
   })
 
-  it('工具失败时只 defer、不收束 (判据 C)', async () => {
+  it('工具失败 / 驱动器未判终态时不收束 (B3: 判据由驱动器给)', async () => {
     const events: string[] = []
     const channel: MudDeliveryChannel = {
       beginToolCall: () => { events.push('begin') },
       endToolCall: () => { events.push('end') },
       takeDeferredDeliveries: () => [],
-      shouldConcludeTurn: () => { events.push('conclude?'); return true },
+      noteToolResult: () => { events.push('note'); return false },
     }
     const { kit } = makeKit({ known: true, toolFails: true, channel })
     const { ctx, tools } = makeScope(kit)
@@ -182,7 +183,7 @@ describe('preset 行 (mud-player 的能力面)', () => {
 
     expect(result).toMatchObject({ ok: false })
     expect(concluded).toBe(0)
-    expect(events).not.toContain('conclude?')
+    expect(events).toContain('note')
   })
 
   it('未绑定会话 / 无 agent 上下文 → 可读拒绝, 不执行任何会话工具', async () => {

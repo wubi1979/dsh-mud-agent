@@ -17,7 +17,6 @@
  * 发命令类工具 (W7.2 在途窗口, §17 W7.2) 另带结算字段:
  *   settled 结算方式 (ga/until/timeout/abort/interrupted/error)
  *   outcome 结算结局 (ok/fail/error; 流程机单步推进判据)
- *   hitText 判据命中行原文 (until 结算; 流程 {lastFail} 槽源)
  *   captures 抽取槽 (W10.2: 结算时对 span 行跑 captures 正则, 命名捕获组即槽名)
  *
  * 工具契约 (LLM 所见声明的类型基础: MudToolResult/OUT_SCHEMA/MudTool/…)
@@ -30,7 +29,7 @@ import {
 } from './commands.ts'
 import { resolveCaptchaImage } from '../network/captcha.ts'
 import { MOVE_ALIASES, MOVE_DIRS, STATUS_CMDS } from '../world/game.ts'
-import type { WindowCriteria, WindowRequest, WindowResult } from './inflight.ts'
+import type { WindowRequest, WindowResult } from './inflight.ts'
 import type { SessionCredentials } from '../session/credentials.ts'
 import { applyPatch, worldSnapshot, type WorldModel } from '../world/state.ts'
 import type { SettleSpec } from './flow/flow-spec.ts'
@@ -105,160 +104,47 @@ const SETTLE_FALLBACK_MS = 3000
 /** T2 命令类工具的显式收口声明 (D3/R1: 现行 `gaCount:1` 迁移为 settle on ga:1)。 */
 const T2_QUERY_SETTLE = { mode: 'stream', on: { kind: 'ga', count: 1 } } as const satisfies SettleSpec
 
-/** resolveSettleWindow 的产出: 在途窗口声明 (或 inline 直发标记)。 */
+/** resolveSettleWindow 的产出: 在途窗口声明 (形态 C：**只有收口**, 没有分类/抽取)。 */
 interface ResolvedSettle {
   /** inline 收口: 工具结果即结算, 直发 + 立即返回 (不开窗)。 */
   inline: boolean
-  criteria?: WindowCriteria
+  /** 关闭触发 (`settle.on` regex / legacy `until`): 命中即关窗（`settled:'evidence'`）, **不判类**。 */
+  closeOn?: RegExp
   gaCount?: number
+  /** 兜底时长 (缺省 3000; 到期恒 timeout 结算)。 */
   timeoutMs?: number
-  /** 分支判据 (W10.2 收口 owner 化): 任一命中即结算, hit={class:'branch', id}。 */
-  branch?: { id: string; pattern: RegExp }[]
-  /** capture 抽取正则 (命名捕获组 (?<name>…) 即槽名; 窗口结算时对 span 行抽取)。 */
-  captures?: RegExp[]
-  /** on 条件关窗但分类未命中时的裁决 (仅显式 'fail' 时携带; 缺省 ok)。 */
-  onSettle?: 'ok' | 'fail'
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-/** 编译分类正则数组 (JSON 参数: 正则源码字符串) 为单条 alternation 正则。 */
-function compilePatterns(list: unknown, field: string): { ok: true; value: RegExp } | { ok: false; error: string } {
-  if (!Array.isArray(list) || list.length === 0) {
-    return { ok: false, error: `${field} 必须是非空正则源码字符串数组` }
-  }
-  const sources: string[] = []
-  for (const item of list) {
-    if (typeof item !== 'string' && !(item instanceof RegExp)) {
-      return { ok: false, error: `${field} 的每项必须是正则源码字符串` }
-    }
-    sources.push(item instanceof RegExp ? item.source : item)
-  }
-  try {
-    return { ok: true, value: new RegExp(sources.map(s => `(?:${s})`).join('|')) }
-  } catch (error) {
-    return { ok: false, error: `${field} 正则编译失败 (${error instanceof Error ? error.message : String(error)})` }
-  }
-}
-
 /**
- * 把 tool-call 的 `settle`/`classify`/`captures` 参数解析为在途窗口声明 (PLAN §3.1)。
+ * 把 tool-call 的 `settle` 参数解析为在途窗口声明（PLAN §3.1 **形态 C**）。
  *
- * **收口缺省** `{mode:'stream'}` + fallback 3000 (两 lane 一致, 调用期不报错); 非法声明
- * **fail-closed 拒绝** (返回 error 文本, 不静默回退——声明写错不该被 3s 兜底掩盖)。
- * W10.2 收口 owner 化: `on regex` → 判据型窗口 (onSettle 定 ok/fail 侧), 分类正则命中即
- * 结算 (fail-fast), `on ga` → gaCount, fallback.ms → 放弃计时, `classify.branch` → 分支
- * 判据 (任一命中即结算, id 不含 ':'), `captures` → 抽取正则 (窗口结算时对 span 行抽取)。
+ * **模型可见面只有一个概念：关闭触发**。`settle.on` = `{kind:'ga',count}`（第 N 个 GA 后关窗）
+ * 或 `{kind:'regex',pattern}`（正则命中即关窗）；`fallback.ms` = 兜底时长。**收口不解释内容**
+ * —— 触发命中与 GA 关窗都只表示"窗口因证据关闭"（`settled:'evidence'` / `'ga'`，同形不同名），
+ * 内容随窗口带回；"这行算哪一类"由**流程表的 `classify`** 决定、由驱动器复判。
+ * 缺省 `{mode:'stream'}` + fallback 3000（两 lane 一致，调用期不报错）；非法声明
+ * **fail-closed 拒绝**（不静默回退 —— 声明写错不该被 3s 兜底掩盖）。
  */
-function resolveSettleWindow(
-  settle: unknown,
-  classify: unknown,
-  captures: unknown,
-): ResolvedSettle | { error: string } {
-  // ① 分类声明先编译 (inline 下声明分类/抽取拒绝)。
-  let classifyOk: RegExp | undefined
-  let classifyFail: RegExp | undefined
-  let branch: { id: string; pattern: RegExp }[] | undefined
-  let captureRes: RegExp[] | undefined
-  let onSettle: 'ok' | 'fail' = 'ok'
-  if (classify !== undefined) {
-    if (!isPlainObject(classify)) return { error: '工具拒绝: classify 必须是对象 ({ok?/fail?/branch?/onSettle?})' }
-    if (classify.ok !== undefined) {
-      const c = compilePatterns(classify.ok, 'classify.ok')
-      if (!c.ok) return { error: `工具拒绝: ${c.error}` }
-      classifyOk = c.value
-    }
-    if (classify.fail !== undefined) {
-      const c = compilePatterns(classify.fail, 'classify.fail')
-      if (!c.ok) return { error: `工具拒绝: ${c.error}` }
-      classifyFail = c.value
-    }
-    if (classify.branch !== undefined) {
-      if (!Array.isArray(classify.branch) || classify.branch.length === 0) {
-        return { error: '工具拒绝: classify.branch 必须是非空的 {id, pattern} 数组' }
-      }
-      branch = []
-      for (const item of classify.branch) {
-        if (!isPlainObject(item)) {
-          return { error: '工具拒绝: classify.branch 的每项必须是 {id, pattern}' }
-        }
-        if (typeof item.id !== 'string' || item.id.trim() === '' || item.id.includes(':')) {
-          return { error: '工具拒绝: classify.branch id 必须是非空字符串且不含 ":"' }
-        }
-        if (typeof item.pattern !== 'string' && !(item.pattern instanceof RegExp)) {
-          return { error: `工具拒绝: classify.branch ${item.id} 的 pattern 必须是正则源码字符串` }
-        }
-        try {
-          branch.push({ id: item.id, pattern: new RegExp(item.pattern instanceof RegExp ? item.pattern.source : item.pattern) })
-        } catch (error) {
-          return { error: `工具拒绝: classify.branch ${item.id} 正则编译失败 (${error instanceof Error ? error.message : String(error)})` }
-        }
-      }
-    }
-    if (classify.onSettle !== undefined) {
-      if (classify.onSettle !== 'ok' && classify.onSettle !== 'fail') {
-        return { error: "工具拒绝: classify.onSettle 只能是 'ok'/'fail'" }
-      }
-      onSettle = classify.onSettle
-    }
-  }
-  // ①' capture 抽取声明编译 (每项正则源码字符串; 命名捕获组 (?<name>…) 即槽名)。
-  if (captures !== undefined) {
-    if (!Array.isArray(captures) || captures.length === 0) {
-      return { error: '工具拒绝: captures 必须是非空正则源码字符串数组' }
-    }
-    captureRes = []
-    for (const item of captures) {
-      if (typeof item !== 'string' && !(item instanceof RegExp)) {
-        return { error: '工具拒绝: captures 的每项必须是正则源码字符串' }
-      }
-      try {
-        captureRes.push(new RegExp(item instanceof RegExp ? item.source : item))
-      } catch (error) {
-        return { error: `工具拒绝: captures 正则编译失败 (${error instanceof Error ? error.message : String(error)})` }
-      }
-    }
-  }
-  // ② 缺省收口 = stream + fallback 3000; 已编译的分类照常进判据 (分类来源解析三序 ①)。
-  if (settle === undefined) {
-    const criteria: WindowCriteria = {}
-    if (classifyOk !== undefined) criteria.ok = classifyOk
-    if (classifyFail !== undefined) criteria.fail = classifyFail
-    const hasCriteria = criteria.ok !== undefined || criteria.fail !== undefined
-    return {
-      inline: false,
-      ...(hasCriteria ? { criteria } : {}),
-      ...(branch !== undefined ? { branch } : {}),
-      ...(captureRes !== undefined ? { captures: captureRes } : {}),
-      onSettle,
-      timeoutMs: SETTLE_FALLBACK_MS,
-    }
-  }
+function resolveSettleWindow(settle: unknown): ResolvedSettle | { error: string } {
+  // ① 缺省收口 = stream + fallback 3000, 无关闭触发 (恒等满兜底)。
+  if (settle === undefined) return { inline: false, timeoutMs: SETTLE_FALLBACK_MS }
   if (!isPlainObject(settle)) {
     return { error: '工具拒绝: settle 必须是 {mode:"inline"} 或 {mode:"stream", on?, fallback?}' }
   }
   if (settle.mode === 'inline') {
-    if (classify !== undefined) {
-      return { error: '工具拒绝: mode:"inline" 收口下不能声明 classify (工具结果即结算, 无行内容可分类)' }
-    }
-    if (captures !== undefined) {
-      return { error: '工具拒绝: mode:"inline" 收口下不能声明 captures (无行内容可抽取)' }
-    }
+    // inline 收口: 工具结果即结算 (不开行流窗口, 故无关闭触发可声明)。
     return { inline: true }
   }
   if (settle.mode !== 'stream') {
     return { error: '工具拒绝: settle.mode 只能是 "inline"/"stream"' }
   }
-  // ⚠️ 层间不互斥（2026-09-21 二次定案，**撤销同日"settle.on 与 classify 互斥"口径**）：
-  // `settle` 只回答"窗口何时关闭"（收口触发：on 条件 / fallback），`classify` 只回答
-  // "内容指向哪个 next"（判据，由 flow 持有）—— 两层正交，可共存。
-  // 唯一约束是**层内唯一类型**：`settle.on` 是单 kind（结构已保证），`classify` 只收正则。
-  // ③ stream: on 条件 → 提前关窗 (ga 的 count / regex 的 pattern)。
+  // ② stream: on 条件 → 关闭触发 (ga 的 count / regex 的 pattern)。
   let gaCount: number | undefined
-  const criteria: WindowCriteria = {}
-  let hasCriteria = false
+  let closeOn: RegExp | undefined
   if (settle.on !== undefined) {
     if (!isPlainObject(settle.on)) {
       return { error: '工具拒绝: settle.on 必须是 {kind:"ga", count} 或 {kind:"regex", pattern}' }
@@ -273,10 +159,7 @@ function resolveSettleWindow(
         return { error: '工具拒绝: settle.on regex pattern 必须是正则源码字符串' }
       }
       try {
-        const compiled = new RegExp(settle.on.pattern instanceof RegExp ? settle.on.pattern.source : settle.on.pattern)
-        // on 命中关窗 + onSettle 裁决 → 判据型窗口 (W10.2 收口 owner 化后由裁决器承担)。
-        if (onSettle === 'fail') { criteria.fail = compiled } else { criteria.ok = compiled }
-        hasCriteria = true
+        closeOn = new RegExp(settle.on.pattern instanceof RegExp ? settle.on.pattern.source : settle.on.pattern)
       } catch (error) {
         return { error: `工具拒绝: settle.on regex 编译失败 (${error instanceof Error ? error.message : String(error)})` }
       }
@@ -284,10 +167,7 @@ function resolveSettleWindow(
       return { error: '工具拒绝: settle.on kind 只能是 "ga"/"regex" (time kind 已删除, 时间恒由 fallback 管)' }
     }
   }
-  // 分类正则命中即结算 (fail-fast; MVP 唯一语义)。
-  if (classifyOk !== undefined) { criteria.ok = criteria.ok ?? classifyOk; hasCriteria = true }
-  if (classifyFail !== undefined) { criteria.fail = criteria.fail ?? classifyFail; hasCriteria = true }
-  // ④ fallback: 兜底时长 (缺省 3000; 到期恒 timeout 结算)。
+  // ③ fallback: 兜底时长 (缺省 3000; 到期恒 timeout 结算)。
   let timeoutMs = SETTLE_FALLBACK_MS
   if (settle.fallback !== undefined) {
     const fb = settle.fallback as { ms?: unknown }
@@ -298,25 +178,22 @@ function resolveSettleWindow(
   }
   return {
     inline: false,
-    ...(hasCriteria ? { criteria } : {}),
+    ...(closeOn !== undefined ? { closeOn } : {}),
     ...(gaCount !== undefined ? { gaCount } : {}),
-    ...(branch !== undefined ? { branch } : {}),
-    ...(captureRes !== undefined ? { captures: captureRes } : {}),
-    onSettle,
     timeoutMs,
   }
 }
 
 /** T2 命令类工具的窗口请求 (显式收口 settle on ga:1 + 统一 fallback 3000, D3/R1)。 */
 function t2QueryRequest(cmd: string, label: string, signal?: AbortSignal): WindowRequest {
-  const settle = resolveSettleWindow(T2_QUERY_SETTLE, undefined, undefined)
+  const settle = resolveSettleWindow(T2_QUERY_SETTLE)
   if ('error' in settle || settle.inline) {
     // 常量声明错误属编程缺陷 (恒不触发)。
     throw new Error(`T2 收口常量非法: ${'error' in settle ? settle.error : 'inline'}`)
   }
   return {
     cmd,
-    ...(settle.criteria !== undefined ? { criteria: settle.criteria } : {}),
+    ...(settle.closeOn !== undefined ? { closeOn: settle.closeOn } : {}),
     ...(settle.gaCount !== undefined ? { gaCount: settle.gaCount } : {}),
     ...(settle.timeoutMs !== undefined ? { timeoutMs: settle.timeoutMs } : {}),
     label,
@@ -477,15 +354,9 @@ export function buildMudTools({
    */
   const viaWindow = async (spec: WindowRequest): Promise<MudToolResult> => {
     const r = await registerWindow!(spec)
-    return {
-      ok: r.ok,
-      note: r.text,
-      cmd: r.cmd,
-      settled: r.settled,
-      ...(r.outcome !== undefined ? { outcome: r.outcome } : {}),
-      ...(r.hitText !== undefined ? { hitText: r.hitText } : {}),
-      ...(r.captures !== undefined ? { captures: r.captures } : {}),
-    }
+    // 形态 C：工具结果只有 `{ok, note, cmd, settled}` —— 内容随 `lines` 由窗口表直送驱动器
+    // (不进模型可见面); 分类/命中行/抽取都不是工具面概念。
+    return { ok: r.ok, note: r.text, cmd: r.cmd, settled: r.settled }
   }
   return {
     /** 移动: 只接受合法方向 (全名或别名), 非法方向拒绝。 */
@@ -594,22 +465,12 @@ export function buildMudTools({
         until: {
           type: 'object',
           additionalProperties: true,
-          description: '可选 (旧口径, 规则动作使用): 声明应答结算判据 {regex, timeout?}。声明的正则命中应答文本即结算 (跨帧累积; 慢命令如 dz/fullme), 缺省 GA 主边界关窗结算。与 settle 不得同时声明',
+          description: '可选 (旧口径, 规则动作使用): 声明应答关闭触发 {regex, timeout?}。声明的正则命中应答文本即关窗 (跨帧累积; 慢命令如 dz/fullme), 缺省由 settle 的关闭触发与兜底时长管。与 settle 不得同时声明',
         },
         settle: {
           type: 'object',
           additionalProperties: true,
-          description: '可选收口声明 (只回答"窗口何时关闭"): {mode:"inline"} 不等应答立即返回 (工具结果即结算, 不开应答窗口); {mode:"stream", on?, fallback?} 开应答窗口——on 为提前关窗条件 {kind:"ga", count:N} (第 N 个 GA 后关窗) 或 {kind:"regex", pattern} (正则命中即关窗, 正则为源码字符串), fallback={ms} 为兜底超时毫秒。缺省 stream + 3000ms 兜底 (到期即 timeout 结算)',
-        },
-        classify: {
-          type: 'object',
-          additionalProperties: true,
-          description: '可选分类声明 (只回答"应答内容算哪一类", 与关窗解耦): {ok?: 正则源码字符串[], fail?: 正则源码字符串[], branch?: {id, pattern}[], onSettle?: "ok"|"fail"}——正则命中应答即结算 (ok=成功 / fail=失败); branch 为分支判据 (任一命中即结算, 结果携带 hit={class:"branch", id}); onSettle 是 on 条件关窗但分类未命中时的裁决 (缺省 ok)',
-        },
-        captures: {
-          type: 'array',
-          items: { type: 'string' },
-          description: '可选抽取声明 (正则源码字符串数组): 窗口结算时对 span 行逐行扫描, 命名捕获组 (?<name>…) 即槽名, 结果携带 captures={槽名:值} (先到先得, 未匹配不报错)',
+          description: '可选收口声明 (只回答"窗口何时关闭", 不解释应答内容): {mode:"inline"} 不等应答立即返回 (工具结果即结算, 不开应答窗口); {mode:"stream", on?, fallback?} 开应答窗口——on 为关闭触发 {kind:"ga", count:N} (第 N 个 GA 后关窗) 或 {kind:"regex", pattern} (正则命中即关窗, 正则为源码字符串), fallback={ms} 为兜底超时毫秒。缺省 stream + 3000ms 兜底 (到期即 timeout 结算)',
         },
       },
       output: { schema: OUT_SCHEMA, render: OUT_RENDER },
@@ -620,12 +481,13 @@ export function buildMudTools({
         )
         const refused = offline()
         if (refused !== null) return refused
-        // ── W10.1 收口/分类/抽取参数 (PLAN §3.1): 非法声明 fail-closed 拒绝 (不静默回退);
-        // legacy until (规则动作旧口径) 与 settle 互斥。
+        // ── W10.1/形态 C 收口参数 (PLAN §3.1): 非法声明 fail-closed 拒绝 (不静默回退);
+        // legacy until (规则动作旧口径) 与 settle 互斥。**分类/抽取不是工具面概念**
+        // (形态 C：它们是流程表字段, 由驱动器对窗口带回的内容复判/抽取)。
         if (args.until !== undefined && args.settle !== undefined) {
-          return { ok: false, note: 'until 与 settle 不得同时声明 (until 为旧口径, 请改用 settle/classify)', cmd: '' }
+          return { ok: false, note: 'until 与 settle 不得同时声明 (until 为旧口径, 请改用 settle)', cmd: '' }
         }
-        const settleResolved = resolveSettleWindow(args.settle, args.classify, args.captures)
+        const settleResolved = resolveSettleWindow(args.settle)
         if ('error' in settleResolved) return { ok: false, note: settleResolved.error, cmd: '' }
         if (settleResolved.inline) {
           // inline 收口: 工具结果即结算 —— 直发 + 立即 ok 返回 (不开窗、不算应答)。
@@ -649,24 +511,25 @@ export function buildMudTools({
           send(wire(inlineCmd))
           return { ok: true, note: inlineCmd, cmd: inlineCmd }
         }
-        // 声明判据 (规则动作可传): args.until = { regex, timeout? } → ok 判据 (命中 =
-        // 成功结算, §2.3 判据型)。非法正则回退无判据 (窗口型, GA 关窗)。
-        // W10.1: 未声明 until 时 criteria/fallback 来自 settle/classify 解析 (缺省
-        // stream + 3000; 活动表附加仅在此无判据时生效, 见下)。
+        // 关闭触发 (规则动作可传): args.until = { regex, timeout? } → 关闭触发 (命中即关窗,
+        // 形态 C：不判类; 规则动作无"下一步"可判)。非法正则回退无触发 (只由 settle 的
+        // 触发 / GA / 兜底收口)。
+        // 未声明 until 时触发/兜底来自 settle 解析 (缺省 stream + 3000; 活动表附加仅在
+        // 此无触发时生效, 见下)。
         const untilRaw = args.until as { regex?: unknown; timeout?: unknown } | undefined
-        let criteria: WindowCriteria | undefined
+        let closeOn: RegExp | undefined
         let timeoutMs: number | undefined
         if (untilRaw !== undefined) {
           if (typeof untilRaw.regex === 'string') {
             try {
-              criteria = { ok: new RegExp(untilRaw.regex) }
+              closeOn = new RegExp(untilRaw.regex)
             } catch {
-              criteria = undefined
+              closeOn = undefined
             }
             if (typeof untilRaw.timeout === 'number') timeoutMs = untilRaw.timeout
           }
         } else {
-          criteria = settleResolved.criteria
+          closeOn = settleResolved.closeOn
           timeoutMs = settleResolved.timeoutMs
         }
         // 回合取消信号: 随窗口注册传入 (取消 → 优雅结算 settled='abort')。
@@ -685,12 +548,9 @@ export function buildMudTools({
             // interrupted/abort 由窗口结算原样透传 (ok:false), 序列天然不再续发。
             return viaWindow({
               cmd: series.map(wire),
-              ...(criteria !== undefined ? { criteria } : {}),
+              ...(closeOn !== undefined ? { closeOn } : {}),
               ...(timeoutMs !== undefined ? { timeoutMs } : {}),
               ...(settleResolved.gaCount !== undefined ? { gaCount: settleResolved.gaCount } : {}),
-              ...(settleResolved.branch !== undefined ? { branch: settleResolved.branch } : {}),
-              ...(settleResolved.captures !== undefined ? { captures: settleResolved.captures } : {}),
-              ...(settleResolved.onSettle !== undefined ? { onSettle: settleResolved.onSettle } : {}),
               label: 'mud_send',
               ...(signal !== undefined ? { signal } : {}),
             })
@@ -708,23 +568,20 @@ export function buildMudTools({
           return { ok: false, note: `安全禁用命令, 拒绝发送: ${cmd}`, cmd: '' }
         }
         const wiredCmd = wire(cmd)
-        // §8 活动表: 慢命令 (打坐/静坐/睡觉 …) 未显式声明判据时自动附带完成句锚定 —
-        // 完成句作为窗口 ok 判据注册 (命中即结算), 不依赖 GA (dz/sleep 无 GA 无 prompt)。
+        // §8 活动表: 慢命令 (打坐/静坐/睡觉 …) 未显式声明触发时自动附带完成句锚定 —
+        // 完成句作为**关闭触发**注册 (命中即关窗), 不依赖 GA (dz/sleep 无 GA 无 prompt)。
         const activityEntry = activityFor(cmd, activity)
-        if (activityEntry !== null && criteria === undefined) {
-          criteria = { ok: new RegExp(activityEntry.until) }
+        if (activityEntry !== null && closeOn === undefined) {
+          closeOn = new RegExp(activityEntry.until)
           if (activityEntry.timeoutMs !== undefined) timeoutMs = activityEntry.timeoutMs
         }
         log(`[工具] mud_send → ${cmd}`)
         if (registerWindow && opts?.fireAndForget !== true) {
           return viaWindow({
             cmd: wiredCmd,
-            ...(criteria !== undefined ? { criteria } : {}),
+            ...(closeOn !== undefined ? { closeOn } : {}),
             ...(timeoutMs !== undefined ? { timeoutMs } : {}),
             ...(settleResolved.gaCount !== undefined ? { gaCount: settleResolved.gaCount } : {}),
-            ...(settleResolved.branch !== undefined ? { branch: settleResolved.branch } : {}),
-            ...(settleResolved.captures !== undefined ? { captures: settleResolved.captures } : {}),
-            ...(settleResolved.onSettle !== undefined ? { onSettle: settleResolved.onSettle } : {}),
             label: 'mud_send',
             ...(signal !== undefined ? { signal } : {}),
           })

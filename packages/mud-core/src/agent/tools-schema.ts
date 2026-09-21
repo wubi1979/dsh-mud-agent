@@ -13,7 +13,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ParameterSchemaSpec, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
 import type { ReplySettle } from './inflight.ts'
 
-/** 工具统一返回。*/
+/** 工具统一返回。**形态 C：只有 `{ok, note, cmd, settled}`** —— 窗口内容与分类都不进模型可见面。 */
 export interface MudToolResult {
   ok: boolean
   note: string
@@ -21,21 +21,15 @@ export interface MudToolResult {
   /** 在途窗口结算方式 (发命令工具; 见 OUT_RENDER — 窗口超时/中止
    *  是"成功结果携带错误文本", 与工具层校验拒绝区分, 不加 "工具拒绝:" 前缀)。 */
   settled?: ReplySettle
-  /** 结算结局 (窗口判据/关窗; ok/fail/error; 未结算不带 — 流程机单步推进判据)。 */
-  outcome?: 'ok' | 'fail' | 'error'
-  /** 判据命中行原文 (until 结算; 流程 {lastFail} 槽源)。 */
-  hitText?: string
-  /** capture 抽取结果 (W10.2; 槽名 → 值, 先到先得; declare captures 的窗口结算携带)。 */
-  captures?: Record<string, string>
 }
 
 /**
  * 输出 schema (所有工具一致)。
- * `settled` 可选: 在途窗口的结算语义 (ga/until/timeout/abort…), 见
+ * `settled` 可选: 在途窗口的结算语义 (evidence/ga/timeout/abort…), 见
  * §8.3/§8.4。工具层校验拒绝 (未连接/危险命令) 不带该字段 —
  * 缺省即"未结算"。声明为 optional 是必需的: `additionalProperties: false`
  * 下漏声明会让**成功**的调用报 `value.settled is not a declared property`
- * (工具实际已执行, 却回给模型一条失败帧)。`outcome`/`hitText`/`captures` 同理。
+ * (工具实际已执行, 却回给模型一条失败帧)。
  */
 export const OUT_SCHEMA = {
   type: 'object',
@@ -45,9 +39,6 @@ export const OUT_SCHEMA = {
     note: { type: 'string', required: true },
     cmd: { type: 'string', required: true },
     settled: { type: 'string' },
-    outcome: { type: 'string' },
-    hitText: { type: 'string' },
-    captures: { type: 'object', additionalProperties: true },
   },
 } as const satisfies ValueSchemaSpec
 
