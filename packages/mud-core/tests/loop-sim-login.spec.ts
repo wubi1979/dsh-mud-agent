@@ -1,13 +1,15 @@
 /**
  * dsh-mud-core — **login 流程在官方 loop 模拟器下的回合/步骤账目**（`doc/ARCHITECTURE.md` §19.6）。
  *
- * 目的：量清楚"现行 T1 投递（`agent.followup`）"在官方 loop 语义下到底是什么形状 ——
- * 一个流程占几个回合、每步花几次模型请求、有没有"空续步"。结论写进 §19.6。
+ * 目的：量清楚形态 C 第 5 步③（删非入口投递 + T1 按槽渲染）后，login 在官方 loop 语义下的
+ * 形状 —— 一个流程占几个回合、每步花几次模型请求、空认领里哪些是有效续步。
+ * 结论写进 §19.6 / PLAN W10.4 第 5 步。
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import defaultPerceptionRules from '../src/perceive/rules.ts'
-import { defaultFlows } from '../src/agent/flow/flows/index.ts'
+import type { PerceptionRule } from '../src/perceive/types.ts'
+import { defaultFlows, PRIORITY_NORMAL, type FlowSpec } from '../src/agent/flow/flows/index.ts'
 import { MudSessionRuntime } from '../src/session/session.ts'
 import type { MudRuntimeConfig, MudRuntimeSink } from '../src/session/types.ts'
 import type { MudConnectionManager, MudConnectionSink } from '../src/network/manager.ts'
@@ -22,7 +24,11 @@ function ml(text: string, abs: number): MudLine {
   return { text, raw: text, style: [], abs, time: Date.now(), isPrompt: false }
 }
 
-function harness(sessionId: string, earlyStop: SimEarlyStop = 'conclude-turn'): {
+function harness(
+  sessionId: string,
+  earlyStop: SimEarlyStop = 'conclude-turn',
+  options: { flows?: readonly FlowSpec[]; eventRules?: readonly PerceptionRule[] } = {},
+): {
   runtime: MudSessionRuntime
   sim: LoopSim
   sink: () => MudConnectionSink
@@ -59,7 +65,7 @@ function harness(sessionId: string, earlyStop: SimEarlyStop = 'conclude-turn'): 
     commands: '',
     defaultHost: 'example.invalid',
     defaultPort: 8081,
-    flows: defaultFlows,
+    flows: options.flows ?? defaultFlows,
   }
   // 先建运行时（需要 sink），再建模拟器（需要运行时），最后回填 agentOf。
   let sim: LoopSim | null = null
@@ -75,7 +81,7 @@ function harness(sessionId: string, earlyStop: SimEarlyStop = 'conclude-turn'): 
   }
   const runtime = new MudSessionRuntime(sessionId, config, sink, connections, {
     stateRules: defaultPerceptionRules.filter(rule => rule.lane === 'state'),
-    eventRules: defaultPerceptionRules.filter(rule => rule.lane !== 'state'),
+    eventRules: options.eventRules ?? defaultPerceptionRules.filter(rule => rule.lane !== 'state'),
     holdRuleIds: new Set(),
   })
   sim = new LoopSim(sessionId, runtime, text => { logs.push(text) }, { earlyStop })
@@ -127,24 +133,27 @@ describe('官方 loop 模拟器: login 流程的回合/步骤账目', () => {
     return h
   }
 
-  it('真行为 (defer + conclude): 1 个回合 / 3 次模型请求', async () => {
+  it('真行为 (槽渲染 + conclude): 1 回合 / 3 步 / 零投递 / 零空步', async () => {
     const h = await runLogin('sim-login-defer')
 
-    // §19.6.2 落地后的账目：整条 login 落在**一个回合**内，每步一次模型请求，没有空续步。
+    // §19.6.2 + 第 5 步③落地后的账目：整条 login 落在**一个回合**内；只有入口步投递，
+    // pass/success 靠 T1 按槽渲染（claimless 但有 tool-call = 有效续步，不是浪费）。
     expect(h.sim.stats).toMatchObject({
-      turns: 1,          // 整条 login = 一个回合
-      steps: 3,          // name / pass / success 各一步（下一步随结果进同一回合）
+      turns: 1,            // 整条 login = 一个回合
+      steps: 3,            // name / pass / success 各一步
       modelCalls: 3,
-      emptySteps: 0,
+      emptySteps: 2,       // = claimlessSteps + idleSteps（D5 拆分）
+      claimlessSteps: 2,   // pass / success：claim=0 但槽渲出 tool-call（有效续步）
+      idleSteps: 0,        // 收束空步 = 0（B3 收束；A vs B 裁决看这里）
       t1Calls: 3,
-      t2Calls: 0,        // 流程期间绝不落到 T2（真实 LLM）
+      t2Calls: 0,          // 流程期间绝不落到 T2（真实 LLM）
       toolCalls: 3,
-      deferred: 2,       // name→pass、pass→success 两次下一步动作随结果走（判据 A）
-      concludedTurns: 1, // success 的空命令 GA 落地后流程收束 → 该结果 concludeTurn（判据 B）
+      deferred: 0,         // 非入口步不 push hit ⇒ 无 deferContext 投递（③ 删非入口投递）
+      concludedTurns: 1,   // success 的空命令 GA 落地后流程收束 → 该结果 concludeTurn（判据 B）
     })
-    // 每步都拿到新投递（没有 claim=0 的空续步）。
+    // 只有入口步有投递（claim=1）；续步 claim=0 但 lane 仍为 t1（T1 按槽渲）。
     expect(h.sim.trace.filter(e => e.event === 'step/start').map(e => e.detail)).toEqual([
-      'claim=1 lane=t1', 'claim=1 lane=t1', 'claim=1 lane=t1',
+      'claim=1 lane=t1', 'claim=0 lane=t1', 'claim=0 lane=t1',
     ])
     h.runtime.dispose()
   })
@@ -155,35 +164,127 @@ describe('官方 loop 模拟器: login 流程的回合/步骤账目', () => {
    * 判据 B（`shouldConcludeTurn` + 投递尺寸记账）在新模型下没有存在理由 —— T1 持状态，
    * 不需要"由运行时观测流程是否空闲来替 T1 收束回合"。
    *
-   * **实测结论（与 §D5 的预期不同，是本次账目的发现）**：删掉判据 B 后，流程末步的工具结果
-   * 不再标记 `concludesTurn`，而工具结果**不进 `next-step`**（官方只在 `deferContext` 时
-   * 往 `next-step` 追加）⇒ 末步之后 `next-step` 为空、`turnEnds` 仍为 null ⇒ 回合**不会结束**，
-   * 而是**再走一个 `claim=0` 的步**（空续步）：这一步没有任何新输入，只因 T1 无可渲染动作才收束。
+   * **实测结论（第 5 步③后）**：删掉判据 B 后，流程末步的工具结果不标记 `concludesTurn`，
+   * 非入口步又不投递 ⇒ `next-step` 为空、`turnEnds` 仍为 null ⇒ 回合**不会结束**，而是再走
+   * 一个 `claim=0` 的步：这一步没有任何新输入，T1 无可渲染动作才收束 —— 即 **idleSteps=1**。
    *
-   * 即：**1 回合 / 4 步 / 4 请求 / 1 空续步**（现行：3 步 / 3 请求 / 0 空续步）。
-   * §D5 写的"T1 无动作即 `finish stop` 自然收束"实际就是这一空步 —— 它是 T1 本地确定性请求，
-   * 但按 §19.6.1 规矩必须记账（回合数不变、T2 不介入）。
+   * 即：**1 回合 / 4 步 / 4 请求 / 1 空步**（conclude 路径：3 步 / 0 空步）。
+   * §D5 写的"T1 无动作即 `finish stop` 自然收束"实际就是这一空步 —— 它是 T1 本地确定性
+   * 请求，但按 §19.6.1 规矩必须记账（回合数不变、T2 不介入）。
    */
-  it('删判据 B 的代价 (实测): 1 回合 / 4 步 / 4 请求 / 1 空续步', async () => {
+  it('删判据 B 的代价 (实测): 1 回合 / 4 步 / 4 请求 / 1 空步 (idle)', async () => {
     const h = await runLogin('sim-login-no-conclude', 'none')
 
     expect(h.sim.stats).toMatchObject({
-      turns: 1,          // 仍是一个回合（无 T2 介入、无 followup）
-      steps: 4,          // name / pass / success + 末步"无动作收束"
+      turns: 1,            // 仍是一个回合（无 T2 介入、无 followup）
+      steps: 4,            // name / pass / success + 末步"无动作收束"
       modelCalls: 4,
       t1Calls: 4,
       t2Calls: 0,
-      toolCalls: 3,      // 工具调用仍是 3 次（末步不产生工具调用）
-      emptySteps: 1,     // 末步 claim=0 —— **空续步**（本账目的发现）
-      deferred: 2,
-      concludedTurns: 0, // 判据 B 已删除：没有任何工具结果标记 concludesTurn
+      toolCalls: 3,        // 工具调用仍是 3 次（末步不产生工具调用）
+      emptySteps: 3,       // = claimless(2, 有效续步) + idle(1, 收束空步)
+      claimlessSteps: 2,   // pass / success 槽渲染
+      idleSteps: 1,        // 末步 claim=0 且无 tool-call —— **删判据 B 换来的空步**
+      deferred: 0,         // 非入口步零投递
+      concludedTurns: 0,   // 判据 B 已删除：没有任何工具结果标记 concludesTurn
     })
     expect(h.sim.trace.filter(e => e.event === 'step/start').map(e => e.detail)).toEqual([
-      'claim=1 lane=t1', 'claim=1 lane=t1', 'claim=1 lane=t1', 'claim=0 lane=t1',
+      'claim=1 lane=t1', 'claim=0 lane=t1', 'claim=0 lane=t1', 'claim=0 lane=t1',
     ])
-    // 末步 = 空认领 → T1 无可渲染动作 → 收束（这就是删判据 B 换来的那一空步）。
+    // 末步 = 空认领 → T1 无可渲染动作 → 收束（删判据 B 换来的那一空步）。
     expect(h.sim.trace.find(e => e.turn === 1 && e.step === 4 && e.event === 'request'))
       .toMatchObject({ detail: 'T1 → 收束' })
+    h.runtime.dispose()
+  })
+})
+
+describe('官方 loop 模拟器: 打断的回合/步骤账目（§6.4 / D5 followup 代价）', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  /** 练功流程（同 `flow-interrupt.spec` 的 PRACTICE_FLOW：单步 + GA 结算，可被战斗打断）。 */
+  const PRACTICE_FLOW: FlowSpec = {
+    id: 'practice',
+    priority: PRIORITY_NORMAL,
+    entry: 'start',
+    timeoutMs: 30_000,
+    steps: [{
+      id: 'start',
+      driver: { kind: 'text', includes: ['你开始练习剑法。'] },
+      action: { tool: 'mud_send', args: { cmd: 'lian sword' } },
+      ok: [{ kind: 'ga' }],
+      onInterrupt: ['halt'],
+    }],
+  }
+
+  /** 战斗类规则（档位 200 > 100 ⇒ 可打断练功）。 */
+  const COMBAT_RULE: PerceptionRule = {
+    id: 'test:combat',
+    eventType: 'p:test:combat',
+    match: { kind: 'text', includes: ['一个流氓拦住了你的去路'] },
+    action: {
+      output: '战斗: 一个流氓拦住了你',
+      tool: { name: 'mud_send', args: { cmd: 'kill liumang' } },
+      interrupts: 200,
+    },
+  }
+
+  /**
+   * **打断账目（第 6 步接线后实测）**：练功在途时战斗事件到达 → 在途结算 `interrupted`、
+   * 流程复位、combat 动作**持有**（D5，不再 defer 进同回合）→ 回合 1 收束 → 静止点
+   * `onAgentIdle()` → `flushInterruptFollowups` 以 followup 开**新回合**投递 → T1 渲染
+   * combat 动作执行（回合 2）。
+   *
+   * 代价 = **+1 回合 / +2 步（工具步 + 收束空步）/+2 次 T1 请求**，全程无 T2、零 defer。
+   */
+  it('打断 → followup 新回合: 2 回合 / 4 步 / 4 请求 / 全 T1 / 零 defer', async () => {
+    const h = harness('sim-interrupt', 'conclude-turn', {
+      flows: [PRACTICE_FLOW],
+      eventRules: [COMBAT_RULE],
+    })
+    h.runtime.connect()
+    h.sink().onConnect()
+    vi.advanceTimersByTime(10)
+
+    // ① 练功入口句 → 流程激活 → 投递入口动作 → 回合 1 → T1 渲 mud_send {lian sword}。
+    h.sink().onLines([ml('你开始练习剑法。', 0)])
+    h.sink().onBoundary('ga')
+    await until(() => h.sent.includes('lian sword'), 'lian sword 写出')
+
+    // ② 打断句 → 在途结算 interrupted → 流程复位 + onInterrupt 直发 (halt) →
+    //    combat 动作持有 (D5)。驱动器随后排空 → 静止点 → followup 新回合 → 回合 2
+    //    里 T1 渲染 combat 动作并执行。
+    h.sink().onLines([ml('一个流氓拦住了你的去路', 1)])
+    h.sink().onBoundary('ga')
+    expect(h.logs.join('\n')).toContain('practice 被 test:combat 打断')
+    // halt 走命令队列节流（queue.send），推进假计时器后才写出。
+    await until(() => h.sent.includes('halt'), 'halt 写出 (onInterrupt 直发)')
+    await until(() => h.sent.includes('kill liumang'), 'kill liumang 写出 (followup 新回合)')
+
+    // ③ combat 的 mud_send 无声明判据 → hold 兜底 3s 结算 → 回合 2 收束空步。
+    await vi.advanceTimersByTimeAsync(3001)
+    await h.sim.whenIdle()
+
+    // 证据: 紧凑轨迹。
+    // eslint-disable-next-line no-console
+    console.log('\n[sim] 打断轨迹:\n' + h.sim.report() + '\n[sim] 统计: ' + JSON.stringify(h.sim.stats))
+    expect(h.sim.stats).toMatchObject({
+      turns: 2,            // 流程回合 (1) + combat followup 回合 (2)
+      steps: 4,            // 每回合: 1 工具步 + 1 收束空步
+      modelCalls: 4,
+      t1Calls: 4,
+      t2Calls: 0,          // 打断路径全程 T1，真实 LLM 不介入
+      toolCalls: 2,        // lian sword + kill liumang
+      emptySteps: 2,
+      claimlessSteps: 0,   // 两回合都是入口投递起手 (claim=1)，无槽渲染续步
+      idleSteps: 2,        // 两回合各 1 个收束空步
+      deferred: 0,         // 打断动作不再 defer（D5 的本意）
+      concludedTurns: 0,   // 流程被复位（非终态收束），没有结果触发 concludeTurn
+    })
+    // 回合起手都是 claim=1（投递）；回合内第二步都是 claim=0 收束。
+    expect(h.sim.trace.filter(e => e.event === 'step/start').map(e => e.detail)).toEqual([
+      'claim=1 lane=t1', 'claim=0 lane=t1', 'claim=1 lane=t1', 'claim=0 lane=t1',
+    ])
     h.runtime.dispose()
   })
 })

@@ -141,13 +141,35 @@ function harness(sessionId: string): {
 }
 
 /**
- * 假 loop: 走**官方工具包装器**执行最新一条投递里的动作（真链路: begin/end + 工具结果
- * 回喂流程机 + defer —— 与 runtime-captcha.spec 的 startAction 同一接线）。
+ * 假 loop: 执行**当前可执行动作**（真链路: begin/end + 工具结果回喂流程机 + defer）。
+ *
+ * **形态 C 第 5 步③**：入口步动作随投递到达（`h.delivered`）；非入口步只发槽
+ * （`h.runtime.slot()`）—— 先槽后投递，与 T1 的渲染优先级一致。
  */
 async function runLatestAction(h: ReturnType<typeof harness>): Promise<{
   ruleId: string
   pending: Promise<unknown>
 }> {
+  const slot = h.runtime.slot()
+  if (slot !== null && slot.phase === 'awaiting-result' && slot.render !== undefined
+    && slot.pendingCallId === null) {
+    const ruleId = `flow:${slot.flowId}/${slot.stepId}`
+    const callId = `mud-flow-${slot.flowId}-${slot.stepId}-${slot.retries}`
+    h.runtime.markSlotRendered(callId)
+    const tool = h.runtime.tools()[slot.render.tool]
+    if (tool === undefined) throw new Error(`未知工具 ${slot.render.tool}`)
+    const pending = runWithDeliveryChannel({
+      channel: h.runtime,
+      callId,
+      exec: {
+        deferContext: (deferredMessage) => { h.delivered.push(toDelivered(deferredMessage as unknown as OwnedMessage)) },
+        concludeTurn: () => {},
+      },
+      run: async () => await tool.execute({ ...slot.render.args }),
+    })
+    await vi.advanceTimersByTimeAsync(1)
+    return { ruleId, pending }
+  }
   const message = h.delivered.at(-1)
   if (message === undefined || message.actions.length === 0) throw new Error('没有待执行动作')
   if (message.delivery === undefined) throw new Error('投递消息没有 delivery id')
@@ -166,6 +188,16 @@ async function runLatestAction(h: ReturnType<typeof harness>): Promise<{
   })
   await vi.advanceTimersByTimeAsync(1)   // 队列写出 → 武装
   return { ruleId: action.ruleId, pending }
+}
+
+/** 当前槽上的流程动作（非入口步断言用；无槽/无 render = 抛错）。 */
+function slotAction(h: ReturnType<typeof harness>): { ruleId: string; tool: { name: string; args: Record<string, unknown> } } {
+  const slot = h.runtime.slot()
+  if (slot === null || slot.render === undefined) throw new Error('槽没有可渲染动作')
+  return {
+    ruleId: `flow:${slot.flowId}/${slot.stepId}`,
+    tool: { name: slot.render.tool, args: slot.render.args },
+  }
 }
 
 describe('流程表 (login)', () => {
@@ -272,27 +304,32 @@ describe('登录流程端到端 (流程表 → T1 动作 → 桥挂起 → 判�
     const first = await runLatestAction(h)
     expect(h.sent).toContain('tester')
 
-    // ③ 应答帧: 密码提示（同帧、先于 GA）→ name 成功并走 pass 分支 → 投递 {pass}
+    // ③ 应答帧: 密码提示（同帧、先于 GA）→ name 成功并走 pass 分支 → **非入口步只发槽**
     h.sink().onLines([ml(PASS_PROMPT, 1)])
     h.sink().onBoundary('ga')
     await first.pending
     vi.advanceTimersByTime(1)
-    expect(h.delivered).toHaveLength(2)
-    expect(h.delivered[1]!.actions.map(a => a.ruleId)).toEqual(['flow:login/pass'])
-    expect(h.delivered[1]!.actions[0]!.tool.args).toEqual({ cmd: '{pass}' })
+    expect(h.delivered).toHaveLength(1)                 // 非入口零投递 (第 5 步③)
+    expect(slotAction(h)).toEqual({
+      ruleId: 'flow:login/pass',
+      tool: { name: 'mud_send', args: { cmd: '{pass}' } },
+    })
     expect(h.runtime.diag().flow).toMatchObject({ flowId: 'login', stepId: 'pass' })
 
-    // ④ 执行 {pass}; 应答帧里是成功句 → 命中 success 的进入判据 → 置位已登录 + 投递空命令
+    // ④ 执行 {pass}; 应答帧里是成功句 → 命中 success 的进入判据 → 置位已登录 + 槽发空命令
     const second = await runLatestAction(h)
+    expect(second.ruleId).toBe('flow:login/pass')
     expect(h.sent).toContain('secret')
     h.sink().onLines([ml(LOGIN_DONE, 2)])
     h.sink().onBoundary('ga')
     await second.pending
     vi.advanceTimersByTime(1)
     expect(h.runtime.loggedIn).toBe(true)
-    expect(h.delivered).toHaveLength(3)
-    expect(h.delivered[2]!.actions.map(a => a.ruleId)).toEqual(['flow:login/success'])
-    expect(h.delivered[2]!.actions[0]!.tool.args).toEqual({ cmd: '' })
+    expect(h.delivered).toHaveLength(1)
+    expect(slotAction(h)).toEqual({
+      ruleId: 'flow:login/success',
+      tool: { name: 'mud_send', args: { cmd: '' } },
+    })
     expect(h.runtime.diag().flow).toMatchObject({ flowId: 'login', stepId: 'success' })
 
     // ⑤ 执行空命令 (顶开服务端/退出 MXP 检测; 不再发 look) → GA → 终态 → 流程结束
@@ -328,19 +365,25 @@ describe('登录流程端到端 (流程表 → T1 动作 → 桥挂起 → 判�
     h.sink().onBoundary('ga')
     await second.pending
     vi.advanceTimersByTime(1)
-    expect(h.delivered.at(-1)!.actions.map(a => a.ruleId)).toEqual(['flow:login/replace'])
-    expect(h.delivered.at(-1)!.actions[0]!.tool.args).toEqual({ cmd: 'y' })
+    expect(slotAction(h)).toEqual({
+      ruleId: 'flow:login/replace',
+      tool: { name: 'mud_send', args: { cmd: 'y' } },
+    })
+    expect(h.delivered).toHaveLength(1)
     expect(h.runtime.loggedIn).toBe(false)
 
-    // 执行 y → 成功句（重新连线完毕）→ replace 成功 → 进入 success（置位 + 空命令）
+    // 执行 y → 成功句（重新连线完毕）→ replace 成功 → 进入 success（置位 + 空命令槽）
     const third = await runLatestAction(h)
+    expect(third.ruleId).toBe('flow:login/replace')
     h.sink().onLines([ml('重新连线完毕。', 3)])
     h.sink().onBoundary('ga')
     await third.pending
     vi.advanceTimersByTime(1)
     expect(h.runtime.loggedIn).toBe(true)
-    expect(h.delivered.at(-1)!.actions.map(a => a.ruleId)).toEqual(['flow:login/success'])
-    expect(h.delivered.at(-1)!.actions[0]!.tool.args).toEqual({ cmd: '' })
+    expect(slotAction(h)).toEqual({
+      ruleId: 'flow:login/success',
+      tool: { name: 'mud_send', args: { cmd: '' } },
+    })
 
     // 空命令的 GA → 终态
     const fourth = await runLatestAction(h)
@@ -445,13 +488,13 @@ describe('登录流程端到端 (流程表 → T1 动作 → 桥挂起 → 判�
     await first.pending
     vi.advanceTimersByTime(1)
 
-    // 成功句 + GA: 进入 success → 投递空命令（success.ok 只认 GA）
+    // 成功句 + GA: 进入 success → 槽发空命令（success.ok 只认 GA）
     const second = await runLatestAction(h)
     h.sink().onLines([ml(LOGIN_DONE, 2)])
     h.sink().onBoundary('ga')
     await second.pending
     vi.advanceTimersByTime(1)
-    expect(h.delivered.at(-1)!.actions.map(a => a.ruleId)).toEqual(['flow:login/success'])
+    expect(slotAction(h).ruleId).toBe('flow:login/success')
     expect(h.runtime.diag().flow).toMatchObject({ stepId: 'success' })
 
     // 此刻空命令还没写出（没有在途窗口）→ 此时到达的 GA 无窗口可结算，success 步不被打动。

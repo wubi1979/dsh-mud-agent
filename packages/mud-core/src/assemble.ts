@@ -658,6 +658,19 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
     tuiLog(sessionId, `[agent] 待处理投递被丢弃 (回合取消): ${preview}…`)
   })
 
+  // 回合边界 = 流程边界 (D6): 每个回合停下时让活跃流程失效 —— 若流程还在等结果/分支,
+  // 它已经等不到同回合的续行了。出队/接续不在做这 (此刻可能还有排队回合要开)。
+  ctx.on('agent/turn-stopping', ({ agent }) => {
+    runtimes.get(String(agent.id))?.onTurnStopping()
+  })
+
+  // 官方静止点 (agent 转 idle, D0): 无工具在途、无排队回合 —— 活跃失效兜底 + 入口 arm
+  // 恢复 + 打断事件动作 followup 投递 (D5) + 排队动作/排队入口出队 (D6)。
+  ctx.on('agent/status', ({ agent, status }) => {
+    if (status !== 'idle') return
+    runtimes.get(String(agent.id))?.onAgentIdle()
+  })
+
   // ── 会话内命令事件 (mud/command): 只投给该会话的游戏连接 ──
   ctx.on('session/event', (session, event) => {
     if (!event || event.type !== 'mud/command') return

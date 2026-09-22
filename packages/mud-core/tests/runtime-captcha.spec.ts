@@ -169,7 +169,11 @@ function stubCaptchaPage(html = `<html><body><img src="${CAPTCHA_IMG}"></body></
 }
 
 /**
- * 走**官方工具包装器**执行最新一条投递里的动作（真链路：begin/end + 工具结果回喂 + defer）。
+ * 走**官方工具包装器**执行当前可执行动作（真链路：begin/end + 工具结果回喂 + defer）。
+ *
+ * **形态 C 第 5 步③**：入口步动作随投递到达（`h.delivered`）；非入口步只发槽
+ * （`h.runtime.slot()`）—— 先槽后投递，与 T1 渲染优先级一致。两拍重试的拍 1
+ * （重新取图）同样经槽发布。
  *
  * 返回的 `pending` 在工具返回后才 resolve —— ask-human 工具会一直挂起到人工提交/中止/超时，
  * 测试负责提交码再 await。
@@ -181,31 +185,57 @@ async function startAction(h: ReturnType<typeof harness>, index = 0): Promise<{
   state: { deferred: number; concluded: boolean }
   pending: Promise<{ ok: boolean; note: string }>
 }> {
+  const flags = { deferred: 0, concluded: false }
+  const defer = (deferredMessage: OwnedMessage) => {
+    // 官方 loop：`additionalContexts` 进 `next-step` inbox → 成为下一步认领的消息。
+    // 第 5 步③起非入口步零投递 ⇒ 此处通常为空（只剩规则/入口兜底）。
+    flags.deferred += 1
+    h.delivered.push(toDelivered(deferredMessage))
+  }
+  // 槽路径（非入口步 / 两拍拍 1）：T1 按槽渲染的同一 callId 形态。
+  const slot = h.runtime.slot()
+  if (index === 0 && slot !== null && slot.phase === 'awaiting-result'
+    && slot.render !== undefined && slot.pendingCallId === null) {
+    const ruleId = `flow:${slot.flowId}/${slot.stepId}`
+    const callId = `mud-flow-${slot.flowId}-${slot.stepId}-${slot.retries}`
+    h.runtime.markSlotRendered(callId)
+    const tool = h.runtime.tools()[slot.render.tool]
+    if (tool === undefined) throw new Error(`未知工具 ${slot.render.tool}`)
+    const pending = runWithDeliveryChannel({
+      channel: h.runtime,
+      callId,
+      exec: { deferContext: defer, concludeTurn: () => { flags.concluded = true } },
+      run: async () => await tool.execute({ ...slot.render.args }),
+    }) as Promise<{ ok: boolean; note: string }>
+    await vi.advanceTimersByTimeAsync(1)
+    return { ruleId, callId, state: flags, pending }
+  }
   const message = h.delivered.at(-1)
   if (message === undefined || message.actions.length === 0) throw new Error('没有待执行动作')
   const action = message.actions[index]
   if (action === undefined) throw new Error(`投递里没有第 ${index} 个动作`)
   const tool = h.runtime.tools()[action.tool.name]
   if (tool === undefined) throw new Error(`未知工具 ${action.tool.name}`)
-  const flags = { deferred: 0, concluded: false }
   const callId = `mud-${String(message.delivery)}-${index}`
   const pending = runWithDeliveryChannel({
     channel: h.runtime,
     callId,
-    exec: {
-      deferContext: (deferredMessage) => {
-        // 官方 loop：`additionalContexts` 进 `next-step` inbox → 成为下一步认领的消息
-        // （T1 据此渲染下一个动作）。测试里等价于"多了一条投递"。
-        flags.deferred += 1
-        h.delivered.push(toDelivered(deferredMessage as OwnedMessage))
-      },
-      concludeTurn: () => { flags.concluded = true },
-    },
+    exec: { deferContext: defer, concludeTurn: () => { flags.concluded = true } },
     run: async () => await tool.execute({ ...action.tool.args }),
-  })
+  }) as Promise<{ ok: boolean; note: string }>
   // 队列按 commandIntervalMs 写出 → 桥武装（官方 loop 里这段是"工具执行中"）。
   await vi.advanceTimersByTimeAsync(1)
   return { ruleId: action.ruleId, callId, state: flags, pending }
+}
+
+/** 当前槽上的流程动作（非入口步断言用）。 */
+function slotAction(h: ReturnType<typeof harness>): { ruleId: string; tool: { name: string; args: Record<string, unknown> } } {
+  const slot = h.runtime.slot()
+  if (slot === null || slot.render === undefined) throw new Error('槽没有可渲染动作')
+  return {
+    ruleId: `flow:${slot.flowId}/${slot.stepId}`,
+    tool: { name: slot.render.tool, args: slot.render.args },
+  }
 }
 
 /** 建一个**已登录**连接（fullme 的入口条件 = logged_in；login 流程不再 arm）。 */
@@ -287,11 +317,15 @@ describe('fullme 流程 (提醒行 → fullme → ask-human 提问 → 人工回
     expect(h.runtime.diag().flow).toMatchObject({ flowId: 'fullme', stepId: 'request' })
     expect(h.sent).toContain('fullme')
 
-    // ② 地址在应答帧里 → 进 prompt 步（capture 存槽）→ 投递 mud_captcha。
+    // ② 地址在应答帧里 → 进 prompt 步（capture 存槽）→ 槽发 mud_captcha（非入口零投递）。
     const prompt = await toPrompt(h, request)
     expect(prompt.ruleId).toBe('flow:fullme/prompt')
-    // 地址槽已抽出并**投递前**插好值；`{lastFail}` 本轮为空 → 空串（不是字面占位符）。
-    expect(h.delivered.at(-1)!.actions[0]!.tool.args).toEqual({ url: CAPTCHA_URL, note: '' })
+    // 地址槽已抽出并在**发布槽时**插好值；`{lastFail}` 本轮为空 → 空串（不是字面占位符）。
+    expect(slotAction(h)).toEqual({
+      ruleId: 'flow:fullme/prompt',
+      tool: { name: 'mud_captcha', args: { url: CAPTCHA_URL, note: '' } },
+    })
+    expect(h.delivered).toHaveLength(1)                   // 非入口零投递
     expect(h.runtime.diag().flow?.slots).toEqual({ captchaUrl: CAPTCHA_URL })
 
     // ③ 取图（fetch 桩）→ 推弹窗 → **回合内挂起**（ask-human：工具在途，等待者注册）。
@@ -299,20 +333,23 @@ describe('fullme 流程 (提醒行 → fullme → ask-human 提问 → 人工回
     expect(h.captchas).toEqual([{ imageUrl: CAPTCHA_IMG, robotUrl: CAPTCHA_URL }])
     expect(h.runtime.humanWait).toBe(true)
     expect(prompt.state.concluded).toBe(false)            // 工具在途 → 回合不收束
-    expect(h.delivered).toHaveLength(2)                   // 没有第三次投递
+    expect(h.delivered).toHaveLength(1)                   // 非入口零投递 (answer 只进槽)
     expect(h.runtime.diag().flow).toMatchObject({ stepId: 'prompt', phase: 'awaiting-result' })
 
     // ④ 人工提交**裸码**（弹窗只收图片里的文字）→ 码入 externalValues + 解挂等待者 →
-    //    工具结果 ok → prompt 成功 → answer 动作随**本工具结果** defer 进同一回合。
+    //    工具结果 ok → prompt 成功 → answer **只发槽**（非入口零投递/零 defer），T1 按槽渲染。
     expect(h.runtime.sendCommand('1234')).toBe(true)
     await vi.advanceTimersByTimeAsync(1)
     const captchaCall = await prompt.pending
     expect(captchaCall.ok).toBe(true)
-    expect(prompt.state.deferred).toBe(1)                 // answer 动作搭车工具结果
+    expect(prompt.state.deferred).toBe(0)                 // 非入口步不产出投递 (第 5 步③)
     expect(h.runtime.humanWait).toBe(false)
     const answer = await startAction(h)
     expect(answer.ruleId).toBe('flow:fullme/answer')
-    expect(h.delivered.at(-1)!.actions[0]!.tool.args).toEqual({ cmds: ['halt', 'fullme {captcha}'] })
+    expect(slotAction(h)).toEqual({
+      ruleId: 'flow:fullme/answer',
+      tool: { name: 'mud_send', args: { cmds: ['halt', 'fullme {captcha}'] } },
+    })
 
     // ⑤ 命令序列逐条写出：人工值只在发送那一刻出现。
     expect(h.sent).toContain('halt')
@@ -320,13 +357,16 @@ describe('fullme 流程 (提醒行 → fullme → ask-human 提问 → 人工回
     await vi.advanceTimersByTimeAsync(1)
     expect(h.sent).toContain('fullme 1234')
 
-    // ⑥ 成功句 → answer 成功 → 顺序兜底进 success（hpbrief）→ 终态。
+    // ⑥ 成功句 → answer 成功 → 顺序兜底进 success（hpbrief 槽）→ 终态。
     h.sink().onLines([ml(FULLME_OK_TEXT, 2)])
     h.sink().onBoundary('ga')
     await answer.pending
     await vi.advanceTimersByTimeAsync(1)
-    expect(h.delivered.at(-1)!.actions.map(a => a.ruleId)).toEqual(['flow:fullme/success'])
-    expect(h.delivered.at(-1)!.actions[0]!.tool.args).toEqual({ cmd: 'hpbrief' })
+    expect(slotAction(h)).toEqual({
+      ruleId: 'flow:fullme/success',
+      tool: { name: 'mud_send', args: { cmd: 'hpbrief' } },
+    })
+    expect(h.delivered).toHaveLength(1)
 
     const finish = await startAction(h)
     expect(h.sent).toContain('hpbrief')
@@ -349,10 +389,11 @@ describe('fullme 流程 (提醒行 → fullme → ask-human 提问 → 人工回
     await request.pending
     await vi.advanceTimersByTimeAsync(1)
 
-    expect(h.delivered.at(-1)!.actions.map(a => a.ruleId)).toEqual(['flow:fullme/stale'])
-    expect(h.delivered.at(-1)!.actions[0]!.tool.args).toEqual({
-      cmds: ['fullme 1', 'fullme 1', 'fullme 1'],
+    expect(slotAction(h)).toEqual({
+      ruleId: 'flow:fullme/stale',
+      tool: { name: 'mud_send', args: { cmds: ['fullme 1', 'fullme 1', 'fullme 1'] } },
     })
+    expect(h.delivered).toHaveLength(1)                   // 非入口零投递
     const stale = await startAction(h)
     // 三连发在一个动作里逐条写出（必须三连才真放弃）：每条的 GA 放行下一条。
     expect(h.sent).toContain('fullme 1')
@@ -435,9 +476,14 @@ describe('fullme 流程 (提醒行 → fullme → ask-human 提问 → 人工回
     await answerWith(h, '1111', 'wrong', 2)
 
     // 重试动作 = 重新取图（同一个 robot 地址，页面自动刷新出新图），弹窗带失败原文。
+    // **两拍拍 1**（第 5 步③）：`retry.action` 经槽发布（`awaitingPre`），结果回来才发拍 2。
     const retry = await startAction(h)
     expect(retry.ruleId).toBe('flow:fullme/answer')
-    expect(h.delivered.at(-1)!.actions[0]!.tool.args).toEqual({ url: CAPTCHA_URL, note: FULLME_WRONG_TEXT })
+    expect(slotAction(h)).toEqual({
+      ruleId: 'flow:fullme/answer',
+      tool: { name: 'mud_captcha', args: { url: CAPTCHA_URL, note: FULLME_WRONG_TEXT } },
+    })
+    expect(h.delivered).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(1)
     expect(h.captchas).toHaveLength(2)
     expect(h.captchas[1]).toEqual({ imageUrl: CAPTCHA_IMG, robotUrl: CAPTCHA_URL, note: FULLME_WRONG_TEXT })
@@ -446,16 +492,19 @@ describe('fullme 流程 (提醒行 → fullme → ask-human 提问 → 人工回
     expect(h.runtime.diag().flow).toMatchObject({ stepId: 'answer', retries: 1 })
     expect(h.logs.join('\n')).toContain('[流程] fullme/answer 重试 2/3')
 
-    // 第二次提交裸码 → 解挂第二次等待者 → 挂起的 answer 动作随**第二次工具结果**
-    // defer 进同一回合（工具结果 ok 本身无判据, 被忽略）。
+    // 第二次提交裸码 → 解挂第二次等待者 → 拍 1 结果回来 → **拍 2 = 本步动作进槽**
+    // （非入口零投递/零 defer；工具结果 ok 本身无判据, 被忽略）。
     expect(h.runtime.sendCommand('2222')).toBe(true)
     await vi.advanceTimersByTimeAsync(1)
     const retried = await retry.pending
     expect(retried.ok).toBe(true)
-    expect(retry.state.deferred).toBe(1)
+    expect(retry.state.deferred).toBe(0)
     const answer = await startAction(h)
     expect(answer.ruleId).toBe('flow:fullme/answer')
-    expect(h.delivered.at(-1)!.actions[0]!.tool.args).toEqual({ cmds: ['halt', 'fullme {captcha}'] })
+    expect(slotAction(h)).toEqual({
+      ruleId: 'flow:fullme/answer',
+      tool: { name: 'mud_send', args: { cmds: ['halt', 'fullme {captcha}'] } },
+    })
 
     // halt GA → fullme 2222（发送瞬间插值新码）→ 成功句 → 终态（success 步由顺序兜底进入）。
     expect(h.sent).toContain('halt')
@@ -466,7 +515,8 @@ describe('fullme 流程 (提醒行 → fullme → ask-human 提问 → 人工回
     h.sink().onBoundary('ga')
     await answer.pending
     await vi.advanceTimersByTimeAsync(1)
-    expect(h.delivered.at(-1)!.actions.map(a => a.ruleId)).toEqual(['flow:fullme/success'])
+    expect(slotAction(h).ruleId).toBe('flow:fullme/success')
+    expect(h.delivered).toHaveLength(1)
     h.runtime.dispose()
   })
 

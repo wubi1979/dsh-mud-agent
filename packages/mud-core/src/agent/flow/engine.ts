@@ -2,14 +2,15 @@
  * dsh-mud-core — 流程运行时 (flow runtime), `doc/ARCHITECTURE.md` §19。
  *
  * 一条流程 = 显式的步骤图（`agent/flow/flows/` 声明）。本类持有**每会话**的流程实例状态:
- *   - **arming 集**：当前开着的**行判据**（本步 driver(重试) + 本步 ok/fail 行判据 +
- *     条件分支后继的进入判据；GA/tool 判据不经 arming）；
- *   - **挂起**：命令发出后等结果（实现上就是在途窗口, §8.3 / W7.2 ——
- *     GA 判据经 `windowSpecFor` 随窗口结算, 行判据走 arming）；
+ *   - **挂起**：命令发出后等结果（在途窗口, §8.3 / W7.2 —— 形态 C：窗口只带回**内容**，
+ *     关闭触发由本步判据派生（`windowSpecFor`），本步算哪一类由**驱动器复判**（`judgeStep`））；
  *   - **判定**：工具结果（窗口结算 / tool 判据）/ 行判据命中 / 超时 → 成功 / 失败（三态，无静默）；
  *   - **推进**：成功 → 条件分支优先（同批行内），否则顺序兜底；无后继 = 终态 ⇒ 流程成功结束；
  *   - **打断**：规则 `interrupts > flow.priority` 时可打断（在途窗口结算为 interrupted → 复位）；
- *   - **排队**：不可打断的事件动作 / 流程期间的其它流程入口，流程结束后接续。
+ *   - **排队**：不可打断的事件动作 / 流程期间的其它流程入口，流程结束后接续
+ *     （判定节点中途出队保留；流程入口出队在回合结束的 idle 静止点，D6）。
+ *   - **arming 面（W10.4 批次二⑤收窄）**：步骤判据不再经标记 —— 会话侧只剩**入口 arm**（D1：
+ *     无回合时也得盯行流）与**分支等待期布防**（`succeedStep` 唯一布防点）；重试即清空。
  *
  * 它**不发命令、不解析帧归属**：要动的动作以"命中"返回给运行时，由运行时走投递与官方工具
  * 路径（T1 渲染 → 闸门 → 工具 → 在途窗口）。所有状态迁移都通过 `onLog`/`onDecision` 留痕。
@@ -28,6 +29,7 @@ import type { ReplySettle } from '../inflight.ts'
 import { lineCriteriaPattern } from '../../perceive/criteria.ts'
 import { commandsOf, entryMatch, interpolate, preview } from './util.ts'
 import { FlowSlotTable, type FlowSlot } from './slot.ts'
+import { fillSlots } from '../../session/types.ts'
 
 
 /**
@@ -90,6 +92,12 @@ export class FlowRuntime {
      * 重试**不重新抽取**（沿用首次的值）。
      */
     slots: Record<string, string>
+    /**
+     * **两拍重试的拍 1 在途**（W10.4 第 5 步③）：`tryRetry` 发布了 `retry.action`
+     * （如重新取图 `mud_captcha`）、其工具结果尚未回来。结果回来时清标记并发布拍 2
+     * （本步动作）。`resumeHuman` 见此标记只翻相位、不发拍 2。
+     */
+    awaitingPre?: boolean
   } | null = null
   /** 当前 arming 判据（行判据; W7.2 起含本步 driver(重试) + 本步 ok/fail 行判据 + 条件分支后继 —— GA/tool 判据不经 arming, 随窗口/工具结果结算）。 */
   private armed: ArmedMatch[] = []
@@ -184,35 +192,68 @@ export class FlowRuntime {
   /**
    * **发布流程槽**（迁移点唯一写入口）：把当前实例状态投影成公开槽。
    *
-   * 只在 `awaiting-result` 且本步有动作时带 `render`（T1 要发的 tool-call，含**未插值**参数
-   * 与收口三件 —— 与 `windowSpecFor` 同一次 `windowSpecOf` 派生，保证两侧不可能分歧）。
+   * 只在 `awaiting-result` 且本步有动作时带 `render`（T1 要发的 tool-call）。**流程实例槽
+   * 在此填实**（`{captchaUrl}`/`{lastFail}`；与投递路径 `queueFlowActions` 的 `fillSlots`
+   * 同一语义），`{name}`/`{pass}`/`{captcha}` 等凭据/外部值留给工具发送瞬间；收口三件与
+   * `windowSpecFor` 同一次 `windowSpecOf` 派生，保证两侧不可能分歧。
+   *
+   * **两拍（第 5 步③）**：`override` 用于拍 1 —— 发布 `retry.action`（如重新取图）而非本步
+   * 动作；拍 2 在前置结果回来 / 人工就位后由下一次无参 `publishSlot()` 发布本步动作。
+   * 收口三件仍按**本步**派生（前置动作通常 inline 不开行窗，壳侧 `windowSpecFor` 命不中即
+   * 沿用工具自带声明）。
+   * @param override 拍 1 要发布的动作（缺省 = 本步 `step.action`）。
    */
-  private publishSlot(): void {
+  private publishSlot(override?: { tool: string; args: Record<string, unknown> }): void {
     const active = this.active
     if (active === null) {
       this.slotTable.clear()
       return
     }
-    const action = active.step.action
+    const action = override ?? active.step.action
     const renderable = action !== undefined && active.phase === 'awaiting-result'
+    // **流程实例槽在发布点插值**（与 `queueFlowActions` 的投递路径同一语义）：
+    // `{captchaUrl}`/`{lastFail}` 等在此填实；`{name}`/`{pass}`/`{captcha}` 留给工具发送瞬间。
+    // 不填则槽渲染路径下 `mud_captcha` 会收到字面 `{captchaUrl}`。
+    const renderArgs = renderable
+      ? fillSlots(
+        {
+          ruleId: `flow:${active.flow.id}/${active.step.id}`,
+          output: '',
+          tool: { name: action.tool, args: action.args },
+        },
+        active.slots,
+        this.slotNames(),
+      ).tool.args
+      : action?.args ?? {}
     this.slotTable.publish({
       flowId: active.flow.id,
       stepId: active.step.id,
       phase: active.phase,
-      ...(renderable
+      ...(renderable && action !== undefined
         ? {
           render: {
             tool: action.tool,
-            args: action.args,
+            args: renderArgs,
             ...this.windowSpecOf(active.step, commandsOf(action.args).length),
           },
         }
         : {}),
-      // 每次发布都是"新的一步 / 新相位" ⇒ 上一次的在途调用 id 作废（结果已回或已弃用）。
+      // 每次发布都是"新的一步 / 新相位 / 新一拍" ⇒ 上一次的在途调用 id 作废
+      // （结果已回或已弃用）。
       pendingCallId: null,
       retries: active.retries,
       captureSlots: { ...active.slots },
     })
+  }
+
+  /**
+   * 当前步声明的 `awaitExternal` 键（**壳侧就位检查**用；空闲/未声明 = 空数组）。
+   *
+   * 第 5 步③起 `enterStep`/`tryRetry` 不再为等人工步产出动作投递 —— "外部值是否已就位、
+   * 要不要 `resumeHuman` 发拍 2"的判断留在持有 `externalValues` 的壳侧（D10）。
+   */
+  awaitingExternalKeys(): readonly string[] {
+    return this.active?.step.awaitExternal ?? []
   }
 
   /**
@@ -234,6 +275,39 @@ export class FlowRuntime {
   /** 是否**挂起中**（在途窗口未结算、流程等待结果/人工的阶段）。 */
   suspended(): boolean {
     return this.active !== null && this.active.phase !== 'awaiting-branch'
+  }
+
+  /**
+   * **回合结束接线**（W10.4 第 6 步，D6「流程活跃绑定回合」）：回合收束时若仍有活跃流程
+   * （等分支判据、异常中止等回合内无法继续推进的等待期）→ **活跃失效**：复位 + 留痕。
+   *
+   * 正常路径不受影响：流程终态/失败由驱动器在推进点判定（B3），`concludeTurn` 之前
+   * `active` 已经是 null。空闲调用 = no-op（幂等，`turn-stopping` 与 idle 静止点双保险）。
+   */
+  noteTurnEnd(): void {
+    const active = this.active
+    if (this.disposed || active === null) return
+    this.opts.log(`[流程] ${active.flow.id}/${active.step.id} 随回合结束失效（回合边界 = 流程边界, D6）`)
+    this.opts.decision?.({
+      actor: 'flow',
+      flow: active.flow.id,
+      eventType: 'flow-expired',
+      ruleId: `${active.flow.id}/${active.step.id}`,
+      action: '流程随回合结束失效',
+      result: 'turn-end',
+      text: `[流程] ${active.flow.id} 随回合结束复位`,
+    })
+    this.reset()
+  }
+
+  /**
+   * **取走排队入口行**（W10.4 第 6 步，D1/D6）：pendingEntry 的出队**只在回合结束、槽已
+   * 失效之后**（idle 静止点），由运行时经 `offer()` 原路重放 —— 与即时投递行为一致
+   * （复位重开、入口投递开新回合）。流程仍活跃时不取（I10）。
+   */
+  takePendingEntryLines(): MudLine[] {
+    if (this.disposed || this.active !== null) return []
+    return this.pendingEntry.splice(0)
   }
 
   /**
@@ -266,13 +340,10 @@ export class FlowRuntime {
    * **工具结果通知**（官方工具路径; 在途窗口结算与纯工具判据的统一入口, W7.2）。
    *
    * 只接受**当前步**的结果（stepId 已由运行时解析到步骤 id）：
-   *   - `settled='ga'/'eor'`（窗口关窗）：本步声明了 ga 判据才判定 —— fail → 重试/失败
-   *     （如 `stale` 的三连放弃）, ok → 成功 + 补跑顺序兜底（如 `success` 步）; 没声明 =
-   *     本步结果由**后继 driver** 推进（`name`/`pass`/`request` 型）, 忽略;
-   *   - `settled='until'`（判据命中）：ok → 成功（`why` 带命中行）; fail → 重试
-   *     （`{lastFail}` = 命中行原文, 如 `answer` 答错）或失败;
-   *   - `settled='timeout'/'abort'/'error'`：本步失败收束;
-   *   - `settled` 缺省（不经过在途窗口的工具, 如 `mud_captcha`; §19.1 tool 判据）：
+ *   - `settled='ga'/'eor'/'evidence'`（窗口关窗, 形态 C）：**只带回内容** —— 本步算哪一类由
+ *     `judgeStep` 复判（固定类序 retry → fail → 分支 → ok）;
+ *   - `settled='timeout'/'abort'/'error'`：本步失败收束;
+ *   - `settled` 缺省（不经过在途窗口的工具, 如 `mud_captcha`; §19.1 tool 判据）：
    *     ok → tool-ok 判据或本步无 ok 判据 → 成功; fail → 重试或失败; error → 失败;
    *   - `interrupted`：打断由运行时先复位流程 → 到这里已是新上下文, 忽略（防御）。
    * @param stepId 该工具调用所属的步骤 id（`flow:<delivery>-<index>` → 动作 ruleId）。
@@ -297,6 +368,31 @@ export class FlowRuntime {
     }
     if (settled === 'interrupted') {
       this.debug('工具结果 interrupted（流程已复位, 忽略）')
+      return hits
+    }
+    // **两拍拍1结果**（第 5 步③）：`retry.action`（如重新取图 `mud_captcha`）的结果回来
+    // ⇒ 清 `awaitingPre`、发布拍 2（本步动作）。必须在判据分支**之前**拦 —— 拍 1 是
+    // 前置工具，其 ok/fail 不是本步的行判据（answer 步的 regex ok 会把它误判成"忽略"）。
+    if (this.active.awaitingPre === true) {
+      this.active.awaitingPre = false
+      this.debug(`两拍拍1结果 (${outcome}${settled === undefined ? '' : `/${settled}`}) → 发布拍2`)
+      if (outcome === 'error') {
+        this.failStep('重试前置动作失败/连接断开')
+        return hits
+      }
+      if (outcome === 'fail') {
+        if (!this.tryRetry('fail', undefined)) {
+          this.failStep(`重试前置动作失败 (${stepId})`)
+        }
+        return hits
+      }
+      // 拍 1 成功：拍 2 = 本步动作。有 `awaitExternal` 时外部值应在拍 1 期间已就位
+      // （ask-human 的结果即人工回填）；仍停在 awaiting-human 则等壳 `resumeHuman` 发布。
+      if ((this.active.step.awaitExternal ?? []).length > 0 && this.active.phase === 'awaiting-human') {
+        return hits
+      }
+      this.active.phase = 'awaiting-result'
+      this.publishSlot()
       return hits
     }
     if (settled === 'evidence' || settled === 'ga' || settled === 'eor' || settled === 'timeout') {
@@ -327,7 +423,7 @@ export class FlowRuntime {
       return hits
     }
     if (outcome === 'fail') {
-      if (!this.tryRetry('fail', undefined, true, hits)) {
+      if (!this.tryRetry('fail', undefined)) {
         this.failStep(`工具结果失败 (${stepId})`)
       }
       return hits
@@ -374,7 +470,7 @@ export class FlowRuntime {
       // 判定可能换步/收束：旧 units 随之作废（新步另等自己的窗口）。
       if (this.active === null || this.active !== active) break
     }
-    if (!judged) this.settleFallback(active.step, kind, hits)
+    if (!judged) this.settleFallback(active.step, kind)
     this.flushSequential(lines, true, hits)
     return hits
   }
@@ -428,7 +524,7 @@ export class FlowRuntime {
   }
 
   /** 复判未命中任何判据时的兜底裁决（证据关闭 / 到期）。 */
-  private settleFallback(step: FlowStep, kind: 'evidence' | 'ga' | 'eor' | 'timeout', hits: FlowActionHit[]): void {
+  private settleFallback(step: FlowStep, kind: 'evidence' | 'ga' | 'eor' | 'timeout'): void {
     if (kind === 'timeout') {
       this.failStep('本步超时（兜底到期，无判据命中）')
       return
@@ -436,7 +532,7 @@ export class FlowRuntime {
     const ga = this.gaCriteriaOf(step)
     if (ga !== null) {
       if (ga.role === 'fail') {
-        if (!this.tryRetry('fail', undefined, true, hits)) this.failStep(ga.why ?? 'GA 判据 → 失败')
+        if (!this.tryRetry('fail', undefined)) this.failStep(ga.why ?? 'GA 判据 → 失败')
         return
       }
       this.succeedStep(ga.why ?? 'GA 判据命中')
@@ -450,13 +546,13 @@ export class FlowRuntime {
   private applyJudgement(unit: JudgementUnit, line: MudLine, framed: boolean, hits: FlowActionHit[]): void {
     if (unit.role === 'retry') {
       // 命中本步 driver（步内重试判据）：声明了 retry 才重发本步动作，否则失败。
-      if (this.tryRetry('driver', line, framed, hits)) return
+      if (this.tryRetry('driver', line)) return
       this.failStep(`命中本步 driver 但没有声明 retry (${unit.label})`)
       return
     }
     if (unit.role === 'fail') {
       // 声明了 `retry.on: ['fail']` 的步骤：答错**重来**而不是收场（§19.2）。
-      if (this.tryRetry('fail', line, framed, hits)) return
+      if (this.tryRetry('fail', line)) return
       this.failStep(unit.why ?? `命中失败判据 ${unit.label} (${preview(line.text)})`)
       return
     }
@@ -603,11 +699,22 @@ export class FlowRuntime {
     return this.pendingActions.length > 0
   }
 
-  /** 人工回填后由运行时调用：回到"等结果"（命令已可发出）。 */
+  /**
+   * 人工回填后由运行时调用：回到"等结果"并**发布拍 2**（第 5 步③两拍）。
+   *
+   * 拍 2 = 本步动作（含 `awaitExternal` 占位符，值已由壳写进 `externalValues`，工具在
+   * 发送瞬间插值）。`awaitingPre`（拍 1 在途）时**只翻相位、不发布** —— 拍 2 由
+   * `noteToolResult` 在拍 1 结果回来时发布。
+   */
   resumeHuman(): void {
     if (this.active === null || this.active.phase !== 'awaiting-human') return
     this.active.phase = 'awaiting-result'
     this.opts.log(`[流程] ${this.active.flow.id}/${this.active.step.id} 人工已提交 → 挂起等结果`)
+    if (this.active.awaitingPre === true) {
+      this.debug('两拍拍1仍在途：只翻相位，拍2等前置结果')
+      return
+    }
+    this.publishSlot()
   }
 
   /** 当前是否可被该档位打断（诊断/测试用）。 */
@@ -844,15 +951,20 @@ export class FlowRuntime {
       this.succeedStep(`进入判定节点 ${step.id}（进入判据命中）`)
       return
     }
-    hits.push({
-      ruleId: `flow:${flow.id}/${step.id}`,
-      output: `流程 ${flow.id}/${step.id}: ${step.action.tool}`,
-      tool: { name: step.action.tool, args: step.action.args },
-      text: line?.text ?? `[系统] 流程 ${flow.id}/${step.id}`,
-      anchorAbs: line?.abs ?? -1,
-      framed,
-      ...((step.awaitExternal ?? []).length === 0 ? {} : { awaitExternal: step.awaitExternal }),
-    })
+    // **第 5 步③（两拍/删非入口投递）**：只有**入口步**（`previous === null`，流程刚激活）
+    // 保留动作投递 —— 入口投递 = 开回合 + `flow:{id}`（D1）。分支/顺序后继/复判进入的
+    // 步不再 push hit：动作由 T1 按槽渲染（`publishSlot` 在下方统一发布）。
+    if (previous === null) {
+      hits.push({
+        ruleId: `flow:${flow.id}/${step.id}`,
+        output: `流程 ${flow.id}/${step.id}: ${step.action.tool}`,
+        tool: { name: step.action.tool, args: step.action.args },
+        text: line?.text ?? `[系统] 流程 ${flow.id}/${step.id}`,
+        anchorAbs: line?.abs ?? -1,
+        framed,
+        ...((step.awaitExternal ?? []).length === 0 ? {} : { awaitExternal: step.awaitExternal }),
+      })
+    }
     const timeout = step.timeoutMs ?? flow.timeoutMs ?? 30_000
     this.active.deadline = Date.now() + timeout
     if ((step.awaitExternal ?? []).length > 0) {
@@ -862,6 +974,8 @@ export class FlowRuntime {
       const keys = (step.awaitExternal ?? []).map(key => `{${key}}`).join('/')
       this.opts.log(`[流程] ${flow.id}/${step.id} 等人工输入 (${keys}; 预算 ${timeout}ms)`)
       this.armTimer(flow.id, step.id, timeout, `人工未在 ${timeout}ms 内提交（本步预算耗尽）`)
+      // 非入口的等人工步：不 push hit（第 5 步③），槽停在 `awaiting-human`（无 render）——
+      // 壳在外部值就位时调 `resumeHuman()` 发拍 2。入口步仍带 hit（上方已 push）。
       this.publishSlot()
       return
     }
@@ -975,23 +1089,25 @@ export class FlowRuntime {
   }
 
   /**
-   * **原步内重试**（§19.2）：命中 `retry.on` 里的判据时回到"重新投动作 + 等结果/等人工"，
+   * **原步内重试**（§19.2）：命中 `retry.on` 里的判据时回到"重新发调用 + 等结果/等人工"，
    * **不换步、不重置计时器**（时间预算是"一步总计"）。
    *
+   * **两拍（W10.4 第 5 步③定案）**：槽一次只放一条真能发的调用 ——
+   *   - 有 `retry.action` ⇒ **拍 1** = 发布前置动作（如重新取图 `mud_captcha`），置
+   *     `awaitingPre`；其结果回来时由 `noteToolResult` 清标记并发布**拍 2**（本步动作）。
+   *   - 无前置、步有 `awaitExternal` ⇒ 槽停 `awaiting-human`（无 render）；外部值就位后
+   *     壳调 `resumeHuman()` 发拍 2。
+   *   - 无前置、不等人工 ⇒ 直接重发本步动作（`publishSlot`，与缺省重发同形）。
+   *
    * 做四件事：① `{lastFail}` ← 命中行原文；② 清空本步 `awaitExternal` 的槽值（旧码作废）；
-   * ③ 投 `retry.action`（缺省 = 重发本步动作；已 `awaitExternal` 的步骤把本步动作**再挂起一次**）；
-   * ④ 重布防本步判据。`attempts` 用尽 → 直接失败收束（返回 true = 已处理）。
+   * ③ 按上表发布拍 1 / 拍 2 / 重发；④ 重布防本步判据。`attempts` 用尽 → 直接失败收束。
    * @param on 触发来源（'driver' = 本步 driver 再次命中；'fail' = 命中失败判据）。
    * @param line 命中行（失败原文进 `{lastFail}`；工具结果路径只带 `{ text }`）。
-   * @param framed 命中是否来自应答帧（动作投递路径）。
-   * @param hits 动作收集（由调用方投递）。
    * @returns 是否已处理（false = 本步未声明该来源的重试，交给调用方走失败）。
    */
   private tryRetry(
     on: 'driver' | 'fail',
     line: { text: string; abs?: number } | undefined,
-    framed: boolean,
-    hits: FlowActionHit[],
   ): boolean {
     const active = this.active
     if (active === null) return false
@@ -1020,50 +1136,29 @@ export class FlowRuntime {
       result: `${attempt}/${total}`,
       text: `[流程] ${active.flow.id}/${step.id} 重试 ${attempt}/${total}`,
     })
-    const ruleId = `flow:${active.flow.id}/${step.id}`
-    const anchorAbs = line?.abs ?? -1
-    const text = line?.text ?? step.id
-    // ① 重试前的动作（如重新取图 + 弹窗反馈失败原文）。
+    this.setArmed([])
+    // ① 拍 1：有前置动作（如重新取图）→ 发布它，等其结果回来再发拍 2。
     const pre = retry.action
     if (pre !== undefined) {
-      hits.push({
-        ruleId,
-        output: `流程 ${active.flow.id}/${step.id}: 重试 ${attempt}/${total}`,
-        tool: { name: pre.tool, args: pre.args },
-        text,
-        anchorAbs,
-        framed,
-      })
-    }
-    if (keys.length > 0) {
-      // ② 等人工的步骤：本步动作**再挂起一次**（人工回填后由运行时投出）。
-      if (step.action !== undefined) {
-        hits.push({
-          ruleId,
-          output: `流程 ${active.flow.id}/${step.id}: 重试后重新等人工`,
-          tool: { name: step.action.tool, args: step.action.args },
-          text,
-          anchorAbs,
-          framed,
-          awaitExternal: keys,
-        })
-      }
-      active.phase = 'awaiting-human'
+      active.awaitingPre = true
+      active.phase = 'awaiting-result'
+      this.publishSlot({ tool: pre.tool, args: pre.args })
+      this.debug(`两拍拍1: 前置 ${pre.tool}（等其结果 → 拍2 本步动作）`)
       return true
     }
-    // ③ 不等人工的步骤：缺省重发本步动作（旧语义）；计时器不动。
-    // 形态 C：本步判据随窗口走，重投动作后由新窗口的 `closeOn` 接管 —— 不放回会话侧判据。
-    if (pre === undefined && step.action !== undefined) {
-      hits.push({
-        ruleId,
-        output: `流程 ${active.flow.id}/${step.id}: 重试 ${attempt}/${total}`,
-        tool: { name: step.action.tool, args: step.action.args },
-        text,
-        anchorAbs,
-        framed,
-      })
+    // ② 无前置、等人工：槽停 awaiting-human（无 render）；值就位后壳 resumeHuman 发拍 2。
+    if (keys.length > 0) {
+      active.awaitingPre = false
+      active.phase = 'awaiting-human'
+      this.publishSlot()
+      this.debug('两拍: 等人工（无拍1；外部值就位后 resumeHuman 发拍2）')
+      return true
     }
-    this.setArmed([])
+    // ③ 无前置、不等人工：直接重发本步动作；计时器不动。
+    // 形态 C：本步判据随窗口走，重投动作后由新窗口的 `closeOn` 接管 —— 不放回会话侧判据。
+    active.awaitingPre = false
+    active.phase = 'awaiting-result'
+    this.publishSlot()
     return true
   }
 
@@ -1100,17 +1195,10 @@ export class FlowRuntime {
     for (const cmd of success?.direct ?? []) this.opts.direct(cmd)
     for (const cmd of success?.commands ?? []) this.opts.direct(cmd)
     this.armEntries()
-    this.drainPendingEntryToOffer()
+    // 排队入口**不再中途接续**（D6/D1：出队只发生在回合结束、槽已失效之后）——
+    // 由运行时在 idle 静止点 `takePendingEntryLines()` → `offer()` 原路重放（入口投递复位重开）。
     // 已回到空闲 → 通知运行时（看门狗据"无活跃流程"重新起表；§11）。
     this.opts.onTransition?.()
-  }
-
-  /** 流程结束后接续排队的入口行。 */
-  private drainPendingEntryToOffer(): void {
-    if (this.pendingEntry.length === 0) return
-    const queued = this.pendingEntry.splice(0)
-    this.opts.log(`[流程] 接续排队入口 ${queued.length} 行`)
-    this.matchEntries(queued, false, [])
   }
 
   /** 本步失败 → 流程失败收束（复位 + 留痕 + 交 T2 一次）。 */
@@ -1123,6 +1211,7 @@ export class FlowRuntime {
     this.active = null
     this.armed = []
     this.matcher = null
+    this.slotTable.clear()
     this.opts.log(`[流程] ${flow.id}/${stepId} 失败：${why} → 复位（只留入口）`)
     this.opts.decision?.({
       actor: 'flow',

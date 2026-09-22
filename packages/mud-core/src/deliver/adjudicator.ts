@@ -362,6 +362,9 @@ export class SessionAdjudicator {
   private gateRules!: GateRules
   /** 已挂的打断常驻标记 id (register 重挂时先清旧, 幂等)。 */
   private interruptMarkerIds: string[] = []
+  /** **打断事件动作持有槽**（D5, W10.4 第 6 步）：打断命中的事件动作不进本批投递，持有到
+   * 回合结束的 idle 静止点由 `flushInterruptFollowups()` 以 followup 开新回合投出。 */
+  private readonly pendingFollowups: { ruleId: string; text: string; action: { tool?: { name: string; args: Record<string, unknown> }; output?: string } }[] = []
   /** L2 待决行 (未投递的文本块行 = 单流切分的 segment 缓冲)。 */
   private readonly pending: MudLine[] = []
   /**
@@ -703,9 +706,20 @@ export class SessionAdjudicator {
       if (outcome.kind === 'interrupted') {
         // ① 在途窗口当场结算为 interrupted (gate 随结算放行) ② onInterrupt 直发
         // (actor system; §2.8 打断时序: 先结算释放 gate, halt 直发不被直发延后压住)。
+        // `priority: 'halt'` 必带: 直发延后 gate 可能被**新窗口**重新激活 (本命令入队与
+        // 发出之间), 非豁免命令会被压成 rank 2 挂住到那扇窗结算 —— halt 类命令必须
+        // 走 gate 豁免级 0, 恒定放行。
         const settled = this.deps.windows.interrupt(`[流程打断] ${hit.ruleId} (interrupts=${interrupts})`)
-        for (const cmd of outcome.onInterrupt) this.deps.queue.send(cmd, { actor: 'system' })
+        for (const cmd of outcome.onInterrupt) this.deps.queue.send(cmd, { actor: 'system', priority: 'halt' })
         this.deps.debug('perception', `[流程] 打断已结算在途窗口 ${settled} 个`)
+        // ③ 打断事件动作**不进本批投递**（D5：不再随被打断的工具结果 defer 进同一回合），
+        //    持有到回合结束的 idle 静止点，经 `flushInterruptFollowups()` 以 followup 开新回合。
+        this.pendingFollowups.push({
+          ruleId: hit.ruleId,
+          text: anchor?.text ?? textOfLines(lines).trim(),
+          action: { ...(hit.action.tool === undefined ? {} : { tool: hit.action.tool }), output: hit.action.output },
+        })
+        continue
       }
       admitted.push(hit)
     }
@@ -783,6 +797,35 @@ export class SessionAdjudicator {
     for (const request of queued) {
       this.deliverStandalone(request.text, [actionOf(request.ruleId, request.action)])
     }
+  }
+
+  /**
+   * **打断事件动作 followup 新回合**（D5, W10.4 第 6 步）：idle 静止点（回合已收束、
+   * 槽已复位）把持有中的打断动作以动作投递发出 —— 此刻无工具在途，`deliverStandalone`
+   * 必然走 `agent.followup`（独占新回合），不会再 defer 进旧回合。流程又活跃时继续持有
+   * （等下一个静止点）。
+   */
+  flushInterruptFollowups(): void {
+    if (this.pendingFollowups.length === 0 || this.deps.flow.state() !== null) return
+    const followups = this.pendingFollowups.splice(0)
+    this.deps.debug('perception', `[流程] 打断事件动作 followup 新回合投递 ${followups.length} 条 (D5)`)
+    for (const request of followups) {
+      this.deliverStandalone(request.text, [
+        actionOf(request.ruleId, { ...request.action, output: request.action.output ?? '' }),
+      ])
+    }
+  }
+
+  /**
+   * **排队入口出队 = 入口投递**（D1/D6, W10.4 第 6 步）：idle 静止点把流程期间排队的其它
+   * 流程入口行经 `offer()` 原路重放 —— 与即时投递行为一致（复位重开、入口投递开新回合）。
+   */
+  drainQueuedEntries(): void {
+    const lines = this.deps.flow.takePendingEntryLines()
+    if (lines.length === 0) return
+    this.deps.debug('perception', `[流程] 排队入口出队投递 ${lines.length} 行 (D6)`)
+    const hits = this.deps.flow.offer(lines, false)
+    if (hits.length > 0) this.queueFlowActions(hits)
   }
 
   // ── 站⑤: 投递记账与节拍 ───────────────────────────────
@@ -1049,6 +1092,19 @@ export class SessionAdjudicator {
     const hits = this.deps.flow.noteToolResult(
       stepId, outcome, settled, contentLines ?? [],
     )
+    // **第 5 步③ 就位检查（壳侧，D10）**：驱动器可能把流程停在 `awaiting-human`
+    // （非入口 `enterStep` 进等人工步 / `tryRetry` 无前置且等人工）—— 这两条路不再产出
+    // 动作投递，"外部值是否已就位"的判断必须由持有 `externalValues` 的壳补做：
+    // 值已齐 ⇒ `resumeHuman()` 发拍 2（槽出现 `render`，T1 下一请求按槽渲染）；
+    // 仍缺 ⇒ 维持挂起（等 `exitHumanWait` 回填后再走本检查）。
+    const state = this.deps.flow.state()
+    if (state !== null && state.phase === 'awaiting-human') {
+      const keys = this.deps.flow.awaitingExternalKeys()
+      if (keys.length > 0 && this.deps.missingExternalValues(keys).length === 0) {
+        this.deps.log(`[流程] ${state.flowId}/${state.stepId} 外部值已就位 → resumeHuman 发拍2`)
+        this.deps.flow.resumeHuman()
+      }
+    }
     if (hits.length > 0) {
       this.queueFlowActions(hits)
       // 工具结果驱动的 lined 动作没有帧链 ⑤ 兜底 (待决缓冲不会再有新行): 无行可带时

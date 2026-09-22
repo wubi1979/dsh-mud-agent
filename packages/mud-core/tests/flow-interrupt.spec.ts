@@ -4,7 +4,8 @@
  * 规则声明 `interrupts`（纯数字，越大越强）后，**只在有流程实例挂起时**参与：
  *   - `interrupts > flow.priority` ⇒ **打断**：挂起的工具调用当场结算为 `interrupted`
  *     （可读原因、不悬挂、不静默）、流程复位（只留入口）、`onInterrupt` 直发、
- *     本规则动作照常投递（走官方工具路径）；
+ *     打断事件动作**持有到回合结束的 idle 静止点**，经 `followup` 新回合投递（D5：
+ *     不再随被打断的工具结果 defer 进同一回合）；
  *   - 档位不够 ⇒ **排队**：动作等流程结束（终态/失败/打断）后立即执行；
  *   - 未声明 ⇒ 不打断也不排队（照常投递）。
  *
@@ -198,10 +199,32 @@ function harness(sessionId: string, options: {
 }
 
 /**
- * 假 loop: 走**官方工具包装器**执行最新一条投递里的动作（真链路: begin/end + 工具结果
- * 回喂流程机 + defer —— 与 runtime-captcha.spec 的 startAction 同一接线）。
+ * 假 loop: 执行**当前可执行动作**（真链路: begin/end + 工具结果回喂流程机 + defer）。
+ *
+ * **形态 C 第 5 步③**：流程入口步动作随投递到达；非入口步只发槽。规则动作
+ * （`test:*`）永远走投递 —— 槽不可渲染时回落投递路径。
  */
 async function runLatestAction(h: ReturnType<typeof harness>): Promise<{ ruleId: string; pending: Promise<{ ok: boolean; settled?: string; note: string }> }> {
+  const slot = h.runtime.slot()
+  if (slot !== null && slot.phase === 'awaiting-result' && slot.render !== undefined
+    && slot.pendingCallId === null) {
+    const ruleId = `flow:${slot.flowId}/${slot.stepId}`
+    const callId = `mud-flow-${slot.flowId}-${slot.stepId}-${slot.retries}`
+    h.runtime.markSlotRendered(callId)
+    const tool = h.runtime.tools()[slot.render.tool]
+    if (tool === undefined) throw new Error(`未知工具 ${slot.render.tool}`)
+    const pending = runWithDeliveryChannel({
+      channel: h.runtime,
+      callId,
+      exec: {
+        deferContext: (deferredMessage) => { h.delivered.push(toDelivered(deferredMessage as unknown as OwnedMessage)) },
+        concludeTurn: () => {},
+      },
+      run: async () => await tool.execute({ ...slot.render.args }),
+    }) as Promise<{ ok: boolean; settled?: string; note: string }>
+    await vi.advanceTimersByTimeAsync(1)
+    return { ruleId, pending }
+  }
   const message = h.delivered.at(-1)
   if (message === undefined || message.actions.length === 0) throw new Error('没有待执行动作')
   if (message.delivery === undefined) throw new Error('投递消息没有 delivery id')
@@ -258,7 +281,7 @@ describe('打断与排队 (§19.4)', () => {
     h.runtime.dispose()
   })
 
-  it('档位够 → 打断: 挂起结算为 interrupted + 流程复位 + onInterrupt 直发 + 事件动作投递', async () => {
+  it('档位够 → 打断: 挂起结算 interrupted + 流程复位 + onInterrupt 直发 + 动作 followup 新回合投递', async () => {
     const { h, first } = await suspendedPractice('session-interrupt', [COMBAT_RULE])
 
     h.sink().onLines([ml('一个流氓拦住了你的去路', 1)])
@@ -275,7 +298,10 @@ describe('打断与排队 (§19.4)', () => {
     expect(h.logs.join('\n')).toContain('practice 被 test:combat 打断')
     // ③ onInterrupt 直发 (halt)。
     expect(h.sent).toContain('halt')
-    // ④ 打断事件的动作照常投递 (T1)。
+    // ④ 打断事件动作**不进本批投递**（D5）：持有到回合结束的 idle 静止点。
+    expect(h.delivered.some(msg => msg.actions.some(a => a.ruleId === 'test:combat'))).toBe(false)
+    // ⑤ 官方静止点 (agent 转 idle) → `flushInterruptFollowups` 以 followup 新回合投递。
+    h.runtime.onAgentIdle()
     const combat = h.delivered.filter(msg => msg.actions.some(a => a.ruleId === 'test:combat'))
     expect(combat).toHaveLength(1)
     expect(combat[0]!.actions[0]!.tool).toEqual({ name: 'mud_send', args: { cmd: 'kill liumang' } })

@@ -14,10 +14,15 @@
  *
  * W10.3 (2026-09): 折叠机制整体删除 —— 状态抓取与 `direct` 反射都**不改行流**。
  * 末节固定行流守恒 (A9): 投递拼接 == 完整入站行流, 无隐藏行。
+ *
+ * W10.6 (2026-09): 行流守恒补 **span 记账面** —— 在途窗口带回的 span 行只进消费面
+ * (T2 窗口结果 / 流程驱动器复判), 不进投递也不丢; 末节两面各钉一例 (T2 窗口 / 流程窗口)。
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { FlowSpec } from '../src/agent/flow/flows/index.ts'
+import { runWithDeliveryChannel } from '../src/session/mount.ts'
 import { MudSessionRuntime } from '../src/session/session.ts'
 import type { MudRuntimeConfig, MudRuntimeSink } from '../src/session/types.ts'
 import type { MudConnectionManager, MudConnectionSink } from '../src/network/manager.ts'
@@ -38,14 +43,19 @@ function harness(sessionId: string, options: {
   stateRule?: boolean
   /** 一条 `direct` 反射规则 (行流守恒用例: 反射命中行也必须照常投出)。 */
   directRule?: boolean
+  /** 流程表 (span 记账面用例: 流程窗口的行进驱动器复判, 不进投递)。 */
+  flows?: readonly FlowSpec[]
 } = {}): {
   runtime: MudSessionRuntime
   sink: () => MudConnectionSink
   sent: string[]
   delivered: string[]
+  /** 投递消息携带的动作与确定性 call-id (T1 视角; 流程用例据此按官方包装器执行)。 */
+  actions: { callId: string; tool: { name: string; args: Record<string, unknown> } }[]
 } {
   const sent: string[] = []
   const delivered: string[] = []
+  const actions: { callId: string; tool: { name: string; args: Record<string, unknown> } }[] = []
   let captured: MudConnectionSink | null = null
   const connection = {
     id: 'conn-1',
@@ -63,8 +73,16 @@ function harness(sessionId: string, options: {
     id: sessionId,
     status: 'idle',
     inbox: { nextTurn: [] },
-    followup: (message: { content: readonly { type: string; text?: string }[] }) => {
+    followup: (message: {
+      content: readonly { type: string; text?: string }[]
+      source?: { delivery?: string; actions?: readonly { tool: { name: string; args?: Record<string, unknown> } }[] }
+    }) => {
       delivered.push(message.content.find(b => b.type === 'text')?.text ?? '')
+      // 记录投递动作与确定性 call-id (`mud-<delivery>-<index>`, T1 渲染视角)。
+      const delivery = message.source?.delivery ?? 'd0'
+      ;(message.source?.actions ?? []).forEach((action, index) => {
+        actions.push({ callId: `mud-${delivery}-${index}`, tool: { name: action.tool.name, args: action.tool.args ?? {} } })
+      })
     },
   } as unknown as Agent
   const sink: MudRuntimeSink = {
@@ -93,6 +111,7 @@ function harness(sessionId: string, options: {
     defaultPort: 8081,
     loginExitCommands: [],
     ...(options.t2DeliverIntervalMs === undefined ? {} : { t2DeliverIntervalMs: options.t2DeliverIntervalMs }),
+    ...(options.flows === undefined ? {} : { flows: options.flows }),
   }
   const eventRules: PerceptionRule[] = []
   if (options.rule === true) {
@@ -126,6 +145,7 @@ function harness(sessionId: string, options: {
     runtime,
     sent,
     delivered,
+    actions,
     sink: () => {
       if (captured === null) throw new Error('connect 未调用')
       return captured
@@ -304,6 +324,116 @@ describe('行流守恒 (W10.3 无折叠: 抓取行与反射行都照常进行流
     // 无反引号/前缀包装: 批次正文即原行按序拼接 (含被抓取与被反射的两行)。
     expect(h.delivered[0]).toBe(stream.join('\n'))
     expect(h.runtime.recall(10)).toEqual(stream)
+    h.runtime.dispose()
+  })
+})
+
+/** 单步流程 (span 记账面用例): fail 行命中关闭触发 → 驱动器复判失败 → 复位。 */
+const FAIL_FLOW: FlowSpec = {
+  id: 'conserve',
+  priority: 100,
+  entry: 'start',
+  timeoutMs: 30_000,
+  steps: [
+    {
+      id: 'start',
+      driver: { kind: 'text', includes: ['你开始行动'] },
+      action: { tool: 'mud_send', args: { cmd: 'go' } },
+      fail: [{ kind: 'text', includes: ['你摔了一跤'], why: '摔跤判据' }],
+      ok: [{ kind: 'ga' }],
+    },
+  ],
+}
+
+/**
+ * **行流守恒: span 记账面** (A9 / W10.6): span（在途窗口带回的行）是投递之外的第二条
+ * 消费通路 —— span 行**不进投递也不丢**，与 T2 批次、带原文投递合并后恰为完整入站
+ * 行流（`recall()` 为入站全量记录面）。
+ *
+ * 两面各钉一例：
+ *   - **T2 窗口面**：裸窗口的 span 行只进窗口结果 (`note`)，无主行照常进批次；
+ *   - **流程面**：流程窗口的 span 行进**驱动器复判**（工具结果可见面只有
+ *     `{ok,note,cmd,settled}`，span 原文不进模型可见面）；流程失败收束后，喂入的行
+ *     照常进后续 T2 消费批（不被流程吞掉）。
+ */
+describe('行流守恒 (W10.6): span 记账面 — 窗口行不进投递也不丢', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('T2 窗口: span 行只进窗口结果, 无主行进批次; 投递 ∪ span == recall 全量', async () => {
+    const h = harness('session-conserve-span')
+    h.runtime.connect()
+    h.sink().onConnect()
+
+    // ① 无主行 → T2 批次照常投出。
+    h.sink().onLines([ml('无主一行', 0)])
+    h.sink().onBoundary('ga')
+    expect(h.delivered).toEqual(['无主一行'])
+
+    // ② 声明收口的窗口: span 行进窗口 (工具结果消费面), 不进投递。
+    const settle = { mode: 'stream', on: { kind: 'ga', count: 1 } } as const
+    const pending = h.runtime.tools().mud_send!.execute({ cmd: 'look', settle })
+    await vi.advanceTimersByTimeAsync(1)           // 队列写出 → armed
+    expect(h.sent).toContain('look')
+    h.sink().onLines([ml('北大街 -', 1), ml('这里明显的出口是 south。', 2)])
+    h.sink().onBoundary('ga')
+    const reply = await pending
+    expect(reply.note).toContain('北大街')         // span 行到达消费者
+    expect(h.delivered).toEqual(['无主一行'])      // span 行不双计进投递
+
+    // ③ 窗口关后的无主行 → 后续 T2 批次。
+    h.sink().onLines([ml('无主二行', 3)])
+    h.sink().onBoundary('ga')
+
+    // 守恒: 投递 = 两个无主批次; recall == 入站全量 (含 span 行, 不丢失)。
+    expect(h.delivered).toEqual(['无主一行', '无主二行'])
+    expect(h.runtime.recall(10)).toEqual(['无主一行', '北大街 -', '这里明显的出口是 south。', '无主二行'])
+    h.runtime.dispose()
+  })
+
+  it('流程窗口: span 行进驱动器复判 (不进投递); 失败收束后行进后续消费批', async () => {
+    const h = harness('session-conserve-flow', { flows: [FAIL_FLOW] })
+    h.runtime.connect()
+    h.sink().onConnect()
+
+    // 入口行命中 → 流程激活; 入口行带原文投递 (动作随行)。
+    h.sink().onLines([ml('你开始行动。', 0)])
+    h.sink().onBoundary('ga')
+    expect(h.runtime.diag().flow).toMatchObject({ flowId: 'conserve', stepId: 'start' })
+    expect(h.delivered).toEqual(['你开始行动。'])
+    const action = h.actions.at(-1)
+    expect(action).toBeDefined()
+
+    // 按官方包装器执行入口动作: 命令发出 → 窗口按流程收口三件 (windowSpecFor) 注册。
+    let concluded = 0
+    const pending = runWithDeliveryChannel({
+      channel: h.runtime,
+      callId: action!.callId,
+      exec: { deferContext: () => {}, concludeTurn: () => { concluded += 1 } },
+      run: async () => await h.runtime.tools()[action!.tool.name]!.execute({ ...action!.tool.args }),
+    })
+    await vi.advanceTimersByTimeAsync(1)           // 队列写出 → armed
+    expect(h.sent).toContain('go')
+
+    // span 行进窗口 (不进投递); fail 行命中关闭触发 → 驱动器复判 → 失败复位。
+    h.sink().onLines([ml('半路上', 1), ml('你摔了一跤。', 2)])
+    h.sink().onBoundary('ga')
+    await pending
+    expect(h.runtime.diag().flow).toBeNull()       // 驱动器消费了 span 行 → 判失败复位
+    expect(concluded).toBe(1)                      // B3: 失败收束由驱动器判, 包装器转达
+
+    // 失败后喂入的行 → 后续消费批 (T2), 不被流程吞掉;
+    // 中间夹 notifyFail 的程序唤醒 (控制消息, 非行流)。
+    h.sink().onLines([ml('爬起来再走', 3)])
+    h.sink().onBoundary('ga')
+    expect(h.delivered).toEqual([
+      '你开始行动。',
+      expect.stringContaining('失败'),
+      '爬起来再走',
+    ])
+
+    // 守恒: recall == 入站全量 (4 行, 含被驱动器消费的 span 行)。
+    expect(h.runtime.recall(10)).toEqual(['你开始行动。', '半路上', '你摔了一跤。', '爬起来再走'])
     h.runtime.dispose()
   })
 })

@@ -14,10 +14,9 @@
  *   ok   是否成功入队
  *   note 结果说明 (工具层校验失败时的拒绝原因)
  *   cmd  实际发出的命令 (空 = 未发出)
- * 发命令类工具 (W7.2 在途窗口, §17 W7.2) 另带结算字段:
- *   settled 结算方式 (ga/until/timeout/abort/interrupted/error)
- *   outcome 结算结局 (ok/fail/error; 流程机单步推进判据)
- *   captures 抽取槽 (W10.2: 结算时对 span 行跑 captures 正则, 命名捕获组即槽名)
+ * 发命令类工具 (W7.2 在途窗口, §17 W7.2) 另带结算方式 `settled`
+ * (evidence/ga/timeout/abort/interrupted/error; 形态 C: 窗口只带回内容,
+ * "这行算哪一类"由**流程表 `classify`** 决定、由驱动器复判 —— 无 outcome/hit/captures)。
  *
  * 工具契约 (LLM 所见声明的类型基础: MudToolResult/OUT_SCHEMA/MudTool/…)
  * 见 `tools-schema.ts`; 本模块 = 构建/插值 (buildMudTools + 占位符插值 + 活动表)。

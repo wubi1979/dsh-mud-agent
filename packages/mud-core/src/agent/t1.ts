@@ -190,6 +190,17 @@ export class TriggerLlmAdapter extends LlmAdapter {
     }
     const deliveryLabel = context.kind === 'actions' ? context.delivery : '?'
     this.hooks.onLog?.(`[t1] 渲染 ${pending.length} 条动作 (delivery=${deliveryLabel})`)
+    // **D3 缺口（第 5 步③）**：入口步的流程动作走投递渲染（callId = `mud-<delivery>-<i>`），
+    // 若不登记 `pendingCallId`，槽里同一步的 `render` 会在窗口未关时被下一个空 claim
+    // **重渲一遍**。规则动作（`ruleId` 非 `flow:`）与槽无关，不登记。
+    const sessionId = typeof options?.sessionId === 'string' && options.sessionId !== '' ? options.sessionId : null
+    if (sessionId !== null) {
+      for (const entry of pending) {
+        if (entry.action.ruleId?.startsWith('flow:') === true) {
+          this.hooks.markRendered?.(sessionId, String(entry.id))
+        }
+      }
+    }
     yield* this.renderActions(pending)
   }
 

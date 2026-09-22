@@ -508,6 +508,32 @@ export class MudSessionRuntime {
     this.noteWorldChange()
   }
 
+  /**
+   * `agent/turn-stopping`（D0/D6）：回合边界 = 流程边界 —— 活跃流程在此失效。
+   *
+   * 出队/接续不在做这（此刻可能还有排队回合要开）；真正的静止点在 `onAgentIdle()`。
+   */
+  onTurnStopping(): void {
+    if (this.disposed) return
+    this.flow.noteTurnEnd()
+  }
+
+  /**
+   * `agent/status` → idle（D0/D6）：官方静止点（无工具在途、无排队回合）。
+   *
+   * 顺序固定：① 活跃失效兜底（turn-stopping 已做则空转）→ ② 重算入口布防 →
+   * ③ 打断事件动作 followup 投递（D5，新回合）→ ④ 判定节点排队动作出队 →
+   * ⑤ 排队流程入口出队（pendingEntry 原路重放）。
+   */
+  onAgentIdle(): void {
+    if (this.disposed) return
+    this.flow.noteTurnEnd()
+    this.flow.refreshEntries()
+    this.adjudicator.flushInterruptFollowups()
+    this.adjudicator.drainFlowQueue()
+    this.adjudicator.drainQueuedEntries()
+  }
+
   /** 释放本会话运行时: 关连接、清定时器、停队列、关在途窗口表。 */
   dispose(): void {
     if (this.disposed) return
@@ -766,10 +792,13 @@ export class MudSessionRuntime {
       text: '[流程] fullme: 人工已提交, T1 发送',
     })
     if (waiter !== null) waiter.resolve(values.captcha ?? '')
+    // 两拍（第 5 步③）：有拍 1 在途只翻相位；否则发布拍 2（本步动作进槽，T1 按槽渲染）。
     this.flow.resumeHuman()
     const slots = this.flow.slots()
     const names = this.flow.slotNames()
     this.noteWorldChange()   // 看门狗恢复
+    // 流程步两拍后 `pendingExternal` 应为空（动作不经 park、由槽发布）；仍挂着的是
+    // 入口/旧装配路径的兜底 —— 照常投出，不删这条防御通路。
     if (parked.length > 0) {
       this.adjudicator.deliverStandalone(
         `[系统] 人工已提交验证码 (${parked.map(entry => entry.ruleId).join('/')})`,

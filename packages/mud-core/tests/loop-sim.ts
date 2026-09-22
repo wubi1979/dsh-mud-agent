@@ -53,8 +53,18 @@ export interface SimStats {
   t2Calls: number
   /** 工具调用数。 */
   toolCalls: number
-  /** 认领消息为空的步数（"空续步"）。 */
+  /**
+   * 认领消息为空的步数（"空续步"；= `claimlessSteps + idleSteps`，兼容旧断言）。
+   *
+   * **第 5 步③拆分（2026-09-21）**：删非入口投递后，流程续步靠 T1 按槽渲染 ⇒ 空认领但
+   * **产出了 tool-call** 的是"有效续步"（`claimlessSteps`）；空认领且**无 tool-call** 的
+   * 才是真正浪费的"收束空步"（`idleSteps`）。账目裁决 A vs B 看后者是否为 0。
+   */
   emptySteps: number
+  /** `claim=0` 但 T1 按槽渲染出了 tool-call（有效续步，不是浪费）。 */
+  claimlessSteps: number
+  /** `claim=0` 且 T1 无 tool-call（收束空步；B3 收束时应为 0）。 */
+  idleSteps: number
   /** 经 `deferContext` 随工具结果进下一步的投递数（§19.6.2 判据 A）。 */
   deferred: number
   /** 用 `concludeTurn` 收束的回合数（判据 B）。 */
@@ -84,7 +94,7 @@ export class LoopSim {
   readonly trace: SimTrace[] = []
   readonly stats: SimStats = {
     turns: 0, steps: 0, modelCalls: 0, t1Calls: 0, t2Calls: 0, toolCalls: 0, emptySteps: 0,
-    deferred: 0, concludedTurns: 0,
+    claimlessSteps: 0, idleSteps: 0, deferred: 0, concludedTurns: 0,
   }
 
   private nextTurn: Message[] = []
@@ -95,7 +105,8 @@ export class LoopSim {
   private step = 0
   private running = false
   private activity: Promise<void> = Promise.resolve()
-  private readonly adapter = new TriggerLlmAdapter()
+  /** T1 适配器：接上会话 runtime 的流程槽（形态 C 第 5 步；与 `assemble.ts` 同款钩子）。 */
+  private readonly adapter: TriggerLlmAdapter
   private readonly earlyStop: SimEarlyStop
 
   /**
@@ -111,6 +122,15 @@ export class LoopSim {
     options: { earlyStop?: SimEarlyStop } = {},
   ) {
     this.earlyStop = options.earlyStop ?? 'conclude-turn'
+    // 形态 C 第 5 步：非入口流程步不再投递 → T1 按会话槽渲染下一步（D10/I8：
+    // 槽表归会话作用域，adapter 无状态）；与生产装配 `assemble.ts` 的钩子同形。
+    this.adapter = new TriggerLlmAdapter({
+      onLog: (text) => { this.log(text) },
+      slotOf: (id) => (id === this.sessionId ? this.runtime.slot() : null),
+      markRendered: (id, callId) => {
+        if (id === this.sessionId) this.runtime.markSlotRendered(callId)
+      },
+    })
   }
 
   /** runtime 侧看到的 agent（`MudRuntimeSink.agentOf` 返回它）。 */
@@ -149,6 +169,10 @@ export class LoopSim {
       } finally {
         this.running = false
       }
+      // 官方静止点仿真（D0/D6）：inbox 排空 = agent 转 idle —— 活跃失效兜底 + 入口 arm
+      // 恢复 + 打断 followup / 排队动作 / 排队入口出队。在 `running=false` 之后调用，
+      // 期间 followup 触发的 kick() 不会被误吞。
+      this.runtime.onAgentIdle()
     })()
   }
 
@@ -176,7 +200,8 @@ export class LoopSim {
       if (this.step === 0 && claimed.length === 0) { turnEnds = 'completed'; break }
       this.step = step
       this.stats.steps += 1
-      if (claimed.length === 0) this.stats.emptySteps += 1
+      const claimless = claimed.length === 0
+      if (claimless) this.stats.emptySteps += 1
       // pre-step: 记本回合 lane（插件逻辑；认领消息里第一条 mud-owned 的 lane）。
       const claimedLane = ownedLaneOf(claimed)
       if (claimedLane !== undefined) this.turnLane = { turn, lane: claimedLane }
@@ -187,6 +212,11 @@ export class LoopSim {
       // 模型请求（agent/request 选路：lane=t1 → T1；其余 = T2 基线）。
       const asked = await this.ask(lane)
       this.history.push(asked.message)
+      // 空认领步的账目拆分（第 5 步③）：T1 渲出 tool-call = 有效续步；没渲出 = 收束空步。
+      if (claimless) {
+        if (asked.toolCalls.length > 0) this.stats.claimlessSteps += 1
+        else this.stats.idleSteps += 1
+      }
       if (asked.toolCalls.length === 0) {
         this.note('step/end', 'completed (无 tool-call)')
         if (turnEnds === null) turnEnds = 'completed'
@@ -213,6 +243,9 @@ export class LoopSim {
       target = 'next-step'
     }
     this.note('turn/end', turnEnds ?? 'completed')
+    // 回合边界 = 流程边界（D6）：官方 `agent/turn-stopping` 在回合停下时触发，
+    // 活跃流程在此失效（后续回合不再续它）。
+    this.runtime.onTurnStopping()
     return this.nextTurn.length > 0 || this.nextStep.length > 0
   }
 
