@@ -43,7 +43,6 @@ export const FULL_CAPABILITIES: readonly string[] = [
   'connection:connect',
   'connection:disconnect',
   'wake:dead-air',
-  'wake:login-stall',
   'catalog:skills',
   'catalog:rules',
   'captcha:refresh',
@@ -55,7 +54,7 @@ export const MUD_TIER_SPECS: Record<MudTier, MudTierSpec> = {
     tier: 'observe',
     name: '只读',
     description: '只看不发: 读世界快照 (mud_state)、查命令语法 (mud_help); 登录流程照常。',
-    // mud_send/world_patch = T1 T1 动作通道 (登录 + 置位), 见模块头部的取舍说明。
+    // mud_send/world_patch = T1 动作通道 (登录 + 置位), 见模块头部的取舍说明。
     // mud_help = 零发送语法查询 (只读档也要能查"有哪些命令")。
     tools: ['mud_state', 'mud_help', 'mud_send', 'world_patch', 'mud_captcha'],
     capabilities: [],
@@ -73,7 +72,7 @@ export const MUD_TIER_SPECS: Record<MudTier, MudTierSpec> = {
     description: '读写 + 外围能力 (连接/唤醒/目录/验证码刷新)。',
     tools: [
       'mud_state', 'mud_help', 'mud_send', 'world_patch', 'mud_captcha', 'mud_move', 'mud_look', 'mud_status',
-      'mud_flow_list', 'mud_flow_disable', 'mud_flow_enable',
+      'mud_flow_disable', 'mud_flow_enable',
     ],
     capabilities: FULL_CAPABILITIES,
   },

@@ -63,17 +63,23 @@ export function attachMudPersona(agentCtx: Context, persona: () => string): void
 }
 
 /**
+ * MUD 提示区段序号 (**唯一来源**; 宿主装配路径 (`attachMudPrompt`) 与 preset 路径
+ * (`preset.ts`) 共用同一套编号 —— 两处各写一份时，"哪个 MUD 区段胜出"会静默漂移)。
+ */
+export const MUD_PROMPT_ORDER = { skills: -50, tier: -45, commands: -40 } as const
+
+/**
  * 把 MUD 系统提示区段注册到 agent 作用域 (仅 MUD 会话的 agent)。
  * @param agentCtx agent 作用域上下文 (`agent.ctx`)。
  * @param sections 区段文本 (空串/空文本跳过)。
  */
 export function attachMudPrompt(agentCtx: Context, sections: MudPromptSections): void {
-  agentCtx.systemPrompt.section({ name: 'mud-skills', order: -50, text: () => sections.skillsText() })
+  agentCtx.systemPrompt.section({ name: 'mud-skills', order: MUD_PROMPT_ORDER.skills, text: () => sections.skillsText() })
   if (sections.commands !== '') {
-    agentCtx.systemPrompt.section({ name: 'mud-commands', order: -40, text: sections.commands })
+    agentCtx.systemPrompt.section({ name: 'mud-commands', order: MUD_PROMPT_ORDER.commands, text: sections.commands })
   }
   if (sections.tierText !== undefined) {
-    agentCtx.systemPrompt.section({ name: 'mud-tier', order: -45, text: () => sections.tierText?.() ?? '' })
+    agentCtx.systemPrompt.section({ name: 'mud-tier', order: MUD_PROMPT_ORDER.tier, text: () => sections.tierText?.() ?? '' })
   }
 }
 

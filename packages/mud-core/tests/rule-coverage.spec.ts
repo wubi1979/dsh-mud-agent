@@ -18,8 +18,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import rules from '../src/perceive/rules.ts'
-import { PerceptionEngine, type EngineHit } from '../src/perceive/engine.ts'
+import { createDefaultPerceptionRules } from '../src/perceive/rules.ts'
+import { PerceptionEngine, splitPerceptionRules, type EngineHit } from '../src/perceive/engine.ts'
 import type { MudLine } from '../src/network/ansi.ts'
 import { ownedGameMessage } from '../src/deliver/lane.ts'
 import { TriggerLlmAdapter } from '../src/agent/t1.ts'
@@ -61,7 +61,7 @@ function feedOne(ruleId: string): {
   stateIds: readonly string[]
   allIds: readonly string[]
 } {
-  const rule = rules.find(r => r.id === ruleId)
+  const rule = createDefaultPerceptionRules().find(r => r.id === ruleId)
   if (rule === undefined) throw new Error(`样本引用了不存在的规则: ${ruleId}`)
   const isState = rule.lane === 'state'
   const engine = new PerceptionEngine({
@@ -79,11 +79,12 @@ function feedOne(ruleId: string): {
 }
 
 /**
- * 每条规则的样本**只喂一次** (结果缓存)。
+ * 每条规则的样本**只喂一次** (结果缓存, 纯为省时间)。
  *
- * 不只是省时间: `pager:continue` 的 guard 是模块级节流 (1s 内不重复翻页),
- * 同一份样本在多个断言里各喂一次, 第二次必然不命中 —— 那是节流的行为, 不是
- * 规则的缺陷。缓存让每个断言看同一次真实命中。
+ * 历史原因: `pager:continue` 的 guard 曾是**模块级**节流 (1s 内不重复翻页), 同一份样本
+ * 在多个断言里各喂一次, 第二次必然不命中 —— 那是节流的行为, 不是规则的缺陷。
+ * v0.11.2 起规则表按会话构造 (§1 I8), 每次 `feedOne` 拿到的都是全新的 guard 状态,
+ * 该约束已消失; 缓存保留只为省时间。
  */
 const feedCache = new Map<string, ReturnType<typeof feedOne>>()
 
@@ -123,8 +124,8 @@ async function renderFirstToolCall(hits: readonly EngineHit[]): Promise<{ name: 
   return call
 }
 
-const ruleIds = rules.map(r => r.id)
-const eventRules = rules.filter(r => r.lane !== 'state')
+const ruleIds = createDefaultPerceptionRules().map(r => r.id)
+const eventRules = createDefaultPerceptionRules().filter(r => r.lane !== 'state')
 
 describe('规则表 × T1 渲染链 (每条命中必被适配)', () => {
   it('每条规则都有 canonical 样本 (新增规则必须补样本)', () => {
@@ -133,7 +134,7 @@ describe('规则表 × T1 渲染链 (每条命中必被适配)', () => {
 
   it('state 规则: 样本进 stateHits (落库路径存在)', () => {
     const failures: string[] = []
-    for (const rule of rules.filter(r => r.lane === 'state')) {
+    for (const rule of createDefaultPerceptionRules().filter(r => r.lane === 'state')) {
       const { stateIds } = sampleHits(rule.id)
       if (!stateIds.includes(rule.id)) failures.push(rule.id)
     }
@@ -188,5 +189,35 @@ describe('规则表 × T1 渲染链 (每条命中必被适配)', () => {
       }
     }
     expect(unexpected).toEqual([])
+  })
+})
+
+/**
+ * 规则表**按会话构造**（v0.11.2，§1 I8「禁止模块级可变单例状态」）。
+ *
+ * 规则里的 `guard` 闭包带运行态：`pager:continue` 用它做 1s 翻页节流。模块级共享同一份
+ * 规则表时，该时间戳被**所有会话**共用 —— 会话 A 翻页后，会话 B 在 1s 内的翻页会被静默
+ * 压掉（多会话部署下的真实缺陷，本仓测试也一直在为它写规避）。工厂化后每份规则表各有
+ * 自己的时间戳：同一份表内仍然节流，跨表互不影响。
+ */
+describe('规则表按会话构造 (§1 I8: guard 运行态不跨会话)', () => {
+  /** 用"一份全新规则表"建一个引擎并喂分页行, 返回 direct 命中。 */
+  function flipOnce(): string[] {
+    const engine = new PerceptionEngine(splitPerceptionRules(createDefaultPerceptionRules()))
+    return engine.feed(linesOf(['== 未完继续 88% == (q 离开，b 前一页，其他继续下一页)']))
+      .directHits.map(hit => hit.ruleId)
+  }
+
+  it('两个会话各自翻页: 第二份规则表不被第一份的 1s 节流压住', () => {
+    expect(flipOnce()).toEqual(['pager:continue'])
+    // 旧实现（模块级共享时间戳）在这里返回 [] —— 会话 B 被会话 A 压住。
+    expect(flipOnce()).toEqual(['pager:continue'])
+  })
+
+  it('同一份规则表内仍然节流 (节流语义本身不变)', () => {
+    const engine = new PerceptionEngine(splitPerceptionRules(createDefaultPerceptionRules()))
+    const pager = '== 未完继续 88% == (q 离开，b 前一页，其他继续下一页)'
+    expect(engine.feed(linesOf([pager])).directHits.map(h => h.ruleId)).toEqual(['pager:continue'])
+    expect(engine.feed(linesOf([pager])).directHits).toEqual([])
   })
 })

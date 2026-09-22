@@ -13,7 +13,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import defaultPerceptionRules from '../src/perceive/rules.ts'
+import { createDefaultPerceptionRules } from '../src/perceive/rules.ts'
 import { MudSessionRuntime } from '../src/session/session.ts'
 import type { MudRuntimeConfig, MudRuntimeSink } from '../src/session/types.ts'
 import type { MudConnectionManager, MudConnectionSink } from '../src/network/manager.ts'
@@ -24,7 +24,8 @@ const SAVE_PROMPT = '建议经常使用save命令保存档案，避免造成意�
 const PAGER_PROMPT = '== 未完继续 88% == (q 离开，b 前一页，其他继续下一页)'
 const CAPTCHA_URL = 'http://fullme.pkuxkx.net/robot.php?filename=1699999999'
 /** 直接执行用例: save/分页 (direct)。 */
-const DIRECT_RULES = defaultPerceptionRules.filter(
+/** 直接执行用例的规则子集 (**每次调用新建一份** —— guard 的节流状态归每份规则表)。 */
+const directRules = () => createDefaultPerceptionRules().filter(
   rule => rule.id === 'save:prompt' || rule.id === 'pager:continue',
 )
 /**
@@ -105,11 +106,10 @@ function harness(sessionId: string, extraRules: readonly PerceptionRule[] = []):
     commands: '',
     defaultHost: 'example.invalid',
     defaultPort: 8081,
-    loginExitCommands: [],
   }
   const runtime = new MudSessionRuntime(sessionId, config, sink, connections, {
     stateRules: [],
-    eventRules: [...DIRECT_RULES, ...extraRules],
+    eventRules: [...directRules(), ...extraRules],
     holdRuleIds: new Set(),
   })
   return {
@@ -131,7 +131,7 @@ async function connected(sessionId: string, extraRules: readonly PerceptionRule[
   h.runtime.connect()
   h.sink().onConnect()
   await h.runtime.tools().world_patch!.execute({ patch: { logged_in: true } })
-  vi.advanceTimersByTime(10)          // loginExitCommands (空行 + look) 出队
+  vi.advanceTimersByTime(10)          // 登录收尾 (流程表 login 的空行，v0.4.0 起不再由运行时发固定序列)
   h.sent.length = 0
   h.delivered.length = 0
   h.decisions.length = 0

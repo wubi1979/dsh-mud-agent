@@ -1,13 +1,17 @@
 /**
  * dsh-mud-core — TriggerLlmAdapter (agent/t1). T1 本地模拟 LLM = **动作渲染器**.
  *
- * T1 是注册进官方 llm 注册表的一个"本地模拟模型" (provider = `mud-t1`)。v0.4.0 起它是
- * **无状态**的（`doc/ARCHITECTURE.md` §7 契约）：
+ * T1 是注册进官方 llm 注册表的一个"本地模拟模型" (provider = `mud-t1`)。它的**外壳无状态**
+ * (不持有会话/流程实例数据)，但**渲染来源有两路**（`doc/ARCHITECTURE.md` §7 v0.11.0 契约）：
  *
- *   - 输入 = 本步**认领到的投递消息**里自带的**动作请求**（`source.actions`，
- *     由规则/流程声明；与 T2 拿到的消息同形 —— 契约检验 I15）；
- *   - 输出 = 对应的 `tool-call` 块（与真实 LLM 同构）→ 官方 `tools/pre-execute` 闸门 →
- *     官方工具管道。动作参数原样渲染（`{name}`/`{pass}`/`{captcha}` 由工具执行层插值）。
+ *   - **投递路由**：本步**认领到的投递消息**里自带的**动作请求**（`source.actions`，
+ *     由规则声明；与 T2 拿到的消息同形 —— 契约检验 I15）；
+ *   - **流程槽路由**（形态 C 第 5 步）：投递无动作可渲染时，按 `sessionId` 读**流程槽**
+ *     渲染下一步 tool-call（流程续步不再有投递消息）。槽表归**会话作用域**（D10/I8），
+ *     adapter 只查表、不持有状态。
+ *
+ * 输出 = 对应的 `tool-call` 块（与真实 LLM 同构）→ 官方 `tools/pre-execute` 闸门 →
+ * 官方工具管道。动作参数原样渲染（`{name}`/`{pass}`/`{captcha}` 由工具执行层插值）。
  *   - 没有动作请求 → `finish stop`（回合自然收束；失败路径就是"运行时不投递动作"）；
  *   - **不查运行时**：不再有 turnRef / 命中队列 / 游标。"这条动作是否已执行过"用
  *     **确定性 call-id**（`mud-<delivery>-<index>`）判断：会话里已有该 id 的 tool-result
@@ -29,7 +33,7 @@ import type {
 import type { FlowSlot } from './flow/slot.ts'
 
 /** 一条动作请求（与 `deliver/lane` 的 `OwnedAction` 同形；用字面量避免循环依赖）。 */
-export interface RenderedAction {
+interface RenderedAction {
   /** 来源：规则 id 或 `flow:<flowId>/<stepId>`。 */
   ruleId?: string
   /** 渲染文本（output 文本块）。 */

@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import rules from '../src/perceive/rules.ts'
+import { createDefaultPerceptionRules } from '../src/perceive/rules.ts'
 import {
   defaultFlows, flowCommands, FULLME_FLOW, FULLME_OK_TEXT, FULLME_WRONG_TEXT,
   FULLME_COOLDOWN_PATTERN, FULLME_URL_CAPTURE, LOGIN_FLOW, validateFlows, type FlowSpec,
@@ -127,7 +127,7 @@ describe('fullme 流程表 (声明面)', () => {
   })
 
   it('规则表里不再有 fullme:* 规则（三条已流程化）', () => {
-    expect(rules.map(rule => rule.id).filter(id => id.startsWith('fullme:'))).toEqual([])
+    expect(createDefaultPerceptionRules().map(rule => rule.id).filter(id => id.startsWith('fullme:'))).toEqual([])
   })
 
   it('系统流程命令集由流程表派生（含 fullme/halt/答案/hpbrief；权限判据用）', () => {

@@ -29,13 +29,6 @@ export type MudUiItemInput = Omit<MudUiItem, 'seq' | 'sessionId'>
 export type CommandActor = 'agent' | 'user' | 'system'
 
 /**
- * 登录流程的**收尾命令**（v0.4.0 起退役）：MXP 探测的"顶一下"与 `look` 现在是流程
- * `login` 的步骤（`mxp` 条件分支 + `look` 顺序步），不再由运行时发固定序列。
- * @deprecated 由 `agent/flow/flows` 的 `LOGIN_FLOW` 声明取代（`doc/ARCHITECTURE.md` §11/§19）。
- */
-export const DEFAULT_LOGIN_EXIT_COMMANDS: readonly string[] = []
-
-/**
  * 引擎命中 → 待投递的动作请求 (`doc/ARCHITECTURE.md` §7)。
  * @param ruleId 来源规则 id。
  * @param action 规则声明的动作。

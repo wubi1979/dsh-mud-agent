@@ -61,6 +61,69 @@ describe('分行', () => {
   })
 })
 
+/**
+ * 跨块终止符 (S1/S2, v0.11.2)。CRLF 的 `\r` 与 `\n` 落在**两个 TCP 块**里, 以及
+ * "无终止符行被 flushLine 刷出后, 服务器才补发行尾"这两种块边界情形。
+ *
+ * 回归的缺陷: `write()` 用块内前瞻 (`charAt(i+1)`) 判断 `\r\n`, 只看得到本块的下一字符
+ * —— `\r` 落块尾时多提交一个空行。该空行会拿到 abs、进待决/T2 批次、并推进 `spacer`
+ * 类多行规则的行计数。现有测试按整串喂料, 前瞻永远看得到 `\n`, 所以抓不到。
+ */
+describe('跨块终止符 (S1/S2)', () => {
+  it('S1: \\r 落块尾 + \\n 落块头 ⇒ 不产空行, abs 连续', () => {
+    const p = new AnsiStreamParser()
+    expect(p.write('你好\r').map(l => [l.abs, l.text])).toEqual([[0, '你好']])
+    expect(p.write('\n世界\r\n').map(l => [l.abs, l.text])).toEqual([[1, '世界']])
+  })
+
+  it('S1: \\r 落块尾 + 下一块直接是文本', () => {
+    const p = new AnsiStreamParser()
+    expect(p.write('a\r').map(l => l.text)).toEqual(['a'])
+    expect(p.write('b\r\n').map(l => l.text)).toEqual(['b'])
+  })
+
+  it('S1: 真正的空行跨块仍然保留 (a\\r\\n | \\r\\nb)', () => {
+    const p = new AnsiStreamParser()
+    expect(p.write('a\r\n').map(l => l.text)).toEqual(['a'])
+    expect(p.write('\r\nb').map(l => l.text)).toEqual([''])
+    expect(p.flush()?.text).toBe('b')
+  })
+
+  it('S1: \\r\\r 是两个终止符 ⇒ 恰好一个空行 (不吞也不多)', () => {
+    const p = new AnsiStreamParser()
+    expect(p.write('a\r').map(l => l.text)).toEqual(['a'])
+    expect(p.write('\r\nb').map(l => l.text)).toEqual([''])
+  })
+
+  it('S2: flushLine 刷出的行, 随后补发的 \\r\\n 不再产出空行', () => {
+    const p = new AnsiStreamParser()
+    expect(p.write('提示符>')).toEqual([])
+    expect(p.flushLine()?.text).toBe('提示符>')
+    expect(p.write('\r\n')).toEqual([])
+    expect(p.write('下一行\r\n').map(l => [l.abs, l.text])).toEqual([[1, '下一行']])
+  })
+
+  it('S2: 裸 \\n 与直接跟文本都正确处理', () => {
+    const bare = new AnsiStreamParser()
+    bare.write('提示符>')
+    bare.flushLine()
+    expect(bare.write('\n')).toEqual([])
+
+    const text = new AnsiStreamParser()
+    text.write('提示符>')
+    text.flushLine()
+    expect(text.write('结尾\r\n').map(l => l.text)).toEqual(['结尾'])
+  })
+
+  it('S2: 空刷 (无可刷内容) 不得吃掉服务器真发的空白行', () => {
+    const p = new AnsiStreamParser()
+    expect(p.write('a\r\n').map(l => l.text)).toEqual(['a'])
+    expect(p.flushLine()).toBeNull()
+    // 标志未被置位 ⇒ 这个 \r\n 是内容上的空行, 必须产出。
+    expect(p.write('\r\n').map(l => l.text)).toEqual([''])
+  })
+})
+
 describe('颜色解析 (style run)', () => {
   it('16 色: 前景色 run 坐标对齐 text', () => {
     const p = new AnsiStreamParser()

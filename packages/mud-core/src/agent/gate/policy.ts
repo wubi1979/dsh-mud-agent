@@ -18,9 +18,6 @@ import { dangerousRuleFor } from '../commands.ts'
 import { tierSpec, type MudTier } from './tiers.ts'
 import type { GateRules } from './rules.ts'
 
-export type { DangerousAction, DangerousRule } from '../commands.ts'
-export { DEFAULT_DANGEROUS_COMMANDS, deniedCommands, dangerousRuleFor } from '../commands.ts'
-
 /**
  * 一个工具调用会发出的游戏命令 (无发送 = 空数组)。
  *

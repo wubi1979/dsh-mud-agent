@@ -42,7 +42,7 @@ import {
 // 明文仅在 mud_send 发送瞬间插值 (下方 interpolateCredentials)。
 
 /** 凭据占位符插值: 字符串值中的 {name}/{pass} → 会话实际值 (逐值替换)。 */
-export function interpolateCredentials(
+function interpolateCredentials(
   text: string,
   creds: SessionCredentials | undefined,
 ): string {
@@ -59,7 +59,7 @@ export function interpolateCredentials(
  * @param values 外部值表 (缺省不替换)。
  * @returns 替换后的文本。
  */
-export function interpolateExternal(
+function interpolateExternal(
   text: string,
   values: Readonly<Record<string, string>> | undefined,
 ): string {
@@ -227,7 +227,7 @@ export const DEFAULT_ACTIVITY_TABLE: readonly ActivityEntry[] = [
  * @param table 活动表 (缺省 `DEFAULT_ACTIVITY_TABLE`)。
  * @returns 命中的活动, 或 null。
  */
-export function activityFor(
+function activityFor(
   cmd: string,
   table: readonly ActivityEntry[] = DEFAULT_ACTIVITY_TABLE,
 ): ActivityEntry | null {
@@ -533,8 +533,8 @@ export function buildMudTools({
         }
         // 回合取消信号: 随窗口注册传入 (取消 → 优雅结算 settled='abort')。
         const signal = opts?.signal
-        // 命令序列: **单窗一次注册** (序列 = 同一窗口, 每命令至少 1 个 GA → 缺省
-        // gaCount = 条数; W7.2 取代旧桥逐条串行结算)。
+        // 命令序列: **单窗一次注册** (序列 = 同一窗口)。GA 关窗**只在显式声明时**生效
+        // (v0.11.0 §8.3: 旧的"缺省 gaCount = 条数"隐式早关已废除; W7.2 取代旧桥逐条串行结算)。
         const series = Array.isArray(args.cmds) ? args.cmds.map((c) => String(c)) : null
         if (series && series.length > 0) {
           for (const c of series) {

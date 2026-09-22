@@ -109,7 +109,6 @@ function harness(sessionId: string, options: {
     commands: '',
     defaultHost: 'example.invalid',
     defaultPort: 8081,
-    loginExitCommands: [],
     ...(options.t2DeliverIntervalMs === undefined ? {} : { t2DeliverIntervalMs: options.t2DeliverIntervalMs }),
     ...(options.flows === undefined ? {} : { flows: options.flows }),
   }

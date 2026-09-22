@@ -143,6 +143,18 @@ export class AnsiStreamParser {
   // 跨块残留的控制序列内容
   private csiBuf = ''
   private oscBuf = ''
+  /**
+   * 跨块终止符状态 (S1/S2)。行缓冲与半截转义序列本来就跨块保留, 终止符也必须:
+   *   - `skipLF`: 本块刚用 `\r` 提交了行 ⇒ 紧随其后的 `\n` 是**同一个 CRLF** 的后半;
+   *   - `absorbFlushTerminator`: 刚被 `flushLine()` 刷出的行**本来没有终止符**
+   *     (服务器只是晚发了行尾) ⇒ 紧随其后的整个终止符 (`\n` / `\r` / `\r\n`) 属于那一行。
+   *
+   * 单靠块内前瞻 (`charAt(i+1)`) 判断 `\r\n` 是错的: `\r` 正好落在块尾时前瞻看不到
+   * 下一块的 `\n`, 于是多提交一个空行 —— 该空行会拿到 abs、进待决/T2 批次、
+   * 推进 `spacer` 类多行规则的行计数。
+   */
+  private skipLF = false
+  private absorbFlushTerminator = false
   // 绝对行号分配器 (进程/连接生命周期内单调递增; reset/flush 不复位 —
   // GA 空刷若归零, 多行状态机的 abs 单调保护将永久失效。重连换 parser
   // 实例自然从 0 起, 触发器状态由宿主 resetContext 同步清空, 无需续号)
@@ -170,6 +182,8 @@ export class AnsiStreamParser {
     this.runs = []
     this.csiBuf = ''
     this.oscBuf = ''
+    this.skipLF = false
+    this.absorbFlushTerminator = false
   }
 
   /** 写入一块解码后的文本, 返回本块内完结的完整行 (携带自分配递增 abs)。 */
@@ -179,6 +193,27 @@ export class AnsiStreamParser {
     let i = 0
     while (i < chunk.length) {
       if (this.state === State.Text) {
+        // 跨块终止符吸收 (S1/S2): 先看本块开头是否有"上一块欠下的"终止符后半。
+        // 命中即整段吃掉并清位; 遇到其它字符则清位后走常规路径 —— 因此真正的空白行
+        // (上一行由终止符正常提交, 标志未置位) 不受影响。
+        if (this.skipLF || this.absorbFlushTerminator) {
+          const pending = chunk.charAt(i)
+          if (pending === '\n') {
+            this.skipLF = false
+            this.absorbFlushTerminator = false
+            i += 1
+            continue
+          }
+          // flushLine 刷出的行: 整个终止符 (含 CRLF) 都归它, 不能再产出一个空行。
+          const absorbCR = this.absorbFlushTerminator && pending === '\r'
+          this.skipLF = false
+          this.absorbFlushTerminator = false
+          if (absorbCR) {
+            i += chunk.charAt(i + 1) === '\n' ? 2 : 1
+            continue
+          }
+          // `\r\r` 的另一半: skipLF 由下面的常规路径按"两次终止符"处理 (产出一个空行)。
+        }
         // 快路径: 一次定位下一个特殊字符 (ESC / 换行), 整段复制。
         let next = chunk.length
         let hit = chunk.indexOf(ESC, i)
@@ -199,9 +234,10 @@ export class AnsiStreamParser {
           i += 1
           continue
         }
-        // \n / \r：行分隔符 (\r\n 视为一个)。
-        if (ch === '\r' && chunk.charAt(i + 1) === '\n') i += 2
-        else i += 1
+        // \n / \r：行分隔符。CRLF **跨块**配对靠 skipLF 标志, 不用块内前瞻
+        // (`\r` 落在块尾时前瞻看不到下一块的 `\n`, 会多提交一个空行)。
+        if (ch === '\r') this.skipLF = true
+        i += 1
         out.push(this.commitLine())
         continue
       }
@@ -256,6 +292,10 @@ export class AnsiStreamParser {
    *  重设 SGR 的后续行不得被记回默认色)。返回 null = 无可显示内容。 */
   flushLine(): MudLine | null {
     if (this.textLen === 0 && this.runs.length === 0) return null
+    // S2: 刷出的行本来没有终止符 ⇒ 紧随其后的终止符属于它 (服务器只是晚发了行尾),
+    // 不能再提交一个空行。**空刷 (上面 return null) 不得置位** —— 此时并没有"欠着
+    // 行尾"的行, 置位会把服务器随后真正发来的空白行吃掉。
+    this.absorbFlushTerminator = true
     return this.commitLine()
   }
 

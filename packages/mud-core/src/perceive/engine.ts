@@ -145,12 +145,4 @@ export class PerceptionEngine {
     this.event.resetContext()
   }
 
-  /** 诊断: 两个桶当前是否有未完成的多行捕获。 */
-  pendingCaptures(): { state: boolean; event: boolean } {
-    const any: ReadonlySet<string> = new Set<string>()
-    return {
-      state: this.state.hasPendingCapture(any) || this.state.pendingCaptureCount() > 0,
-      event: this.event.pendingCaptureCount() > 0,
-    }
-  }
 }

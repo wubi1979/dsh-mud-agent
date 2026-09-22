@@ -41,6 +41,9 @@ import { FlowRuntime } from '../agent/flow/engine.ts'
 import { defaultFlows } from '../agent/flow/flows/index.ts'
 import type { MudWorldSnapshot } from '../shell/remote-types.ts'
 import { SessionAdjudicator, t2Allowed } from '../deliver/adjudicator.ts'
+// 投递通道契约 (type-only; 无运行时环): 本类**实现**该接口 —— 方法漂移时编译期就报,
+// 不再退化成"静默走 channel===undefined 分支"(mount.ts 记录过这个 bug 已发生一次)。
+import type { MudDeliveryChannel } from './mount.ts'
 import {
   fillSlots,
   type ActionRequest,
@@ -64,7 +67,7 @@ const CAPTCHA_WAIT_MS = 175_000
  * 单个 MUD 会话的运行时。所有字段都是**会话私有** — 不存在跨会话共享的
  * 可变状态 (旧实现的 `SID='console'` 单槽位与全局 `agent` 变量已移除)。
  */
-export class MudSessionRuntime {
+export class MudSessionRuntime implements MudDeliveryChannel {
   readonly sessionId: string
   readonly config: MudRuntimeConfig
   private readonly sink: MudRuntimeSink
@@ -289,11 +292,6 @@ export class MudSessionRuntime {
   }
 
   // ── 对外状态 ───────────────────────────────────────────
-
-  /** 当前绑定的连接 id (未连接 = null)。 */
-  get boundConnectionId(): string | null {
-    return this.conn.id
-  }
 
   /** 是否已建立 socket。 */
   get connected(): boolean {
@@ -546,6 +544,9 @@ export class MudSessionRuntime {
     this.queue.clear()
     this.watchdogs.dispose()
     this.conn.close()
+    // world 推送是 500ms 防抖: 必须 clearTimeout —— 只置 null 会让定时器在 purge 之后
+    // 仍触发一次 sink.pushWorld(已注销会话) (assemble 的 purge 语义: 该身份不应再能被读回)。
+    if (this.worldTimer !== null) clearTimeout(this.worldTimer)
     this.worldTimer = null
     this.adjudicator.dispose()
     this.channel.reset()

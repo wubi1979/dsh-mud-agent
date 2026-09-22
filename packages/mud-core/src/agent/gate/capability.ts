@@ -19,7 +19,7 @@ import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
 import type { SessionProjectionStateMap } from '@deepseek-ai/dsh-session-projection/types'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import {
-  isMudTier, MUD_TIER_NAMES, mudTierOption, resolveMudTier, tierSpec,
+  isMudTier, MUD_TIER_NAMES, mudTierOption, tierSpec,
   type MudTier, type MudTierSpec,
 } from './tiers.ts'
 
@@ -256,6 +256,3 @@ export function registerMudCapability(
   }
   return api
 }
-
-/** 配置里的档位名解析 (坏值回落, 不抛出)。 */
-export { resolveMudTier }

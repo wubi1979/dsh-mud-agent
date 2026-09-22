@@ -22,24 +22,24 @@ export interface MudSkill {
   steps: string[]
 }
 
-/** 技能目录 (login: agent 侧的登录/重连决策知识; 确定性执行待重建为触发器 → lite)。 */
-export const defaultSkills: readonly MudSkill[] = [
+/** 技能目录 (login: agent 侧的登录/重连认知; 确定性执行已归流程表 `login`，§19)。 */
+const defaultSkills: readonly MudSkill[] = [
   {
     id: 'login',
     name: '登录/重连',
-    description: '登录进入游戏。正常场景由系统自动处理 (确定性登录流程, 待重建为触发器 → lite); 断线或自动登录失效时, 由你诊断并按步骤重连。流程执行进展会随游戏输出反馈给你。',
+    description: '登录进入游戏。正常场景由系统自动处理 (确定性登录流程表, §19); 断线后连接重建即由流程复位重开，你不需要逐步接管。流程执行进展会随游戏输出反馈给你。',
     targets: ['mud_send'],
     steps: [
-      '判断连接状态 (看输出/状态): 自动登录未生效 → 按提示修正输入重试',
-      '已断线需重连 → 手动重连 (建连 + 登录提示应答)',
-      '登录失败/超时 → 用 mud_send 按提示手动完成登录 (账号/密码/替换确认)',
+      '判断连接状态 (看输出 / 用 mud_state 看连接态): 自动登录未生效 → 按提示修正输入重试',
+      '已断线 → 连接重建后登录流程自动重跑; 若仍无进展, 先用 mud_state 核对连接态与已知状态',
+      '登录失败 → 流程失败只留痕 (login 的 failPolicy 不唤醒你); 账号/密码问题需人工核对',
       '出现"欢迎来到北大侠客行"或"重新连线完毕" → 登录完成, 继续正常行动',
     ],
   },
 ]
 
 /** 渲染为 agent 系统提示区段文本 (技能目录)。 */
-export function skillsTextForAgent(skills: readonly MudSkill[] = defaultSkills): string {
+function skillsTextForAgent(skills: readonly MudSkill[] = defaultSkills): string {
   return skills
     .map((s) => {
       const steps = (s.steps ?? []).map((t, i) => `   ${i + 1}. ${t}`).join('\n')

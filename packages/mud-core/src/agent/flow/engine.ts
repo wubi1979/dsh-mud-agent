@@ -717,12 +717,6 @@ export class FlowRuntime {
     this.publishSlot()
   }
 
-  /** 当前是否可被该档位打断（诊断/测试用）。 */
-  interruptibleBy(interrupts: number): boolean {
-    if (this.active === null) return false
-    return interrupts > this.active.flow.priority
-  }
-
   /** 断线：流程上下文作废（复位到空闲）。 */
   noteDisconnect(): void {
     if (this.disposed || this.active === null) return

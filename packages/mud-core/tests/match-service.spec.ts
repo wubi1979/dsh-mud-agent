@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { TriggerMatchService } from '../src/perceive/matcher.ts'
-import defaultPerceptionRules from '../src/perceive/rules.ts'
+import { createDefaultPerceptionRules } from '../src/perceive/rules.ts'
 import type { MudLine } from '../src/network/ansi.ts'
 import type { MatchRecord } from '../src/perceive/types.ts'
 
@@ -296,7 +296,7 @@ describe('无折叠面 (W10.3: 命中不改行流)', () => {
 })
 
 describe('state:look extract (窗口提取: 地图/房间名/描述/出口/NPC)', () => {
-  const look = defaultPerceptionRules.find(r => r.id === 'state:look')!
+  const look = createDefaultPerceptionRules().find(r => r.id === 'state:look')!
   const run = (before: string[], anchor: string, after: string[]): Record<string, unknown> =>
     look.extract!({
       rows: toLines([anchor]),

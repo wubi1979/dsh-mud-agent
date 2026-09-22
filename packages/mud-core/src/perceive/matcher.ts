@@ -80,8 +80,16 @@ const REGEX_META = new Set(['\\', '.', '^', '$', '*', '+', '?', '(', ')', '[', '
  * **正确性要求: seed 必须是"命中 ⟹ 满足"的必要条件**（预筛只能丢不可能命中的行）。
  * 因此量词与顶层选择分支必须按必要性强弱处理 —— 曾经漏了 `?`: `^https?://…` 推出的
  * seed 是 `https`，于是 `http://…` 的行在预筛就被丢掉，规则永远不命中（fullme 提示行
- * 的实录就是 `http://`）。 */
-function deriveSeed(src: string): Seed | null {
+ * 的实录就是 `http://`）。
+ *
+ * @param src 正则源码 (`re.source`)。
+ * @param flags 正则标志 (`re.flags`); 影响字面量比较的见下方早退 (S4)。
+ */
+function deriveSeed(src: string, flags = ''): Seed | null {
+  // S4: 影响"字面量相等"判定的标志一律放弃预筛 —— seed 的比较是**大小写敏感**的
+  // `startsWith`/`includes`, `i` 会让 `/^ABC/i` 推出 `ABC` 却丢掉 `abc` 行;
+  // `s`/`u`/`v` 改变 `.` 与转义语义。`m` 安全 (逐行测试下单行 `^` 语义不变)。
+  if (/[isuv]/.test(flags)) return null
   let i = 0
   const anchored = src[0] === '^'
   if (anchored) i = 1
@@ -91,7 +99,11 @@ function deriveSeed(src: string): Seed | null {
     if (c === '\\') {
       const next = src[i + 1]
       if (next === undefined) break
-      if ('dDwWsSbB0123456789'.includes(next)) break // 字符类/边界/回溯引用 → 非字面
+      // 反斜杠后跟字母/数字 ⇒ **绝不等同于那个字面字符**: 字符类 (\d\w\s)、边界 (\b)、
+      // 回溯引用 (\1)、字符转义 (\n\t\f\v)、码点转义 (\u4e2d / \u{…} / \x41)、
+      // Unicode 属性 (\p{L}) 全在这一类。早年只列了 `dDwWsSbB0-9`, 于是 `\u4e2d`
+      // 会推出 seed "u4e2d"（把 `中` 的行全部丢掉）—— 与 `https?` 同一类缺陷。
+      if (/^[A-Za-z0-9]$/.test(next)) break
       run += next
       i += 2
       continue
@@ -293,11 +305,20 @@ export class Perceptor<TAction = unknown> {
     return norm
   }
 
+  /**
+   * 推导一组判据的预筛 seed (同一条规则的 patterns 之间是 **OR** 关系)。
+   *
+   * **任何一条 pattern 提不出 seed ⇒ 整组放弃预筛 (返回空 = 逐行全量扫)**: 只保留其余
+   * seed 会让它们变成"必要条件的真子集" —— 一个分支的必要条件被丢掉, 预筛就会拒绝本该
+   * 命中的行 (S3: `[/abc/, /[x]yz/]` 对 `xyz` 曾 0 命中)。返回空数组时 `seedPasses`
+   * 恒真, 代价只是多跑几条正则。
+   */
   private deriveSeeds(regex: readonly RegExp[]): Seed[] {
     const out: Seed[] = []
     for (const re of regex) {
-      const seed = deriveSeed(re.source)
-      if (seed) out.push(seed)
+      const seed = deriveSeed(re.source, re.flags)
+      if (seed === null) return []
+      out.push(seed)
     }
     return out
   }
@@ -306,15 +327,6 @@ export class Perceptor<TAction = unknown> {
     const idx = this.rules.findIndex(r => r.id === ruleId)
     if (idx >= 0) this.rules.splice(idx, 1)
     this.owners.delete(ruleId)
-  }
-
-  unregisterByOwner(owner: string): number {
-    const ids: string[] = []
-    for (const [ruleId, ow] of this.owners) {
-      if (ow === owner) ids.push(ruleId)
-    }
-    for (const id of ids) this.unregister(id)
-    return ids.length
   }
 
   /** 窗口匹配: 返回按 lineNumber 排序的结果。运行态由 ctx 承载。 */
@@ -543,19 +555,9 @@ export class TriggerMatchService<TAction = unknown> {
     this.perceptor.unregister(ruleId)
   }
 
-  /** 按 owner 批量注销 (返回注销条数)。 */
-  unregisterByOwner(owner: string): number {
-    return this.perceptor.unregisterByOwner(owner)
-  }
-
   /** 当前注册的触发规则数。 */
   get size(): number {
     return this.perceptor.getRules().length
-  }
-
-  /** 现有触发规则快照 (调试/状态展示)。 */
-  getRules(): { id: string; eventType: string }[] {
-    return this.perceptor.getRules().map(r => ({ id: r.id, eventType: r.eventType }))
   }
 
   /**

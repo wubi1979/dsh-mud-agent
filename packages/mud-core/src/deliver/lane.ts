@@ -134,10 +134,10 @@ export interface TriggerProvider {
 }
 
 /**
- * 注册 T1 provider (`mud-t1`): 一个**无状态动作渲染器**。
+ * 注册 T1 provider (`mud-t1`): 一个**外壳无状态**的动作渲染器 (状态在会话作用域的流程槽里)。
  *
- * 渲染依据是投递消息自带的动作请求（`source.actions`），不再回查运行时状态
- * （不变量 I15；`doc/ARCHITECTURE.md` §7）。
+ * 渲染来源两路（§7 v0.11.0）：投递消息自带的动作请求（`source.actions`）优先；无动作可渲染时
+ * 按 `sessionId` 读**流程槽**渲染流程续步 —— adapter 不持有状态（不变量 I15）。
  * @param ctx 宿主上下文 (提供 `ctx.llm`)。
  * @param opts 日志钩子。
  * @returns provider 释放句柄。

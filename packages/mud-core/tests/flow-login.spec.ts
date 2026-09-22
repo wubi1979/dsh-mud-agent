@@ -16,7 +16,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import defaultPerceptionRules from '../src/perceive/rules.ts'
+import { createDefaultPerceptionRules } from '../src/perceive/rules.ts'
 import { normalizeFlowSpecs } from '../src/agent/flow/flow-spec.ts'
 import {
   LOGIN_FLOW, defaultFlows, flowCommands, validateFlows,
@@ -123,9 +123,10 @@ function harness(sessionId: string): {
     flows: defaultFlows,
   }
   // 只装 state 规则（登录规则已退役为流程步骤）——验证"规则表里不再有 login:*"。
+  const defaultRules = createDefaultPerceptionRules()
   const runtime = new MudSessionRuntime(sessionId, config, sink, connections, {
-    stateRules: defaultPerceptionRules.filter(r => r.lane === 'state'),
-    eventRules: defaultPerceptionRules.filter(r => r.lane !== 'state'),
+    stateRules: defaultRules.filter(r => r.lane === 'state'),
+    eventRules: defaultRules.filter(r => r.lane !== 'state'),
     holdRuleIds: new Set(),
   })
   return {
@@ -213,7 +214,7 @@ describe('流程表 (login)', () => {
   })
 
   it('规则表里不再有 login:* 事件规则 (登录 = 流程步骤, 不重复声明)', () => {
-    const ids = defaultPerceptionRules.map(rule => rule.id)
+    const ids = createDefaultPerceptionRules().map(rule => rule.id)
     expect(ids.filter(id => id.startsWith('login:'))).toEqual([])
   })
 

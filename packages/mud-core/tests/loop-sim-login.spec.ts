@@ -7,7 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import defaultPerceptionRules from '../src/perceive/rules.ts'
+import { createDefaultPerceptionRules } from '../src/perceive/rules.ts'
 import type { PerceptionRule } from '../src/perceive/types.ts'
 import { defaultFlows, PRIORITY_NORMAL, type FlowSpec } from '../src/agent/flow/flows/index.ts'
 import { MudSessionRuntime } from '../src/session/session.ts'
@@ -79,9 +79,10 @@ function harness(
     debug: () => {},
     decision: () => {},
   }
+  const defaultRules = createDefaultPerceptionRules()
   const runtime = new MudSessionRuntime(sessionId, config, sink, connections, {
-    stateRules: defaultPerceptionRules.filter(rule => rule.lane === 'state'),
-    eventRules: options.eventRules ?? defaultPerceptionRules.filter(rule => rule.lane !== 'state'),
+    stateRules: defaultRules.filter(rule => rule.lane === 'state'),
+    eventRules: options.eventRules ?? defaultRules.filter(rule => rule.lane !== 'state'),
     holdRuleIds: new Set(),
   })
   sim = new LoopSim(sessionId, runtime, text => { logs.push(text) }, { earlyStop })

@@ -27,7 +27,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import defaultPerceptionRules from '../src/perceive/rules.ts'
+import { createDefaultPerceptionRules } from '../src/perceive/rules.ts'
 import {
   defaultFlows, FULLME_OK_TEXT, FULLME_REMINDER_TEXT, FULLME_STALE_TEXT, FULLME_WRONG_TEXT,
 } from '../src/agent/flow/flows/index.ts'
@@ -138,10 +138,11 @@ function harness(sessionId: string): {
     defaultPort: 8081,
     flows: defaultFlows,
   }
+  const defaultRules = createDefaultPerceptionRules()
   const runtime = new MudSessionRuntime(sessionId, config, sink, connections, {
     // fullme 是流程；规则表里 `fullme:*` 三条已退役（这里仍装其余规则，保持真实装配）。
-    stateRules: defaultPerceptionRules.filter(r => r.lane === 'state'),
-    eventRules: defaultPerceptionRules.filter(r => r.lane !== 'state'),
+    stateRules: defaultRules.filter(r => r.lane === 'state'),
+    eventRules: defaultRules.filter(r => r.lane !== 'state'),
     holdRuleIds: new Set(),
   })
   return {

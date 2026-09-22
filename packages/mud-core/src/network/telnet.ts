@@ -85,7 +85,7 @@ function escapeIac(bytes: Buffer): Buffer {
 }
 
 /** TelnetClient 事件载荷。 */
-export interface GmcpMessage {
+interface GmcpMessage {
   package: string
   payload: unknown
 }

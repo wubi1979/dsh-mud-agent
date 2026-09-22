@@ -255,9 +255,3 @@ export type PerceptionRule = MatcherRule<ActionSpec> & {
 
 /** 感知规则命中结果 (策略面投影: MatchHit 带 ActionSpec 动作)。 */
 export type PerceptHit = MatchHit<ActionSpec>
-
-/** 一次规则命中 + 其动作 (适配层渲染输入; 装配方过滤出带 action 的命中)。 */
-export interface TriggerAction {
-  hit: PerceptHit
-  action: ActionSpec
-}

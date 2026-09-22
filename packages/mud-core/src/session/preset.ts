@@ -25,7 +25,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { runWithDeliveryChannel } from './mount.ts'
+import { MUD_PROMPT_ORDER, runWithDeliveryChannel } from './mount.ts'
 import { mudToolSchemaTable } from '../agent/tools-build.ts'
 import type { MudToolResult } from '../agent/tools-schema.ts'
 import type { MudAgentKit } from '../shell/service.ts'
@@ -33,8 +33,8 @@ import type { MudAgentKit } from '../shell/service.ts'
 /** 插件名 (Loader 行标识)。 */
 export const name = 'mud-preset-agent'
 
-/** 提示区段 order (与宿主侧装配共用同一套编号: skills -50 / tier -45 / commands -40)。 */
-const ORDER = { tier: -45, skills: -50, commands: -40 } as const
+/** 提示区段 order: 唯一来源在 `mount.ts` (宿主装配路径用同一套编号)。 */
+const ORDER = MUD_PROMPT_ORDER
 
 /**
  * 取调用方 agent 的会话 id (agent 的 id **就是**官方会话 id)。

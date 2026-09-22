@@ -45,7 +45,7 @@ import {
 import { SkillService } from './agent/skills.ts'
 import type { ActivityEntry } from './agent/tools-build.ts'
 import { commandsIndexForAgent } from './agent/commands.ts'
-import defaultPerceptionRules from './perceive/rules.ts'
+import { createDefaultPerceptionRules } from './perceive/rules.ts'
 import { splitPerceptionRules } from './perceive/engine.ts'
 import { flowCommands, defaultFlows } from './agent/flow/flows/index.ts'
 import {
@@ -58,8 +58,8 @@ import {
 import { installMudToolGate } from './agent/gate/tool-gate.ts'
 import { buildGateRules } from './agent/gate/rules.ts'
 import type { DangerousRule } from './agent/commands.ts'
-import { registerMudCapability, resolveMudTier, type MudCapabilityApi } from './agent/gate/capability.ts'
-import { visibleTools, mudTierNote } from './agent/gate/tiers.ts'
+import { registerMudCapability, type MudCapabilityApi } from './agent/gate/capability.ts'
+import { visibleTools, mudTierNote, resolveMudTier } from './agent/gate/tiers.ts'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { Context } from '@deepseek-ai/cordis'
@@ -118,11 +118,6 @@ export interface MudAgentConfig {
   defaultTier?: string
   /** 危险命令策略表覆盖 (缺省 `DEFAULT_DANGEROUS_COMMANDS`; 整体替换, 不合并)。 */
   dangerousCommands?: readonly DangerousRule[]
-  /**
-   * 登录收尾命令序列 (缺省 `['', 'look']`): 登录完成后发一次, 退出服务端 MXP 探测
-   * (不顶一下的话输出要等约 5 分钟)。属登录流程, 走 actor `system`。
-   */
-  loginExitCommands?: readonly string[]
   /** 活动表 (§8 慢命令完成句; 缺省 `DEFAULT_ACTIVITY_TABLE`; 整体替换)。 */
   activityTable?: readonly ActivityEntry[]
   /**
@@ -221,7 +216,11 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
   const attachedAgents = new WeakSet<Agent>()
   /** T1 provider (llm 就绪后装配; 释放随插件生命周期)。 */
   let provider: TriggerProvider | null = null
-  const { stateRules, eventRules, holdRuleIds } = splitPerceptionRules(defaultPerceptionRules)
+  /**
+   * 感知规则**每会话一份** (规则里的 `guard` 闭包带运行态 —— 如 pager 的 1s 节流:
+   * 模块级共享一份会让会话 A 的自动翻页压住会话 B, 违反 §1 I8)。数据逐份相同。
+   */
+  const perceptionForSession = () => splitPerceptionRules(createDefaultPerceptionRules())
   const skillService = new SkillService()
 
   /** 只读解析某会话当前 live agent (官方注册表; 缺失/已释放 = undefined)。 */
@@ -452,7 +451,7 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
       runtimeConfig,
       sink,
       connections,
-      { stateRules, eventRules, holdRuleIds },
+      perceptionForSession(),
     )
     runtimes.set(sessionId, runtime)
     view.setActive(sessionId)
@@ -629,7 +628,8 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
       slotOf: (sessionId) => runtimes.get(sessionId)?.slot() ?? null,
       markRendered: (sessionId, callId) => { runtimes.get(sessionId)?.markSlotRendered(callId) },
     })
-    tuiLog(GLOBAL_SESSION, `[触发] T1 provider (mud-t1) 装配就绪 (state ${stateRules.length} / event ${eventRules.length})`)
+    const counts = perceptionForSession()
+    tuiLog(GLOBAL_SESSION, `[触发] T1 provider (mud-t1) 装配就绪 (state ${counts.stateRules.length} / event ${counts.eventRules.length})`)
     return () => {
       provider?.dispose()
       provider = null
@@ -684,13 +684,16 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
   tuiDecision(GLOBAL_SESSION, {
     actor: 'router',
     eventType: 'init',
-    action: `感知引擎就绪 (${defaultPerceptionRules.length} 条感知规则, agent 模式 ${runtimeConfig.agentMode})`,
+    action: `感知引擎就绪 (${createDefaultPerceptionRules().length} 条感知规则, agent 模式 ${runtimeConfig.agentMode})`,
     text: '[初始化] 感知引擎就绪',
   })
 
   // ── ctx.mud 服务 (host API; WebUI 壳经 HTTP 路由 + /mud/ws 消费) ──
   const service: MudCoreService = {
-    ruleCounts: () => ({ state: stateRules.length, event: eventRules.length, hold: holdRuleIds.size }),
+    ruleCounts: () => {
+      const counts = perceptionForSession()
+      return { state: counts.stateRules.length, event: counts.eventRules.length, hold: counts.holdRuleIds.size }
+    },
     skill: skillService,
     capability,
     agentKit(): MudAgentKit {
