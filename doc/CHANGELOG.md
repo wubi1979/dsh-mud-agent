@@ -649,3 +649,51 @@ note: 只追加，不回改历史条目；每次设计变更在文末登记一�
 - **两拍（推荐）**：槽一次只放一条待发调用（`render` 不变）。重试由驱动器走两拍 —— 有 `retry.action` 时先发布它，其结果是"驱动器可观察的一拍结束"；本步动作在**外部值就位**时发布，而该信号已有入口：壳在人工回填后调 `flow.resumeHuman()`（③ 里让它同时发布拍 2）。好处：`park`/`awaitExternal` 的判断留在**持有外部值的一侧**（壳 `missingExternalValues`），槽里永远是"现在真能发的那条"，T1 不必知道人工状态。
 - **队列（不推荐）**：槽带 `pending: Call[]` —— `park` 语义搬进槽，且 T1 需知道哪条能发（再问壳或把 `externalValues` 投影进槽），人工状态摊成两处。
 - 已写入 PLAN §5 第 5 步 ③-1；实施顺序仍为 ③-1（本设计）→ ③-2（`enterStep` 的 `deliver` 标记：入口投递 / 推进与重试不投）→ ③-3（`emptySteps` 拆分实测 + 三套夹具迁移）
+
+## v0.10.21（2026-09-22）W10.4 收官：非入口步零投递（槽渲染激活）+ 回合边界接线 + A2 同帧定序
+
+- 触发：PLAN §5 第 5 步 ③-2/③-3 与第 6/7 步（作者实施）
+- ① **删非入口步的投递**：`enterStep` 只在**入口步** `push hit`（入口投递 = 开回合 + `flow:<id>/<step>`）；分支/顺序后继/复判进入的步**零投递、零 defer** —— 下一步改由**流程槽**发布，T1 按槽渲染
+- ② **两拍定稿**：槽一次只放一条真能发的调用 —— 有 `retry.action` 时 `tryRetry` 发布拍 1（`awaitingPre=true`），其结果回来时**在判据分支之前**拦截并发布拍 2（本步动作）；无前置且 `awaitExternal` 的步槽停 `awaiting-human`，外部值就位后由**壳侧** `resumeHuman()` 发布拍 2（`adjudicator.noteToolResult` 补就位检查）
+- ③ **回合边界接线**：`assemble.ts` 接 `agent/turn-stopping`（→ `session.onTurnStopping()` → `flow.noteTurnEnd()`：活跃流程随回合边界失效）与 `agent/status` idle（→ `session.onAgentIdle()`：失效兜底 → `refreshEntries()` → `flushInterruptFollowups()` → `drainFlowQueue()` → `drainQueuedEntries()`）；`finishFlow` 不再中途接续 pendingEntry
+- ④ **A2 同帧定序**：由复判固定类序天然实现 + 新增 `tests/flow-judge-order.spec.ts`（2 例：fail 赢分支与 ok / 分支赢 ok）；**连带缺陷修复**：`failStep` 复位漏 `slotTable.clear()`、`onInterrupt` 直发补 `priority:'halt'`
+- ⑤ **夹具迁移**：`flow-login` / `flow-fullme` / `runtime-captcha` / `flow-interrupt` 改为"先槽后投递"，非入口断言改读槽动作；`loop-sim` 仿真 turn-stopping / idle
+- 账目（loop-sim 主路径）：**1 回合 / 3 步 / 3 次模型请求 / `idleSteps=0` / `t2Calls=0` / `deferred=0` / `concludedTurns=1`**；打断改 followup 的代价 = 2 回合 / 4 步 / 4 请求（§19.6.1）
+
+## v0.10.22（2026-09-22）W10.5 删除旧路径核查 + W10.6 测试对齐
+
+- **W10.5**：第 4 章删除清单全量符号**零残留**核查（`shouldConcludeTurn` / `actionCount` / `armOwnJudgements` / `onStepJudged` / `closeForFlow` / `WindowCriteria` / `gaOutcome` / `hitText` / `deliveredAbs` / `noteDelivered` / `mud_recall` 全部零命中）；**判据 A 未删**（defer 槽继续服务 T2 批次与规则动作）
+- **W10.6**：`tests/loop-sim.ts` / `t1-adapter.spec.ts` / `flow-*.spec.ts` / `runtime-delivery.spec.ts` / `frame-splitter.spec.ts` 对齐 + **行流守恒补 span 记账面**（末节两面各一例：T2 窗口面 + 流程窗口面，含失败收束后行进后续消费批）
+- 验证（2026-09-22 复核实测）：`tsc --noEmit` 清零；`vitest run --pool=threads tests` **35 文件 / 369 例全绿**
+
+## v0.11.0（2026-09-22）W10.7：T1 状态化（形态 C + B3）文档同步 + 技能文本
+
+- 正式章节按 PLAN §6.5 范围改写：**§1**（I2/I4/I5/I6/I8/I11/I12/I13 按新口径改写，新增 **I16** T1 私有状态不进 T2 可见面）、**§2 术语表**（新增 收口/分类与复判/形态 C/关闭触发/单一水位线/状态抓取桶/流程槽/流程驱动器/触发器反射；改写 裁决器/投递形态/在途窗口/挂起/唤醒/分投器；"已删除的概念"补 v0.11.0 一批）、**§3 总体架构**（L1 状态抓取与入口 arm、L4 改为"流程驱动器与渲染"、旁路 B/F）、**§4–§6**（状态抓取桶、单一水位线替代交付水位、I6 口径与投递通道换形、选路按回合锁 lane）、**§7–§8**（§7 从"无状态渲染器"改为"有状态流程驱动器"；§8 窗口收窄为纯收口器、§8.4 到期带回内容、§8.5 武装标记收窄为四类、§8.7/§8.8 补 v0.11.0 删除面与实现映射）、**§9–§10**（`agentKit.channel`、零发送通路去 `mud_recall`）、**§11**（流程实例状态与槽、Config 全集去 `captchaPatterns`）、**§12–§13**（日志/决策栏/diag 字段、例数基线 **35 文件 / 369 例**、测试策略换形与逐文件例数）、**§17–§18**（新增 W10 切片行；未决新增 #21 入口回合区分面 / #22 两条 fail-loud 未落地 / #23 R4 端到端用例；已定 #12/#17 措辞更新）、**§19**（整章按形态 C + B3 + 槽渲染重写）、**doc/flows/login.md 与 fullme.md**（声明面改为 `settle`/`classify`/`captures`，补现行 `FlowSpec`）
+- **技能文本同步**（`agent/skills.ts`）：删掉"待重建为触发器 → lite"与"断线由你按步骤重连"两处过时措辞（断线口径 = 复位重开，§19.5）
+- 验证：`tsc --noEmit` 清零；`vitest run --pool=threads tests` **35 文件 / 369 例全绿**
+- 同步期发现的两条**代码欠账**（本次只登记、未改代码）：入口回合的 `flow.id` 字段未落地（现行用 `ruleId` 前缀 + 槽配对）、`settle` 步级必填与 `sessionId` fail-loud 未收紧（§18 未决 #21/#22）
+
+## v0.11.1（2026-09-22）零风险清理：死表面删除 + 两处类型护栏
+
+- **删除无消费者的导出/成员**（逐项全仓 grep 自证零引用；`noUnusedLocals` 只查局部变量，查不到这种累积）：`flow/engine.ts` 的 `interruptibleBy`、`session/types.ts` 的 `DEFAULT_LOGIN_EXIT_COMMANDS` + `assemble.ts` 的 `loginExitCommands` 配置项（§11 早已记其退役，代码现在与文档一致）、`perceive/types.ts` 的 `TriggerAction`、`perceive/engine.ts` 的 `pendingCaptures()`、`session.ts` 的 `boundConnectionId` getter、`matcher.ts` 的 `Perceptor.unregisterByOwner` + `TriggerMatchService.unregisterByOwner/getRules`、`gate/policy.ts` 的两行纯转出 re-export、`gate/capability.ts` 的 `resolveMudTier` 转出（`assemble.ts` 改从 `tiers.ts` 取）
+- **`gate/tiers.ts` 修正两处幽灵声明**：完全档工具表里的 `mud_flow_list`（该工具从未存在；`mud_flow_status` 存在但不在表内 —— 是否纳入见待决项）、`FULL_CAPABILITIES` 里的 `wake:login-stall`（§10 记其 v0.4.0 已删）、`T1 T1` 重复词
+- **两处类型护栏**：① `MudSessionRuntime implements MudDeliveryChannel`（type-only 引入，无运行时环）—— 通道方法漂移从此是编译错误，不再静默回落到 `channel === undefined` 分支（`mount.ts` 记录过该 bug 已发生一次）；② 提示区段序号唯一来源 `MUD_PROMPT_ORDER`（`mount.ts` 导出，`preset.ts` 引入），删掉 `preset.ts` 的第二份 `ORDER`
+- **`dispose()` 补 `clearTimeout(worldTimer)`**：500ms 防抖只置 null 会让定时器在会话 purge 之后仍推一次 world 快照（与 purge"该身份不应再能被读回"矛盾）
+- **四处过时注释改为与代码一致**（均为"文档/注释承诺了、代码没有"的落差）：`agent/t1.ts` 文件头由"v0.4.0 起无状态"改为"外壳无状态 + 双渲染来源（投递动作 / 流程槽）"、`deliver/lane.ts` 的 `registerTriggerProvider` 同步、`tools-build.ts` 的"缺省 gaCount = 条数"改为"声明才计 GA（v0.11.0 已废除隐式早关）"、`tests/runtime-direct-action.spec.ts` 的 `loginExitCommands` 出队注释
+- 验证：`tsc --noEmit` 清零；`vitest run --pool=threads tests` **35 文件 / 369 例全绿**
+- **本次未动（登记待决，均有理由）**：`stepBudget` 与 `classify.branch` 声明了但无消费者（§19.1 承诺了行为）；`WindowResult.outcome` 接口未声明却在字面量里多写（`Promise.resolve` 泛型推断绕过 tsc）；`counters.fail`/`hitsDropped` 恒 0（删字段 vs 补计数，属 diag 契约决定）；`recall()` 生产零调用但**是 I5 守恒用例的唯一观测面**；`mud_flow_enable/disable/status` 三支恒失败却对 full 档模型可见；`loginTimeoutMs` 无读取点；`MudRuntimeConfig.flows` 被运行时消费但**插件配置面不暴露**（测试靠它注入流程表，故字段本身不删）
+
+## v0.11.2（2026-09-22）缺陷修复：跨块终止符 / 预筛丢命中 / 跨会话节流
+
+三个缺陷都是**块边界或组合边界上的静默失效**（无报错、无日志，只表现为"某类行不触发"），故均按不变式补了会红的用例。
+
+- **S1+S2 跨块终止符**（`network/ansi.ts`，P0）：`write()` 用**块内前瞻**（`charAt(i+1)`）判断 `\r\n`，`\r` 恰好落在 TCP 块尾时前瞻看不到下一块的 `\n` ⇒ **多提交一个空行**。该空行会拿到 `abs`、进待决/T2 批次、占 `MAX_SETTLE_LINES`/`MAX_PARKED_LINES` 预算，并**推进 `spacer` 类多行规则的逐行计数**（Mudlet `REGEX_LINE_SPACER`，`matcher.ts` 逐行累加 `spacerCount`），使该条件提前一行满足。S2 同根因且是结构性触发：pkuxkx 的提示符**不带换行**（`telnet.spec.ts` 的 300ms 刷出正为它而设），`flushLine()` 提交后补发的 `\r\n` 必然多产出一个空行。**修法**：行缓冲与半截转义序列本来就跨块保留，终止符也必须 —— 加两个跨块标志 `skipLF`（`\r` 已提交行 ⇒ 紧随的 `\n` 属同一 CRLF）与 `absorbFlushTerminator`（`flushLine` 刷出的行本无终止符 ⇒ 紧随的整个终止符归它）；块内前瞻删除。**真空白行与 `\r\r`（两个终止符 = 恰一个空行）不受影响**（`ansi.spec.ts` +7 例）
+- **S3+S4 预筛静默丢命中**（`perceive/matcher.ts`）：预筛 seed 必须满足"命中 ⟹ seed 成立"，两处退化为**真子集**（失败形态是"某类行永远不触发"，无任何迹象）：
+  - **S3**：同规则的多个 pattern 是 **OR**，但"提不出 seed"的分支被丢弃 ⇒ 留下的 seed 不再是必要条件（`[/abc/, /[x]yz/]` 对 `xyz` 0 命中）。**修法**：任一条提不出 ⇒ 整组放弃预筛（返回空 = 逐行全量扫）。
+  - **S4**：seed 比较是大小写敏感的 `startsWith`/`includes`，而推导只看 `re.source` 不看 `re.flags` ⇒ `/^ABC/i` 推出 `ABC` 丢掉 `abc`。**修法**：flags 含 `i`/`s`/`u`/`v` 直接放弃预筛（`m` 安全）。
+  - **同类第三条（一并修）**：反斜杠后跟字母/数字**绝不等同于那个字面字符**（`\u4e2d` 匹配一个汉字而非 "u4e2d"、`\n` 不是字母 n、`\p{L}`/`\x41`/`\1` 同理）。旧集合只列了 `dDwWsSbB0-9`，`\u4e2d` 这类会推出错 seed。**修法**：`\` 后跟 `[A-Za-z0-9]` 一律停止推导（只会让 seed 更短或不做预筛，方向恒为放宽）。
+  - 新增 `tests/matcher-prefilter.spec.ts`（19 例）：不变式 `pattern.test(line) ⟹ 必须命中`，覆盖混分支 / `i` 标志 / 码点·字符转义 / `\p{…}` / 词边界 / 回溯引用 / 量词 `?`·`*`·`{0,n}` / 顶层选择，并**按内置规则表 × 实录语料逐对**校验（先以参照实现证明用例非空转）
+- **S5 翻页节流跨会话互相压住**（`perceive/rules.ts` + `assemble.ts`，I8 违规）：`pager:continue` 的 `guard` 用闭包变量 `lastPageFlipAt` 做 1s 节流，而规则表是**模块级共享数组**、每个插件只 `splitPerceptionRules` 一次 ⇒ 该闭包被**所有会话**共用：会话 A 翻页后，会话 B 在 1s 内的翻页被静默压掉。**修法**：`createDefaultPerceptionRules()` 工厂（规则表按会话构造，运行态各自独立），`assemble` 改为每会话 `splitPerceptionRules(createDefaultPerceptionRules())`；8 个消费者（`assemble` + 7 个 spec）同步。回归用例 `rule-coverage.spec.ts`（+2 例）：两份规则表各自翻页、同一份表内仍节流（旧实现第一条即红）。**顺带清理**：`rule-coverage.spec.ts` 里"因为共享节流所以样本只喂一次"的规避注释随之改写为纯性能考量
+- 验证：`tsc --noEmit` 清零；`vitest run --pool=threads tests` **36 文件 / 397 例全绿**（+28 例：ansi +7 / matcher-prefilter +19 / rule-coverage +2）；**loop-sim 账目不变** = **1 回合 / 3 步 / 3 次模型请求 / `idleSteps=0` / `t2Calls=0` / `deferred=0` / `concludedTurns=1`**（`loop-sim-login.spec.ts` 断言项未改）
+- 同步章节：§4–§6（实例行：规则表按会话构造 + 连接重建走引擎整体重建而非 `reset()`）、§12–§13（例数基线 → 36 文件 / 397 例；单元面补预筛契约与跨块终止符用例）
+- **未修（登记待决）**：`mud_send` 的 legacy `until` 分支静默吞掉非法声明（不可编译正则/`until:{timeout}` 无 regex 时**无日志无计数**，与 `settle` 路径的 fail-closed 不一致；`ActionSpec.until` 亦无任何读取点）；`capability.ts` 的 `live` 表在 `purgeSession` 时不清（档位残留 + 无界增长）；`ansi.ts` 的 `csiBuf`/`oscBuf` 无上限（对照 telnet 的 `MAX_SUB_NEG_LENGTH` 丢弃模式）
