@@ -697,3 +697,18 @@ note: 只追加，不回改历史条目；每次设计变更在文末登记一�
 - 验证：`tsc --noEmit` 清零；`vitest run --pool=threads tests` **36 文件 / 397 例全绿**（+28 例：ansi +7 / matcher-prefilter +19 / rule-coverage +2）；**loop-sim 账目不变** = **1 回合 / 3 步 / 3 次模型请求 / `idleSteps=0` / `t2Calls=0` / `deferred=0` / `concludedTurns=1`**（`loop-sim-login.spec.ts` 断言项未改）
 - 同步章节：§4–§6（实例行：规则表按会话构造 + 连接重建走引擎整体重建而非 `reset()`）、§12–§13（例数基线 → 36 文件 / 397 例；单元面补预筛契约与跨块终止符用例）
 - **未修（登记待决）**：`mud_send` 的 legacy `until` 分支静默吞掉非法声明（不可编译正则/`until:{timeout}` 无 regex 时**无日志无计数**，与 `settle` 路径的 fail-closed 不一致；`ActionSpec.until` 亦无任何读取点）；`capability.ts` 的 `live` 表在 `purgeSession` 时不清（档位残留 + 无界增长）；`ansi.ts` 的 `csiBuf`/`oscBuf` 无上限（对照 telnet 的 `MAX_SUB_NEG_LENGTH` 丢弃模式）
+
+## v0.11.3（2026-09-23）W11.1 状态泄漏与静默失败面
+
+计划冻结并实施 `doc/PLAN.md` W11.1（七条缺陷，裁决 2026-09-23 回写后冻结）。v0.11.2 登记的三条"未修（登记待决）"欠账全部清掉。
+
+- **① purge 状态泄漏**：新增 `capability.forget(sessionId)`（只清进程内 `live` 档位，投影持久事实不动），`assemble.purgeSession` 调用；`robotUrlMap` 值形改 `{robotUrl, sessionId}`，purge 按会话清条目（刷新路径保持原归属）—— 旧实现 purge 后按 sessionId 读到残留档位/URL 映射
+- **② `lastError` 成功路径清除**：会话级在 `onSocketConnect` 清（`session/session.ts`）；装配级在凭据解析成功（`resolvePass` then）与 `purgeSession` 清（`assemble.ts`）—— 凭据失败留痕不再遮蔽后续诊断
+- **③ legacy `until` 整体删除**（裁决：无真实消费方，待实测 1 已核并关闭）：删 `mud_send` 的 `until` 参数、schema 与解析路径（含"非法正则回退无触发"、"`until:{timeout}` 无 regex"两条静默吞分支）；残留传参 **fail-closed 拒绝**并指向 `settle`（`settle.on: {kind:"ga",count} | {kind:"regex",pattern}`）。用例改写为断言拒绝的红用例
+- **④ `ActionSpec.until` 删字段**（`perceive/types.ts`）：与 ③ 一并整体删除；全仓无读写点，`tsc` 清零即证。**保留** `ActivityEntry.until`（活动表完成句锚定，真实消费于 tools-build）
+- **⑤ `ansi.ts` 序列缓冲上限**：`csiBuf`/`oscBuf` 加 `MAX_SEQUENCE_BUF = 64KB`（对照 telnet `MAX_SUB_NEG_LENGTH`），超限字节进**丢弃态**（不进序列缓冲与行 raw），终止字节/BEL 终止判定不变，终止后解析恢复（`ansi.spec.ts` +3）
+- **⑥ `setAgentMode` 不回写调用方 config**（`assemble.ts`）：运行时状态单源是 `runtimeConfig`，装配层突变调用方对象是状态泄漏
+- **⑦ `Config.flows` 非目标**：`MudAgentConfig` 不暴露 `flows`（装配固定 `defaultFlows`）；`session/types.ts` `flows?` 注释 + §19.1 明写流程表由代码内置、不可配（消除"看起来可配"）
+- **用例**：`permission.spec` +1（forget）、`ansi.spec` +3（CSI/OSC 上限 + 对照组）、`last-error.spec` 新建 1（连接成功清 `lastError`）、`tools.spec` until 用例改写为拒绝断言（例数持平 26）、D2 红证据 5 处（①②⑤ 四红 + ③ 一红，先红后绿）
+- **验证**：`tsc --noEmit` 清零；`vitest run --pool=threads tests` **37 文件 / 402 例全绿**（2026-09-23 当次实测，基线 36/397 → 净增 5，只增不减）；**loop-sim 账目不变** = **1 回合 / 3 步 / 3 次模型请求 / `idleSteps=0` / `t2Calls=0` / `deferred=0` / `concludedTurns=1`**；改动文件全 CRLF
+- **同步章节**：§8.1/§8.3（until 双删 + 活动表 until 保留）、§9/§11（lastError 成功清除 + purge 清残留 + agentMode 不回写 + Config 全集 flows 非目标）、§19.1（flows 非目标）、§12/§13（diag lastError 清除语义、例数基线 37/402）、§17（W11 行，W11.1 落地）；`doc/PLAN.md` 第 4/5/6 章 W11.1 对应内容删除（待实测 1 关闭，2/3 重编号）

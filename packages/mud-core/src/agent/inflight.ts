@@ -30,7 +30,7 @@
  * 任何结算都注销该标记 (不留脏标记)。
  *
  * span (W10.2 A2/A3): confirmSent 时点记录行流水位 (spanStartAbs) —— 结算时 span = 吸收行中
- * abs > spanStartAbs 的部分 (首个/末个行 abs 进 `WindowResult.span`), until/ga 结算的
+ * abs > spanStartAbs 的部分 (首个/末个行 abs 进 `WindowResult.span`), evidence/GA 结算的
  * text/lines 只取 span 行 (命令发出前的缓冲行不属于本步应答), capture 抽取只扫 span 行。
  *
  * 计时语义 (沿用旧桥 §8.4): 唯一的计时器是**放弃** —— 未声明 10s / 声明 120s

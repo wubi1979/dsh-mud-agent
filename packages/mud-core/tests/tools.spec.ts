@@ -193,22 +193,23 @@ describe('在途窗口装配 (registerWindow; W7.2 取代命令-应答桥)', () 
     expect(seen).toEqual([{ cmd: 'north', gaCount: 1, timeoutMs: 3000, label: 'mud_move' }])   // W10.1: fallback 缺省 3000 (D3)
   })
 
-  it('mud_send until 声明 → 关闭触发 + timeoutMs; 超时结算 ok=false', async () => {
+  it('mud_send until 参数已废弃 (W11.1③) → 工具层显式拒绝, 不开窗不发送', async () => {
     const seen: WindowRequest[] = []
+    const sent: string[] = []
     const tools = buildMudTools({
+      send: c => sent.push(c),
       registerWindow: async (req) => {
         seen.push(req)
-        return winResult({ cmd: 'dz', ok: false, text: '你开始打坐\n[应答超时，边界未命中，请决策]', settled: 'timeout', outcome: 'fail' })
+        return winResult({ cmd: String(req.cmd), text: '' })
       },
     })
     const r = await tools.mud_send!.execute({ cmd: 'dz', until: { regex: '^你开始打坐', timeout: 120 } })
+    // legacy until 静默吞声明已废除: fail-closed 拒绝并指向 settle (不开窗、不发送)。
     expect(r.ok).toBe(false)
-    expect(r.note).toContain('应答超时')
-    // 形态 C：`until` 是**关闭触发**（命中即关窗，不判类）—— 不再是"ok 判据"。
-    expect(seen[0]!.closeOn).toEqual(new RegExp('^你开始打坐'))
-    expect(seen[0]!.criteria).toBeUndefined()
-    expect(seen[0]!.timeoutMs).toBe(120)
-    expect((r as { settled?: string }).settled).toBe('timeout')
+    expect(r.note).toContain('until')
+    expect(r.note).toContain('settle')
+    expect(seen).toHaveLength(0)
+    expect(sent).toHaveLength(0)
   })
 
   it('P1-1: 窗口超时结果 render 不加 "工具拒绝:" 前缀 (窗口失败语义 ≠ 工具层校验拒绝)', async () => {
@@ -252,12 +253,15 @@ describe('在途窗口装配 (registerWindow; W7.2 取代命令-应答桥)', () 
     expect(seen.find(s => s.cmd === 'sleep')!.closeOn?.source).toContain('你一觉醒来，精神抖擞地活动了几下手脚')
   })
 
-  it('§8 活动表: 显式 until 优先; 未声明的命令不带触发; 部署可整体覆盖', async () => {
+  it('§8 活动表: 显式 settle 触发优先 (W11.1③ 取代 until); 未声明的命令不带触发; 部署可整体覆盖', async () => {
     const seen: WindowRequest[] = []
     const tools = buildMudTools({
       registerWindow: async (req) => { seen.push(req); return winResult({ cmd: String(req.cmd) }) },
     })
-    await tools.mud_send!.execute({ cmd: 'dz', until: { regex: '^自定义$', timeout: 120 } })
+    await tools.mud_send!.execute({
+      cmd: 'dz',
+      settle: { mode: 'stream', on: { kind: 'regex', pattern: '^自定义$' }, fallback: { ms: 120 } },
+    })
     await tools.mud_send!.execute({ cmd: 'look' })
     expect(seen[0]!.closeOn).toEqual(new RegExp('^自定义$'))
     expect(seen[0]!.timeoutMs).toBe(120)

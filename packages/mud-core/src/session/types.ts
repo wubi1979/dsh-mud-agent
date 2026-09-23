@@ -182,7 +182,7 @@ export interface MudRuntimeConfig {
   commandIntervalMs: number
   /** 未声明请求超时。 */
   bridgeTimeoutMs: number
-  /** 声明 (until) 请求超时。 */
+  /** 声明式窗口请求超时 (settle/活动表声明的窗口, 缺省 120s)。 */
   bridgeDeclaredTimeoutMs: number
   /** 网络装配粒度毫秒 (v0.6.0: 静默窗降级为分帧器装配阀 autoFlushMs, 非消费边界 §8.7)。 */
   bridgeSilenceMs: number
@@ -216,6 +216,8 @@ export interface MudRuntimeConfig {
   /**
    * 流程表 (`doc/ARCHITECTURE.md` §19; 缺省 `defaultFlows`)。
    * 只读声明 —— 每会话的流程实例状态在 `FlowRuntime` 里 (arming/挂起/打断/排队)。
+   * **非配置面 (W11.1⑦)**: 装配固定注入 `defaultFlows`, `Config`/`MudAgentConfig`
+   * 不暴露 `flows` —— 流程表由代码内置、部署不可配 (§19.1)。
    */
   flows?: readonly FlowSpec[]
 }

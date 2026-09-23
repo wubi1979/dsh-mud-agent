@@ -643,6 +643,9 @@ export class MudSessionRuntime implements MudDeliveryChannel {
   // ── socket 事件 ────────────────────────────────────────
 
   private onSocketConnect(): void {
+    // 成功路径清除 (W11.1②): 新连接建立 ⇒ 上一次错误文案过期, 不得在 diag 里
+    // 继续遮蔽新状态 (写入点在 ConnectionRuntime 的 onError, 只写不清)。
+    this.lastError = null
     // 新连接 = 新登录会话: 直接复位登录态 (置信度护栏压不过上次 GMCP 1.0)。
     this.world.flags.logged_in = false
     this.world.flags.awaiting = true

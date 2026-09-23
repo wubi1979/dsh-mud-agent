@@ -87,6 +87,13 @@ export interface MudCapabilityApi {
    */
   set(sessionId: string, tier: string): MudTier
   /**
+   * 清除某会话的进程内档位记忆 (会话注销 / `purgeSession` 时调用)。
+   * 只清 `live` 缓存; 投影持久事实 (§10, 官方会话事件) 不动 —— 未注册/已归档
+   * 会话经此回落部署缺省档位, 消除注销后按旧 id 读到残留的静默失效 (W11.1①)。
+   * @param sessionId 官方会话 id。
+   */
+  forget(sessionId: string): void
+  /**
    * 确保该会话已有档位记录 (MUD 会话声明时调用; 缺省档位落一次日志)。
    * @param sessionId 官方会话 id。
    * @returns 生效档位。
@@ -252,6 +259,9 @@ export function registerMudCapability(
     onChange(listener: (sessionId: string, tier: MudTier) => void): () => void {
       listeners.add(listener)
       return () => { listeners.delete(listener) }
+    },
+    forget(sessionId: string): void {
+      live.delete(sessionId)
     },
   }
   return api

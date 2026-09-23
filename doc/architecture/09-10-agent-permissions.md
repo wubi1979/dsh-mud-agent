@@ -138,7 +138,7 @@ impl: packages/mud-core/src/session/preset.ts + agent/gate/
 | RPC | `ctx.mud.connect` 只收 `passRef`（`pass` 字段已删除）；明文由 host 在**连接瞬间**经 `ctx.credentials.resolve` 解析，**每次连接重新解析**（不跨操作缓存 ⇒ 改密后下次连接即生效） |
 | 值来源 | 官方 seam 分层：进程 env → `$DSH_HOME/.credentials.yaml`（provider 托管、可写）→ project/user `.env` |
 | 录入 | 页面用户表单 → `remote.credentials.set(ref, value)` 单向写入 host 凭据存储；名单行只在写入成功后落（失败不留指向不存在凭据的账号） |
-| 失败 | 三级 fail loud：引用名不合 CredentialRef 语法 / 未挂载凭据 provider / 引用未配置。留痕进 `diag().lastError` 与该会话日志，抛出，**不建连接也不声明会话**。无 `passRef`（含空白串）是**合法空密码**（有些服务器不校验密码），不触碰凭据服务 |
+| 失败 | 三级 fail loud：引用名不合 CredentialRef 语法 / 未挂载凭据 provider / 引用未配置。留痕进 `diag().lastError` 与该会话日志，抛出，**不建连接也不声明会话**。无 `passRef`（含空白串）是**合法空密码**（有些服务器不校验密码），不触碰凭据服务。`lastError` **成功路径清除**（W11.1②：新连接建立 / 凭据解析成功 / 会话注销），陈旧失败不再遮蔽后续诊断 |
 
 **暴露面口径（文档不得写成"明文消失"）**：改的是**收敛**而非归零 —— ① connect 不再携明文（原先每次连接都过网）；② 录入瞬间 `credentials.set` 仍携明文过一次网；③ 明文以**未加密文本**落在 `$DSH_HOME/.credentials.yaml`（目录 owner-only）；④ host 内存里的明文生命周期由"连接后持有"变为"连接前解析后持有"。`{name}/{pass}` 占位符与掩码机制**不变**（§19）：明文仍只在发送瞬间插值。
 

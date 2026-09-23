@@ -75,8 +75,8 @@ export interface MudRemoteServiceInternals {
   /** UI 条目写入 (验证码刷新路径复用 buffers.pushUi)。 */
   readonly pushUi: (sessionId: string, input: MudUiItemInput) => void
   readonly tuiLog: (sessionId: string, text: string) => void
-  /** 验证码刷新映射: 图片URL → robot.php URL。 */
-  readonly robotUrlMap: Map<string, string>
+  /** 验证码刷新映射: 图片URL → {robotUrl, sessionId 归属 (purgeSession 按会话清)}。 */
+  readonly robotUrlMap: Map<string, { robotUrl: string; sessionId: string }>
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -98,7 +98,7 @@ export class MudRemoteService extends TypertRemoteService {
   private readonly logServiceOf: (sessionId: string) => MudLogService
   private readonly pushUi: (sessionId: string, input: MudUiItemInput) => void
   private readonly tuiLog: (sessionId: string, text: string) => void
-  private readonly robotUrlMap: Map<string, string>
+  private readonly robotUrlMap: Map<string, { robotUrl: string; sessionId: string }>
 
   constructor(ctx: Context, internals: MudRemoteServiceInternals) {
     super(ctx, 'mudRemote', { namespace: 'mud' })
@@ -210,11 +210,12 @@ export class MudRemoteService extends TypertRemoteService {
    */
   @Remote
   async captchaRefresh(imageUrl: string, sessionId?: string): Promise<{ url: string }> {
-    const robotUrl = this.robotUrlMap.get(imageUrl)
-    if (robotUrl === undefined) throw new Error('unknown captcha image')
+    const entry = this.robotUrlMap.get(imageUrl)
+    if (entry === undefined) throw new Error('unknown captcha image')
     this.robotUrlMap.delete(imageUrl)
-    const newDisplayUrl = await resolveCaptchaImage(robotUrl)
-    this.robotUrlMap.set(newDisplayUrl, robotUrl)
+    const newDisplayUrl = await resolveCaptchaImage(entry.robotUrl)
+    // 归属随条目走: 刷新后仍记原会话 (purge 按会话清残留, W11.1①)。
+    this.robotUrlMap.set(newDisplayUrl, { robotUrl: entry.robotUrl, sessionId: entry.sessionId })
     const target = this.resolveSession(sessionId)
     this.tuiLog(target, `[验证码] 刷新图片: ${newDisplayUrl}`)
     this.pushUi(target, { kind: 'captcha', text: 'fullme 验证码', url: newDisplayUrl, cmd: 'fullme', time: Date.now() })

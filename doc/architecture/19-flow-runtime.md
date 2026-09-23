@@ -25,6 +25,8 @@ impl: packages/mud-core/src/agent/flow/engine.ts + agent/flow/slot.ts + agent/fl
 
 **声明面 = 三层正交声明**（`FlowStep.settle` / `classify` / `captures`，`agent/flow/flow-spec.ts`）：
 
+**流程表由代码内置、不可配**（W11.1⑦ 非目标）：`Config`/`MudAgentConfig` **不暴露 `flows`** —— 装配固定注入 `defaultFlows`（`assemble.ts`），`MudRuntimeConfig.flows` 只是运行态接线、不接受部署覆盖；"看起来可配"的字段不存在，改流程 = 改 `agent/flow/flows/` 代码。
+
 ```
 flow <id>
   priority    数字。直接比大小（不打分档枚举）：normal = 100；越大越不可打断

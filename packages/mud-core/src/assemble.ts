@@ -158,8 +158,9 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
   const feeds = new MudFeedHub()
   buffers.attachSink(feeds)
   let lastError: string | null = null
-  // 验证码刷新映射: 图片URL → robot.php URL (供前端刷新按钮重新获取图片)。
-  const robotUrlMap = new Map<string, string>()
+  // 验证码刷新映射: 图片URL → {robotUrl, sessionId 归属} (供前端刷新按钮重新获取图片;
+  // 归属随条目走, purgeSession 按会话清残留 — W11.1①)。
+  const robotUrlMap = new Map<string, { robotUrl: string; sessionId: string }>()
 
   /** 会话日志服务 (lazily; 日志条目同时转发 WS 日志 tab)。 */
   function logServiceOf(sessionId: string): MudLogService {
@@ -417,7 +418,7 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
     // 人工验证码 (fullme): 解析（出站围栏 + 取图）在 `mud_captcha` 工具里（流程 `prompt` 步），
     // 运行时只把**解析好的图片**转给宿主推前台弹窗；`robotUrl` 供"刷新图片"路由用。
     captcha: (sessionId, push) => {
-      robotUrlMap.set(push.imageUrl, push.robotUrl)
+      robotUrlMap.set(push.imageUrl, { robotUrl: push.robotUrl, sessionId })
       tuiLog(sessionId, `[验证码] 已取到图片: ${push.imageUrl} (等人工输入)`)
       buffers.pushUi(sessionId, {
         kind: 'captcha',
@@ -472,7 +473,7 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
    * @returns 明文密码; 无引用名时为空串。
    */
   function resolvePass(sessionId: string, explicit: string | undefined): Promise<string> {
-    return resolveMudPass(
+    const pending = resolveMudPass(
       ctx,
       { explicit, fallback: config.account?.passRef },
       (message) => {
@@ -480,6 +481,12 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
         tuiLog(sessionId, `[SYS] 凭据解析失败: ${message}`)
       },
     )
+    // 成功路径清除 (W11.1②): 解析成功即过期全局 lastError — 陈旧凭据失败不得
+    // 继续经 `lastError ?? 会话级` 的次序遮蔽会话诊断 (失败回调先于 reject 到达)。
+    return pending.then((pass) => {
+      lastError = null
+      return pass
+    })
   }
 
   /**
@@ -606,6 +613,14 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
     runtime?.dispose()
     runtimes.delete(target)
     capabilityReady.delete(target)
+    // 档位进程内记忆 + 验证码映射残留: 按会话清 (W11.1①; 注销后按旧 id 读到
+    // 残留是静默失效)。投影持久事实与全局缓冲各归其主, 不动。
+    capability.forget(target)
+    for (const [imageUrl, entry] of robotUrlMap) {
+      if (entry.sessionId === target) robotUrlMap.delete(imageUrl)
+    }
+    // 全局 lastError: 注销会话 = 用户重置现场, 陈旧错误一并清 (W11.1②)。
+    lastError = null
     logServices.get(target)?.purge()
     logServices.delete(target)
     const files = purgeSessionLogs(logDir, target)
@@ -791,8 +806,10 @@ export function createMudCore(ctx: Context, config: MudAgentConfig): void {
     },
     setAgentMode(mode: 'off' | 't1' | 't2' | 'full'): void {
       if (runtimeConfig.agentMode === mode) return
+      // 运行时状态单源是 runtimeConfig (动态开关); **不回写调用方持有的 config
+      // 对象** (W11.1⑥: 装配层突变调用方对象是状态泄漏)。config.agentMode 只作
+      // 启动值参与 runtimeConfig 初始化, 此后不再读写。
       runtimeConfig.agentMode = mode
-      config.agentMode = mode
       const label: Record<typeof mode, string> = {
         off: '暂停接入',
         t1: '仅 T1 (确定性管道)',

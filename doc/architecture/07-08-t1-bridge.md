@@ -67,7 +67,7 @@ T1 是**有状态的**（状态按 `sessionId` 分槽，见 §19.3/§19.7），�
 | **GA/EOR** | 八成（服务端概率证据） | telnet 边界事件，常驻缺省 | 命中即提交当前帧；**只有显式声明 GA 关窗的窗口才计数**（§8.3） |
 | **判据（正则/完成句）** | 十成（声明的确定性证据） | ① 窗口**关闭触发**（`settle.on` 正则 / 流程派生 `closeOn`）② 活动表（注册窗口的规则动作收口声明）③ 流程**入口 driver** 与**分支等待期后继 driver** ④ 打断规则 | 命中即提交；随窗口/流程**注册为武装标记**（§8.5） |
 
-- **不再进标记表的东西**：流程步的 `ok`/`fail` 分类（形态 C 下它们随窗口走、由驱动器复判，§19.2）；`until`（旧口径，已并入关闭触发）。
+- **不再进标记表的东西**：流程步的 `ok`/`fail` 分类（形态 C 下它们随窗口走、由驱动器复判，§19.2）；`until`（旧口径 —— `mud_send` 参数与 `ActionSpec.until` 已随 W11.1 整体删除，声明只走 `settle`；活动表完成句是另一字段 `ActivityEntry.until`，仍作关闭触发来源）。
 
 ### §8.2 帧生命周期与消费链
 
@@ -145,7 +145,7 @@ T1 是**有状态的**（状态按 `sessionId` 分槽，见 §19.3/§19.7），�
 | 结算优先级阶梯（until > GA > 静默 > 超时） | v0.6.0 | 收敛为"标记命中即提交" |
 | 300ms 静默作为消费边界 | v0.6.0 | 保留为网络装配粒度（`autoFlushMs`） |
 | **旧命令-应答桥本体**（`bridge.ts`：pending/live 单槽、挂起闸门、`tx-*` 标记、I11/I12 挂起期拒绝） | v0.9 W7.2 | 在途窗口表取代；配对移交替代按命令比对归属 |
-| **`until` 口径**（工具参数与活动表） | v0.11.0 | 并入"关闭触发"（`settle.on` regex / legacy `until` → `closeOn`） |
+| **`until` 口径**（工具参数与 `ActionSpec.until`；活动表字段保留） | v0.11.0 / **W11.1（v0.11.3）** | v0.11.0 并入"关闭触发"（`settle.on` regex → `closeOn`）；W11.1 **整体删除**工具参数与 `ActionSpec.until`（残留传参 fail-closed 拒绝并指向 `settle`；活动表 `ActivityEntry.until` = 完成句锚定，有真实消费，保留） |
 | **`WindowCriteria`（`ok`/`fail`）、`branch`、`gaOutcome`、`onSettle`、`WindowResult.hit`/`hitText`、`settleCriteria` 按类结算、`armWindowMarker` 多样标记** | v0.11.0 | 形态 C：判类归驱动器，窗口只留一个 `closeOn` |
 | **N-GA 隐式缺省**（`gaCount ?? cmds.length`）与"到点即成功" | v0.11.0 | 声明才计 GA；到期恒 `timeout` |
 | **形态 A 脚手架**（`closeForFlow()` / `ReplySettle='flow'` / `noteToolResult` 的 `'flow'` 早返回） | v0.11.0 | 形态 C 自然退役 |

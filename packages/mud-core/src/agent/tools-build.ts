@@ -107,7 +107,7 @@ const T2_QUERY_SETTLE = { mode: 'stream', on: { kind: 'ga', count: 1 } } as cons
 interface ResolvedSettle {
   /** inline 收口: 工具结果即结算, 直发 + 立即返回 (不开窗)。 */
   inline: boolean
-  /** 关闭触发 (`settle.on` regex / legacy `until`): 命中即关窗（`settled:'evidence'`）, **不判类**。 */
+  /** 关闭触发 (`settle.on` regex): 命中即关窗（`settled:'evidence'`）, **不判类**。 */
   closeOn?: RegExp
   gaCount?: number
   /** 兜底时长 (缺省 3000; 到期恒 timeout 结算)。 */
@@ -461,11 +461,6 @@ export function buildMudTools({
           items: { type: 'string' },
           description: '命令序列, 依次发出 (发完即走时可含空命令, 用于分页翻页)。与 cmd 二选一',
         },
-        until: {
-          type: 'object',
-          additionalProperties: true,
-          description: '可选 (旧口径, 规则动作使用): 声明应答关闭触发 {regex, timeout?}。声明的正则命中应答文本即关窗 (跨帧累积; 慢命令如 dz/fullme), 缺省由 settle 的关闭触发与兜底时长管。与 settle 不得同时声明',
-        },
         settle: {
           type: 'object',
           additionalProperties: true,
@@ -480,11 +475,15 @@ export function buildMudTools({
         )
         const refused = offline()
         if (refused !== null) return refused
-        // ── W10.1/形态 C 收口参数 (PLAN §3.1): 非法声明 fail-closed 拒绝 (不静默回退);
-        // legacy until (规则动作旧口径) 与 settle 互斥。**分类/抽取不是工具面概念**
+        // ── W11.1③: legacy `until` 参数整体删除 — 模型/规则若仍传则 fail-closed
+        // 拒绝 (不静默吞、不回退), 指引改用 settle。**分类/抽取不是工具面概念**
         // (形态 C：它们是流程表字段, 由驱动器对窗口带回的内容复判/抽取)。
-        if (args.until !== undefined && args.settle !== undefined) {
-          return { ok: false, note: 'until 与 settle 不得同时声明 (until 为旧口径, 请改用 settle)', cmd: '' }
+        if (args.until !== undefined) {
+          return {
+            ok: false,
+            note: 'until 参数已废弃移除 (W11.1③), 请改用 settle 声明关闭触发 (settle.on: {kind:"ga",count} | {kind:"regex",pattern})',
+            cmd: '',
+          }
         }
         const settleResolved = resolveSettleWindow(args.settle)
         if ('error' in settleResolved) return { ok: false, note: settleResolved.error, cmd: '' }
@@ -510,27 +509,11 @@ export function buildMudTools({
           send(wire(inlineCmd))
           return { ok: true, note: inlineCmd, cmd: inlineCmd }
         }
-        // 关闭触发 (规则动作可传): args.until = { regex, timeout? } → 关闭触发 (命中即关窗,
-        // 形态 C：不判类; 规则动作无"下一步"可判)。非法正则回退无触发 (只由 settle 的
-        // 触发 / GA / 兜底收口)。
-        // 未声明 until 时触发/兜底来自 settle 解析 (缺省 stream + 3000; 活动表附加仅在
-        // 此无触发时生效, 见下)。
-        const untilRaw = args.until as { regex?: unknown; timeout?: unknown } | undefined
-        let closeOn: RegExp | undefined
-        let timeoutMs: number | undefined
-        if (untilRaw !== undefined) {
-          if (typeof untilRaw.regex === 'string') {
-            try {
-              closeOn = new RegExp(untilRaw.regex)
-            } catch {
-              closeOn = undefined
-            }
-            if (typeof untilRaw.timeout === 'number') timeoutMs = untilRaw.timeout
-          }
-        } else {
-          closeOn = settleResolved.closeOn
-          timeoutMs = settleResolved.timeoutMs
-        }
+        // 关闭触发/兜底时长: 全部来自 settle 解析 (缺省 stream + 3000; 非法声明已 fail-closed
+        // 拒绝于上方)。活动表完成句附加仅在无显式触发时生效 (见下)。
+        // legacy `until` 参数已整体删除 (W11.1③): 声明用 settle, 不再有静默吞路径。
+        let closeOn: RegExp | undefined = settleResolved.closeOn
+        let timeoutMs: number | undefined = settleResolved.timeoutMs
         // 回合取消信号: 随窗口注册传入 (取消 → 优雅结算 settled='abort')。
         const signal = opts?.signal
         // 命令序列: **单窗一次注册** (序列 = 同一窗口)。GA 关窗**只在显式声明时**生效

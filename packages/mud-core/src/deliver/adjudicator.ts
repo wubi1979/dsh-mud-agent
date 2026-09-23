@@ -469,7 +469,7 @@ export class SessionAdjudicator {
     return this.lastLineAbs
   }
 
-  // ── 武装标记 (打断常驻 / 流程布防 / 桥 until) ──────────
+  // ── 武装标记 (打断常驻 / 流程布防 / 桥关闭触发) ──────────
 
   /** §8.5 武装集同步 (FlowRuntime.onArmSync): 全量替换流程布防标记 ——
    *  天然兼容重连 (复位后一次重挂) 与布防收缩。`arm()` 的"arming 即测"处理

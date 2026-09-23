@@ -351,3 +351,38 @@ describe('性能冒烟', () => {
     expect(lines.every(l => l.raw.includes('\x1b'))).toBe(true)
   })
 })
+
+describe('转义序列缓冲上限 (W11.1⑤, 对照 telnet MAX_SUB_NEG_LENGTH)', () => {
+  /** 上限与 src/network/ansi.ts 的 MAX_SEQUENCE_BUF 同值 (64KB)。 */
+  const MAX = 64 * 1024
+
+  it('超长未终止 CSI: csiBuf/raw 有界, 终止符到达后文本恢复可见', () => {
+    const p = new AnsiStreamParser()
+    // 超限载荷 (无终字节): 参数字节全部不属于 @-~。
+    p.write('\x1b[' + '1'.repeat(MAX + 512))
+    // 探针: 超限字节进丢弃态 — 缓冲与行 raw 都不得继续增长 (旧实现无上限 → 会红)。
+    const probe = p as unknown as { csiBuf: string; raw: string[] }
+    expect(probe.csiBuf.length).toBeLessThanOrEqual(MAX)
+    expect(probe.raw.join('').length).toBeLessThanOrEqual(MAX + 16)
+    // 终止符到达 → 序列结束, 后续文本照常可见 (对照组: 正常解析恢复)。
+    const lines = p.write('m欢迎光临\r\n')
+    expect(lines.map(l => l.text)).toEqual(['欢迎光临'])
+  })
+
+  it('超长未终止 OSC: oscBuf 有界, BEL 终止后恢复可见', () => {
+    const p = new AnsiStreamParser()
+    p.write('\x1b]' + '0'.repeat(MAX + 512))
+    const probe = p as unknown as { oscBuf: string; raw: string[] }
+    expect(probe.oscBuf.length).toBeLessThanOrEqual(MAX)
+    expect(probe.raw.join('').length).toBeLessThanOrEqual(MAX + 16)
+    const lines = p.write('\x07恢复可见\r\n')
+    expect(lines.map(l => l.text)).toEqual(['恢复可见'])
+  })
+
+  it('对照组: 正常短序列不受上限影响 (样式照常生效)', () => {
+    const p = new AnsiStreamParser()
+    const lines = p.write('\x1b[31m红\x1b[0m\r\n')
+    expect(lines[0]?.text).toBe('红')
+    expect(lines[0]?.style.length).toBeGreaterThan(0)
+  })
+})

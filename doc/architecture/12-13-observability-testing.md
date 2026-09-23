@@ -12,7 +12,7 @@ deps: ["§1", "§4", "§19"]
 | 决策栏 | `feed-classify`（lane 决策）、`holdDelivery` 暂缓/释放、权限 deny/ask、agent 工具调用、**流程迁移**（`flow-start` / `step-success` / `step-retry` / `flow-success` / `flow-failure` / `flow-interrupted` / `flow-expired`（随回合失效））、`direct-exec`（直接执行） |
 | 档位读写 | `GET /mud/capability?sessionId=…`（当前档 + 选项 + 外围能力）、`POST /mud/capability {sessionId,tier}`；`GET /mud/status` 每行带 `tier` |
 | agent 侧 | `agent/error`（回合错误）、`agent/inbox/discarded`（待处理投递被取消丢弃） |
-| `/mud/diag` | 每会话：`connectionId`、`connected`、观察窗/回看缓冲（诊断通路，2000 行上限）规模/`awaitingHuman`（人工环节）、`agent` 是否 live、`lastError`、**`flow`**（`FlowState`：`{flowId, stepId, armed[], phase: awaiting-result \| awaiting-human \| awaiting-branch, deadline, pendingActions, pendingEntry, retries, slots}` —— 形态 C 下 `armed` 只剩入口 arm 与分支等待期布防）、`pendingActions`/`pendingEntry` 条数；**计数**：遗留段丢弃行数、holdDelivery 释放次数、流程失败/超时次数、**在途窗口结算结局计数**（ok/fail/timeout/error/interrupted/abort，§8.3/I4） |
+| `/mud/diag` | 每会话：`connectionId`、`connected`、观察窗/回看缓冲（诊断通路，2000 行上限）规模/`awaitingHuman`（人工环节）、`agent` 是否 live、`lastError`（**成功路径清除**：连接建立/凭据解析成功/会话注销，W11.1②）、**`flow`**（`FlowState`：`{flowId, stepId, armed[], phase: awaiting-result \| awaiting-human \| awaiting-branch, deadline, pendingActions, pendingEntry, retries, slots}` —— 形态 C 下 `armed` 只剩入口 arm 与分支等待期布防）、`pendingActions`/`pendingEntry` 条数；**计数**：遗留段丢弃行数、holdDelivery 释放次数、流程失败/超时次数、**在途窗口结算结局计数**（ok/fail/timeout/error/interrupted/abort，§8.3/I4） |
 
 <!-- 待补：diag 字段的精确 schema 与阈值告警口径 -->
 
@@ -20,7 +20,7 @@ deps: ["§1", "§4", "§19"]
 
 ## §13 测试策略
 
-> **例数基线**（2026-09-22 实测）：**36 文件 / 397 例全绿**（`pnpm exec vitest run --pool=threads tests`；沙箱内默认 forks 池起不来，用 `--pool=threads`）；`tsc --noEmit` 清零。红绿以当次汇总为准，本文只登记当次实测数；历史基线见 §17 各切片行。
+> **例数基线**（2026-09-23 实测，W11.1 落地后）：**37 文件 / 402 例全绿**（`pnpm exec vitest run --pool=threads tests`；沙箱内默认 forks 池起不来，用 `--pool=threads`）；`tsc --noEmit` 清零。红绿以当次汇总为准，本文只登记当次实测数；历史基线见 §17 各切片行。
 
 1. **不变量用例（I5，v0.11.0 换形）**：`① 命中行 + ② 流程 span + ③ T2 批次 + ④ 仍带原文的投递 == 完整入站行流`（替代旧"按序拼接投递消息体"口径；折叠类目已移除，行流无隐藏行）。`tests/runtime-delivery.spec.ts` 末节两面各一例（T2 窗口面 + 流程窗口面，含失败收束后行进后续消费批）。
 2. **表驱动"命中必被适配"**（I4）：`tests/rule-coverage.spec.ts` —— 每条规则一条 canonical 样本（样本表必须覆盖规则表，新增规则不补样本即红），走 `PerceptionEngine.feed → TriggerLlmAdapter` 真实链路，断言 state 规则进 `stateHits`、event 规则进 `hits` 且渲染出的 tool-call 名字/参数与规则声明逐字一致。

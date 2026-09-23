@@ -86,6 +86,13 @@ const CONTROL_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g
 
 const ESC = '\u001b'
 
+/**
+ * 转义序列参数缓冲上限 (对照 telnet `MAX_SUB_NEG_LENGTH` = 64KB): 超限字节进
+ * **丢弃态** —— 不再进序列缓冲与行 raw, 终止符判定不变 (CSI 终字节 / OSC BEL|ESC)。
+ * 内存有界; 终止符到达后解析照常恢复 (W11.1⑤)。
+ */
+const MAX_SEQUENCE_BUF = 64 * 1024
+
 /** prompt 启发: 默认裸 > / ＞ 行。 */
 export function isPromptText(text: string): boolean {
   const t = text.trim()
@@ -262,24 +269,28 @@ export class AnsiStreamParser {
       }
       if (this.state === State.Csi) {
         const ch = chunk.charAt(i)
-        this.raw.push(ch)
         if (ch >= '\x40' && ch <= '\x7e') {
+          this.raw.push(ch)
           if (ch === 'm') this.applySgr(this.csiBuf)
           this.state = State.Text
-        } else {
+        } else if (this.csiBuf.length < MAX_SEQUENCE_BUF) {
+          this.raw.push(ch)
           this.csiBuf += ch
         }
+        // else: 超限丢弃态 — 字节不进缓冲与 raw (内存有界), 等终字节恢复。
         i += 1
         continue
       }
-      // Osc: 内容忽略, 遇 BEL 或 ESC (ST 或新序列) 终止。
+      // Osc: 内容忽略, 遇 BEL 或 ESC (ST 或新序列) 终止; 超限字节丢弃 (内存有界)。
       const ch = chunk.charAt(i)
-      this.raw.push(ch)
       if (ch === '\x07') {
+        this.raw.push(ch)
         this.state = State.Text
       } else if (ch === ESC) {
+        this.raw.push(ch)
         this.state = State.Esc
-      } else {
+      } else if (this.oscBuf.length < MAX_SEQUENCE_BUF) {
+        this.raw.push(ch)
         this.oscBuf += ch
       }
       i += 1

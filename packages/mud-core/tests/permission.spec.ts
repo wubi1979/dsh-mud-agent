@@ -393,6 +393,24 @@ describe('档位服务 (registerMudCapability)', () => {
     expect(api.ensure('s1')).toBe('observe')
   })
 
+  it('forget 清进程内记忆 (W11.1① purge 残留): 回落缺省 / 投影不动 / 其余会话不受影响', () => {
+    const { api } = makeCapability({ withServices: true })
+    // s1: 注册会话 — live + 投影都有记录; s2: 未注册会话 — 仅 live (purge 要清的残留面)。
+    api.set('s1', 'observe')
+    api.set('s2', 'full')
+    expect(api.current('s1')).toBe('observe')
+    expect(api.current('s2')).toBe('full')
+    // 注销 s2: live 残留清除 → 回落缺省 (W11.1①: 旧实现无 forget, 此处即会红)。
+    api.forget('s2')
+    expect(api.current('s2')).toBe('operate')
+    // s1 条目不受波及; 且 live 清除后投影持久事实 (§10) 仍然生效。
+    api.forget('s1')
+    expect(api.current('s1')).toBe('observe')
+    // 幂等: 重复 forget 空操作。
+    api.forget('s2')
+    expect(api.current('s2')).toBe('operate')
+  })
+
   it('投影注册声明: 状态校验与折叠只认本单元事件', () => {
     const { registered } = makeCapability({ withServices: true })
     expect(registered).toHaveLength(1)
