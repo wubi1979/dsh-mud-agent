@@ -6,6 +6,7 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "test": "pnpm exec vitest run test"
+    "test": "pnpm exec vitest run test",
+    "typecheck": "tsc -p tsconfig.test.json"
   }
 }
