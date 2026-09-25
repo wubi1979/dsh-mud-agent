@@ -1,0 +1,11 @@
+{
+  "name": "mud-core2",
+  "description": "MUD autonomous player core v2 (five-layer mind: link / awareness / wake / persona+tools / subagent). Design docs in doc/; skeleton only — implementation pending.",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "pnpm exec vitest run test"
+  }
+}
