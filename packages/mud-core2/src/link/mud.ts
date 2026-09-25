@@ -20,11 +20,10 @@
  *   - 重连（再次 connect）：行缓冲/样式游标复位（parser.reset），**abs 连续
  *     递增不归零**（行号空间是 Mud 生命周期的，跨重连不复用，避免行号碰撞）。
  *
- * 判定序（写死，impl §3.2）：danger > failOn > until > gaCount > quietMs >
- * timeoutMs > maxLines。danger 不在本层测 —— 意识层在 onLine 钩子里同步判
- * （与意识层同一份 danger.ts），命中即 abortWait('danger')。maxLines 是行数
- * 兜底，**排在判定序末位**：只在 failOn/until/gaCount 均未命中后检查，不得
- * 抢在边界关窗之前剪断。
+ * 判定序（写死，impl §3.2）：同步关窗序 **failOn > until > gaCount > maxLines**
+ * （maxLines 与 gaCount 同属同步关窗、排末位）；quietMs/timeoutMs 是**异步**
+ * 收束源（计时器到点），与同步判据竞速。danger 不在本层测 —— 意识层在
+ * onLine 钩子里同步判（与意识层同一份 danger.ts），命中即 abortWait('danger')。
  * 声明了 until 却未见完成句收场 → 记 error（判据失配要吵，语料可见）。
  * 失配按**关窗者**判（impl §3.2）：quiet/timeout 收场、或被 **maxLines** 剪断
  * （done 且命中来源为 maxLines）而 until 未命中 —— 都算失配；**GA/EOR 边界
