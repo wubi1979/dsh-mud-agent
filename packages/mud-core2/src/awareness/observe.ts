@@ -37,6 +37,13 @@ export interface AwarenessDeps {
   world: World
   /** 危险命中上抛（wake 层接线：steer + 去重 latch 挂 world.inCombat）。 */
   onDanger?: (hit: DangerHit) => void
+  /**
+   * 危险命中观测（§3.8 `mud/danger-fired` 发射点）：**每次 matchDanger 命中
+   * 都回调**（命中即记，观测事实层）——不受 latch 门控、不看 wake/interrupt
+   * 声明；动作是否生效另看 latch（onDanger 才是去重后的动作通道）。装配层
+   * 接 corpus.event 在此，勿接 onDanger（那是被 latch 筛过的子集）。
+   */
+  onDangerHit?: (hit: DangerHit) => void
   /** 行到达活动锚点（wake 层接线：静默重新武装）。 */
   onActivity?: () => void
 }
@@ -73,6 +80,7 @@ export class Awareness {
       // halt、不重唤醒；abortWait 不受 latch（每次在途 read 都该被打断）；
       // 死亡类不声明 latch，每次命中都执行。
       const firstOfFight = d.rule.latch !== 'combat' || prevCombat !== true
+      this.deps.onDangerHit?.(d) // 命中即记（观测层，不受 latch/声明门控）
       if (firstOfFight) {
         if (d.rule.interrupt) this.deps.mud.send('halt')
         if (d.rule.wake) this.deps.onDanger?.(d)

@@ -195,6 +195,8 @@ src/
 │   └── flows/        # types / index / login / fullme
 ├── subagent/         # 子级编排（接线层）
 │   └── subagent.ts   # agent/created 监听 + 预算登记与到期 interrupt
+├── observe/          # 观测（接线层）
+│   └── meter.ts      # 计数护栏（impl §3.8 两个量）+ §4 每场景断言面
 └── lessons.ts        # 教训库（第二期）
 skills/               # 程序记忆（人写种子 SKILL.md；热加载宿主原生）
 package.json / cordis.patch.yml / vitest.config.ts
@@ -482,14 +484,14 @@ T2 输出计划（assistant message，含要点+边界声明）
 ### 3.8 观测（corpus.ts）
 
 - **行流语料**：JSONL 全量落盘（时间戳 + 原文）——自有通道；**不进 Session**（`session.append` 是同步通知、高频行会拖账；自定义类型虽 log-only（`session/index.ts:720-724`），行级频率仍只落 JSONL）；
-- **Session log-only 事件**（交换级，低频，白名单外天然不进模型）：`mud/command-sent`、`mud/exchange-complete`（read 返回时）、`mud/danger-fired`、`mud/flow-result`；
-- **计数（写死，两个量）**：**决策点数 = `step/start` 数**（正确性护栏：空续步必须为 0）；**实际调用数 = `assistant/message` ∪ `assistant/attempt`**（成本侧，两者之差即重试/失败）。**禁用 `request/header`**（只在 initial/resume/change/series 时发）。
+- **交换级事件（定案：只落自有 JSONL 通道，不进 Session）**：`mud/command-sent`、`mud/exchange-complete`（read 返回时）、`mud/danger-fired`（**命中即记**，不受 latch 门控——动作去重另算）、`mud/flow-result`。理由双重：① 凭据类发送在其中（login 的 name/pass），进 Session 有明文入账风险，JSONL 由 `sendCredential` 通道再减一层（凭据两条不落 command-sent）；② 频率虽低于行级，仍属诊断面，白名单外天然不进模型，落本地文件即可对账；
+- **计数（写死，两个量，design4 §8 口径）**：**决策点数 = `step/start` 数**（正确性护栏：空续步必须为 0）；**实际调用数 = `assistant/message` ∪ `assistant/attempt`**（每次尝试恰发两者之一，其和 = 尝试总数）。**重试/失败漂移 = 实际调用数 − 决策点数**（一步可含多次请求，重试走 continue、不新增 step/start——不是 message/attempt 两流之差）。**禁用 `request/header`**（只在 initial/resume/change/series 时发）。
 
 ---
 
 ## 4. 观测与验收账目
 
-**计数口径（写死）**：见 §3.8——`step/start` 作决策点护栏，`assistant/message ∪ assistant/attempt` 作实际调用数；`request/header` 不可用于计数。
+**计数口径（写死）**：见 §3.8——`step/start` 作决策点护栏，`assistant/message ∪ assistant/attempt` 作实际调用数，重试/失败 = 调用数 − 决策点数；`request/header` 不可用于计数。
 
 **四行为验收**
 

@@ -81,6 +81,8 @@ async function setup(): Promise<{ mud: Mud, server: TestServer }> {
 describe('login 流程（实录刻度）', () => {
   it('happy path: 名字 → 密码 → 成功句 → 空命令收尾+收口; 行流干净', async () => {
     const { mud, server } = await setup()
+    const sent: string[] = []
+    mud.onSend = cmd => sent.push(cmd) // command-sent 观测（凭据须缺席）
     const p = LOGIN_FLOW.run({ mud, creds: CREDS, holder: 'root', defaultTimeoutMs: 30_000 })
 
     server.write('欢迎来到北大侠客行。\r\n您的英文名字（要注册新人物请输入new。）：\r\n')
@@ -93,6 +95,9 @@ describe('login 流程（实录刻度）', () => {
 
     const r = await p
     expect(r).toEqual({ done: true })
+    // 凭据经 sendCredential 直发：不进 command-sent，本地 JSONL 无明文可落。
+    expect(sent).not.toContain(CREDS.name)
+    expect(sent).not.toContain(CREDS.pass)
     // 行流干净：收尾帧已被流程消费，缓冲无残留（探针读不出现任何行）
     const probe = await mud.read({ holder: 'root', until: [/永远不会出现/], timeoutMs: 150 })
     expect(probe.lines).toEqual([])

@@ -87,6 +87,17 @@ describe('observe 调度（假 deps）', () => {
     expect(deps.dangers).toEqual(['遭攻击', '遭攻击'])
   })
 
+  it('onDangerHit 命中即记: 每次 matchDanger 命中都回调, 不受 latch 门控 (§3.8 danger-fired 发射点)', () => {
+    const hits: string[] = []
+    const deps = fakeDeps(new World())
+    const awareness = new Awareness({ ...deps, onDangerHit: hit => hits.push(hit.rule.why) })
+    awareness.observe(mkLine('不知哪里杀出一人向你袭来！')) // 首次命中
+    awareness.observe(mkLine('对手再次向你攻来！')) // 战斗中再命中（latch 拦住动作）
+    // 命中观测 2 次；去重后的动作通道（onDanger）只 1 次。
+    expect(hits).toEqual(['遭攻击', '遭攻击'])
+    expect(deps.dangers).toEqual(['遭攻击'])
+  })
+
   it('反射命中：直发命令并返回 swallow（吞触发行、留结果）', () => {
     const deps = fakeDeps(new World())
     const awareness = new Awareness(deps)

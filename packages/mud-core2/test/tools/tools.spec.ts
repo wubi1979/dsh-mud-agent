@@ -230,6 +230,28 @@ describe('mud_flow', () => {
     expect(await flow.execute({ id: 'f-danger' }, { signal })).toEqual({ ok: true, reason: 'danger' })
   })
 
+  it('三出口各发一条 mud/flow-result 交换事件 (§3.8, data={flow,outcome})', async () => {
+    const flows: Flow[] = [
+      { id: 'f-done', description: '', async run() { return { done: true } } },
+      { id: 'f-q', description: '', async run() { return { done: false, question: 'q', lines: [mkLine('l')] } } },
+      { id: 'f-danger', description: '', async run() { return { reason: 'danger' } } },
+    ]
+    const events: Array<{ type: string; data?: unknown }> = []
+    const deps = makeDeps({ flows, onExchange: (type, data) => events.push({ type, data }) })
+    const { defs } = register(deps)
+    const flow = defs.get('mud_flow')!
+    const signal = new AbortController().signal
+
+    await flow.execute({ id: 'f-done' }, { signal })
+    await flow.execute({ id: 'f-q' }, { signal })
+    await flow.execute({ id: 'f-danger' }, { signal })
+    expect(events).toEqual([
+      { type: 'mud/flow-result', data: { flow: 'f-done', outcome: 'done' } },
+      { type: 'mud/flow-result', data: { flow: 'f-q', outcome: 'question' } },
+      { type: 'mud/flow-result', data: { flow: 'f-danger', outcome: 'danger' } },
+    ])
+  })
+
   it('answer 透传给流程（根侧带答案重入）', async () => {
     let seen: unknown
     const flows: Flow[] = [{

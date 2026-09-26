@@ -63,7 +63,8 @@ export const LOGIN_FLOW: Flow = {
 
     // 1. 等名字提示（连接横幅后的入口行）。
     await step(mud, { holder, until: UNTIL_NAME, timeoutMs: defaultTimeoutMs }, signal, '等名字提示')
-    mud.send(creds.name)
+    // 凭据经 sendCredential 直发：不触发 onSend，连本地 JSONL 都不留明文。
+    mud.sendCredential(creds.name)
 
     // 2. 等密码提示；用户名不存在（需要创建新人物）= 实质失败。
     const rPass = await step(
@@ -73,7 +74,7 @@ export const LOGIN_FLOW: Flow = {
       '等密码提示',
     )
     if (rPass.reason === 'failOn') throw new FlowError('登录失败：用户名不存在（需要创建新人物）')
-    mud.send(creds.pass)
+    mud.sendCredential(creds.pass)
 
     // 3. 等替换询问或成功句（谁先到谁生效；密码错误 failOn）。
     const r3 = await step(

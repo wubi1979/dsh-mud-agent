@@ -60,6 +60,13 @@ export interface MudToolDeps {
   /** 本工具面所在会话的持有者身份（'root' | `child:<id>`）：deny 判据 + read/流程参数。 */
   holder: Holder
   /**
+   * 交换级事件面（§3.8，可选）：mud_flow 三出口在此发 `mud/flow-result`
+   * （data = { flow, outcome }）；mud_send/login 的 command-sent、
+   * exchange-complete 由 mud.onSend/onExchange 发射（装配统一接 corpus）。
+   * 白名单外天然 log-only，是否进 Session 归装配裁量。
+   */
+  onExchange?: (type: string, data?: unknown) => void
+  /**
    * 缺省总超时毫秒（Config 供给，取值待 §6 校准）：兼两用 —— mud_send 的
    * 缺省总超时（§3.5"必须显式给出或由工具注入缺省"）与流程单步兜底超时
    * （FlowCtx.defaultTimeoutMs，经 LoginGate/mud_flow 双路传入）。
@@ -350,10 +357,12 @@ export function registerMudTools(
         signal: exec.signal,
       })
       if ('done' in r) {
+        deps.onExchange?.('mud/flow-result', { flow: args.id, outcome: r.done ? 'done' : 'question' })
         return r.done
           ? { ok: true, done: true }
           : { ok: true, done: false, question: r.question, lines: r.lines.map(l => l.text) }
       }
+      deps.onExchange?.('mud/flow-result', { flow: args.id, outcome: 'danger' })
       return { ok: true, reason: 'danger' }
     },
   }

@@ -173,6 +173,51 @@ describe('read 竞速机', () => {
     await server.close()
   })
 
+  it('onSend 观测钩子: 成功发送才回调命令原文 (§3.8 command-sent 发射点)', async () => {
+    const { mud, server } = await setup()
+    const sent: string[] = []
+    mud.onSend = cmd => sent.push(cmd)
+    mud.send('look')
+    await server.waitFor('look')
+    expect(sent).toEqual(['look'])
+    mud.close()
+    const beforeFail = sent.length
+    mud.send('quit') // 未连接：发送失败，不记 command-sent
+    expect(sent.length).toBe(beforeFail)
+  })
+
+  it('onExchange 观测钩子: read 收束时回调 { reason, lines } (§3.8 exchange-complete 发射点)', async () => {
+    const { mud, server } = await setup()
+    const exchanges: Array<{ reason: string; lines: number }> = []
+    mud.onExchange = info => exchanges.push(info)
+    const p = mud.read({ holder: 'root', until: [/密码/], timeoutMs: 2000 })
+    server.write('欢迎\n请输入密码：\n')
+    await p
+    expect(exchanges).toEqual([{ reason: 'done', lines: 2 }])
+    await server.close()
+  })
+
+  it('sendCredential 凭据直发: 不触发 onSend (连本地 JSONL 都不留明文)', async () => {
+    const { mud, server } = await setup()
+    const sent: string[] = []
+    mud.onSend = cmd => sent.push(cmd)
+    mud.sendCredential('hunter')
+    mud.send('look')
+    await server.waitFor('look')
+    expect(sent).toEqual(['look']) // 凭据对 command-sent 缺席
+    await server.close()
+  })
+
+  it('断线窗口 read: 早退也发 exchange-complete (故障场景不留"有动作无交换"缺口)', async () => {
+    const { mud } = await setup()
+    const exchanges: Array<{ reason: string; lines: number }> = []
+    mud.onExchange = info => exchanges.push(info)
+    mud.close()
+    const r = await mud.read({ holder: 'root', timeoutMs: 200 })
+    expect(r.reason).toBe('disconnected')
+    expect(exchanges).toEqual([{ reason: 'disconnected', lines: 0 }])
+  })
+
   it('failOn 优先于 until (判定序写死)', async () => {
     const { mud, server } = await setup()
     const p = mud.read({ holder: 'root', until: [/成功/], failOn: [/失败/], timeoutMs: 2000 })

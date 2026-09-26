@@ -133,6 +133,17 @@ export class Mud {
   onBoundary: ((kind: 'ga' | 'eor') => void) | null = null
   /** 断线钩子：经危险 latch 醒根、登录标志复位由装配层接线。 */
   onDisconnect: (() => void) | null = null
+  /**
+   * 直发观测钩子（§3.8 交换级事件 `mud/command-sent` 的发射点）：send 成功
+   * 后以命令原文回调。**凭据不在此列**（login 的 name/pass 走 sendCredential，
+   * 见下——不触发本钩子，连本地 JSONL 都不留明文）。装配侧只接 JSONL 自有
+   * 通道（corpus.event），**不接 session.append**（防明文入账；语料/诊断是
+   * 本地文件，白名单外天然不进模型上下文）。
+   */
+  onSend: ((cmd: string) => void) | null = null
+  /** read 收束观测钩子（§3.8 `mud/exchange-complete` 发射点）：收束原因 + 行数。
+   *  低频（每次 read 一次）；装配接 corpus.event（进 Session 与否归装配裁量）。 */
+  onExchange: ((info: { reason: ReadReason; lines: number }) => void) | null = null
 
   get connected(): boolean {
     return this.conn?.connected ?? false
@@ -159,8 +170,18 @@ export class Mud {
     conn.connect()
   }
 
-  /** 直发：反射/流程共用；不占行流、不做任何判据。未连接返回 false。 */
+  /** 直发：反射/流程共用；不占行流、不做任何判据。未连接返回 false。
+   *  成功才触发 onSend（未连接的发送不记 command-sent）。 */
   send(cmd: string): boolean {
+    const ok = this.conn?.send(cmd) ?? false
+    if (ok) this.onSend?.(cmd)
+    return ok
+  }
+
+  /** 凭据专用直发（login 发 creds.name/pass）：行为同 send，但**不触发
+   *  onSend**——凭据连本地 JSONL 都不留明文（语料入仓即带口令的风险），
+   *  command-sent 对这两条发送表现为缺席（有交换、无命令记录）。 */
+  sendCredential(cmd: string): boolean {
     return this.conn?.send(cmd) ?? false
   }
 
@@ -186,6 +207,8 @@ export class Mud {
       )
     }
     if (!this.connected) {
+      // 断线窗口的 read 也留 exchange-complete（故障场景不留"有动作无交换"缺口）。
+      this.onExchange?.({ reason: 'disconnected', lines: 0 })
       return Promise.resolve({ lines: [], reason: 'disconnected' })
     }
     // 先消费 buffer：本次 send 之前到达的行先结算。
@@ -352,6 +375,7 @@ export class Mud {
       rest = restLines
     }
     const result: ReadResult = rest !== undefined ? { lines: state.acc, reason, rest } : { lines: state.acc, reason }
+    this.onExchange?.({ reason, lines: state.acc.length })
     state.resolve(result)
   }
 
