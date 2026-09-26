@@ -67,6 +67,11 @@ export interface MudToolDeps {
   defaultTimeoutMs: number
   /** 流程注册表（缺省共享 FLOWS；测试可注入本地表）。 */
   flows?: readonly Flow[]
+  /**
+   * 共享登录闸门（缺省新建）。多 agent（根 + 子级）共享**一次**登录：装配经
+   * createAgentCreatedHandler 注入同一实例，避免每个会话各建一闸、重复登录。
+   */
+  gate?: LoginGate
 }
 
 // ── 子会话静态禁发表（首词一行判断；deniedCommands 承旧实录）─────────────
@@ -226,7 +231,7 @@ export function registerMudTools(
   deps: MudToolDeps,
 ): { disposers: Array<() => void>; gate: LoginGate } {
   const flows = deps.flows ?? FLOWS_REF
-  const gate = new LoginGate(deps.mud, deps.world, flows, deps.creds, deps.connect, deps.defaultTimeoutMs)
+  const gate = deps.gate ?? new LoginGate(deps.mud, deps.world, flows, deps.creds, deps.connect, deps.defaultTimeoutMs)
 
   const mudSend: MudToolDefinition = {
     name: 'mud_send',
