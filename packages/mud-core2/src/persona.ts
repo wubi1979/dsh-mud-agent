@@ -14,6 +14,8 @@
  * T2 做计划级决策；无两执行者——子 agent 是计划执行半边。
  */
 
+import { FULLME_REMINDER_TEXT } from './tools/flows/fullme.ts'
+
 /** 段名（稳定字符串；重复注册宿主会抛错）。 */
 export const PERSONA_SECTION_NAME = 'mud:persona'
 
@@ -29,7 +31,9 @@ export interface SystemPromptRegistry {
   section(section: { name: string; order: number; text: string }): () => void
 }
 
-/** persona 段正文（静态文本；不引用 prompt 变量）。 */
+/** persona 段正文（静态文本；不引用 prompt 变量）。fullme 入口提醒行文经
+ *  常量插值进入正文——FULLME_REMINDER_TEXT 的唯一消费点（流程层不再判它：
+ *  入口由模型自决，impl §3.6）。 */
 export function personaText(): string {
   return `# MUD 玩家身份与纪律
 
@@ -61,7 +65,7 @@ export function personaText(): string {
 
 ## fullme 兜底常识
 
-遇到验证码（fullme）时，第一期没有识别工具：流程会把问题上浮回你这里，你问人取码，拿到后带答案重入当前计划（mud_flow 传 answer），不要为此放弃整场计划。`
+行流出现"${FULLME_REMINDER_TEXT}"这类 fullme 提醒时，调 mud_flow fullme（流程收图并把问题上浮回你这里）；第一期没有识别工具：你问人取码，拿到后带答案重入当前计划（mud_flow 传 answer，空答案不要提交），不要为此放弃整场计划。`
 }
 
 /** 注册 persona 段（装配时调用：registerPersona(ctx.systemPrompt)）；返回宿主 disposer（副作用释放归装配层持有）。 */

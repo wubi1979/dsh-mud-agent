@@ -13,6 +13,7 @@ import {
   personaText,
   registerPersona,
 } from '../src/persona.ts'
+import { FULLME_REMINDER_TEXT } from '../src/tools/flows/fullme.ts'
 
 describe('registerPersona', () => {
   it('以 {name, order, text} 对象注册（prompt 不自拼，走宿主 section 组装）', () => {
@@ -76,5 +77,8 @@ describe('persona 正文内容清单（impl §3.4）', () => {
     expect(text).toContain('问人取码')
     expect(text).toContain('重入当前计划')
     expect(text).toContain('answer')
+    // 入口映射句：提醒行文常量插值 + 调用入口（FULLME_REMINDER_TEXT 唯一消费点）
+    expect(text).toContain(FULLME_REMINDER_TEXT)
+    expect(text).toContain('调 mud_flow fullme')
   })
 })

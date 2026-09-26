@@ -171,7 +171,6 @@ describe('流程注册表', () => {
   })
 
   it('查无此 id 返回 null（mud_flow 据此直接拒）', () => {
-    expect(getFlow('fullme')).toBeNull()
     expect(getFlow('不存在的流程')).toBeNull()
   })
 })

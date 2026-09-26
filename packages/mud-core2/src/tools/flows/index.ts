@@ -5,12 +5,14 @@
  * 模型上下文。查无此 id = 越权/不存在，mud_flow 直接拒（§3.5 静态遮蔽）。
  */
 
+import { FULLME_FLOW } from './fullme.ts'
 import { LOGIN_FLOW } from './login.ts'
 import type { Flow } from './types.ts'
 
 /** 流程注册表（新流程追加到此数组）。 */
 export const FLOWS: readonly Flow[] = [
   LOGIN_FLOW,
+  FULLME_FLOW,
 ]
 
 /** 按 id 查流程；查无返回 null（工具层据此直接拒）。 */
