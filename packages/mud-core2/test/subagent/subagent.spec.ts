@@ -1,19 +1,21 @@
 import { describe, expect, it, vi } from 'vitest'
-import { BudgetRegistry, createAgentCreatedHandler, depthByOptions, type SubagentAgent } from '../../src/subagent/subagent.ts'
-import { World } from '../../src/awareness/world.ts'
-import type { Flow } from '../../src/tools/flows/types.ts'
-import type { Mud } from '../../src/link/mud.ts'
-import type { MudLine } from '../../src/link/ansi.ts'
-import type { MudToolDefinition } from '../../src/tools/tools.ts'
+import { BudgetRegistry, depthByHeader, depthByOptions, type SubagentAgent } from '../../src/subagent/subagent.ts'
 
-/** 宿主 Agent 的测试桩。 */
-function mkAgent(id: string, subagentDepth?: number): SubagentAgent & { cancels: Array<{ cause: unknown; options: unknown }> } {
+/** 宿主 Agent 的测试桩（子级必带 header.parentSession——P2 D3 参数源）。 */
+function mkAgent(
+  id: string,
+  subagentDepth?: number,
+  parentSession?: string,
+): SubagentAgent & { cancels: Array<{ cause: unknown; options: unknown }> } {
   const cancels: Array<{ cause: unknown; options: unknown }> = []
   return {
     id,
     options: subagentDepth === undefined ? {} : { subagentDepth },
     session: {
-      header: subagentDepth === undefined ? {} : { delegationDepth: subagentDepth },
+      header: {
+        ...(subagentDepth === undefined ? {} : { delegationDepth: subagentDepth }),
+        ...(parentSession === undefined ? {} : { parentSession }),
+      },
     },
     cancel(cause, options) {
       cancels.push({ cause, options })
@@ -36,7 +38,7 @@ describe('BudgetRegistry（插件唯一保留的子级运营状态）', () => {
     try {
       const onExpire = vi.fn()
       const budget = new BudgetRegistry({ budgetMs: 20_000, onExpire })
-      const agent = mkAgent('child-a', 1)
+      const agent = mkAgent('child-a', 1, 'root-x')
       budget.register(agent)
 
       expect(budget.size).toBe(1)
@@ -53,26 +55,32 @@ describe('BudgetRegistry（插件唯一保留的子级运营状态）', () => {
     }
   })
 
-  it('注入 interruptAgent：到期走宿主入口通路，不走直接 cancel', () => {
+  it('注入 interruptAgent：到期走宿主入口通路，参数源 = 登记时的直接父会话（P2 D3）', () => {
     vi.useFakeTimers()
     try {
       const interruptAgent = vi.fn()
       const budget = new BudgetRegistry({ budgetMs: 10_000, interruptAgent })
-      const agent = mkAgent('child-a2', 1)
+      const agent = mkAgent('child-a2', 1, 'proxy-root')
       budget.register(agent)
       vi.advanceTimersByTime(10_000)
-      expect(interruptAgent).toHaveBeenCalledWith('child-a2')
+      expect(interruptAgent).toHaveBeenCalledWith('child-a2', 'proxy-root')
       expect(agent.cancels).toEqual([]) // 直接 cancel 未被调用
     } finally {
       vi.useRealTimers()
     }
   })
 
+  it('子级缺 header.parentSession → 登记即 fail-loud（D3：参数缺失不允许静默登记）', () => {
+    const budget = new BudgetRegistry({ budgetMs: 10_000 })
+    expect(() => budget.register(mkAgent('child-no-parent', 1))).toThrow(TypeError)
+    expect(budget.size).toBe(0)
+  })
+
   it('clear() 撤 timer：终结后到期不 interrupt', () => {
     vi.useFakeTimers()
     try {
       const budget = new BudgetRegistry({ budgetMs: 20_000 })
-      const agent = mkAgent('child-b', 1)
+      const agent = mkAgent('child-b', 1, 'root-x')
       budget.register(agent)
       budget.clear('child-b')
       vi.advanceTimersByTime(60_000)
@@ -87,10 +95,10 @@ describe('BudgetRegistry（插件唯一保留的子级运营状态）', () => {
     vi.useFakeTimers()
     try {
       const budget = new BudgetRegistry({ budgetMs: 50_000 })
-      const first = mkAgent('child-c', 1)
+      const first = mkAgent('child-c', 1, 'root-x')
       budget.register(first)
       vi.advanceTimersByTime(15_000)
-      const resumed = mkAgent('child-c', 1) // 同 id 重入（resume 重建 agent 对象）
+      const resumed = mkAgent('child-c', 1, 'root-x') // 同 id 重入（resume 重建 agent 对象）
       budget.register(resumed)
       vi.advanceTimersByTime(20_000) // t=35s：旧预算（t=0 计 50s）与新预算（t=15s 计）都未到期
 
@@ -109,8 +117,8 @@ describe('BudgetRegistry（插件唯一保留的子级运营状态）', () => {
     vi.useFakeTimers()
     try {
       const budget = new BudgetRegistry({ budgetMs: 20_000 })
-      const a = mkAgent('child-d', 1)
-      const b = mkAgent('child-e', 1)
+      const a = mkAgent('child-d', 1, 'root-x')
+      const b = mkAgent('child-e', 1, 'root-x')
       budget.register(a)
       budget.register(b)
       budget.dispose()
@@ -124,73 +132,16 @@ describe('BudgetRegistry（插件唯一保留的子级运营状态）', () => {
   })
 })
 
-describe('createAgentCreatedHandler（agent/created 处理器，宿主作用域装配）', () => {
-  function setup(budgetMs = 60_000, depthOf: (a: SubagentAgent) => number = depthByOptions) {
-    const world = new World()
-    const mud = { connected: false, send: () => true, connect: () => {}, read: () => undefined } as unknown as Mud
-    const scope = { register: () => () => {} }
-    const handler = createAgentCreatedHandler(
-      { mud, world, creds: { name: 'u', pass: 'p' }, connect: { host: 'localhost', port: 23 }, defaultTimeoutMs: 30_000 },
-      { budgetMs },
-      depthOf,
-    )
-    return { handler, scope, world }
-  }
-
-  it('root agent：holder=root，三工具注册完整（自检），不登记预算', () => {
-    const { handler, scope } = setup()
-    const r = handler.handleCreated(scope, mkAgent('root-1'))
-    expect(r.holder).toBe('root')
-    expect(handler.budget.size).toBe(0)
+describe('深度判定（D2：header 权威，options 兜底）', () => {
+  it('depthByHeader：max(header.delegationDepth, options.subagentDepth)；resume 场景 header 不被 options 覆盖', () => {
+    expect(depthByHeader(mkAgent('r'))).toBe(0)
+    expect(depthByHeader(mkAgent('c1', 1, 'p'))).toBe(1)
+    // resume 携新 options（subagentDepth 缺席）时 header 权威
+    expect(depthByHeader({ id: 'r2', options: {}, session: { header: { delegationDepth: 2 } }, cancel: () => {} })).toBe(2)
   })
 
-  it('child agent：holder=child:<id>，登记预算', () => {
-    const { handler, scope } = setup()
-    const r = handler.handleCreated(scope, mkAgent('sess-1', 1))
-    expect(r.holder).toBe('child:sess-1')
-    expect(handler.budget.size).toBe(1)
-  })
-
-  it('depthOf 必填：header 权威判定由装配层供给（resume 子级不被误判 root）', () => {
-    // 模拟 resume：options 缺 subagentDepth，header 带深度（装配读宿主 header）。
-    const agent = { id: 'sess-2', options: {}, session: { header: {} }, cancel: () => {} }
-    const headerDepth: (a: SubagentAgent) => number = () => 1
-    const { handler, scope } = setup(60_000, headerDepth)
-    const r = handler.handleCreated(scope, agent)
-    expect(r.holder).toBe('child:sess-2')
-    expect(handler.budget.size).toBe(1)
-  })
-
-  it('gate 跨 agent 共享：两次 handleCreated 共乘一次登录（登录流程只跑一次）', async () => {
-    const runs: number[] = []
-    const sent: string[] = []
-    const fakeLogin: Flow = { id: 'login', description: 'fake', async run() { runs.push(1); return { done: true } } }
-    const world = new World()
-    const mud = {
-      connected: false,
-      send: (cmd: string) => { sent.push(cmd); return true },
-      connect: () => {},
-      read: async () => ({ lines: [] as MudLine[], reason: 'done' }),
-    } as unknown as Mud
-    const handler = createAgentCreatedHandler(
-      { mud, world, creds: { name: 'u', pass: 'p' }, connect: { host: 'localhost', port: 23 }, defaultTimeoutMs: 30_000, flows: [fakeLogin] },
-      { budgetMs: 60_000 },
-      depthByOptions,
-    )
-
-    // 两次创建（root + child），各自捕获注册到的 mud_send。
-    const sends: Array<MudToolDefinition> = []
-    for (const agent of [mkAgent('root-x'), mkAgent('sess-x', 1)]) {
-      const defs = new Map<string, MudToolDefinition>()
-      handler.handleCreated({ register: (def) => { defs.set(def.name, def); return () => {} } }, agent)
-      sends.push(defs.get('mud_send')!)
-    }
-
-    // 各自执行一次 mud_send：共享闸门 ⇒ 隐式登录只发生一次。
-    const signal = new AbortController().signal
-    await sends[0]!.execute({ cmd: 'look' }, { signal })
-    await sends[1]!.execute({ cmd: 'look' }, { signal })
-    expect(runs).toHaveLength(1)
-    expect(sent).toEqual(['look', 'look'])
+  it('depthByOptions：纯 options 读法（仅供测试与已知无 resume 场景显式选用）', () => {
+    expect(depthByOptions(mkAgent('r'))).toBe(0)
+    expect(depthByOptions(mkAgent('c1', 1, 'p'))).toBe(1)
   })
 })

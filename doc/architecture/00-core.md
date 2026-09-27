@@ -93,7 +93,9 @@
 根 T2 agent（一 session 一 agent，宿主强制 agent/src/index.ts:467）
   │  计划编制（assistant message 落日志，不建 plan 存储，I8）
   │  派单 = T2 调宿主原生 `subagent` 工具（provider=spawn、backgroundMode=continuable，
-  │    preset 已挂，agent.cordis.yml:180-186）——插件不自建派单通道（I6）
+  │    preset 已挂，宿主 bundle/web-app/presets/standard.patch.yml 的 tool-subagent 行；
+  │    本仓 cordis.patch.yml 为其逐条副本 + 本包 preset 行，漂移守卫 test/patch.spec.ts）
+  │    ——插件不自建派单通道（I6）
   ▼
 子 agent（每计划一个，串行执行 N 个要点；无跨计划记忆）
   │  结算（完成/受阻/越界请示/异常终止）→ 宿主投递结算通知（best-effort，§8）
@@ -119,9 +121,14 @@
 ```
 mud-core2/
 ├── src/
-│   ├── index.ts          # apply(ctx, config) 装配一切（唯一大范围碰 ctx 的文件）
+│   ├── index.ts          # apply(ctx, config) 装配一切（唯一大范围碰 ctx 的文件）：
+│   │                     #   provide mudCore2 引擎窄面（含调用期 resolveHolder：depth 判定
+│   │                     #   + 单根守卫）、agent/created 分流（根→Wake/子→预算）、归属门
+│   │                     #   = composedPreset === 'mud-player'
 │   ├── config.ts         # Config schema（连接、静默/超时缺省、路径、预算缺省、教训上限）
-│   ├── persona.ts        # 思考层"软件"：systemPrompt.section 注册（不是自拼字符串）
+│   ├── preset.ts         # preset 行插件：三工具 + persona section 在 preset 作用域注册一次
+│   │                     #   （根与子级同见；注册期不依赖引擎，执行期 ctx.get 解析）
+│   ├── persona.ts        # 思考层"软件"：persona 段正文与注册窄接口（经 preset 行注册）
 │   ├── link/             # 存在层（纯 TS，零宿主依赖，可独立回放测试）
 │   │   ├── mud.ts        # 连接、行流分发、持有者、read 竞速机（响应 signal + 自带超时）
 │   │   ├── telnet.ts     # telnet 协议层（IAC/MCCP2/GA/EOR → 边界事件）
@@ -137,15 +144,17 @@ mud-core2/
 │   │   └── context.ts    # 唤醒正文（事实短消息 + 世界摘要）——瘦
 │   ├── tools/            # 执行域（接线层）
 │   │   ├── tools.ts      # mud_send / mud_flow / mud_state + 子会话静态禁发表
+│   │   │                 #   （holder 由调用期 exec.agent 经引擎窄面 resolveHolder 解析）
 │   │   └── flows/        # types / index / login / fullme
 │   ├── subagent/         # 子级编排（接线层）
-│   │   └── subagent.ts   # agent/created 监听 + 预算登记与到期 interrupt
+│   │   └── subagent.ts   # BudgetRegistry（预算登记与到期 interrupt，参数源 =
+│   │                     #   header.parentSession）+ depth 判定；agent/created 监听在 index.ts
 │   ├── observe/          # 观测（接线层）
 │   │   └── meter.ts      # 计数护栏（§16 两个量）+ §17 每场景断言面
 │   └── lessons.ts        # 教训库（第二期）
 ├── skills/               # 程序记忆（人写种子 SKILL.md；热加载宿主原生）
 ├── package.json          # name: mud-core2，main: src/index.ts
-├── cordis.patch.yml      # 接入宿主
+├── cordis.patch.yml      # 接入宿主（registry 覆盖 default: mud-player + preset 行 + 引擎行）
 └── vitest.config.ts
 ```
 
@@ -154,7 +163,7 @@ mud-core2/
 | 存在 | link/（mud/telnet/ansi）+ awareness/world | 无（纯自建；telnet/ansi 用实录验证过的解析实现） | socket 生命周期、行流、状态机 |
 | 反射 | awareness/reflex.ts | 经 mud.send 直发（**宿主不可见**，不经工具管线） | 表数据 |
 | 意识 | awareness/observe+danger、wake/ | 危险唤醒经 `steer`（`runtime-types.ts:224-231`）；静默经 `followup`；**结算唤醒由宿主投递** | 判据、静默 timer（参考 `schedule/runtime.ts`） |
-| 思考 | persona.ts、wake/context、tools/、subagent/ | persona=`systemPrompt.section`（`:454-463`）；历史每请求自动携带（`agent-loop/agent.ts:631`）；派单=宿主原生 `subagent` 工具（preset 已挂）；权限=工具内静态禁发表 | 唤醒正文、计划格式约定、禁发表数据 |
+| 思考 | preset.ts（persona+三工具注册）、persona.ts、wake/context、tools/、subagent/ | persona=`systemPrompt.section`（经 preset 行注册，preset 作用域一次、根与子级同见）；三工具=preset 作用域 `tools.register` 一次；历史每请求自动携带（`agent-loop/agent.ts:631`）；派单=宿主原生 `subagent` 工具（preset 已挂）；权限=工具内静态禁发表 | 唤醒正文、计划格式约定、禁发表数据 |
 | 记忆 | awareness/world、lessons、skills+flows | skills 热加载原生（`skill-filesystem:492-557`）；摘要注入 `tool-skill:213-249` | lessons 存储（第二期） |
 
 **四条承载约束**（设计对宿主的硬依赖，实施时不得绕过）：
@@ -164,7 +173,7 @@ mud-core2/
 3. **直发可见性**：直发 = socket 写，**宿主与工具管线都不可见**；是否进在途等待的累积文本由我们的分发策略决定——**缺省照常进，实录若误命中再切隔离**（§4、§19）；
 4. **计数口径**：`request/header` 只在首请求/变更/series 时发，**不能计数决策点**；用 `step/start` 计决策点、`assistant/message` ∪ `assistant/attempt` 计实际调用（§16）。
 
-**纯度纪律**（纯度边界落在目录上）：`link/`、`awareness/` 为纯 TypeScript（不 import 宿主）；`wake/context.ts` 为纯函数，`wake/wake.ts` 经注入的窄接口 `{ followup, steer, idle }` 操作 agent；只有 `index / persona / tools/ / subagent/ / lessons` 的接线接触 `ctx`。
+**纯度纪律**（纯度边界落在目录上）：`link/`、`awareness/` 为纯 TypeScript（不 import 宿主）；`wake/context.ts` 为纯函数，`wake/wake.ts` 经注入的窄接口 `{ followup, steer, idle }` 操作 agent；只有 `index / preset / persona / tools/ / subagent/ / lessons` 的接线接触 `ctx`。
 
 **每层禁令**：
 

@@ -1,6 +1,10 @@
 /**
  * dsh-mud-core — preset 行测试 (`doc/ARCHITECTURE.md` §9)。
  *
+ * **[退役 2026-09-27]** v1 `packages/mud-core` 已整体退役（doc/PLAN.md「P2 修订 v2」
+ * 裁决：mud-core2 为唯一生产路径，v1 代码留存不删、停止维护）。本文件与 `presets/`
+ * 目录仅作历史追溯；生产装配与漂移守卫见 `packages/mud-core2/`（test/patch.spec.ts）。
+ *
  * 覆盖 `src/preset-agent.ts` 的契约:
  *   - 组装期注册: 每个工具声明一条注册项 (与 `mudToolSchemaTable()` 同名), 四段提示全部注册;
  *   - 执行期解析: 工具执行体按调用方 agent 的 id 取该会话工具集并委托 (per-session 状态),
@@ -11,7 +15,7 @@
  *     的相对路径 (部署根就是靠这个文件被发现)。
  */
 
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
@@ -286,52 +290,13 @@ describe('preset 组合文件 (部署根的被发现对象)', () => {
   })
 })
 
-describe('preset 副本与 harness standard 的一致性 (本机存在检出时启用)', () => {
-  // 副本是会漂移的快照 (官方 README 明列的已知限制), 所以这条守卫只在 harness 检出存在时
-  // 运行: 逐行比对 standard。它拦住的正是实测踩过的坑 —— 手抄时漏掉某行的必填 config
-  // (plan-mode 的 section), 结果是 preset 挂载失败、插件回落宿主侧装配。
-  const HARNESS_STANDARD = 'D:/code/deepseek-harness/packages/preset/agent-presets/presets/standard/agent.cordis.yml'
-  const OURS = join(import.meta.dirname, '..', 'presets', 'mud-player', 'agent.cordis.yml')
-
-  /** 按 `- id: X` 切块并归一化 (去掉注释/空行与缩进差异)。 */
-  function rowBlocks(raw: string): Map<string, string> {
-    const out = new Map<string, string>()
-    let current: string | null = null
-    let lines: string[] = []
-    const flush = (): void => { if (current !== null) out.set(current, lines.join('\n')) }
-    for (const line of raw.split('\n')) {
-      const trimmed = line.trim()
-      if (trimmed === '' || trimmed.startsWith('#')) continue
-      const match = /^-\s+id:\s*(\S+)\s*$/.exec(trimmed)
-      if (match !== null) {
-        flush()
-        current = match[1] as string
-        lines = [trimmed]
-        continue
-      }
-      if (current !== null) lines.push(trimmed)
-    }
-    flush()
-    return out
-  }
-
-  it.skipIf(!existsSync(HARNESS_STANDARD))('与 standard 逐行一致, 只多一行 mud-agent', () => {
-    const standard = rowBlocks(readFileSync(HARNESS_STANDARD, 'utf8'))
-    const ours = rowBlocks(readFileSync(OURS, 'utf8'))
-
-    const extra = [...ours.keys()].filter(id => !standard.has(id))
-    // 只多一行: mud-agent (本插件的 MUD 会话行)。曾有意多带的 workflow-worker-thread
-    // 已删除 —— 上游 35af8698c2 起删除了该插件包 (编排改走沙箱化 PTC runtime),
-    // 保留该行会让 preset 挂载报 "cannot be resolved" 并回落宿主侧装配。
-    expect(extra).toEqual(['mud-agent'])
-
-    const missing = [...standard.keys()].filter(id => !ours.has(id))
-    expect(missing, '副本缺少 standard 的行').toEqual([])
-
-    const mismatched = [...standard.keys()].filter(id => ours.get(id) !== standard.get(id))
-    expect(mismatched, '与 standard 不一致的行 (重新对齐副本, 或补齐被漏抄的 config)').toEqual([])
-  })
-})
+/**
+ * [退役 2026-09-27] 原「副本与 harness standard 逐行一致性」漂移守卫已删除：
+ * 其比对目标（旧宿主 `agent-presets/presets/standard/agent.cordis.yml`）在现行
+ * harness 已不存在，skipIf 使其恒为绿（空跑守卫，不允许）。v1 装配通道随包
+ * 退役；现行漂移守卫见 `packages/mud-core2/test/patch.spec.ts`（对
+ * `bundle/web-app/presets/standard.patch.yml` 逐条对表）。
+ */
 
 describe('patch 文件 (部署契约)', () => {
   const patch = readFileSync(join(import.meta.dirname, '..', 'cordis.patch.yml'), 'utf8')

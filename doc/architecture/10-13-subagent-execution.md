@@ -14,7 +14,7 @@
 
 ### 10.2 形态与派单
 
-用宿主原生子 agent（独立会话、隔离、结果回注）——独立会话天然实现"无目标"：它看不到主体的历史包袱，世界里只有任务；隔离同时是安全。**派单走宿主原生 `subagent` 工具**（provider=spawn、continuable，preset 已挂，`agent.cordis.yml:180-186`；seed 缺省 = 全新会话），T2 直接调用，prompt = 任务要点 + 边界声明 + 相关技能与战术教训正文（T2 用 `skill` 工具自取拼接）；插件不自建派单通道（I6）。
+用宿主原生子 agent（独立会话、隔离、结果回注）——独立会话天然实现"无目标"：它看不到主体的历史包袱，世界里只有任务；隔离同时是安全。**派单走宿主原生 `subagent` 工具**（provider=spawn、continuable，preset 已挂——宿主 `bundle/web-app/presets/standard.patch.yml` 的 tool-subagent 行，本仓 `cordis.patch.yml` 为其逐条副本；seed 缺省 = 全新会话），T2 直接调用，prompt = 任务要点 + 边界声明 + 相关技能与战术教训正文（T2 用 `skill` 工具自取拼接）；插件不自建派单通道（I6）。
 
 上下文组装：任务要点 + 边界声明 + 相关技能与战术教训 + **可自取的世界状态**——**不含全量历史**。"知道自己在做什么" = 任务上下文 + 执行中的即时感知；精确状态由子级用 `mud_state` 自取，不靠组装器搬运。
 
@@ -28,10 +28,12 @@
 - **紧急处置权**：仅限可逆的即时动作（逃跑 / 停手 / 喝药），不上报；不可逆动作（交易、丢弃、交任务）**不在子 agent 权内**——身体可以本能躲闪，不会本能地买卖贵重物品；
 - 处置不了 / 没见过的危险 → 中断执行，携现场上报 T2（目标级重规划）。
 
-### 10.4 工具可见面与 listener 作用域
+### 10.4 工具可见面与 listener 作用域（P2 D6/D8 修订）
 
-- **`agent/created` 的监听器必须注册在宿主（未限定作用域）或 preset 作用域**：父 agent 与子 agent 的作用域是**兄弟**（都挂在 preset standing key 上），注册在**父 agent 自己作用域**的监听器**看不到自己的子级**（子级可见集 = 全局层 + preset 链 + 自己的作用域，`child-agent.ts:205`；`tools.restrict()` 在父作用域上**不约束**子级）；
-- 装配期自检：**已创建子 agent 的可见面必须包含 `mud_send`/`mud_flow`/`mud_state`**；
+- **三工具由 preset 行在 preset 作用域注册一次**（`src/preset.ts`）：preset 作用域的可见集覆盖根与全部子级（1.1-4 实测证实），不再逐 agent 注册；子级身份纠正归官方 `subagent:delegation`（§9.2）；
+- **`agent/created` 监听器仍注册在插件全局层（引擎行，未限定作用域）**：父 agent 与子 agent 的作用域是**兄弟**（都挂在 preset standing key 上），注册在父 agent 自己作用域的监听器看不到自己的子级——全局层监听只承担引擎侧装配（根→单根守卫+Wake、子→预算登记），工具面与监听解耦；
+- 装配期自检：`registerMudTools` 内置**注册完整性检查**（recording registrar 收集已注册工具名，三工具缺一即 fail-loud）；
+- **`holder` 由调用期解析**（D8）：每次工具执行从宿主 `ToolExecutionInput.agent` 取当前会话，经引擎窄面 `resolveHolder` 判定（depth 判定 + D7 单根守卫）——子会话禁发表、行流持有者检查都消费这一判定，不再依赖注册期身份；
 - **子级在途时 **T2 不得直接调 `mud_send`**（应走 `send_message`/`interrupt_agent`）；纪律写进 persona（§9.2），并由 §11 的会话级持有者检查给牙齿。
 
 ### 10.5 危险 × 在途子级的通道策略（已定案）
@@ -42,7 +44,7 @@
 
 ## §11 预算与释放
 
-- **总体预算，耗尽即失败上报**：给每个子 agent 一份预算（Config 缺省）；**派单后（`agent/created`）登记截止时刻**（登记与 timer 落在 `subagent/`，与唤醒器分离——预算是子级编排的事）；到期 → `interrupt_agent`，报告**只走宿主结算路径**（interrupt → 子级到静止态 → 宿主投递结算，单一报告，插件不自报以免双结算）。**不设**子级看门狗、**不设**在途子级上限；
+- **总体预算，耗尽即失败上报**：给每个子 agent 一份预算（Config 缺省）；**派单后（`agent/created`，装配层全局监听）登记截止时刻**（timer 落在 `subagent/` 的 BudgetRegistry，与唤醒器分离——预算是子级编排的事）；到期 → **宿主 `ctx.subagents.interrupt` 通路**（durable 'user' authority），**参数源 = 登记时捕获的子级 `session.header.parentSession`**（直接父会话即宿主校验的合法形态，P2 D3；缺失即登记 fail-loud），报告**只走宿主结算路径**（interrupt → 子级到静止态 → 宿主投递结算，单一报告，插件不自报以免双结算）。**不设**子级看门狗、**不设**在途子级上限；
 - **不得用"列出子 agent"来判定**（禁止轮询 `list_agents`）：其状态字段（`inactive`）不代表任务完成（§7.2）；
 - **释放阀门是协作式的，必须自持**（I7）：宿主**没有**任何子 agent 超时；激活槽只在"启动失败回滚"（`rollbackUnpublished`）与"激活终结"（`finishDisposal`，内含 `notifySettlement`）两处释放，而"中断"只停当前回合（`agent.cancel({keepInbox:true})`）、**不释放槽**——只有当被中止的等待能到达静止态，才会触发结算并回收槽（终结由 `watchSettlement` 的 `await whenIdle()` 驱动，且要求 `inbox.hasPending === false && ownedChildren.size === 0`；激活槽缺省上限 8，超出报 `ACTIVATION_LIMIT_REACHED`）。⇒ **`wait()` 必须 ①响应 `exec.signal` ②自带超时**（绝不无界等待）。这与宿主工具超时同属"协作式、绝不硬杀"的契约：生命周期归宿主，可中止性归工具作者；
 - **失败也算结算**：预算耗尽的"超时失败"本身就是一次结算通知，经同一通道回根——**不另设"结算看门狗"**（结算通知的 best-effort 交付失败由本条承担，§8）；
@@ -53,16 +55,18 @@
 
 ## §12 工具面与静态禁发表
 
-### 12.1 工具签名（tools.ts）
+### 12.1 工具签名（tools.ts，P2 D8 后）
 
 ```ts
-mud_send({ cmd?, listen?, timeoutMs? })
+mud_send({ cmd?, listen?, timeoutMs? }, exec)
   // 无 cmd = 裸读；有 cmd = send + read（listen 缺省 gaCount:1）
   // 返回 ReadResult.lines 原文（过程即结果，模型看原文自决）
   // 超时必须显式给出或由工具注入缺省（宿主无默认超时，协作式 tools.md:64-68）
-  // 子会话命中静态禁发表（suicide/quit/drop all 类，正则一行判断）→ 直接拒
-mud_flow({ id, answer? })     // 流程注册表调用；answer = 根侧重入时带的决策/人给的值
-mud_state()                   // world 快照
+  // 调用期先经引擎窄面 resolveHolder(exec.agent) 判 holder（缺 agent 上下文 /
+  //   单根守卫命中 → 可读拒；引擎缺席 → CORE_ABSENT_ERROR 可读拒，I9）
+  // holder !== 'root' 且命中静态禁发表（suicide/quit/drop all 类，正则一行判断）→ 直接拒
+mud_flow({ id, answer? }, exec) // 流程注册表调用；answer = 根侧重入时带的决策/人给的值
+mud_state(exec)                // world 快照
 // 第一期**不注册** captchaRecognize：必然失败的桩会让模型反复调用、白烧请求（I9）
 ```
 

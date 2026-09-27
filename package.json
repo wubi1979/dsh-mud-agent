@@ -9,10 +9,8 @@
   "scripts": {
     "build": "pnpm -r build",
     "clean": "pnpm -r run clean",
-    "test": "pnpm --filter @deepseek-ai/dsh-mud-core test",
-    "dev:web": "pnpm build && pnpm --dir D:/Code/deepseek-harness dsh web --patch D:/Code/dsh-mud-agent/packages/mud-core/cordis.patch.yml --patch D:/Code/dsh-mud-agent/packages/mud-webui/cordis.patch.yml --port 3081",
-    "dev:core2": "pnpm --filter mud-core2 build && pnpm --dir D:/Code/deepseek-harness dsh web --patch D:/Code/dsh-mud-agent/packages/mud-core2/cordis.patch.yml --port 3082",
-    "restart:web": "pnpm run dev:web"
+    "test": "pnpm --filter mud-core2 test",
+    "dev:core2": "pnpm --filter mud-core2 build && pnpm --dir D:/Code/deepseek-harness dsh web --patch D:/Code/dsh-mud-agent/packages/mud-core2/cordis.patch.yml --port 3082"
   },
   "devDependencies": {
     "@types/node": "^22.20.0",

@@ -1,5 +1,7 @@
 # dsh-mud-agent
 
+> **v1 已退役（2026-09-27）**：`packages/mud-core`（+ `mud-webui`）已整体退役，代码留存不删、停止维护；本文其余章节描述 v1，仅作历史参考。**当前唯一生产路径是 [`packages/mud-core2/`](packages/mud-core2/)**——设计见 [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md)，装配见 [`packages/mud-core2/cordis.patch.yml`](packages/mud-core2/cordis.patch.yml)，开发入口见下文「当前开发入口」。
+
 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) 的 **仓库外 MUD 插件 workspace**（pkuxkx，`mud.pkuxkx.net`），独立构建、独立从 npm registry 安装依赖，不参与 harness 的根 workspace 构建链。
 
 两个兄弟子包：
@@ -29,40 +31,51 @@
 - **工具集（agent 视角）**：`mud_send`/`mud_recall`/`mud_status`/`mud_move`/`mud_look`/`world_patch`/`mud_flow_*`。工具注册在**该会话 agent 的 ctx** 上（`agent.ctx.tools.register`），闭包绑定本会话运行时，随 agent 释放（V10 计划改由官方 `mud-player` preset 挂载，见文档 §9）。
 - **HTTP/WS 入口**（全部按 `sessionId` 键控）：`POST /mud/bind`（声明"该官方会话是 MUD 会话"）、`/mud/connect`、`/mud/disconnect`、`/mud/command`、`/mud/captcha/refresh`、`/mud/logs`、`POST /mud/purge`（注销：删用户/删服务器时释放运行时与连接、删该会话全部日志文件）、`GET/POST /mud/capability`（权限档位读写）、`GET /mud/status`、`GET /mud/diag`；推送走 `/mud/ws`，条目自带 `sessionId`，前端按会话过滤。
 - **连接入口**：左栏用户行的 ⋯ 菜单（会话体在 blank 期间不渲染）；**不发送占位 prompt** —— `blank` 由首个 `turn/start` 翻转，连接后第一批发出的游戏输出自然开回合翻页。
-- **agent 装配（V10 §9，方案 A1）**：MUD 会话的能力面（工具 + 提示区段）由官方 **agent preset** 提供 —— `packages/mud-core/presets/mud-player/` 是 preset 目录，其 `agent.cordis.yml` 是 **`standard` 的整份副本 + 我们的 `mud-agent` 一行**（preset = 该会话的**全部**组装；只写自己那一行会让会话丢掉所有标准工具）。宿主在会话首个回合前用官方 `ctx.agentPresets.select(agent, 'mud-player')` 装配（仅空白会话可切），装配未落地前**不投递**；装配失败留痕并回落宿主侧装配。开关是 `Config.agentPreset`（留空 = 宿主侧装配，回退门）。升级 harness 后需重新对齐这份副本（harness 已知限制）。
-- **部署（全部在本包 patch，profile patch 留 `[]`）**：`agent-presets` 的 `roots` 与 `mud-core` 的 `agentPreset` 都写在 `packages/mud-core/cordis.patch.yml`（`--patch` 传入，启动期一层），用户不需要维护 profile patch。片段见 `doc/ARCHITECTURE.md` §9。**不要把这两条写进 profile patch**：本机 profile 是 `patchReload: live`，热应用一次 `agent-presets` 配置会重建它的常驻挂载，导致所有 preset 组装出来的工具当场消失（实测过两次，改回 `[]` 不重启即恢复）。
+- **agent 装配（v1 方案，已退役）**：v1 用 `packages/mud-core/presets/mud-player/` 目录 + `agentPreset` 选择。**已废弃**：现行装配走官方 preset 通道（`agent-preset-registry` + 行内联 preset），见 `packages/mud-core2/cordis.patch.yml` 与 doc §3.3/§10.4。
+- **部署（v1 方案，已退役）**：v1 的 `agent-presets` roots 覆盖与 `agentPreset` 写在 `packages/mud-core/cordis.patch.yml`。**已废弃**：该 `agent-presets` 行在现行宿主不存在（会得到 `patch: entry not found`）；现行部署 = `packages/mud-core2/cordis.patch.yml` 单份 patch（registry 覆盖 + preset 行 + 引擎行）。
 - **权限档位（V10 §10）**：每会话三档 `observe`（只读：`mud_state`/`mud_recall`，登录流程除外）/`operate`（读写）/`full`（+外围能力）。可见性层按档注册工具（切换即重挂），强制层是官方 `tools/pre-execute` 上的闸门（T1 反射与 T2 推理同权受约束）；危险命令走数据驱动策略表（`deny`：suicide/passwd；`ask`：abandon/steal/kill/drop/quit，`Config.dangerousCommands` 可整体覆盖）。档位是会话日志里的 `mud/capability` 事件 + `mudCapabilities` 投影，读写走 `GET/POST /mud/capability`（`/mud/status` 每行带 `tier`），页面入口在用户行 ⋯ 菜单，右栏状态区显示当前档。**preset 模式下**档位只剩强制层 + 提示说明（共享组装无法按会话切换工具集）。
 - **删除用户 / 删除服务器**：配套的官方会话走**归档**（`IWorkspaces.archiveSession` —— 官方没有删除会话，归档即从分组/搜索界面隐藏，会话文件与 workspace 记账保留）；插件侧则调 `POST /mud/purge` 释放运行时与连接、删除该会话全部日志文件、清本页与 host 缓冲。日志是我们自己的资产，按现有按会话落盘的命名直接删除。
 - **已移除**：`/mud/prepare` 与自建 agent 的 `createMudAgent`/`prepareAgent`（旧实现与官方 `ApiSessionAgentController` 争夺同一会话的 agent 生命周期，是 T1 不通的根因）。
 
 ---
 
-## 开发模式
-
-当前各包以 registry 自装依赖、`dist/` 产物通过 harness 的 **`web` profile** 加载（无需新建 profile 目录——harness 对 `web` 有内置模板，自动创建并借 module-fallback 解析 `@deepseek-ai/*` 上游）。
+## 当前开发入口（mud-core2）
 
 前置：`pnpm`、harness 克隆于 `D:/Code/deepseek-harness`、Node `^22.19 || >=24`。
 
 ```bash
-pnpm install          # 首次：按 pnpm-workspace.yaml 装全部依赖
+pnpm install            # 首次：按 pnpm-workspace.yaml 装全部依赖
 
-pnpm dev:web          # core + webui：构建并启动 harness web profile（浏览器壳）
-pnpm restart:web      # 等价 pnpm run dev:web
-
-pnpm build            # 全量构建 packages/* → dist/
-pnpm test             # core vitest（180 用例）
+pnpm dev:core2          # 构建并启动 harness web profile（mud-core2 唯一生产入口）
+pnpm build              # 构建 mud-core2 → lib/（改码后必须重建：patch 指向 lib/ 产物）
+pnpm test               # mud-core2 vitest
 ```
 
-等价的手工命令（`dev:web`）：
+等价的手工命令（`pnpm dsh` 才是部署真相；`pnpm exec dsh` 会命中全局旧版 dsh，禁用）：
 
 ```bash
+pnpm --filter mud-core2 build
 pnpm --dir D:/Code/deepseek-harness dsh web \
-  --patch D:/Code/dsh-mud-agent/packages/mud-core/cordis.patch.yml \
-  --patch D:/Code/dsh-mud-agent/packages/mud-webui/cordis.patch.yml \
-  --port 3081
+  --patch D:/Code/dsh-mud-agent/packages/mud-core2/cordis.patch.yml
 ```
 
-> 注意 `--patch` 是**最后**一层：本包 patch 负责插入 `mud-core`/`mud-webui` 两行，所以针对 `mud-core` 的配置只能写在**这份** patch 里；`agent-presets` 的 `roots` 覆盖也放这里（启动期应用，安全），**profile patch 保持 `[]`**（它是热应用的，改错会当场把 preset 组装出来的工具全部卸掉）。
+要点：
+
+- 部署值（凭据等）写在 `packages/mud-core2/cordis.patch.yml` 的 `creds`（留空即启动 fail-loud 拒装）。
+- patch `name` 用 `file:///D:/Code/dsh-mud-agent/packages/mud-core2/lib/*.js` **绝对路径**；相对名按 patch 文件所在目录解析。
+- 新会话默认装配 `mud-player` preset（registry 覆盖 `default: mud-player`）；每次启动 token 不同，WebUI 需用新 URL 打开。
+- 对宿主 `standard.patch.yml` 的逐条副本一致性由 `packages/mud-core2/test/patch.spec.ts` 漂移守卫保证；harness 换代后整批复核宿主引用（doc §0 规则 7）。
+
+---
+
+## v1 开发模式（已退役，仅历史参考）
+
+v1 以 `pnpm dev:web`（core + webui）启动，该入口已下线；以下命令不再可用：
+
+```bash
+pnpm dev:web          # [退役] core + webui：构建并启动 harness web profile（浏览器壳）
+pnpm restart:web      # [退役] 等价 pnpm run dev:web
+```
 
 要点：
 

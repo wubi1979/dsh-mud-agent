@@ -17,6 +17,7 @@
 4. `doc/mud-core/` 已整体标 **archived**：只用于追溯历史决策，**不得**据此实现或验收。
 5. 同一事实只写一处；若两处出现同一规则，以被引用方为准。设计变更只改对应章节文件，并在 CHANGELOG 登记（基线完成前暂不登记）。
 6. 代码注释引用设计一律写 `§N` 形式（如 `doc/ARCHITECTURE.md §19.3`）；"§13 的流程出口"指 [architecture/10-13-subagent-execution.md](architecture/10-13-subagent-execution.md) §13。
+7. **宿主引用整批复核**：正文中指向宿主仓（deepseek-harness）的文件/行号、preset 与 patch 机制、API 形态，随 harness 换代**整批**重新核对——一次换代做一次全量复核，不逐处信任旧行号；本仓 `cordis.patch.yml` 对宿主 standard.patch.yml 的逐条一致性由漂移守卫测试（`test/patch.spec.ts`）持续保证。
 
 ## 章节地图
 

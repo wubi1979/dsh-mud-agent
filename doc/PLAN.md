@@ -6,107 +6,208 @@
 
 ***
 
-## P2 修订 v2：装配绑定改走官方 preset 通道（现行宿主机制）
+## V4：MUD 专用 agent —— 用户 / 连接 / 会话一一对应（多用户并发）
 
-> **状态：已冻结（2026-09-27）——可作实施依据**。已裁决：① 完全采用现行官方 preset 机制（不保留旧装配代码）；② v1 `packages/mud-core` 退役、`dev:web` 下线，mud-core2 为唯一生产路径；③ 新会话默认 `mud-player`。第 3 章核实项全部核销（含 3 项现场实测），无遗留待实测。
-> 取材：2026-09-27 对现行宿主检出的机制核对与实测（见 1.1、第 3 章），取代 `doc/DISCUSS.md` 的 P2 D1/D6。
+> **状态：草案（2026-09-27）——决策已全部裁定（第 2 章），剩 11 条待核实（第 6 章）**。
+> 本版**整份替换**此前已废弃的计划文本（旧「P2 修订 v2」与「P3」）。v2 已落地代码的处置见 1.3；旧文本中的事实若有价值已在 1.2 重录并带证据。
 
-### 第 1 章 背景与决策
+### 第 1 章 业务需求与范围
 
-#### 1.1 背景（全部为实测事实）
+#### 1.1 需求（用户口径）
 
-1. **绑定不可用**：官方 WebUI「新建会话」不指定 sessionId，宿主自造 `session-<uuid>`（`api/session-controller/src/commands.ts:109`）；P2 D1 的 `rootSessionId` 硬绑定导致官方 UI 流程永远造不出被装配的会话。
-2. **宿主 preset 机制已换代**（实测：`cd D:/Code/deepseek-harness; pnpm dsh web --dump-config`，即 `dev:core2` 的同一入口）：
-   - registry 行 `id: agent-preset-registry`（`name: '@deepseek-ai/dsh-agent-preset-registry'`），config 仅 `{default, selectedDefault}`，**无 `roots` 字段**（`packages/preset/agent-preset-registry/src/index.ts:53-56`）；
-   - preset 由行内联声明：`id: preset-<name>` / `name: '@deepseek-ai/dsh-agent-preset'` / `config.{id,name,description,order,plugins}`（`packages/bundle/web-app/presets/*.patch.yml`、`packages/preset/agent-preset/src/index.ts:16-29`）；
-   - 旧机制（`@deepseek-ai/dsh-agent-presets` 包、`roots` + `trust`、`presets/<id>/preset.yml`、`agent.cordis.yml` 目录发现）在现检出中**不存在**。
-   - 注意：`pnpm exec dsh` 会命中**全局已发布的 dsh**（仍是旧机制），不代表部署真相；必须用 `pnpm dsh`（= `node --import tsx/esm apps/cli/src/bin.ts`）。
-3. **子级继承有官方保障**：`agentPresets.composeFrom(childCtx, parent.ctx)`（`packages/preset/agent-preset-registry/src/index.ts:273`）把子级挂到父级同一 preset 代际（`packages/subagent/subagent/src/child-agent.ts:205`）；子级读到继承 preset（`registry.spec.ts:92-99`）。
-4. **工具与 persona 的官方承载 = preset 的 `config.plugins` 行**（出厂 preset 的 standard/ptc/minimal/cordis 一律如此）。preset 作用域每个 revision 只挂载一次、全 preset 共享（`agent-preset-registry/src/index.ts:102-118`、`mount.ts:26-29`），且子级加入同一代际 ⇒ **preset 里注册的工具与 section 对根与子级同样可见**。
-5. **到期 interrupt 的参数源**：宿主对 `{kind:'user', parentSessionId}` 的校验正是子级 `session.header.parentSession`（`subagent/src/continuation-activation.ts:306-312`、`types.ts:65-67`）——取"子级自己的直接父会话"即合法，无需配置根。
+1. 插件实现的是 **MUD 专用 agent**，不再保留原有义务——**所有工具插件均为该用户的 MUD 游戏服务**，不是通用编码 agent；
+2. **用户在 Web 中创建**；**用户 — 连接 — 会话一一对应**；
+3. **工作区对应服务器地址**；
+4. 用户分**前台运行 / 后台运行**；**只要连接未断开、持续产生信息，agent 就必须为之提供决策**；
+5. **上浮允许**：后台也可上浮；无人应答就**超时失败**；或者**在 Web 界面提示"某用户（会话）有待答问题"**；
+6. **只有一个 preset**（角色），但**预留后期增加 preset 的位置**。
 
-#### 1.2 决策修订（P2 D1–D6 → v2）
+#### 1.2 已核实事实（全部带证据）
 
-| 决策 | 修订 | 说明 |
+**宿主模型**
+
+1. 会话↔agent 严格 1:1（`core/agent/src/index.ts:462,467`）；根会话可枚举（`agents.roots()`，`:596`）；**冷会话是文档化常态、按需恢复**（`docs/api-gateway.md:129`、`docs/subsystems/skills.md:237`）；
+2. **多会话并发跑回合 = 会话内串行、会话间并行**：prompt 路径 `session/prompt → resolveAgent（live 复用 / 冷则 resume，并发去重）→ followup(queue) / steer(步边界插话) → 该 agent 自己的 inbox`（`api/session-controller/src/commands.ts:311-365`、`.../client/contract/session.ts:82`）；`ReactLoopInbox` 是 **per-Agent 实例**（`core/agent-loop/src/agent.ts:36,159,200,262,271`；`docs/architecture.md:111` "One inbox feeds the driver"）；无全局串行点（`docs/subsystems/sandbox.md:79` 明写 permits concurrent sessions）；
+3. **无客户端在场机制**：Host 会话 RPC 只有 `list/search/create/selectModel/openWorkspacePath/rename/fork/prompt/attachment/updateQueue/cancel/page/projections`，**无 watch/retain/presence**（`api/session-controller/src/index.ts:251-490`）；客户端的 retain/release 是浏览器侧引用计数；`session-activity`/`updatedAt` 是**活动度**不是在场度；
+4. 建会话可指定 `sessionId`（`api/session-controller/src/commands.ts:109`）；无"客户端断开即回收 agent"的策略；
+5. **有宿主 storage 域可挂载**：`ctx.storage` 是 hub，数据形态由属主 `mount(form, facility)` 挂载、以 `ctx.storage.<form>` 取用，后端可换（JSON/SQLite）（`packages/storage/storage/src/index.ts:41-79`）；
+6. **有官方凭据存储**：页面 `remote.credentials.{describe,set,unset}`（`api/settings-controller/src/credentials.ts:60-105`），插件侧 `ctx.get('credentials').resolve(ref)` 实时解析（v1 先例 `mud-core/src/session/credential-source.ts:45-92`）。
+
+**工作区与会话身份**
+
+7. `Workspace` 实体**只有 `{ id, path, title }` + `sessionIds`**，无自定义字段（`workspace/workspace/src/types.ts:63-111`）；`attachSession` 校验该会话 cwd 解析到本工作区 path（`entity.ts:109-176`）；`session.header.cwd` 是持久身份字段，建会话时 `mkdir(cwd, {recursive:true})`（`api/session-controller/src/agent.ts:480-494`）；cwd 用于文件/终端/搜索工具与技能发现（`tool-fs/src/session-cwd.ts:18`、`tool-bash/src/index.ts:153`）。
+
+**preset（角色）语义**
+
+8. **preset = 共享的环境声明，没有"每用户环境"**：registry 对每个定义只挂一棵树（`preset/agent-preset-registry/src/mount.ts:26-29` "One live revision shared by Agents and scoped readers"；`activate()` 建一次 scope+tree `index.ts:102-118`；`bind()` 只把各 agent 作用域挂到同一 key `:226-250`），宿主测试断言 "shares one revision across Agents"（`registry.spec.ts:17-33`）；
+9. **中途不可切换**：产品路径 `select()` 对已开过回合的会话抛 `agent-preset/locked`（`index.ts:318-334`）；低层 `recompose()` 不检查空白，注释明写 "the caller owns the blank-session check"（`:306-311`，不用）；
+10. **角色跨冷启持久**：恢复时按会话**记录**的 preset 重建并拒绝不一致请求（`api/session-controller/src/agent.ts:431,466-468,518-525`）；
+11. **子级继承父级角色**：`composeFrom(childCtx, parent.ctx)`（`preset/agent-preset-registry/src/index.ts:273`、`subagent/subagent/src/child-agent.ts:205`）；
+12. **工具与 persona 的官方承载 = preset 的 `config.plugins` 行**；工具定义全员共享，**落点必须调用期解析**（`ToolExecutionInput.agent`，`core/tools/src/index.ts:339`）。
+
+**上浮（ask_user_question）**
+
+13. `ctx.userQuestions.ask` 走 `user-questions/request` waterfall，无人认领即 fail closed（`interaction/user-questions/src/index.ts:130-141`）；该事件经 `API_REMOTE_FORWARDED_EVENTS` **扇出给已连接客户端、只取第一个结果**，首次连接前的 pending 会等第一个连上的客户端（`api/remotes/src/remote-events.ts:47`、`api/gateway/tests/gateway-stream.host.spec.ts:1199,1247,1308`）；客户端应答者**按连接注册一次**、以 `ctx.sessions.scopeOf(owner)` 判会话、取不到即 `next()` 委派（`client/ui-user-questions/src/client/index.ts:51-79,105`）；客户端按会话各留一条、同会话多条按 precedence 取一（`client/ui-session/src/client/index.ts:461-481`）；
+14. **宿主不给 `ask_user_question` 超时**：其定义未声明 `timeoutMs`（`interaction/tool-ask-user/src/index.ts:19-99`），而超时策略只在声明了预算时才武装（`timeoutMs === undefined → return next()`，`guard/timeout-policy/src/index.ts:57-59`）⇒ 无人应答**永久挂起**；只有 `exec.signal` 被中止才以 `ASK_ABORTED` 失败（`interaction/user-questions/src/index.ts:41-47,87-89`）；官方扩展点是 `tools/execute` waterfall（`timeout-policy` 本身就是这样一个包装，`:56-80`）。
+
+#### 1.3 v2 已落地部分的处置
+
+| 类别 | 内容 |
+|---|---|
+| **保留** | `link/`（1424 行：mud/telnet/ansi/corpus）、`awareness/`（362）、`wake/`（171）及其全部回放/竞态用例；preset 通道机制（`@deepseek-ai/dsh-agent-preset` 行）；**调用期由 `exec.agent` 解析**的形态；per-instance 纪律（N 会话天然成立）；preset 行插件 `src/preset.ts` 的骨架 |
+| **作废** | standard 逐条副本与漂移守卫；单根守卫 `rootAgentId`/`rootSessions`/`belongs` 复合判定；`MudCoreHandle` 单份引擎窄面；config 静态 `connect`/`creds`；"按深度判归属"（改为按会话） |
+| **重写** | `src/index.ts` 装配、`src/config.ts`、`src/tools/tools.ts` 契约外壳、`src/preset.ts` 解析入口 |
+
+#### 1.4 非目标
+
+不做通用编码能力面（fs/shell/web/todo/plan-mode 等一律不进 preset）；不做账号自动注册（newid）；**不做跨用户共享**（连接、世界状态、凭据、语料一律按会话隔离）；不保留 v1 `mud-core` 的任何义务（已裁决退役）；本轮不做多角色（仅预留位置）。
+
+### 第 2 章 核心决策
+
+| # | 决策 | 理由 / 证据 |
 |---|---|---|
-| D1 会话绑定 | **废弃 → preset 绑定** | 「用了 `mud-player` preset」即归属门：`ctx.get('agentPresets')?.composedPreset(agent.ctx) === 'mud-player'`（`agent-preset-registry/src/index.ts:290`）；config 删 `rootSessionId` |
-| D2 depthOf | 不变 | `session.header.delegationDepth` 权威，`options.subagentDepth` 兜底；根 ⇔ depth === 0 |
-| D3 到期 interrupt | **参数源变更** | `parentSessionId` 取自子级 `session.header.parentSession`（即 1.1-5 的合法形态） |
-| D4 构建产物加载 | 不变（路径改写） | patch 行 `name` 一律用**绝对** `file:///D:/Code/dsh-mud-agent/packages/mud-core2/lib/*.js`；相对名会按 **patch 文件所在目录**解析（`packages/boot/app-boot/src/config-schema/document.ts:14`），`../../lib/**` 会指到包外 |
-| D5 唤醒署名 | 不变 | `kind:'plugin', plugin:'mud-core2'` |
-| D6 persona 承载 | **改为 preset 行注册** | 官方位置与 `@deepseek-ai/dsh-persona` 同层；**子级同样可见**（1.1-4），身份纠正由官方 `subagent:delegation` 运行时上下文承担（`child-agent.ts:172-176, 206-210`）。原「只进根」理由作废，§9.2 同步改写 |
-| **D7（新增）单根守卫** | 新增 | `default: mud-player` 之下所有新会话都是候选根，而连接/Wake/预算是单例（`src/index.ts:74-76, 80-81, 141-152`）。首个命中根独占；后续命中根 **fail-loud 留痕**，其工具调用返回可读拒绝（不静默、不抢占） |
-| **D8（新增）工具注册面** | 新增 | 三工具由 preset 行在 **preset 作用域**注册一次；`holder` 改为**调用期**由 `exec.agent` 推出（宿主 `ToolExecutionInput.agent`，`core/tools/src/index.ts:339`） |
+| **D1** | **一用户 = 一 DSH 会话 = 一 MUD 连接**；连接归会话独占 | 需求 2；1.2-1 |
+| **D2** | **工作区 = 服务器（1:1）**：`workspace.path` 为一台服务器的目录，host:port 存我们的 roster（键 = workspace id/path）；同服务器下 N 个用户各一个会话、cwd 相同 | 需求 3 + 裁决 A；1.2-7 |
+| **D3** | **每会话运行时注册表** `Map<sessionId, SessionRuntime>` 取代 `apply` 级单例 | 数据只供唯一会话、零共享 |
+| **D4** | **工具按调用期解析会话**：`MudToolDeps.runtimeFor(agent)`；工具定义由 preset 行注册一次（定义共享、数据不共享） | 1.2-12 |
+| **D5** | **角色 = preset**：当前只声明一个（`mud-player`），**预留增加位**——归属门读一个显式角色集合 `ROLES`（现单元素），加角色 = 加一条 preset 行 + 集合加一项，**引擎不按角色分支**；建会话时**显式传 `agentPreset`**，**不覆盖** registry 的 `default`（保持 standard） | 需求 6；1.2-8/9/10；避免"全局默认"成为角色选择的杠杆 |
+| **D6** | **能力面 = 最小行集**（3.4），**不复制 `standard`**；漂移守卫删除 → 改为行集白名单自检 | 需求 1；1.2-8 |
+| **D7** | **上浮允许（前后台都给）+ 自持截止**：preset 始终注册 `tool-ask-user`；我们以 `tools/execute` waterfall 给本插件会话的 `ask_user_question` 装 `askTimeoutMs`，到期中止 → 模型收到可读超时 → 自行降级继续 | 需求 5 + 裁决"超时失败即可"；1.2-14 |
+| **D8** | **前台/后台 = 观测面**：由页面在场状态（open/close/心跳）维护，用于"待答提示"与运维视图，**不影响能力面与决策链** | 需求 4/5；1.2-3 |
+| **D9** | **凭据走宿主 credentials**：每用户一个 `CredentialRef`；页面写入，引擎**每次连接实时 resolve**，不缓存、不落 corpus、不进上下文 | 1.2-6；§13 |
+| **D10** | **roster 存宿主 storage 域**（服务器 / 账号 / 角色 / 绑定 sessionId），不进代码常量、不进页面 localStorage | 裁决；1.2-5 |
+| **D11** | **管理面原地重写 `packages/mud-webui`**：复用其包注册与构建链，客户端整体重写 | 裁决 |
+| **D12** | **连接生命周期随会话**：会话 disposed → 断连并拆 runtime；连接断开不销毁 runtime，**重连由 runtime 自持**；会话冷掉时由行流触发恢复（路径见待核实 ⑨） | 需求 4；1.2-4 |
+| **D13** | **预算与账目按用户**：`BudgetRegistry`/`Meter` 按会话；Config 增 `maxSessions`（并发上限，I10 护栏） | I1/I10 |
+| **D14** | v1 `mud-core` 退役、`dev:web` 下线；mud-core2 为唯一生产路径 | 既有裁决 |
 
-**非目标**：不做"建用户时自动创建指定 sessionId"的会话 provisioning（本轮只走 preset 绑定）；不做 v1 `mud-core` 的功能迁移（退役，见第 5 章）；不做深度 ≥2 的专门拓扑；不动 P1（预案档）。
+### 第 3 章 机制与契约
 
-### 第 2 章 改动清单
+#### 3.1 映射与建用户
 
-1. **`packages/mud-core2/cordis.patch.yml`**（全部为顶层条目，覆盖 + 插入；引擎行在前，保证服务先就绪）
-   - 覆盖 registry 行（**不覆盖则新会话仍是 standard**）：
-     ```yaml
-     - id: agent-preset-registry
-       config: { default: mud-player }
-     ```
-   - 插入 preset 行：`- id: preset-mud-player` / `name: '@deepseek-ai/dsh-agent-preset'` / `config.{id: mud-player, name: MUD 玩家, description: …, order: 40, plugins: [...]}`；`plugins` = `packages/bundle/web-app/presets/standard.patch.yml` 的 `config.plugins` **逐条副本** + 末尾追加本包工具行（`name: 'file:///D:/Code/dsh-mud-agent/packages/mud-core2/lib/preset.js'`）。
-   - 插入引擎行：`- id: mud-core2`（保留全局作用域），config 删 `rootSessionId`，其余（connect/creds/corpusPath/缺省刻度）不变。
-2. **新增 `src/preset.ts`（产物 `lib/preset.js`）**：preset 行 apply（`inject: ['tools', 'systemPrompt']`）——
-   - 注册三工具（preset 作用域；执行期按 `exec.agent` 解析 holder，见 D8 与第 2 章第 4 条）；
-   - 注册 `mud:persona` section（段名/段序沿用 `persona.ts`，与 `deployment:persona-prefix/suffix` 不冲突）；
-   - **不**在注册期依赖引擎：执行期 `ctx.get('mudCore2')`（可选服务）取单例；引擎缺席时注册照常、执行给可读拒绝（v1 同款先例，`mud-core/tests/preset-agent.spec.ts:205-213`；满足 I9——拒绝理由可读，不是必然失败的桩）。
-3. **`src/index.ts` 改造**
-   - 删 `belongs` / `rootSessionId`；归属门改 `composedPreset(...) === 'mud-player'`；
-   - 根判定 = `depthOf(agent) === 0`，Wake/persona 换绑逻辑保持（persona 注册点移出，见第 2 条）；
-   - 新增 D7 单根守卫与留痕；
-   - `interruptAgent` 的 `parentSessionId` 取子级 `session.header.parentSession`；
-   - `session/disposed` 断连判据从 `cfg.rootSessionId` 改为「根 agent 会话」（Wake owner / 根登记），避免删字段后失承载（§19「连接随会话」）；
-   - `ctx.provide('mudCore2', …)` 暴露 preset 行需要的窄面（单例 + gate/budget 句柄）。
-4. **`src/tools/tools.ts`**：`MudToolDeps.holder` → `holderOf(agent): Holder`；`execute(args, exec)` 窄面补 `agent?`；禁发表判据（现 `:288-291`）与 `holder` 透传（现 `:354`）改调用期解析。`src/subagent/subagent.ts` 的 `handleCreated` 相应拆分为「preset 侧工具注册」与「引擎侧预算登记」，注册完整性自检（现 `:226-236`）迁到 preset 侧。
-5. **`src/config.ts`**：删 `rootSessionId` 校验；其余不变（fail-loud 纪律保持）。
-6. **测试**：`test/index.spec.ts` 判定改造（composedPreset / 单根守卫 / session-disposed）；新增 `test/preset.spec.ts`（preset 行注册三工具、调用期 holder：根放行 / 子级拒 `suicide`·`quit` 类、引擎缺席可读拒绝）；新增 interrupt 参数源用例。
-7. **漂移守卫**：比对「本包 patch 里 `preset-mud-player.config.plugins`」与「`D:/code/deepseek-harness/packages/bundle/web-app/presets/standard.patch.yml` 的 `config.plugins`」逐条一致、只多本包一行；**路径不存在即失败**（不得沿用 v1 的 `skipIf(!existsSync)` 空跑守卫）。
-8. **设计文档同步**（按 §号逐条，不是只改新增段）：
-   - §3.3（`00-core.md:119-158`）：文件映射加 `src/preset.ts`；承载表"思考"行 persona 措辞；
-   - §9.2（`07-09-t2-wake.md:85-96`）：persona 可见面 = preset 作用域，子级同见；
-   - §10.4（`10-13:31-35`）：工具承载 = preset 行 + 调用期 holder；§11（`:45`）预算登记保留但补"归属门 = preset"；§12.1（`:56-72`）holder 判据来源；
-   - **悬空引用**：`agent.cordis.yml:180-186`（`00-core.md:96`、`10-13:17`）改指 `packages/bundle/web-app/presets/standard.patch.yml` 的 delegation 段；
-   - §17/§18/§19（`17-19:18, 43-47, 49-58, 100`）：工具可见面验收口径、开工前置 2、步 5/6 依赖列、连接生命周期 + 单根守卫；
-   - §0 增一条"宿主引用随 harness 换代整批复核"（已证 `agent-loop/agent.ts:631`、`continuation-activation.ts:881` 投递词两处漂移）；
-   - §2 术语表补"归属门 / 单根"（可选）；
-   - 基线完成前 CHANGELOG 不登记；本文件内容在落地后删除。
-9. **注释与文件头同步**（C7：本轮改动的每个文件逐句对表）：`src/index.ts:1-25, 106, 126-127, 164-165`；`src/subagent/subagent.ts:21-24, 184-197, 226-236`；`src/tools/tools.ts:47-49`；`cordis.patch.yml:1-10` 头注释（现仍写"同 v1 mud-core 的 dev 启动方式"）。
-10. **依赖与版本**：`package.json` 增 type-only 依赖 `@deepseek-ai/dsh-agent-preset-registry`（提供 `ctx.agentPresets` 的声明合并）；peer 版本按部署宿主抬齐（现 `^0.1.5-rc.2` vs 宿主 **0.1.7-rc.2**）。
-11. **测试入口**：根 `package.json` 的 `test`（现只 `--filter @deepseek-ai/dsh-mud-core`）改为覆盖 mud-core2（v1 退役后 core2 是唯一生产路径）。
+```
+workspace(path,title)  ←→  服务器（host, port）        # roster: server → workspace
+user（Web 创建）        ←→  sessionId（显式指定）        # 一一对应
+                       ←→  一条 Mud 连接（会话独占）
+session.header.cwd     =   workspace.path
+```
+建用户流程：页面建服务器（选/建工作区，填 host/port）→ 建账号（name + 密码，写 credentials）→ 建会话 `session/create { sessionId, cwd: workspace.path, agentPreset: 'mud-player' }` → 绑定 → `connect` → runtime 起连接。
 
-### 第 3 章 待核实（实施第一步）
+#### 3.2 会话运行时（新增 `src/session/runtime.ts` + `registry.ts`）
 
-**全部核销（2026-09-27）——无遗留待实测。**
+```ts
+interface SessionRuntime {
+  readonly sessionId: string
+  readonly mud: Mud; readonly world: World; readonly corpus: CorpusWriter
+  readonly gate: LoginGate            // 凭据每次连接时 resolve（D9）
+  wake: Wake | null                   // 仅根 agent 实例换绑（resume/compact）
+  readonly budget: BudgetRegistry     // 本会话子级预算（D13）
+  readonly meter: Meter               // 本会话计数护栏（现未接线，随本版接上）
+}
+registry: Map<SessionId, SessionRuntime>      // 工具 / 唤醒 / 断连的唯一查找面
+runtimeFor(agent): SessionRuntime | null      // 解析不到 ⇒ 工具可读拒绝
+```
+归属解析：根（depth 0）取 `agent.id`；子级沿 `session.header.parentSession` 上溯到根（父先于子创建；登记表 + header 双源）。
 
-源码/结构类：
-- [x] registry 行 id 与 config schema（1.1-2）；`roots` 字段不存在。
-- [x] 子级组合继承（1.1-3，`composeFrom` + `child-agent.ts:205`）。
-- [x] `mud:persona` 与 `@deepseek-ai/dsh-persona` 段名不冲突（`deployment:persona-prefix` / `deployment:persona-suffix`）。
-- [x] patch 内 preset 行的语法合法性（探针 overlay 经 `--dump-config-schema` 被列为一等 entry，宿主接受 `preset-mud-player` 行）。
+#### 3.3 工具契约（`src/tools/tools.ts`）
 
-现场实测（宿主检出；`pnpm exec vitest run <file>`）：
-- [x] **`composedPreset(agent.ctx)` 在 `agent/created` 时刻可读**——在宿主平面注册的 `agent/created` 监听器内读到 `'mud-player'`（临时探针 spec，2/2 通过；跑完即删，宿主检出无残留）。
-- [x] **preset 行在 apply 期与 execute 期都能读到宿主平面服务**——同一探针里 `ctx.get('probeHost')` 两期均命中（`apply:host/exec:host`）⇒ 引擎侧 `ctx.provide('mudCore2', …)` + preset 行执行期 `ctx.get` 的通路成立。
-- [x] **子级继承 preset 注册的工具与 section**——宿主持有测试 `packages/subagent/subagent-in-process-driver/tests/preset-inheritance.spec.ts` 5/5 通过：子级 `system/message` 含 preset 行注册的 section、工具面 = preset 工具、子级 header 记录 `agentPreset`。
+```ts
+interface MudToolDeps { runtimeFor(agent: ToolAgent | undefined): SessionRuntime | null }
+```
+每次 `execute` 先 `const rt = deps.runtimeFor(exec.agent)`；`null` ⇒ 可读拒绝（"未绑定连接/非本插件会话"）。holder = `depthByHeader > 0 ? 'child:<id>' : 'root'`（**会话内**语义）；禁发表、`LoginGate`、`mud.read` 全部取 `rt`。
 
-结论：1.1-4 的推论（preset 注册的 section 对子级同样可见）被实测证实；`mud:persona` 的子级可见性属既定裁决（D6），其**行为层**影响并入第 4 章闸门 4 的实连观察项，不作阻塞。
+#### 3.4 角色（preset）与最小行集
 
-### 第 4 章 验证闸门
+**首版 4 行**：`delegation` 组（`tool-subagent` + `tool-subagent-control`）｜`compaction` 组｜`tool-ask-user`｜**本包 `mud-core2-preset` 行**。
+**不含**：fs / shell / web / todo / goal / plan-mode / present / plugin-manager / `dsh-persona`。
+**预留增加位**：`ROLES = ['mud-player']`（引擎归属门唯一读点）；新增角色 = ①patch 增一条 `preset-<role>` 行；②`ROLES` 加一项；③建会话时传该 role id。**引擎、runtime、工具面零改动**。
+**后加不预留**：`skill-filesystem` + `tool-skill`、`dsh-persona`。
 
-1. `pnpm exec tsc -p tsconfig.test.json --noEmit` + `pnpm exec vitest run test` 全绿（基线：16 文件 / 196 例）；
-2. `pnpm --filter mud-core2 build` 出 `lib/index.js` 与 `lib/preset.js`；
-3. **装配结构闸门（可先于实现跑）**：`cd D:/Code/deepseek-harness; pnpm dsh web --dump-config --patch D:/Code/dsh-mud-agent/packages/mud-core2/cordis.patch.yml` → 断言 `agent-preset-registry.config.default: mud-player` 与 `preset-mud-player` 行存在，且无 `patch: entry not found` 警告（禁用 `pnpm exec dsh`，见 1.1-2）；
-4. 实连复验：`pnpm dev:core2` 起 WebUI → 新建会话（默认即 mud-player）→ 三工具 + persona 可见面 → 非 mud 会话对照 → 派子级确认继承、静态禁发表命中、结算回根；**并观察子级 persona 的实际影响**（D6 的行为层验证，不阻塞）。
-5. **退役面自检**：`grep -rn "dev:web\|agent-presets\|rootSessionId" packages doc README.md package.json` 只应命中退役/历史说明文本，不应命中任何可执行路径。
+#### 3.5 上浮与超时降级（D7）
 
-### 第 5 章 退役与收尾（v1 / 仓面 / 计划自身）
+```
+我们自持 ask 截止（官方 tools/execute waterfall 扩展点，宿主 timeout-policy 同款）：
+  const timer = setTimeout(() => { fired = true; ctrl.abort() }, cfg.askTimeoutMs)
+  exec.signal = AbortSignal.any([upstream, ctrl.signal])      // 仅 mud 会话的 ask_user_question
+  await next()
+  fired ? 可读超时结果 : 原结果
+```
+- 无人应答 ⇒ 到期 → `ASK_ABORTED` → 模型看到可读超时 → 自行降级（fullme 记一条并跳过，继续当前计划）；
+- answerer 侧 pending 由宿主按 `eventId` 取消（`api/gateway/src/stream-protocol.ts:51-60`），页面提示随之消失；
+- **页面提示**（D8）：管理面在会话上标出"有待答问题"（客户端已有按会话 pending 投影，1.2-13）；点击即打开该会话作答；
+- 子级的 ask 由宿主 `DELEGATED_CALLER` 拒绝（`interaction/user-questions/src/index.ts:101-106`），与本机制无冲突。
 
-1. **v1 `packages/mud-core` 退役**：代码留存不删、停止维护；`packages/mud-core/cordis.patch.yml`（`agent-presets` 覆盖）与 `presets/` 不再作为部署路径——该行在现宿主不存在，patch 只会得到 `patch: entry not found`；
-2. **清掉空跑守卫**：`packages/mud-core/tests/preset-agent.spec.ts:293` 的 `HARNESS_STANDARD` 路径已不存在、配 `skipIf` 后恒为绿，须删除或改为显式退役标记（不允许"看起来在守、实际没跑"）；
-3. **脚本与门面**：根 `package.json` 的 `dev:web` 下线；`dev:core2` 升为唯一入口；仓根 `README.md` 的 v1 部署段（`:32-33`、`:65`）改为"mud-core 已退役 → mud-core2"薄指针；
-4. **`doc/DISCUSS.md`**：P2 标 `superseded by doc/PLAN.md「P2 修订 v2」`（D1/D6 及 `rootSessionId` 相关条目作废）；P1（预案档）保持原状、不动；
-5. **本文件**：实施完成后删除本 P2 修订内容；`CHANGELOG` 在基线（§18 八步）完成前不登记。
+#### 3.6 生命周期
+
+建会话 → `agent/created`（归属门 `composedPreset ∈ ROLES`）→ 取/建 runtime → `connect` → 行流驱动 Wake；连接断 → runtime 保留并自持重连；会话 disposed → 拆 runtime + 断连；插件卸载 → 全拆。**冷会话**（agent 被释放但会话仍在）由行流触发恢复后再唤醒（待核实 ⑨）。
+
+#### 3.7 凭据（D9）
+
+页面 `credentials.set(passRef, 明文)`；`connect` RPC 传 `{ sessionId, host, port, name, passRef }`；引擎建连时 `ctx.get('credentials').resolve(passRef)`，明文只进连接的登录流程（`sendCredential` 直发纪律），不落 corpus、不进上下文。resolve 失败 = 连接失败，指名引用名报错。
+
+#### 3.8 roster 存储域（D10）
+
+新增 storage 域（`ctx.storage.mount(form, facility)`）：
+
+```
+servers: { workspaceId, path, title, host, port }
+users:   { userId, serverId, name, passRef, sessionId, role }
+```
+读写动词经我们的 remote 面暴露给管理面；`sessionId` 与 role 落库后不因页面状态丢失。
+
+#### 3.9 管理面（D11：原地重写 `packages/mud-webui`）
+
+服务器 CRUD（host/port ↔ 工作区）、账号 CRUD（name + 密码 → `credentials.set`，页面不留明文）、绑定/连接/断开、**前台状态上报**（打开/关闭/心跳）、**"有待答问题"会话提示**。
+
+#### 3.10 Config 形态
+
+删 `connect` / `creds`（→ 运行时来）；保留 `silenceMs` / `defaultTimeoutMs` / `budgetMs` / `corpusRoot`（按会话派生文件）；新增 `maxSessions`、`askTimeoutMs`、`roles`（缺省 `['mud-player']`）。
+
+### 第 4 章 源码变更清单
+
+| 文件 | 变更 |
+|---|---|
+| `src/session/runtime.ts`、`src/session/registry.ts` | **新增**：单会话运行时 + 注册表 + 归属解析 |
+| `src/storage/roster.ts` | **新增**：storage 域（servers/users） |
+| `src/ask-deadline.ts` | **新增**：`tools/execute` 包装（D7） |
+| `src/remote.ts` | **新增**：`remote.mud.*` 动词（服务器/账号 CRUD、bind/connect/disconnect/status、presence） |
+| `src/index.ts` | **重写**：删单例与单根守卫；`agent/created` = 归属门 → 取/建 runtime → 根挂 Wake、子级登记预算；`session/disposed` 拆 runtime + 断连；`ctx.provide('mudCore2', { runtimeFor })` |
+| `src/tools/tools.ts` | 契约：`MudCoreHandle` 单份 → 按会话 `SessionRuntime`；`MudToolDeps.core` → `runtimeFor`；`resolveHolder` 删除 |
+| `src/preset.ts` | `core: () => ctx.get('mudCore2')` → `runtimeFor: agent => …` |
+| `src/config.ts` | 按 3.10 改 |
+| `src/subagent/subagent.ts` | 预算随父会话 runtime；复核不依赖全局单根 |
+| `src/observe/meter.ts` | 每会话实例 + 接线（现未接线） |
+| `src/link/corpus.ts` | 仅装配侧路径按会话派生（类不动） |
+| `src/persona.ts` | 增补自主纪律（降级继续、超时即放弃该流程） |
+| `cordis.patch.yml` | preset 行 `plugins` 换 3.4 行集；引擎行删 `connect/creds`、加 `corpusRoot`/`askTimeoutMs`/`roles`；**不覆盖** registry `default` |
+| `packages/mud-webui` | **原地重写**客户端（3.9） |
+| `test/*` | `index.spec.ts` 重写（注册表/归属/生命周期）；`preset.spec.ts` 改契约；**新增**「两会话隔离」（各一条连接、互不串线、`runtimeFor` 不交叉）；`patch.spec.ts` 改行集白名单自检；ask 截止用例；roster/storage 用例；remote 契约用例 |
+
+### 第 5 章 实施切片与验收
+
+| 切片 | 内容 | 验收 |
+|---|---|---|
+| **V4.1** | 会话运行时注册表 + 工具按会话解析（暂用配置里的临时服务器/凭据） | `tsc` + 全量用例绿；「两会话隔离」先红后绿（各持一条连接、`runtimeFor` 不交叉、禁发表按会话内 holder 生效） |
+| **V4.2** | MUD 专用 preset 最小行集 + ask 截止与超时降级 + persona 纪律 | dump-config 断言行集 = 白名单且无 `entry not found`；无人应答时 ask 在 `askTimeoutMs` 后以可读超时失败、模型继续（先红后绿：不装截止时挂起） |
+| **V4.3** | roster storage 域 + 凭据 + `remote.mud.*` | 服务器/账号落库；`credentials.set/resolve` 全链路；明文不落 config/corpus/上下文 |
+| **V4.4** | 管理面重写（建服务器/账号、绑定、连接、待答提示、前台上报） | 页面建服务器+账号 → 连接 → 登录成功 → 三工具可用；第二账号并行连接互不干扰 |
+| **V4.5** | 生命周期：断线自持重连、会话 disposed 断连、冷会话唤醒 | 断线后 runtime 自动重连；冷会话可被行流唤醒（待核实 ⑨） |
+| **V4.6** | 前台/后台观测 + 每用户账目 + `maxSessions` | 无客户端时后台会话仍产出决策；每用户 `step/start`/调用数可读；并发上限生效 |
+
+### 第 6 章 待核实 / 完成定义
+
+**待核实**（实施第一步；①–④ 决定 3.5 与 3.9 的实现形状，建议先跑）
+
+- [ ] ① 我们的 `tools/execute` 包装与宿主 `timeout-policy` 的先后关系（两者都替换 `exec.signal`；正确性不依赖顺序，需实测互不吞掉）；
+- [ ] ② `askTimeoutMs` 取值与超时后模型看到的结果文案；
+- [ ] ③ 客户端 `sessions.scopeOf(owner)` 的物化条件（列表即物化 vs 打开才物化）——决定哪个连接会认领、页面提示的可见范围；
+- [ ] ④ 客户端会话级 pending 投影能否直接用于管理面的"待答提示"（`ui-session` 的 `pendingSnapshot` / `useSessionStatus`）；
+- [ ] ⑤ `ctx.storage` 域 API 与后端行 id（`storage-json` 的落盘位置与命名）；域内 schema 版本化策略；
+- [ ] ⑥ `ctx.get('credentials')` 现行服务名与 `resolve` 签名（v1 先例是旧宿主版本）；`remote.credentials.set` 的引用名约束；
+- [ ] ⑦ 客户端插件发现与 remote 注册通路（`exports["./client"]` + `ctx.remote.$mount`、typer codec 工厂格式）在现行版本的实测；
+- [ ] ⑧ 前台/后台状态上报的动词设计（谁上报、粗粒度到会话还是工作区）；
+- [ ] ⑨ 冷会话唤醒路径：`ctx.agents.resume`（自带 preset setup）vs `schedule`；
+- [ ] ⑩ 多连接下 corpus/log 布局与 `link/mud.ts` 的单例假设逐处核对；
+- [ ] ⑪ 角色集合 `ROLES` 的判定是否只有 `composedPreset` 一条路（加角色时是否有更稳的官方判据）。
+
+**完成定义**：N 用户各自独立连接与状态、零共享；上浮可用且无人应答能超时降级；管理面能建服务器/账号并连接；`tsc` + 全量用例绿；设计章节（§1 I3 措辞、§2 术语、§3.3 文件映射、§11、§12、§13 凭据、§15–§17 账目、§19 连接生命周期）同步 + `CHANGELOG` 一行（基线完成后）；本文件内容删除。

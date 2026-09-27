@@ -6,6 +6,12 @@
  * 快照。第一期满（不注册 captchaRecognize）：必然失败的桩会让模型反复调用、
  * 白烧请求。
  *
+ * 承载（P2 修订 v2 D8）：三工具由 preset 行在 **preset 作用域**注册一次，
+ * 注册期不依赖引擎；`holder` 改为**调用期**由 `exec.agent` 解析——执行期经
+ * deps.core() 取引擎窄面（MudCoreHandle），其 resolveHolder 做归属判定
+ * （单根守卫 + depth 判定，装配层注入，D7/D8）。引擎缺席时注册照常、
+ * 执行给可读拒绝（v1 同款先例，I9）。
+ *
  * 静态遮蔽（不做动态权限，§12.2）：
  *   - 根会话（holder === 'root'）：放行；
  *   - 子会话（`child:*`）：mud_send 工具内**静态禁发表**（suicide/quit/drop
@@ -17,7 +23,7 @@
  * 装配层接线 mud.onDisconnect → gate.reset()）。
  *
  * 接线层：经注入窄结构接口（ToolRegistrar）注册，包内不 import 宿主、保持
- * 零依赖；exec 只消费 `signal`（读竞速机的释放阀门）。
+ * 零依赖；exec 只消费 `signal` 与 `agent`（调用期 holder 解析的来源，D8）。
  */
 
 import { FLOWS as FLOWS_REF, getFlow } from './flows/index.ts'
@@ -41,24 +47,55 @@ export interface MudToolDefinition {
     schema: Record<string, unknown>
     render(args: unknown, value: unknown): readonly TextBlock[]
   }
-  execute(args: unknown, exec: { signal: AbortSignal }): Promise<unknown>
+  execute(args: unknown, exec: { signal: AbortSignal; agent?: unknown }): Promise<unknown>
 }
 
-/** 宿主注册面窄结构（对应宿主 `tools.register(ToolDefinition): () => void`；
- *  在 agent 作用域内调用 = 只对该 agent 可见，装配时由 agent/created 监听器
- *  逐 agent 调用，作用域必须是宿主/preset（§10.4 实施前提 2）。 */
+/** 宿主注册面窄结构（对应宿主 `tools.register(ToolDefinition): () => void`）；
+ *  P2 修订 v2 D8：三工具由 preset 行在 preset 作用域注册一次，不再逐 agent
+ *  注册（agent/created 监听器只管引擎侧预算与唤醒）。 */
 export interface ToolRegistrar {
   register(definition: MudToolDefinition): () => void
 }
 
-/** 工具依赖（装配层一次注入）。 */
-export interface MudToolDeps {
+/**
+ * 调用期 agent 窄结构（宿主 ToolExecutionInput.agent 的本包消费面；D8）。
+ * resolveHolder（装配层注入）消费它判定 holder；工具层只透传不解释。
+ * options/session **必填**（宿主 Agent 恒有；缺即是测试桩形状错误——
+ * resolveHolder 会把缺 session 的 agent 直送 depthByHeader，宁可炸不可
+ * 静默当 root）。
+ */
+export interface ToolAgent {
+  readonly id: string
+  readonly options: { readonly subagentDepth?: number }
+  readonly session: { readonly header: { readonly delegationDepth?: number; readonly parentSession?: string } }
+}
+
+/** holder 解析结果：放行 = holder；拒绝 = 可读 error（单根守卫/缺 agent 上下文）。 */
+export type HolderResolution = { holder: Holder } | { error: string }
+
+/**
+ * 引擎窄面（装配层 `ctx.provide('mudCore2', …)` 暴露；preset 行执行期
+ * `ctx.get('mudCore2')` 解析，缺席 = null ⇒ 执行可读拒绝，P2 D8/I9）。
+ */
+export interface MudCoreHandle {
   mud: Mud
   world: World
   creds: FlowCreds
   connect: { host: string; port: number }
-  /** 本工具面所在会话的持有者身份（'root' | `child:<id>`）：deny 判据 + read/流程参数。 */
-  holder: Holder
+  /** 共享登录闸门（装配层单例；断线复位由装配接线 mud.onDisconnect）。 */
+  gate: LoginGate
+  /** 缺省总超时毫秒（mud_send 缺省 + 流程单步兜底，§12.1）。 */
+  defaultTimeoutMs: number
+  /** 流程注册表（缺省共享 FLOWS；测试可注入本地表）。 */
+  flows?: readonly Flow[]
+  /** 调用期 holder 解析（装配层注入：depth 判定 + D7 单根守卫）。 */
+  resolveHolder(agent: ToolAgent | undefined): HolderResolution
+}
+
+/** 工具依赖（preset 行一次注入；执行期解析引擎窄面）。 */
+export interface MudToolDeps {
+  /** 引擎窄面解析（执行期调用；null = 引擎缺席 ⇒ 可读拒绝，注册不受影响）。 */
+  core: () => MudCoreHandle | null
   /**
    * 交换级事件面（§16.1，可选）：mud_flow 三出口在此发 `mud/flow-result`
    * （data = { flow, outcome }）；mud_send/login 的 command-sent、
@@ -66,19 +103,13 @@ export interface MudToolDeps {
    * 白名单外天然 log-only，是否进 Session 归装配裁量。
    */
   onExchange?: (type: string, data?: unknown) => void
-  /**
-   * 缺省总超时毫秒（Config 供给，取值待 §19 校准）：兼两用 —— mud_send 的
-   * 缺省总超时（§12.1"必须显式给出或由工具注入缺省"）与流程单步兜底超时
-   * （FlowCtx.defaultTimeoutMs，经 LoginGate/mud_flow 双路传入）。
-   */
-  defaultTimeoutMs: number
-  /** 流程注册表（缺省共享 FLOWS；测试可注入本地表）。 */
-  flows?: readonly Flow[]
-  /**
-   * 共享登录闸门（缺省新建）。多 agent（根 + 子级）共享**一次**登录：装配经
-   * createAgentCreatedHandler 注入同一实例，避免每个会话各建一闸、重复登录。
-   */
-  gate?: LoginGate
+}
+
+/** mudCore2 声明合并（cordis Context 的可选服务；provide 方在装配层 index.ts）。 */
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    mudCore2?: MudCoreHandle
+  }
 }
 
 // ── 子会话静态禁发表（首词一行判断；deniedCommands 承旧实录）─────────────
@@ -225,20 +256,24 @@ function linesText(lines: readonly MudLine[] | string[]): string {
   return texts.join('\n')
 }
 
+/** 引擎缺席时的可读拒绝（I9：不是必然失败的桩，注册照常、执行明确说明）。 */
+export const CORE_ABSENT_ERROR = '已拒绝：mud-core2 引擎服务缺席（ctx.mudCore2 未装配），工具仅注册未接线'
+
 /**
- * 构建并注册三个 mud 工具（装配时对每个 agent 会话调用一次；子会话依赖
- * agent/created 监听器注册在宿主/preset 作用域，§10.4 实施前提 2）。
+ * 构建并注册三个 mud 工具（P2 修订 v2 D8：由 preset 行在 preset 作用域调用
+ * 一次；注册期不依赖引擎，执行期经 deps.core() 解析引擎窄面）。
  *
- * 返回注册 disposer 列表与登录闸门 —— 装配层把 mud.onDisconnect 接到
- * gate.reset()；闸门以 deps.defaultTimeoutMs 构造（同值兼流程单步兜底
- * 超时，见 MudToolDeps.defaultTimeoutMs 注释）。
+ * 注册完整性自检：登记本层经 registrar 实际注册的工具名，缺即 fail-loud
+ * （原 handleCreated 内自检迁到 preset 侧，§17 验收表"工具可见面"行）。
+ *
+ * 返回注册 disposer 列表（由 preset 作用域容器持有，随作用域释放自动执行）。
+ * 登录闸门归引擎窄面（装配层单例），本层不再创建。
  */
 export function registerMudTools(
   registrar: ToolRegistrar,
   deps: MudToolDeps,
-): { disposers: Array<() => void>; gate: LoginGate } {
-  const flows = deps.flows ?? FLOWS_REF
-  const gate = deps.gate ?? new LoginGate(deps.mud, deps.world, flows, deps.creds, deps.connect, deps.defaultTimeoutMs)
+): Array<() => void> {
+  const core = (): MudCoreHandle | null => deps.core()
 
   const mudSend: MudToolDefinition = {
     name: 'mud_send',
@@ -284,8 +319,12 @@ export function registerMudTools(
     },
     async execute(rawArgs, exec) {
       const args = rawArgs as { cmd?: string; listen?: ListenSpec; timeoutMs?: number }
-      const timeoutMs = args.timeoutMs ?? deps.defaultTimeoutMs
-      const { holder } = deps
+      const c = core()
+      if (c === null) return { ok: false, error: CORE_ABSENT_ERROR }
+      const resolved = c.resolveHolder(exec.agent as ToolAgent | undefined)
+      if ('error' in resolved) return { ok: false, error: resolved.error }
+      const { holder } = resolved
+      const timeoutMs = args.timeoutMs ?? c.defaultTimeoutMs
 
       // 静态禁发表先于隐式登录（子会话首发即禁命令时，不为它建连登录）。
       if (args.cmd !== undefined && holder !== 'root') {
@@ -293,10 +332,10 @@ export function registerMudTools(
         if (head !== null) return { ok: false, error: `已拒绝：子会话静态禁发表命中（${head}）` }
       }
 
-      await gate.ensure(holder, exec.signal)
+      await c.gate.ensure(holder, exec.signal)
 
-      if (args.cmd !== undefined) deps.mud.send(args.cmd)
-      const r = await deps.mud.read({
+      if (args.cmd !== undefined) c.mud.send(args.cmd)
+      const r = await c.mud.read({
         holder,
         timeoutMs,
         signal: exec.signal,
@@ -346,13 +385,17 @@ export function registerMudTools(
     },
     async execute(rawArgs, exec) {
       const args = rawArgs as { id: string; answer?: string }
-      const flow = getFlow(args.id, flows)
+      const c = core()
+      if (c === null) return { ok: false, error: CORE_ABSENT_ERROR }
+      const resolved = c.resolveHolder(exec.agent as ToolAgent | undefined)
+      if ('error' in resolved) return { ok: false, error: resolved.error }
+      const flow = getFlow(args.id, c.flows ?? FLOWS_REF)
       if (flow === null) return { ok: false, error: `未知流程 id: ${args.id}` } // 越权/不存在同拒
       const r = await flow.run({
-        mud: deps.mud,
-        creds: deps.creds,
-        holder: deps.holder,
-        defaultTimeoutMs: deps.defaultTimeoutMs,
+        mud: c.mud,
+        creds: c.creds,
+        holder: resolved.holder,
+        defaultTimeoutMs: c.defaultTimeoutMs,
         ...(args.answer !== undefined ? { answer: args.answer } : {}),
         signal: exec.signal,
       })
@@ -378,11 +421,27 @@ export function registerMudTools(
         return [{ type: 'text', text: JSON.stringify(v.state, null, 2) }]
       },
     },
-    async execute() {
-      return { ok: true, state: deps.world.snapshot() }
+    async execute(_rawArgs, exec) {
+      const c = core()
+      if (c === null) return { ok: false, error: CORE_ABSENT_ERROR }
+      const resolved = c.resolveHolder(exec.agent as ToolAgent | undefined)
+      if ('error' in resolved) return { ok: false, error: resolved.error }
+      return { ok: true, state: c.world.snapshot() }
     },
   }
 
-  const disposers = [mudSend, mudFlow, mudState].map(def => registrar.register(def))
-  return { disposers, gate }
+  // 注册完整性自检：登记实际注册的工具名，注册后断言三工具全部过 registrar
+  // （只证明"registerMudTools 三工具注册成功"，不证明"子级可见面含三工具"——
+  // 后者属装配期探针，§17 验收表"工具可见面"行）。
+  const registered = new Set<string>()
+  const recording: ToolRegistrar = {
+    register: def => {
+      registered.add(def.name)
+      return registrar.register(def)
+    },
+  }
+  const disposers = [mudSend, mudFlow, mudState].map(def => recording.register(def))
+  const missing = ['mud_send', 'mud_flow', 'mud_state'].filter(n => !registered.has(n))
+  if (missing.length > 0) throw new Error(`mud-core2 注册完整性自检失败：本层未注册 ${missing.join('/')}`)
+  return disposers
 }

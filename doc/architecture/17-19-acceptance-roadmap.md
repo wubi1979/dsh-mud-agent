@@ -15,7 +15,7 @@
 | **链路覆盖** | 四行为（取钱/买食物/喝水/找路）**至少一次走通** 编制 → 调宿主 `subagent` 工具派单 → 子 agent 执行 → 结算通知 → 根检视——只测根直跑等于没测干 |
 | 语料回放四条 | 完成句跨批 / 危险中断 read / rest 同帧移交 / until 失配记错——先红后绿 |
 | 静态遮蔽 | 子会话发自杀 / quit 类命令 → `mud_send` 工具内拒、deny 不进 body；根会话放行；经济类越权靠语料审计兜底（无机制） |
-| 工具可见面 | 已创建子 agent 的可见面**含** `mud_send`/`mud_flow`/`mud_state`（listener 作用域正确性的唯一可执行证据，§10.4） |
+| 工具可见面 | 三工具由 preset 行注册一次、preset 作用域天然覆盖子级（1.1-4 实测）；可执行证据 = `registerMudTools` 注册完整性自检 + preset.spec 注册面断言（§10.4） |
 | 释放 | 子级超预算 ⇒ 根必被唤醒**且激活槽被释放**；根与子级并发 read 必须被拒（§11） |
 | 人工唯一性 | 全程 `userQuestions` 调用只发生在根会话（子 agent 0 次——DELEGATED_CALLER 保证 + 断言防回归） |
 
@@ -43,7 +43,7 @@
 **开工前必须已落的三项**（否则验收会翻车或子级无工具）：
 
 1. **静态禁发表**：随 `mud_send` 工具落地，子会话生效（§12）；
-2. **监听器作用域**：`agent/created` 注册在宿主或 preset 作用域，并加"子级可见 mud 工具"的装配期断言（§10.4）；
+2. **装配通道**：三工具 + persona 由 preset 行在 preset 作用域注册一次（P2 D6/D8；`agent/created` 监听在引擎行全局层只管引擎侧装配，§10.4）；
 3. **成本指标**：验收必须同时量 token 成本（§15、§17）。
 
 | 步 | 内容 | 依赖宿主 |
@@ -52,8 +52,8 @@
 | 2 | 语料回放用例：完成句跨批 / 危险中断 read / rest 移交 / until 失配记错 | 无（先红后绿） |
 | 3 | awareness + world + danger（字段化意图）+ REFLEX（**吞触发行**） | 无 |
 | 4 | wake（静默+危险）+ context 瘦正文 + persona section（**含"子级在途不得直调 mud_send"**） | followup/steer；systemPrompt.section |
-| 5 | tools（mud_send/mud_state/mud_flow）+ flows/login | tools.register；agent/created（**作用域见前提 2**） |
-| 6 | **subagent 拓扑**：`agent/created` 监听 + 预算登记（Config 缺省）与到期 interrupt + 子会话静态禁发表 | 宿主 `subagent` 工具（preset 已挂）；userQuestions 根侧 |
+| 5 | tools（mud_send/mud_state/mud_flow）+ flows/login（经 preset 行注册，D6/D8） | tools.register（preset 作用域一次）；preset 装配通道（前提 2） |
+| 6 | **subagent 拓扑**：装配层 `agent/created` 全局监听 + 预算登记（Config 缺省）与到期 interrupt（宿主通路，参数源 = header.parentSession，D3）+ 子会话静态禁发表（调用期 holder，D8） | 宿主 `subagent` 工具（preset 已挂）；userQuestions 根侧；ctx.subagents.interrupt |
 | 7 | **fullme 链路**（**不注册识别工具**；问题上浮 → 根问人 → 带答案重入） | tools；userQuestions（DELEGATED_CALLER 天然生效） |
 | 8 | corpus + 计数护栏（**两个量**）+ 成本护栏 + §17 验收全表 | session 事件 |
 
@@ -97,5 +97,5 @@
 | captchaRecognize 承载研究 | `llm` 多模态 / `attachment` / 自调 VLM；**第一期不注册任何桩**（I9） |
 | 计划被 compaction 压缩后的处理 | **无例证不建守护**（I5）；若实测出现计划被压缩致失忆，先试部署层关 compaction，再考虑重注机制 |
 | 直发输出的累积文本归属 | 缺省照常进在途等待的累积文本，实录若误命中再切隔离（§3.3 承载约束 3） |
-| 连接生命周期 | 缺省随会话（`session/disposed` 断连）；多会话需求出现再改 |
+| 连接生命周期 | 缺省随会话（`session/disposed` 断连；判据 = 装配层根登记 rootSessions，实例终结先行不误断）；**单根守卫**：并行第二根 fail-loud 留痕且工具调用可读拒（P2 D7）；多会话需求出现再改 |
 | 教训存储位置 | lessons.json 起步，storage 包可替换 |

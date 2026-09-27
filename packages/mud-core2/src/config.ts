@@ -5,10 +5,15 @@
  * （setTimeout 语义），身份字段非空。缺省取值均为 §19 待实测校准项的占位。
  */
 
+/**
+ * preset 绑定 id（P2 D1 修订）：归属门 = 「agent 用了 mud-player preset」
+ * （ctx.agentPresets.composedPreset(agent.ctx) === PRESET_ID），与
+ * cordis.patch.yml 的 preset-mud-player 行 config.id 一致（漂移守卫对表）。
+ */
+export const PRESET_ID = 'mud-player'
+
 /** 插件装配配置（cordis.patch.yml `config` 的形态；全部字段可缺省传入）。 */
 export interface MudCore2Config {
-  /** 绑定的根会话 id（必填）：只装配该会话与其直接子级（P2 D1；§11 单连接）。 */
-  rootSessionId: string
   /** MUD 服务器地址（首次 mud_send 隐式建连用，§4）。 */
   connect: { host: string; port: number }
   /** 登录凭据（resolve 双键空间的第一承载；明文只进发送瞬间，§13）。 */
@@ -49,7 +54,6 @@ function requirePositiveInt(value: unknown, what: string): number {
  * budgetMs 的 setTimeout 溢出上界（≤2^31−1）由 BudgetRegistry 构造复查。
  */
 export function resolveConfig(input: Partial<MudCore2Config>): MudCore2Config {
-  const rootSessionId = requireNonEmpty(input.rootSessionId, 'rootSessionId')
   const host = requireNonEmpty(input.connect?.host, 'connect.host')
   const port = requirePositiveInt(input.connect?.port, 'connect.port')
   const name = requireNonEmpty(input.creds?.name, 'creds.name')
@@ -61,7 +65,6 @@ export function resolveConfig(input: Partial<MudCore2Config>): MudCore2Config {
   requirePositiveInt(defaultTimeoutMs, 'defaultTimeoutMs')
   requirePositiveInt(budgetMs, 'budgetMs')
   return {
-    rootSessionId,
     connect: { host, port },
     creds: { name, pass },
     silenceMs,

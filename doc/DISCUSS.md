@@ -218,7 +218,9 @@ for (round = 1; ; round++):
 
 # P2 装配层接线（§18 步 4–7 收口）
 
-> **状态：定稿（2026-09-27，随"按建议顺序逐步实施"裁定开工）**。范围：`src/index.ts` + `config.ts` + `cordis.patch.yml` + 三处小扩面；实现 §3.3 文件映射的接线层。
+> **状态：superseded by doc/PLAN.md「P2 修订 v2」（2026-09-27）**。本节 D1（`rootSessionId` 硬绑定）与 D6（persona 只进根）已作废——现行装配改走官方 preset 通道（归属门 = composedPreset、D3 参数源 = 子级 header.parentSession、persona/三工具 preset 作用域注册）。以下原文仅作历史追溯。
+
+> 原状态：定稿（2026-09-27，随"按建议顺序逐步实施"裁定开工）。范围：`src/index.ts` + `config.ts` + `cordis.patch.yml` + 三处小扩面；实现 §3.3 文件映射的接线层。
 
 ## 1. 已定决策（超出 §3.3 草图的部分）
 

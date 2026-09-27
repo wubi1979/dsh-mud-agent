@@ -1,25 +1,31 @@
 /**
- * tools 测试 — 三工具 + 静态禁发表 + 登录闸门（§12）。
+ * tools 测试 — 三工具 + 静态禁发表 + 登录闸门（§12；P2 修订 v2 D8）。
  *
  * 覆盖：首词禁发表（大小写/分号切分；子会话拒、根不受限、先于隐式登录）、
  * 隐式登录（首次触发、已登录防重入）、listen 编译（缺省 gaCount:1、非法
  * 正则拒、字符串→RegExp）、mud_flow 三出口转写与越权 id 拒、mud_state 快照、
- * 注册面（三个工具名 + disposer）。
+ * 注册面（三个工具名 + disposer）、引擎窄面（调用期 holder 解析：引擎缺席
+ * 可读拒绝 / resolveHolder 拒绝透传）。
  *
- * execute 用 stub mud（send/read 记录调用）；login 流程注入假流程（不触真
- * 读竞速机，读竞速机本体已由 link/flows 测试覆盖）。
+ * execute 用 stub mud（send/read 记录调用）+ 假引擎窄面（resolveHolder 由
+ * 测试给定）；login 流程注入假流程（不触真读竞速机，读竞速机本体已由
+ * link/flows 测试覆盖）。装配层 resolveHolder 的归属判定（单根守卫）由
+ * index.spec 覆盖。
  */
 
 import { describe, expect, it } from 'vitest'
 import type { MudLine } from '../../src/link/ansi.ts'
-import type { Mud, ReadResult, WaitOpts } from '../../src/link/mud.ts'
+import type { Holder, Mud, ReadResult, WaitOpts } from '../../src/link/mud.ts'
 import { World } from '../../src/awareness/world.ts'
 import type { Flow } from '../../src/tools/flows/types.ts'
+import { LoginGate } from '../../src/tools/tools.ts'
 import {
   commandHead,
   compileListen,
   denyMatch,
   registerMudTools,
+  CORE_ABSENT_ERROR,
+  type MudCoreHandle,
   type MudToolDefinition,
   type MudToolDeps,
 } from '../../src/tools/tools.ts'
@@ -46,19 +52,6 @@ function stubMud(readImpl: (opts: WaitOpts) => Promise<ReadResult>): TestMud {
   } as unknown as TestMud
 }
 
-function makeDeps(overrides?: Partial<MudToolDeps> & { mud?: TestMud }): MudToolDeps & { mud: TestMud } {
-  const mud = overrides?.mud ?? stubMud(async () => ({ lines: [mkLine('应答原文')], reason: 'done' }))
-  return {
-    mud,
-    world: new World(),
-    creds: { name: 'u', pass: 'p' },
-    connect: { host: '127.0.0.1', port: 8081 },
-    holder: 'root',
-    defaultTimeoutMs: 30_000,
-    ...overrides,
-  } as MudToolDeps & { mud: TestMud }
-}
-
 /** 假 login 流程（记录执行次数）。 */
 function fakeLogin(runs: number[]): Flow {
   return {
@@ -68,19 +61,43 @@ function fakeLogin(runs: number[]): Flow {
   }
 }
 
-interface Registered {
-  defs: Map<string, MudToolDefinition>
-  disposers: Array<() => void>
-  gate: ReturnType<typeof registerMudTools>['gate']
+/** 假引擎窄面 + 依赖（D8：执行期经 deps.core() 解析；holder 由测试给定）。 */
+function makeDeps(opts: {
+  mud?: TestMud
+  world?: World
+  holder?: Holder
+  flows?: Flow[]
+  onExchange?: (type: string, data?: unknown) => void
+  /** 覆盖引擎窄面（缺省返回给定 holder）；返回 null 模拟引擎缺席。 */
+  core?: () => MudCoreHandle | null
+} = {}): { deps: MudToolDeps; handle: MudCoreHandle; mud: TestMud; world: World; gate: LoginGate } {
+  const mud = opts.mud ?? stubMud(async () => ({ lines: [mkLine('应答原文')], reason: 'done' }))
+  const world = opts.world ?? new World()
+  const gate = new LoginGate(mud, world, opts.flows ?? [], { name: 'u', pass: 'p' }, { host: '127.0.0.1', port: 8081 }, 30_000)
+  const handle: MudCoreHandle = {
+    mud,
+    world,
+    creds: { name: 'u', pass: 'p' },
+    connect: { host: '127.0.0.1', port: 8081 },
+    gate,
+    defaultTimeoutMs: 30_000,
+    ...(opts.flows !== undefined ? { flows: opts.flows } : {}),
+    resolveHolder: () => ({ holder: opts.holder ?? 'root' }),
+  }
+  const deps: MudToolDeps = {
+    core: opts.core ?? (() => handle),
+    ...(opts.onExchange !== undefined ? { onExchange: opts.onExchange } : {}),
+  }
+  return { deps, handle, mud, world, gate }
 }
 
-function register(deps: MudToolDeps): Registered {
+function register(deps: MudToolDeps): { defs: Map<string, MudToolDefinition>; disposers: Array<() => void> } {
   const defs = new Map<string, MudToolDefinition>()
-  const { disposers, gate } = registerMudTools(
+  const disposers = registerMudTools(
     { register: (def) => { defs.set(def.name, def); return () => defs.delete(def.name) } },
     deps,
   )
-  return { defs, disposers, gate }
+  return { defs, disposers }
 }
 
 describe('静态禁发表（首词一行判断）', () => {
@@ -108,7 +125,7 @@ describe('静态禁发表（首词一行判断）', () => {
 
 describe('mud_send', () => {
   it('注册面：三个工具名齐、disposer 可注销', () => {
-    const { defs, disposers } = register(makeDeps())
+    const { defs, disposers } = register(makeDeps().deps)
     expect([...defs.keys()].sort()).toEqual(['mud_flow', 'mud_send', 'mud_state'])
     expect(disposers).toHaveLength(3)
     disposers[0]?.()
@@ -117,91 +134,114 @@ describe('mud_send', () => {
 
   it('首次调用隐式登录（gate.ensure），已登录后不再重入', async () => {
     const runs: number[] = []
-    const deps = makeDeps({ flows: [fakeLogin(runs)] })
+    const { deps, mud } = makeDeps({ flows: [fakeLogin(runs)] })
     const { defs } = register(deps)
     const send = defs.get('mud_send')!
 
     await send.execute({ cmd: 'look' }, { signal: new AbortController().signal })
     await send.execute({ cmd: 'look' }, { signal: new AbortController().signal })
     expect(runs).toHaveLength(1)
-    expect(deps.mud.sent).toEqual(['look', 'look'])
-    expect(deps.mud.reads).toHaveLength(2)
+    expect(mud.sent).toEqual(['look', 'look'])
+    expect(mud.reads).toHaveLength(2)
   })
 
   it('登录态写世界记忆: 登录成功 → session.loggedIn=true, gate.reset() → false', async () => {
     const runs: number[] = []
-    const deps = makeDeps({ flows: [fakeLogin(runs)] })
-    const { defs, gate } = register(deps)
+    const { deps, world, gate } = makeDeps({ flows: [fakeLogin(runs)] })
+    const { defs } = register(deps)
 
-    expect(deps.world.get('session', 'loggedIn')).toBeNull() // 初始无值（摘要跳过）
+    expect(world.get('session', 'loggedIn')).toBeNull() // 初始无值（摘要跳过）
     await defs.get('mud_send')!.execute({}, { signal: new AbortController().signal })
-    expect(deps.world.get('session', 'loggedIn')?.value).toBe(true) // measured 直测事实
+    expect(world.get('session', 'loggedIn')?.value).toBe(true) // measured 直测事实
 
     gate.reset() // 装配层接线 mud.onDisconnect
-    expect(deps.world.get('session', 'loggedIn')?.value).toBe(false)
+    expect(world.get('session', 'loggedIn')?.value).toBe(false)
   })
 
   it('有 cmd = send + read（listen 缺省 gaCount:1）；无 cmd = 裸读不发送', async () => {
     const runs: number[] = [1]
-    const deps = makeDeps({ flows: [fakeLogin(runs)] })
+    const { deps, mud } = makeDeps({ flows: [fakeLogin(runs)] })
     const { defs } = register(deps)
     const send = defs.get('mud_send')!
     const signal = new AbortController().signal
 
     await send.execute({ cmd: 'look' }, { signal })
-    expect(deps.mud.reads[0]?.gaCount).toBe(1)
-    expect(deps.mud.reads[0]?.timeoutMs).toBe(30_000) // 缺省超时由工具注入
+    expect(mud.reads[0]?.gaCount).toBe(1)
+    expect(mud.reads[0]?.timeoutMs).toBe(30_000) // 缺省超时由工具注入
 
     await send.execute({ timeoutMs: 1234 }, { signal }) // 裸读
-    expect(deps.mud.sent).toEqual(['look']) // 未再发送
-    expect(deps.mud.reads[1]?.timeoutMs).toBe(1234)
-    expect(deps.mud.reads[1]?.gaCount).toBe(1)
+    expect(mud.sent).toEqual(['look']) // 未再发送
+    expect(mud.reads[1]?.timeoutMs).toBe(1234)
+    expect(mud.reads[1]?.gaCount).toBe(1)
   })
 
   it('子会话命中禁发表 → 直接拒，且先于隐式登录、不发送', async () => {
     const runs: number[] = []
-    const deps = makeDeps({ holder: 'child:a', flows: [fakeLogin(runs)] })
+    const { deps, mud } = makeDeps({ holder: 'child:a', flows: [fakeLogin(runs)] })
     const { defs } = register(deps)
     const send = defs.get('mud_send')!
 
     const r = await send.execute({ cmd: 'quit' }, { signal: new AbortController().signal })
     expect(r).toEqual({ ok: false, error: '已拒绝：子会话静态禁发表命中（quit）' })
-    expect(deps.mud.sent).toEqual([]) // 未发送
+    expect(mud.sent).toEqual([]) // 未发送
     expect(runs).toEqual([]) // 未触发登录
   })
 
   it('根会话不受禁发表限（quit 放行）', async () => {
     const runs: number[] = [1]
-    const deps = makeDeps({ holder: 'root', flows: [fakeLogin(runs)] })
+    const { deps, mud } = makeDeps({ holder: 'root', flows: [fakeLogin(runs)] })
     const { defs } = register(deps)
     const send = defs.get('mud_send')!
 
     const r = await send.execute({ cmd: 'quit' }, { signal: new AbortController().signal })
     expect(r).toMatchObject({ ok: true })
-    expect(deps.mud.sent).toEqual(['quit'])
+    expect(mud.sent).toEqual(['quit'])
   })
 
   it('listen 字符串正则编译为 RegExp；非法正则抛错', async () => {
     const runs: number[] = [1]
-    const deps = makeDeps({ flows: [fakeLogin(runs)] })
+    const { deps, mud } = makeDeps({ flows: [fakeLogin(runs)] })
     const { defs } = register(deps)
     const send = defs.get('mud_send')!
     const signal = new AbortController().signal
 
     await send.execute({ cmd: 'look', listen: { until: ['去茶室'], gaCount: 2 } }, { signal })
-    expect(deps.mud.reads[0]?.until?.[0]).toBeInstanceOf(RegExp)
-    expect(deps.mud.reads[0]?.until?.[0]?.test('你去茶室吧。')).toBe(true)
-    expect(deps.mud.reads[0]?.gaCount).toBe(2)
+    expect(mud.reads[0]?.until?.[0]).toBeInstanceOf(RegExp)
+    expect(mud.reads[0]?.until?.[0]?.test('你去茶室吧。')).toBe(true)
+    expect(mud.reads[0]?.gaCount).toBe(2)
 
     await expect(
       send.execute({ cmd: 'look', listen: { until: ['[非法'] } }, { signal }),
     ).rejects.toThrow('正则非法')
   })
+
+  it('引擎窄面缺席（core → null）→ 可读拒绝，不建连不登录', async () => {
+    const runs: number[] = []
+    const { deps, mud } = makeDeps({ flows: [fakeLogin(runs)], core: () => null })
+    const { defs } = register(deps)
+
+    const r = await defs.get('mud_send')!.execute({ cmd: 'look' }, { signal: new AbortController().signal })
+    expect(r).toEqual({ ok: false, error: CORE_ABSENT_ERROR })
+    expect(mud.sent).toEqual([])
+    expect(runs).toEqual([])
+  })
+
+  it('resolveHolder 拒绝（单根守卫/缺 agent 上下文）→ 错误原文透传', async () => {
+    const { handle, mud } = makeDeps()
+    const deps: MudToolDeps = {
+      core: () => ({ ...handle, resolveHolder: () => ({ error: '已拒绝：mud-core2 单根守卫命中' }) }),
+    }
+    const { defs } = register(deps)
+
+    const r = await defs.get('mud_state')!.execute({}, { signal: new AbortController().signal })
+    expect(r).toEqual({ ok: false, error: '已拒绝：mud-core2 单根守卫命中' })
+    expect(mud.sent).toEqual([])
+  })
 })
 
 describe('mud_flow', () => {
   it('查无此 id 直接拒（越权/不存在同拒）', async () => {
-    const deps = makeDeps()
+    const { deps } = makeDeps()
     const { defs } = register(deps)
     const flow = defs.get('mud_flow')!
 
@@ -218,7 +258,7 @@ describe('mud_flow', () => {
       },
       { id: 'f-danger', description: '', async run() { return { reason: 'danger' } } },
     ]
-    const deps = makeDeps({ flows })
+    const { deps } = makeDeps({ flows })
     const { defs } = register(deps)
     const flow = defs.get('mud_flow')!
     const signal = new AbortController().signal
@@ -237,7 +277,7 @@ describe('mud_flow', () => {
       { id: 'f-danger', description: '', async run() { return { reason: 'danger' } } },
     ]
     const events: Array<{ type: string; data?: unknown }> = []
-    const deps = makeDeps({ flows, onExchange: (type, data) => events.push({ type, data }) })
+    const { deps } = makeDeps({ flows, onExchange: (type, data) => events.push({ type, data }) })
     const { defs } = register(deps)
     const flow = defs.get('mud_flow')!
     const signal = new AbortController().signal
@@ -258,9 +298,16 @@ describe('mud_flow', () => {
       id: 'f', description: '',
       async run(ctx) { seen = ctx.answer; return { done: true } },
     }]
-    const { defs } = register(makeDeps({ flows }))
+    const { defs } = register(makeDeps({ flows }).deps)
     await defs.get('mud_flow')!.execute({ id: 'f', answer: 'k3x9' }, { signal: new AbortController().signal })
     expect(seen).toBe('k3x9')
+  })
+
+  it('引擎窄面缺席 → 可读拒绝', async () => {
+    const { deps } = makeDeps({ core: () => null })
+    const { defs } = register(deps)
+    const r = await defs.get('mud_flow')!.execute({ id: 'f' }, { signal: new AbortController().signal })
+    expect(r).toEqual({ ok: false, error: CORE_ABSENT_ERROR })
   })
 })
 
@@ -268,18 +315,25 @@ describe('mud_state', () => {
   it('返回 world 快照（measured 字段可读）', async () => {
     const world = new World()
     world.reduce(mkLine('【气血】1560/3000'))
-    const deps = makeDeps({ world })
+    const { deps } = makeDeps({ world })
     const { defs } = register(deps)
 
     const r = await defs.get('mud_state')!.execute({}, { signal: new AbortController().signal }) as { ok: boolean; state: unknown }
     expect(r.ok).toBe(true)
     expect((r.state as { vitals: Record<string, unknown> }).vitals['hp']).toBe(1560)
   })
+
+  it('引擎窄面缺席 → 可读拒绝', async () => {
+    const { deps } = makeDeps({ core: () => null })
+    const { defs } = register(deps)
+    const r = await defs.get('mud_state')!.execute({}, { signal: new AbortController().signal })
+    expect(r).toEqual({ ok: false, error: CORE_ABSENT_ERROR })
+  })
 })
 
 describe('render（模型面合同：人读文本，不让模型读 JSON）', () => {
   it('mud_send: 成功 = 行原文；失败 = 可读错误文本', () => {
-    const { defs } = register(makeDeps())
+    const { defs } = register(makeDeps().deps)
     const send = defs.get('mud_send')!
     expect(send.output.render({}, { ok: true, reason: 'done', lines: ['你看到茶室。', '师父在这里。'] }))
       .toEqual([{ type: 'text', text: '你看到茶室。\n师父在这里。' }])
@@ -288,7 +342,7 @@ describe('render（模型面合同：人读文本，不让模型读 JSON）', ()
   })
 
   it('mud_flow: done / question / danger 三出口 + 错误均人读文本', () => {
-    const { defs } = register(makeDeps())
+    const { defs } = register(makeDeps().deps)
     const flow = defs.get('mud_flow')!
     expect(flow.output.render({}, { ok: true, done: true }))
       .toEqual([{ type: 'text', text: '流程完成。' }])
@@ -303,7 +357,7 @@ describe('render（模型面合同：人读文本，不让模型读 JSON）', ()
   it('mud_state: 渲染为 world 快照的缩进 JSON 文本', () => {
     const world = new World()
     world.reduce(mkLine('【气血】1560/3000'))
-    const { defs } = register(makeDeps({ world }))
+    const { defs } = register(makeDeps({ world }).deps)
     const state = defs.get('mud_state')!
     const r = state.output.render({}, { ok: true, state: world.snapshot() })[0]
     expect(r?.type).toBe('text')
