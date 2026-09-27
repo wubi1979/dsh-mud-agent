@@ -1,13 +1,13 @@
 /**
- * observe/meter — 计数护栏（impl §3.8 两个量 + §4 每场景断言面）。
+ * observe/meter — 计数护栏（§16.2 两个量 + §17 每场景断言面）。
  *
- * **两个量（口径写死，design4 §8）**：
+ * **两个量（口径写死，§16.2）**：
  * - **决策点数 = `step/start` 数**（正确性护栏：每场景应等于真正需要模型
  *   决策的次数）；
  * - **实际调用数 = `assistant/message` ∪ `assistant/attempt`**（每次尝试恰发
  *   两者之一，故其和 = 尝试总数）。
  *
- * **重试/失败漂移 = 实际调用数 − 决策点数**（§8 口径；理由见 impl §0.2：
+ * **重试/失败漂移 = 实际调用数 − 决策点数**（§16 口径；理由见 §16.2：
  * 一步可含多次请求，重试走 continue、不新增 step/start）。**不是**
  * message/attempt 两流之差——那数不出重试（1 步 1 重试时两流各 1）。
  *
@@ -15,25 +15,25 @@
  * （宿主 agent-loop 实录），不能用来计数请求或决策点——meter 对它 fail-loud
  * （把 header 事件喂进计数器是编程错误）。
  *
- * **成本护栏（§4）**：每场景 root 上下文规模 / 峰值 token 不劣于实证基线——
- * token 量**没有 session 事件可数**（§3.7 实录：无事件表示请求真的发出），
+ * **成本护栏（§17）**：每场景 root 上下文规模 / 峰值 token 不劣于实证基线——
+ * token 量**没有 session 事件可数**（§16.2 实录：无事件表示请求真的发出），
  * 峰值测量归宿主侧实机验收；本面只出计数两量与漂移，供验收脚本逐场景
  * assertWithin。
  *
  * 纯度纪律：不 import 宿主；装配层把自己的 session 事件流转发进 forward()。
  */
 
-/** 计数快照（§4 每场景断言的读出面）。 */
+/** 计数快照（§17 每场景断言的读出面）。 */
 export interface MeterSnapshot {
   /** 决策点数（step/start 数）。 */
   decisionPoints: number
   /** 实际调用数（assistant/message + assistant/attempt）。 */
   actualCalls: number
-  /** 重试/失败漂移 = 实际调用数 − 决策点数（design4 §8 口径，非两流之差）。 */
+  /** 重试/失败漂移 = 实际调用数 − 决策点数（§16 口径，非两流之差）。 */
   drift: number
 }
 
-/** 验收越界（§4：账目/成本护栏不达标即红）。 */
+/** 验收越界（§17：账目/成本护栏不达标即红）。 */
 export class MeterBreachError extends Error {}
 
 /** 场景断言边界（缺省维度不设限；min 下界防"漏转发 ⇒ 护栏恒绿空跑"）。 */
@@ -54,7 +54,7 @@ export class Meter {
    *  不拦。 */
   forward(type: string): void {
     if (type === 'request/header') {
-      throw new Error('request/header 禁用于计数（impl §3.8）：只在 initial/resume/change/series 时发，数不出请求与决策点')
+      throw new Error('request/header 禁用于计数（§16）：只在 initial/resume/change/series 时发，数不出请求与决策点')
     }
     const lower = type.toLowerCase()
     if (lower.startsWith('step/')) {
@@ -84,7 +84,7 @@ export class Meter {
     this.attempts = 0
   }
 
-  /** §4 断言面：越界即抛 MeterBreachError（含实测值，验收脚本直接可读）。 */
+  /** §17 断言面：越界即抛 MeterBreachError（含实测值，验收脚本直接可读）。 */
   assertWithin(bounds: MeterBounds): void {
     const s = this.snapshot()
     if (bounds.minDecisionPoints !== undefined && s.decisionPoints < bounds.minDecisionPoints) {

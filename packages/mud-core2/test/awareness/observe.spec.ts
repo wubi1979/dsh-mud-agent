@@ -1,5 +1,5 @@
 /**
- * awareness/observe 单测 + 与 Mud 集成测试（impl §3.3 意识层入口）。
+ * awareness/observe 单测 + 与 Mud 集成测试（§6.1 意识层入口）。
  *
  * 单测（假 deps，无 socket）：危险字段化意图逐项执行（halt/abortWait/onDanger）、
  * 反射吞触发行（返回 'swallow' + 直发）、行到达活动锚点、调度顺序。
@@ -87,7 +87,7 @@ describe('observe 调度（假 deps）', () => {
     expect(deps.dangers).toEqual(['遭攻击', '遭攻击'])
   })
 
-  it('onDangerHit 命中即记: 每次 matchDanger 命中都回调, 不受 latch 门控 (§3.8 danger-fired 发射点)', () => {
+  it('onDangerHit 命中即记: 每次 matchDanger 命中都回调, 不受 latch 门控 (§16.1 danger-fired 发射点)', () => {
     const hits: string[] = []
     const deps = fakeDeps(new World())
     const awareness = new Awareness({ ...deps, onDangerHit: hit => hits.push(hit.rule.why) })
@@ -177,7 +177,7 @@ async function setup(): Promise<{ mud: Mud, world: World, server: TestServer, se
   }
 }
 
-describe('observe × Mud 集成（impl §3.3 出口）', () => {
+describe('observe × Mud 集成（§6.1 出口）', () => {
   it('危险行让在途 read 以 danger 收束, 触发行收编进结果, halt 直发, 世界记入战斗态', async () => {
     const { mud, world, sent, server } = await setup()
     const dangers: string[] = []

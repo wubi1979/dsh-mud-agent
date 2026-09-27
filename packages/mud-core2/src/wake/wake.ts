@@ -1,16 +1,16 @@
 /**
- * wake/wake — 唤醒器：两源自建唤醒（静默 + 危险）→ DSH 动词（impl §3.4）。
+ * wake/wake — 唤醒器：两源自建唤醒（静默 + 危险）→ DSH 动词（§7.3）。
  *
  * 第三源（子级结算）由**宿主投递**（continuation-activation：idle→followup /
  * running→steer）——插件不重复唤醒、不自报结算；结算通知是 best-effort
  * （四种状态不唤醒），交付失败无独立兜底，由预算路径承担（subagent/ 的事，
  * 本层无涉）。
  *
- * 去重在 awareness/observe（world.inCombat 边沿 + 规则 latch:'combat'，impl
- * §3.3）——本层只投递正文，不做任何去重：死亡类规则无 latch，observe 每次
+ * 去重在 awareness/observe（world.inCombat 边沿 + 规则 latch:'combat'，
+ * §6.2）——本层只投递正文，不做任何去重：死亡类规则无 latch，observe 每次
  * 命中都上抛同一 why，本层照投不合并。
  *
- * 守卫纪律（impl §3.4，V7 裁定）：
+ * 守卫纪律（§7.2，V7 裁定）：
  *   - **不要**写"无子 agent 在途"守卫——list_agents 的 inactive 不代表任务
  *     完成（已结算的子级仍在目录里），据此判会让根首次派单后永久认为"有事在干"；
  *   - **不要**写"结算已消化"守卫——双唤醒窗口无害，接受冗余唤醒
@@ -24,7 +24,7 @@ import { dangerText, silenceText } from './context.ts'
 import type { DangerHit } from '../awareness/danger.ts'
 import type { World } from '../awareness/world.ts'
 
-/** 注入窄接口（impl §2：`{ followup, steer, idle }` 操作 agent）。 */
+/** 注入窄接口（§3.3：`{ followup, steer, idle }` 操作 agent）。 */
 export interface WakeDeps {
   world: World
   /** 静默唤醒投递（宿主 followup：空闲自开回合、运行中排队——冗余唤醒无害）。 */
@@ -41,7 +41,7 @@ export interface WakeDeps {
 }
 
 export interface WakeOptions {
-  /** 静默时长（ms）：Config 化，取值待实测语料校准（impl §6）。 */
+  /** 静默时长（ms）：Config 化，取值待实测语料校准（§19）。 */
   silenceMs: number
 }
 
@@ -60,8 +60,7 @@ export class Wake {
   }
 
   /**
-   * 静默重新武装（observe 的 onActivity 接线）：新行到达即重新武装（写死，
-   * impl §6）。每行一次 clear+set —— 单 timer、到期驱动（形态参考宿主
+   * 静默重新武装（observe 的 onActivity 接线）：新行到达即重新武装（写死，§19）。每行一次 clear+set —— 单 timer、到期驱动（形态参考宿主
    * schedule/runtime：同一时刻至多一个 timer，重算即重置）。
    */
   armSilence(): void {

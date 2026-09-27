@@ -1,16 +1,16 @@
 /**
- * persona — 思考层"软件"：systemPrompt.section 注册（impl §3.4）。
+ * persona — 思考层"软件"：systemPrompt.section 注册（§9.2）。
  *
  * **prompt 不自拼**：不自拼字符串进每次请求，而是注册 section 由宿主每请求
  * 组装（宿主 systemPrompt.section(PromptSection) → disposer；agent-loop 每请求
  * systemPrompt.assemble 消费）。本文件是接线层：registerPersona 收**窄结构
  * 接口**（装配时传 ctx.systemPrompt），包内不 import 宿主依赖、保持零依赖。
  *
- * 内容清单（impl §3.4）：五层身份（你是玩家，下属替你跑腿）、服务端拒绝是
+ * 内容清单（§9.2）：五层身份（你是玩家，下属替你跑腿）、服务端拒绝是
  * 教育信号、**子级在途时不得直接调 mud_send**、工具用法、计划格式（要点 +
  * 边界声明 + 预算）、维持类自查、fullme 兜底常识。
  *
- * 禁令（design4 §2 思考层）：T2 唯一持有目标与意图连贯性；意识/反射不得替
+ * 禁令（§3.3 思考层）：T2 唯一持有目标与意图连贯性；意识/反射不得替
  * T2 做计划级决策；无两执行者——子 agent 是计划执行半边。
  */
 
@@ -33,7 +33,7 @@ export interface SystemPromptRegistry {
 
 /** persona 段正文（静态文本；不引用 prompt 变量）。fullme 入口提醒行文经
  *  常量插值进入正文——FULLME_REMINDER_TEXT 的唯一消费点（流程层不再判它：
- *  入口由模型自决，impl §3.6）。 */
+ *  入口由模型自决，§13）。 */
 export function personaText(): string {
   return `# MUD 玩家身份与纪律
 

@@ -1,7 +1,7 @@
 /**
- * awareness/observe — 意识层入口：每行调度（impl §3.3，**必须薄**）。
+ * awareness/observe — 意识层入口：每行调度（§6.1，**必须薄**）。
  *
- * 每行执行顺序（impl §3.3 伪码为准）：
+ * 每行执行顺序（§6.1 伪码为准）：
  *   1. world.reduce(line)          —— 抓取世界字段（HP/内力/位置/战斗态；
  *      边沿采样先于 reduce：interrupt/wake 的 combat latch 判的是**本行之前**
  *      的战斗态）；
@@ -10,14 +10,14 @@
  *      onDanger(hit)（唤醒上抛，wake 层接线 steer）；abortWait →
  *      mud.abortWait(line)（行等待中断，触发行收编进 read 结果）。
  *      interrupt/wake 受规则去重锚（latch:'combat'）门控：一次战斗一条 latch
- *      （挂 world.inCombat 边沿，design4 §3.2：去重挂世界状态、不挂行模式），
+ *      （挂 world.inCombat 边沿，§6.2：去重挂世界状态、不挂行模式），
  *      战斗中每回合再命中不重发 halt、不重唤醒；abortWait 不受 latch；
  *   3. REFLEX 匹配                 —— 命中即直发命令并**吞触发行**（返回
  *      'swallow'：不进 acc/缓冲/模型面；应答照常进并参与判据）；
  *   4. onActivity()                —— 行到达活动锚点（静默重新武装，wake 层
- *      接线；新行到达即重新武装，写死 impl §6）。
+ *      接线；新行到达即重新武装，写死 §19）。
  *
- * 禁令（design4 §2）：意识层**薄** —— 只感知与触发，不解释内容、不生成动作
+ * 禁令（§3.3）：意识层**薄** —— 只感知与触发，不解释内容、不生成动作
  * 序列、不持有目标；危险命中的唤醒决策在 wake 层，目标级决策归 T2。意识层
  * 动作**无输出特例**：危险行照常进模型面、照常参与判据（只有反射行被吞）。
  *
@@ -38,7 +38,7 @@ export interface AwarenessDeps {
   /** 危险命中上抛（wake 层接线：steer + 去重 latch 挂 world.inCombat）。 */
   onDanger?: (hit: DangerHit) => void
   /**
-   * 危险命中观测（§3.8 `mud/danger-fired` 发射点）：**每次 matchDanger 命中
+   * 危险命中观测（§16.1 `mud/danger-fired` 发射点）：**每次 matchDanger 命中
    * 都回调**（命中即记，观测事实层）——不受 latch 门控、不看 wake/interrupt
    * 声明；动作是否生效另看 latch（onDanger 才是去重后的动作通道）。装配层
    * 接 corpus.event 在此，勿接 onDanger（那是被 latch 筛过的子集）。
@@ -76,7 +76,7 @@ export class Awareness {
     const d = matchDanger(line, this.dangerRules)
     if (d !== null) {
       // interrupt/wake 按规则的去重锚门控：latch:'combat' = 一次战斗一条
-      // latch（design4 §3.2：去重挂世界状态、不挂行模式），战斗中再命中不重发
+      // latch（§6.2：去重挂世界状态、不挂行模式），战斗中再命中不重发
       // halt、不重唤醒；abortWait 不受 latch（每次在途 read 都该被打断）；
       // 死亡类不声明 latch，每次命中都执行。
       const firstOfFight = d.rule.latch !== 'combat' || prevCombat !== true

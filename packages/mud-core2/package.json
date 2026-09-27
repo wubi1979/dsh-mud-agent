@@ -1,12 +1,29 @@
 {
   "name": "mud-core2",
-  "description": "MUD autonomous player core v2 (five-layer mind: link / awareness / wake / persona+tools / subagent). Design docs in doc/; skeleton only — implementation pending.",
+  "description": "MUD autonomous player core v2 (five-layer mind: link / awareness / wake / persona+tools / subagent). Design docs in doc/.",
   "version": "0.0.1",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
+    "build": "tsc -p tsconfig.json",
     "test": "pnpm exec vitest run test",
     "typecheck": "tsc -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-llm": "^0.1.5-rc.2"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-agent": "^0.1.5-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.1.5-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "^0.1.5-rc.2"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-agent": "^0.1.5-rc.2",
+    "@deepseek-ai/dsh-llm": "^0.1.5-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "^0.1.5-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.1.5-rc.2"
   }
 }

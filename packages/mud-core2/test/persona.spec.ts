@@ -1,8 +1,8 @@
 /**
- * persona 单测 — systemPrompt.section 注册（impl §3.4）。
+ * persona 单测 — systemPrompt.section 注册（§9.2）。
  *
  * 覆盖：段名/段序稳定、注册参数为对象（PromptSection 形态）、正文覆盖
- * impl §3.4 内容清单（五层身份 / 服务端拒绝是教育信号 / 子级在途不得直调
+ * §9.2 内容清单（五层身份 / 服务端拒绝是教育信号 / 子级在途不得直调
  * mud_send / 工具用法 / 计划格式 / 维持类自查 / fullme 兜底常识）。
  */
 
@@ -34,7 +34,7 @@ describe('registerPersona', () => {
   })
 })
 
-describe('persona 正文内容清单（impl §3.4）', () => {
+describe('persona 正文内容清单（§9.2）', () => {
   const text = personaText()
 
   it('五层身份：玩家本人持有目标，下属替你跑腿', () => {

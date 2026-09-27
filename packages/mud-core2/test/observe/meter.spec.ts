@@ -1,5 +1,5 @@
 /**
- * observe/meter 测试 — 计数护栏（impl §3.8 两个量 + §4 断言面）。
+ * observe/meter 测试 — 计数护栏（§16 两个量 + §17 断言面）。
  *
  * 覆盖：两量计数口径（step/start / assistant/message+attempt）、漂移（重试/
  * 失败）、request/header fail-loud（禁用于计数）、未知事件忽略、场景复位、
@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest'
 import { Meter, MeterBreachError } from '../../src/observe/meter.ts'
 
-describe('两个量计数口径 (impl §3.8, design4 §8)', () => {
+describe('两个量计数口径 (§16)', () => {
   it('决策点 = step/start 数；实际调用 = message + attempt；漂移 = 调用数 − 决策点数', () => {
     const m = new Meter()
     m.forward('step/start')
@@ -22,7 +22,7 @@ describe('两个量计数口径 (impl §3.8, design4 §8)', () => {
     const s = m.snapshot()
     expect(s.decisionPoints).toBe(2)
     expect(s.actualCalls).toBe(4) // message 3 + attempt 1
-    expect(s.drift).toBe(2) // 重试/失败 = 4 − 2（§8 口径：一步可含多次请求）
+    expect(s.drift).toBe(2) // 重试/失败 = 4 − 2（§16 口径：一步可含多次请求）
   })
 
   it('反例锁定：1 步 1 次重试 ⇒ drift=1（两流之差口径会得 0）', () => {
@@ -36,7 +36,7 @@ describe('两个量计数口径 (impl §3.8, design4 §8)', () => {
     expect(m.snapshot()).toEqual({ decisionPoints: 1, actualCalls: 2, drift: 1 })
   })
 
-  it('request/header → fail-loud（禁用于计数，impl §3.8）', () => {
+  it('request/header → fail-loud（禁用于计数，§16）', () => {
     const m = new Meter()
     expect(() => m.forward('request/header')).toThrow(/禁用于计数/)
     expect(m.snapshot().actualCalls).toBe(0)
@@ -65,7 +65,7 @@ describe('两个量计数口径 (impl §3.8, design4 §8)', () => {
   })
 })
 
-describe('assertWithin 断言面 (impl §4 每场景护栏)', () => {
+describe('assertWithin 断言面 (§17 每场景护栏)', () => {
   it('界内不抛；越界抛 MeterBreachError 且含实测值', () => {
     const m = new Meter()
     for (let i = 0; i < 3; i++) m.forward('step/start')

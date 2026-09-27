@@ -12,6 +12,9 @@ function mkAgent(id: string, subagentDepth?: number): SubagentAgent & { cancels:
   return {
     id,
     options: subagentDepth === undefined ? {} : { subagentDepth },
+    session: {
+      header: subagentDepth === undefined ? {} : { delegationDepth: subagentDepth },
+    },
     cancel(cause, options) {
       cancels.push({ cause, options })
     },
@@ -150,7 +153,7 @@ describe('createAgentCreatedHandler（agent/created 处理器，宿主作用域�
 
   it('depthOf 必填：header 权威判定由装配层供给（resume 子级不被误判 root）', () => {
     // 模拟 resume：options 缺 subagentDepth，header 带深度（装配读宿主 header）。
-    const agent = { id: 'sess-2', options: {}, cancel: () => {} }
+    const agent = { id: 'sess-2', options: {}, session: { header: {} }, cancel: () => {} }
     const headerDepth: (a: SubagentAgent) => number = () => 1
     const { handler, scope } = setup(60_000, headerDepth)
     const r = handler.handleCreated(scope, agent)

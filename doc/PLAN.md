@@ -1,188 +1,112 @@
-# PLAN.md — 文件头（新计划起草区，使用一级标题）
+# mud-core2 计划起草区
 
-## 起草约定
-
-> **文件角色**：本文件是后续新计划的临时起草区，只用于起草和修改计划，不作为正式设计文档留存及长期事实来源。任何大型计划必须先在本文件中起草成型；实施完成后再同步到 `doc/architecture/` 的正式章节，并在 `doc/CHANGELOG.md` 登记一行。同步完成后，本文件中对应内容必须删除，不留档。
-
-1. 按“对照源码变更的实施计划”组织，大型计划至少含6节：① 元信息与范围（状态、覆盖项、目标/非目标）；② 背景与核心决策；③ 机制与契约（接口、状态机、配置校验、行流归属）；④ 源码变更清单（新增/修改/删除到文件/模块粒度）；⑤ 实施切片与测试验收；⑥ 未决、待实测与完成定义。中、小型计划可减少为4节：目标与决策、契约与变更、实施与验收、未决与收尾。
-2. 缺少核心章节不得视为可冻结状态。未冻结计划不可作为实施依据。若计划尚未实施或尚未同步，不得删除本文件中的对应内容。
-3. `§N` 符号仅用于正式章节，起草期内容不使用。引用现行设计时一律写 `§N`，不写裸文件名。本文件自身章节的引用不带 **`§`**（小节写作 `3.1` / `6.2`，整章写作 `第 4 章`），避免与正式章节编号混淆。
-4. 所有例数、计数、规模等数字，一律以当次实测为准，不得硬编码历史值。交付切片统一使用`W*`编号，具体序号见 `doc/architecture/17-18-roadmap.md` ，顺序增加。
-5. 列表项 - 本文的内容不被任何设计文档引用。如需引用设计，需先同步到正式文档再做引用。
-6. 起草计划不得修改文件头，文件头标题与计划标题从一级标题开始。
-
-## 待办池：后续计划启动方向（源自 §18 未决）
-
-> 用途：编制新计划的取材清单，条目编号用 `T*`。条目仅作启动方向提示，起草新计划时以 §18/对应章节的现行口径为准复核。某事项立项起草后在此标注"已立项 → 见本文件对应计划"；实施落地后从本表删除并同步 §18（§17–§18 仍为当前状态唯一来源，本表不承载状态事实）。
-
-| #   | 事项                             | 启动方向建议                                                                                                                   |
-| --- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| T4  | 流程内部并行分支                       | 同流程多 driver 并行推进的语义与结算归属；先确认是否有真实消费方（login/fullme 都是严格串行），无则维持 §18 的非目标口径                                                |
-| T5  | W5 尾款                          | `pendingEntry` 端到端用例；`hpbrief` 应答折叠进 world（§19.7 待定 1/2；§18 未决 #5）→ 已立项：W11.5 ④⑤                                         |
-| T6  | 并发调度分类器（I11 边界）                | `isConcurrencySafe` 是我们在 `defineTool` 里自己可加的字段（非上游依赖）：给 `mud_state`/`mud_help` 这类零发送只读工具声明并发安全时，必须同时重估 I11 → 已立项：W11.5 ⑦ |
-| T7  | 窗口期分页被延后                       | 明确窗口内插话命令的归属判据（§8.3）+ 翻页命令（`pager:continue`）的直发豁免策略（gateRank）→ 已立项：W11.5 ⑧                                               |
-| T8  | `halt` 无条件豁免直发延后 gate          | 豁免收紧为打断路径专用并留痕（§18.8：非打断路径 halt 应答 GA 可能污染在途窗口计数）→ 已立项：W11.5 ⑨                                                           |
-| T9  | 装配层测试基建（§18.9）                 | vitest 管线加载不了 TC39 装饰器模块 → 是否引入 esbuild/swc 变换链，或继续把可测策略从装配层抽出来（W9 的 `session/credential-source.ts` 即后者）→ 已立项：W11.5 ⑥    |
-| T10 | 收口声明收紧 + `sessionId` fail-loud | 把"流程表步级 `settle` 必填、漏写装配期报错"与"T1 拿不到 `sessionId` 即 fail loud"两条欠账补上（§18 未决 #22）→ 已立项：W11.2 ⑦⑧                            |
-| T11 | 入口回合区分面（`flow.id` 字段）          | 若确认需要显式区分"流程入口回合"与"渲染回合"，落地 `flow?: {id}` 字段 + 装配期校验，替换现行 `ruleId` 前缀解析（§18 未决 #21）→ 已立项：W11.2 ⑩                         |
-| T12 | R4 端到端用例                       | 流程失败 → `failPolicy.notify='t2'` 投递一条 T2 可见失败消息 → T2 接手（§18 未决 #23）→ 已立项：W11.5 ③                                          |
+> **文件角色**：mud-core2 的新计划在此起草；不作为长期事实来源。计划落地后同步到 `doc/architecture/` 对应章节文件并登记 `CHANGELOG`（基线完成前不登记），随后删除本文件中对应内容。
+>
+> 编号约定：本文件自身小节写 `1.1` / `第 3 章`；引用现行设计一律写 `§N`（§号属于 `doc/ARCHITECTURE.md` 章节地图）。交付切片暂用 `P*` 编号。
 
 ***
 
-# W11 修复计划（W10 遗留 → 结构精简）\[计划标题使用一级标题]
+## P2 修订 v2：装配绑定改走官方 preset 通道（现行宿主机制）
 
-> **状态：已冻结（2026-09-23；裁决回写经作者复核通过，可作实施依据）**。取材：2026-09-22 对本仓的三份只读审计（会话层 / 工具装配面 / 感知与网络）+ 已落地的两批改动（1.1）。裁决结论见 3.2 表后附录与第 6 章。落地后按文件头约定同步正式章节 + CHANGELOG，并删除本文件对应内容。
->
-> 编号约定：**本计划占一个交付编号** **`W11`**，下设 5 个切片 `W11.1`–`W11.5`，切片内部的细节步骤用圆圈数字（①②③…）。本文件自身小节写 `1.1` / `第 3 章`，引用现行设计一律写 `§N`。`W11` 是起草占位：**只有落地后才写入 §17 的切片表**（§17 是状态事实的唯一来源，未落地的切片不进表）。
+> **状态：已冻结（2026-09-27）——可作实施依据**。已裁决：① 完全采用现行官方 preset 机制（不保留旧装配代码）；② v1 `packages/mud-core` 退役、`dev:web` 下线，mud-core2 为唯一生产路径；③ 新会话默认 `mud-player`。第 3 章核实项全部核销（含 3 项现场实测），无遗留待实测。
+> 取材：2026-09-27 对现行宿主检出的机制核对与实测（见 1.1、第 3 章），取代 `doc/DISCUSS.md` 的 P2 D1/D6。
 
-## 第 1 章 元信息与范围
+### 第 1 章 背景与决策
 
-### 1.1 已落地基线（仅登记，不重复实施）
+#### 1.1 背景（全部为实测事实）
 
-| 批次                  | 内容                                                                                                                                                                                                                                                                                                                               | 证据                                                         |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| v0.11.1（2026-09-22） | 零风险清理：删死表面（`interruptibleBy` / `DEFAULT_LOGIN_EXIT_COMMANDS` / `loginExitCommands` / `TriggerAction` / `pendingCaptures` / `boundConnectionId` / matcher 三个零引用成员 / 两处纯转出 re-export）+ 幽灵声明修正（`mud_flow_list` / `wake:login-stall`）+ 两处类型护栏（`implements MudDeliveryChannel` / `MUD_PROMPT_ORDER` 单源）+ `dispose()` 补 `clearTimeout` | CHANGELOG v0.11.1；`tsc` 清零；35 文件 / 369 例                   |
-| v0.11.2（2026-09-22） | 缺陷修复 **S1–S5**：跨块终止符（`\r` 落块尾 + `flushLine` 后补发行尾不再产幽灵空行）、预筛静默丢命中（无 seed 即全扫 + 尊重 flags + 转义非字面）、翻页节流改每会话（I8）                                                                                                                                                                                                                    | CHANGELOG v0.11.2；`tsc` 清零；**36 文件 / 397 例**；loop-sim 账目不变 |
+1. **绑定不可用**：官方 WebUI「新建会话」不指定 sessionId，宿主自造 `session-<uuid>`（`api/session-controller/src/commands.ts:109`）；P2 D1 的 `rootSessionId` 硬绑定导致官方 UI 流程永远造不出被装配的会话。
+2. **宿主 preset 机制已换代**（实测：`cd D:/Code/deepseek-harness; pnpm dsh web --dump-config`，即 `dev:core2` 的同一入口）：
+   - registry 行 `id: agent-preset-registry`（`name: '@deepseek-ai/dsh-agent-preset-registry'`），config 仅 `{default, selectedDefault}`，**无 `roots` 字段**（`packages/preset/agent-preset-registry/src/index.ts:53-56`）；
+   - preset 由行内联声明：`id: preset-<name>` / `name: '@deepseek-ai/dsh-agent-preset'` / `config.{id,name,description,order,plugins}`（`packages/bundle/web-app/presets/*.patch.yml`、`packages/preset/agent-preset/src/index.ts:16-29`）；
+   - 旧机制（`@deepseek-ai/dsh-agent-presets` 包、`roots` + `trust`、`presets/<id>/preset.yml`、`agent.cordis.yml` 目录发现）在现检出中**不存在**。
+   - 注意：`pnpm exec dsh` 会命中**全局已发布的 dsh**（仍是旧机制），不代表部署真相；必须用 `pnpm dsh`（= `node --import tsx/esm apps/cli/src/bin.ts`）。
+3. **子级继承有官方保障**：`agentPresets.composeFrom(childCtx, parent.ctx)`（`packages/preset/agent-preset-registry/src/index.ts:273`）把子级挂到父级同一 preset 代际（`packages/subagent/subagent/src/child-agent.ts:205`）；子级读到继承 preset（`registry.spec.ts:92-99`）。
+4. **工具与 persona 的官方承载 = preset 的 `config.plugins` 行**（出厂 preset 的 standard/ptc/minimal/cordis 一律如此）。preset 作用域每个 revision 只挂载一次、全 preset 共享（`agent-preset-registry/src/index.ts:102-118`、`mount.ts:26-29`），且子级加入同一代际 ⇒ **preset 里注册的工具与 section 对根与子级同样可见**。
+5. **到期 interrupt 的参数源**：宿主对 `{kind:'user', parentSessionId}` 的校验正是子级 `session.header.parentSession`（`subagent/src/continuation-activation.ts:306-312`、`types.ts:65-67`）——取"子级自己的直接父会话"即合法，无需配置根。
 
-### 1.2 目标
+#### 1.2 决策修订（P2 D1–D6 → v2）
 
-1. **消缺陷**：把审计里"静默失效 / 状态泄漏"两类问题清零（本轮 S1–S5 即此类）。
-2. **去伪声明**：写入声明面的每个字段都必须有消费者；没有的删掉或补实现。
-3. **降结构债**：把"靠注释维持的一致性"改成结构保证（同源派生、唯一来源、类型护栏）。
-4. **门面与文档一致**：README / preset 描述 / 章节地图与代码同步。
+| 决策 | 修订 | 说明 |
+|---|---|---|
+| D1 会话绑定 | **废弃 → preset 绑定** | 「用了 `mud-player` preset」即归属门：`ctx.get('agentPresets')?.composedPreset(agent.ctx) === 'mud-player'`（`agent-preset-registry/src/index.ts:290`）；config 删 `rootSessionId` |
+| D2 depthOf | 不变 | `session.header.delegationDepth` 权威，`options.subagentDepth` 兜底；根 ⇔ depth === 0 |
+| D3 到期 interrupt | **参数源变更** | `parentSessionId` 取自子级 `session.header.parentSession`（即 1.1-5 的合法形态） |
+| D4 构建产物加载 | 不变（路径改写） | patch 行 `name` 一律用**绝对** `file:///D:/Code/dsh-mud-agent/packages/mud-core2/lib/*.js`；相对名会按 **patch 文件所在目录**解析（`packages/boot/app-boot/src/config-schema/document.ts:14`），`../../lib/**` 会指到包外 |
+| D5 唤醒署名 | 不变 | `kind:'plugin', plugin:'mud-core2'` |
+| D6 persona 承载 | **改为 preset 行注册** | 官方位置与 `@deepseek-ai/dsh-persona` 同层；**子级同样可见**（1.1-4），身份纠正由官方 `subagent:delegation` 运行时上下文承担（`child-agent.ts:172-176, 206-210`）。原「只进根」理由作废，§9.2 同步改写 |
+| **D7（新增）单根守卫** | 新增 | `default: mud-player` 之下所有新会话都是候选根，而连接/Wake/预算是单例（`src/index.ts:74-76, 80-81, 141-152`）。首个命中根独占；后续命中根 **fail-loud 留痕**，其工具调用返回可读拒绝（不静默、不抢占） |
+| **D8（新增）工具注册面** | 新增 | 三工具由 preset 行在 **preset 作用域**注册一次；`holder` 改为**调用期**由 `exec.agent` 推出（宿主 `ToolExecutionInput.agent`，`core/tools/src/index.ts:339`） |
 
-### 1.3 非目标
+**非目标**：不做"建用户时自动创建指定 sessionId"的会话 provisioning（本轮只走 preset 绑定）；不做 v1 `mud-core` 的功能迁移（退役，见第 5 章）；不做深度 ≥2 的专门拓扑；不动 P1（预案档）。
 
-- 不改形态 C / 单一水位线 / 帧机制 / B3 这些**已定案模型**（审计结论：无需要推翻之处）。
-- 不做跨会话编排、不做增量续接（§18 非目标 + §19.7 待定 3）。
-- 不为"可能有用"保留无消费者的字段或工具；需要就立项，不需要就删。
+### 第 2 章 改动清单
 
-## 第 2 章 背景与核心决策
+1. **`packages/mud-core2/cordis.patch.yml`**（全部为顶层条目，覆盖 + 插入；引擎行在前，保证服务先就绪）
+   - 覆盖 registry 行（**不覆盖则新会话仍是 standard**）：
+     ```yaml
+     - id: agent-preset-registry
+       config: { default: mud-player }
+     ```
+   - 插入 preset 行：`- id: preset-mud-player` / `name: '@deepseek-ai/dsh-agent-preset'` / `config.{id: mud-player, name: MUD 玩家, description: …, order: 40, plugins: [...]}`；`plugins` = `packages/bundle/web-app/presets/standard.patch.yml` 的 `config.plugins` **逐条副本** + 末尾追加本包工具行（`name: 'file:///D:/Code/dsh-mud-agent/packages/mud-core2/lib/preset.js'`）。
+   - 插入引擎行：`- id: mud-core2`（保留全局作用域），config 删 `rootSessionId`，其余（connect/creds/corpusPath/缺省刻度）不变。
+2. **新增 `src/preset.ts`（产物 `lib/preset.js`）**：preset 行 apply（`inject: ['tools', 'systemPrompt']`）——
+   - 注册三工具（preset 作用域；执行期按 `exec.agent` 解析 holder，见 D8 与第 2 章第 4 条）；
+   - 注册 `mud:persona` section（段名/段序沿用 `persona.ts`，与 `deployment:persona-prefix/suffix` 不冲突）；
+   - **不**在注册期依赖引擎：执行期 `ctx.get('mudCore2')`（可选服务）取单例；引擎缺席时注册照常、执行给可读拒绝（v1 同款先例，`mud-core/tests/preset-agent.spec.ts:205-213`；满足 I9——拒绝理由可读，不是必然失败的桩）。
+3. **`src/index.ts` 改造**
+   - 删 `belongs` / `rootSessionId`；归属门改 `composedPreset(...) === 'mud-player'`；
+   - 根判定 = `depthOf(agent) === 0`，Wake/persona 换绑逻辑保持（persona 注册点移出，见第 2 条）；
+   - 新增 D7 单根守卫与留痕；
+   - `interruptAgent` 的 `parentSessionId` 取子级 `session.header.parentSession`；
+   - `session/disposed` 断连判据从 `cfg.rootSessionId` 改为「根 agent 会话」（Wake owner / 根登记），避免删字段后失承载（§19「连接随会话」）；
+   - `ctx.provide('mudCore2', …)` 暴露 preset 行需要的窄面（单例 + gate/budget 句柄）。
+4. **`src/tools/tools.ts`**：`MudToolDeps.holder` → `holderOf(agent): Holder`；`execute(args, exec)` 窄面补 `agent?`；禁发表判据（现 `:288-291`）与 `holder` 透传（现 `:354`）改调用期解析。`src/subagent/subagent.ts` 的 `handleCreated` 相应拆分为「preset 侧工具注册」与「引擎侧预算登记」，注册完整性自检（现 `:226-236`）迁到 preset 侧。
+5. **`src/config.ts`**：删 `rootSessionId` 校验；其余不变（fail-loud 纪律保持）。
+6. **测试**：`test/index.spec.ts` 判定改造（composedPreset / 单根守卫 / session-disposed）；新增 `test/preset.spec.ts`（preset 行注册三工具、调用期 holder：根放行 / 子级拒 `suicide`·`quit` 类、引擎缺席可读拒绝）；新增 interrupt 参数源用例。
+7. **漂移守卫**：比对「本包 patch 里 `preset-mud-player.config.plugins`」与「`D:/code/deepseek-harness/packages/bundle/web-app/presets/standard.patch.yml` 的 `config.plugins`」逐条一致、只多本包一行；**路径不存在即失败**（不得沿用 v1 的 `skipIf(!existsSync)` 空跑守卫）。
+8. **设计文档同步**（按 §号逐条，不是只改新增段）：
+   - §3.3（`00-core.md:119-158`）：文件映射加 `src/preset.ts`；承载表"思考"行 persona 措辞；
+   - §9.2（`07-09-t2-wake.md:85-96`）：persona 可见面 = preset 作用域，子级同见；
+   - §10.4（`10-13:31-35`）：工具承载 = preset 行 + 调用期 holder；§11（`:45`）预算登记保留但补"归属门 = preset"；§12.1（`:56-72`）holder 判据来源；
+   - **悬空引用**：`agent.cordis.yml:180-186`（`00-core.md:96`、`10-13:17`）改指 `packages/bundle/web-app/presets/standard.patch.yml` 的 delegation 段；
+   - §17/§18/§19（`17-19:18, 43-47, 49-58, 100`）：工具可见面验收口径、开工前置 2、步 5/6 依赖列、连接生命周期 + 单根守卫；
+   - §0 增一条"宿主引用随 harness 换代整批复核"（已证 `agent-loop/agent.ts:631`、`continuation-activation.ts:881` 投递词两处漂移）；
+   - §2 术语表补"归属门 / 单根"（可选）；
+   - 基线完成前 CHANGELOG 不登记；本文件内容在落地后删除。
+9. **注释与文件头同步**（C7：本轮改动的每个文件逐句对表）：`src/index.ts:1-25, 106, 126-127, 164-165`；`src/subagent/subagent.ts:21-24, 184-197, 226-236`；`src/tools/tools.ts:47-49`；`cordis.patch.yml:1-10` 头注释（现仍写"同 v1 mud-core 的 dev 启动方式"）。
+10. **依赖与版本**：`package.json` 增 type-only 依赖 `@deepseek-ai/dsh-agent-preset-registry`（提供 `ctx.agentPresets` 的声明合并）；peer 版本按部署宿主抬齐（现 `^0.1.5-rc.2` vs 宿主 **0.1.7-rc.2**）。
+11. **测试入口**：根 `package.json` 的 `test`（现只 `--filter @deepseek-ai/dsh-mud-core`）改为覆盖 mud-core2（v1 退役后 core2 是唯一生产路径）。
 
-**背景**：W10（形态 C + B3 + 槽渲染）把 T1 状态化完成后，遗留问题集中在三处 —— ① 声明面比实现"宽"（`settle` 缺省三处口径不一、`classify.branch`/`stepBudget` 校验但不消费）；② 结构上"同源"靠人守（`closeTrigger` 与 `judgementUnits` 各遍历一遍、两个区段序号常量各写一份）；③ 审计发现的静默失效（本轮已修 5 条，余 3 条登记）。
+### 第 3 章 待核实（实施第一步）
 
-**核心决策**：
+**全部核销（2026-09-27）——无遗留待实测。**
 
-| #  | 决策                                                           | 理由                                          |
-| -- | ------------------------------------------------------------ | ------------------------------------------- |
-| D1 | **排序原则**：静默失效 > 状态泄漏 > 声明面去伪 > 结构精简 > 大件重构                   | 前两类是"看不见的错"，后两类是"看得见的债"；债可以等，错不能等           |
-| D2 | **行为变更必须自带会红的用例**：先证明旧实现失败（探针/参照实现），再改                       | 本轮 S1–S5 的做法固化为纪律 —— 三个缺陷都是无声的，没有会红的用例就不算修完 |
-| D3 | **文档与代码冲突一律先裁决后落笔**，实施方不自行选择口径                               | 第 3 章列出全部裁决点；裁决前该条目保持"待裁决"状态                |
-| D4 | **结构类切片只做纯搬迁 / 等价重构**：验收 = `tsc` 清零 + 全量例数**只增不减**           | 与大件重构分开，避免"重构 + 改行为"混在一个提交里                 |
-| D5 | **大件（W11.4）在动之前必须先能验收**：涉及流程/回合的必须有 `tests/loop-sim.ts` 账目支撑 | 这是本仓唯一可信的回合/步数证据（§19.6.1）                   |
-| D6 | 切片落地 = 同步正式章节 + CHANGELOG 一行 + 从本文件删除该切片                     | 文件头约定                                       |
+源码/结构类：
+- [x] registry 行 id 与 config schema（1.1-2）；`roots` 字段不存在。
+- [x] 子级组合继承（1.1-3，`composeFrom` + `child-agent.ts:205`）。
+- [x] `mud:persona` 与 `@deepseek-ai/dsh-persona` 段名不冲突（`deployment:persona-prefix` / `deployment:persona-suffix`）。
+- [x] patch 内 preset 行的语法合法性（探针 overlay 经 `--dump-config-schema` 被列为一等 entry，宿主接受 `preset-mud-player` 行）。
 
-## 第 3 章 机制与契约（验收口径与裁决点）
+现场实测（宿主检出；`pnpm exec vitest run <file>`）：
+- [x] **`composedPreset(agent.ctx)` 在 `agent/created` 时刻可读**——在宿主平面注册的 `agent/created` 监听器内读到 `'mud-player'`（临时探针 spec，2/2 通过；跑完即删，宿主检出无残留）。
+- [x] **preset 行在 apply 期与 execute 期都能读到宿主平面服务**——同一探针里 `ctx.get('probeHost')` 两期均命中（`apply:host/exec:host`）⇒ 引擎侧 `ctx.provide('mudCore2', …)` + preset 行执行期 `ctx.get` 的通路成立。
+- [x] **子级继承 preset 注册的工具与 section**——宿主持有测试 `packages/subagent/subagent-in-process-driver/tests/preset-inheritance.spec.ts` 5/5 通过：子级 `system/message` 含 preset 行注册的 section、工具面 = preset 工具、子级 header 记录 `agentPreset`。
 
-### 3.1 通用验收口径
+结论：1.1-4 的推论（preset 注册的 section 对子级同样可见）被实测证实；`mud:persona` 的子级可见性属既定裁决（D6），其**行为层**影响并入第 4 章闸门 4 的实连观察项，不作阻塞。
 
-| 项       | 口径                                                                                                                                                              |
-| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 类型与静态   | `pnpm --filter @deepseek-ai/dsh-mud-core exec tsc --noEmit` 清零                                                                                                  |
-| 全量用例    | `pnpm --filter @deepseek-ai/dsh-mud-core exec vitest run --pool=threads tests`（沙箱内默认 forks 池起不来；例数**以当次实测为准**，历史值只作对照）                                          |
-| 行为不变证明  | 结构类切片：例数不减 + 新增用例数为 0 或仅补护栏；缺陷类切片：每条先有会红的用例                                                                                                                     |
-| 流程/回合影响 | `tests/loop-sim-login.spec.ts` 的账目断言不得变化：**1 回合 / 3 步 / 3 次模型请求 /** **`idleSteps=0`** **/** **`t2Calls=0`** **/** **`deferred=0`** **/** **`concludedTurns=1`** |
-| 行尾      | 仓库 `core.autocrlf=true`：改动文件一律 CRLF，不得留 LF/混合                                                                                                                   |
+### 第 4 章 验证闸门
 
-### 3.2 裁决点（A1–A8 已裁决 2026-09-23；裁决结论附后，已经作者复核定稿）
+1. `pnpm exec tsc -p tsconfig.test.json --noEmit` + `pnpm exec vitest run test` 全绿（基线：16 文件 / 196 例）；
+2. `pnpm --filter mud-core2 build` 出 `lib/index.js` 与 `lib/preset.js`；
+3. **装配结构闸门（可先于实现跑）**：`cd D:/Code/deepseek-harness; pnpm dsh web --dump-config --patch D:/Code/dsh-mud-agent/packages/mud-core2/cordis.patch.yml` → 断言 `agent-preset-registry.config.default: mud-player` 与 `preset-mud-player` 行存在，且无 `patch: entry not found` 警告（禁用 `pnpm exec dsh`，见 1.1-2）；
+4. 实连复验：`pnpm dev:core2` 起 WebUI → 新建会话（默认即 mud-player）→ 三工具 + persona 可见面 → 非 mud 会话对照 → 派子级确认继承、静态禁发表命中、结算回根；**并观察子级 persona 的实际影响**（D6 的行为层验证，不阻塞）。
+5. **退役面自检**：`grep -rn "dev:web\|agent-presets\|rootSessionId" packages doc README.md package.json` 只应命中退役/历史说明文本，不应命中任何可执行路径。
 
-| #  | 冲突                               | 事实（已核）                                                                                                                                                                                                                                                       | 待定选项                                                                                 |
-| -- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
-| A1 | **`settle`** **缺省口径三处不一致**       | 工具层 `SETTLE_FALLBACK_MS = 3000`；流程步缺 `fallback` 时引擎落 `flow.timeoutMs ?? 30_000`；窗口自身缺省 `defaultTimeoutMs = 10_000`。§19.7 定案 3 写"缺省 `fallback:{ms:3000}`，窗口恒有界"—— 该说法**只对工具层成立**                                                                              | ① 统一为一个常量（推荐：以步预算为唯一来源，窗口不再自带缺省）；② 保持现状并改文档口径                                        |
-| A2 | **`classify.branch`** **校验但不消费** | `validateFlows` 校验 `branch[].id` 必须存在；`normalizeFlowSpecs` 明写"branch 不映射"；`judgeStep` 的分支来自 `next` + 后继 `driver`                                                                                                                                             | ① 删声明（推荐，声明面即真相）；② 实现（分支从 `classify.branch` 取）                                       |
-| A3 | **`stepBudget`** **仅声明 + 校验**    | 无任何消费者（grep 仅 `flow-spec.ts` 自身）                                                                                                                                                                                                                             | ① 删；② 实现（防 T1 空转的步数预算）                                                               |
-| A4 | **`WindowResult.outcome`**       | 接口未声明该字段、字面量里多写（`Promise.resolve({...})` 泛型推断绕过多余属性检查）、全仓无读者；`noteToolResult` 的 `outcome: 'ok'\|'fail'\|'error'` 中 `'fail'` 在生产路径**永不产生**（唯一调用方传 `ok ? 'ok' : 'error'`），而声明面 `{kind:'tool'}` 只表达 `ok`/`error`                                                | ① 删字段 + 口径收窄为 `'ok'\|'error'`（推荐）；② 把窗口的精确结局（abort⇒fail）接回引擎（**行为变更**，需 fullme 用例复核） |
-| A5 | **`ReplySettle`** **六值三名**       | 注释自称 `evidence`/`ga`/`eor` "同形不同名"；`engine.noteToolResult` 必须四选一判断；`parseWindowMarkerId` 解析 `ok\|fail\|branch\|close` 四类而只有 `close` 是活的                                                                                                                      | ① 收敛为判别式（`evidence`/`timeout`/`abort`/`error`/`interrupted`）+ 诊断字段带原因（推荐）；② 保留现状     |
-| A6 | **恒 0 计数器**                      | `counters.fail`（`inflight` diag）**从不自增**；`hitsDropped`（diag）全仓无自增点。二者都进 `MudSessionDiag`，但 WebUI/壳层无消费者                                                                                                                                                      | ① 删字段（推荐）；② 补计数（`fail` 在形态 C 下已无语义，需先定义）                                             |
-| A7 | **`recall()`** **生产零调用**         | `/mud/diag` 只用**计数**；`session.recall()` → `adjudicator.recall()` 仅测试调用。但它同时是 **I5 守恒用例的唯一观测面**（`runtime-delivery.spec.ts` 断言"投递 ∪ span == recall 全量"）                                                                                                        | ① 删缓冲 + 守恒观测面改用测试侧 spy（推荐，省每会话最多 2000 行常驻）；② 保留并如实标注"测试观测面"                          |
-| A8 | **文档与门面残留**                      | §18 未决 #22 正文不含"拆桥"（§19.1 却把桥归到 #22）；`ARCHITECTURE.md` 章节地图仍写 §7–§8 = "命令-应答桥"；README 仍写 `turnRef`/命令-应答桥/`perception/`+`runtime/` 路径/`mud_recall`/`mud_flow_*`/"vitest 180 用例"；`presets/mud-player/preset.yml` 描述含 `mud_recall` 且漏 `mud_captcha`/`mud_help` | ① 一并订正（推荐）；② 仅订正 §18/章节地图，README 另立                                                  |
+### 第 5 章 退役与收尾（v1 / 仓面 / 计划自身）
 
-**裁决结论（2026-09-23，作者裁决；冻结前复核定稿）**：
-
-| #   | 裁决                                                                                                                                                                                                                                       |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| A1  | **① 统一为一个常量** —— 以步预算为唯一来源，窗口不再自带缺省；同步订正 §19.7 定案 3；执行面与 A3 的步预算实现、W11.4 的 3. 单一步预算时钟同源                                                                                                     |
-| A2  | **① 删声明** —— 删 `classify.branch` 字段与 `validateFlows` 的 `branch[].id` 校验（声明面即真相）                                                                                                                                          |
-| A3  | **② 实现** —— `stepBudget` 作防 T1 空转的步数预算接进引擎；**行为变更**：先写会红用例，loop-sim 账目不变                                                                                                                                     |
-| A4  | **自定义裁决** —— `settled`（窗口精确结局）保持现值域不动（6 类：边界 `ga`/`eor`、`evidence`、`timeout`、`abort`、`interrupted`、`error`）；`outcome` 3 值收 2 值（`'ok'`/`'error'`）；删 `WindowResult` 上无消费者的 `outcome` 残面。**两套编码各管各的，不混**         |
-| A5  | **① 收敛为判别式** —— 加诊断字段带原因；`parseWindowMarkerId` 只留 `close`；`noteToolResult` 四选一随之简化。**复核点**：原选项文字作"五值"，与 A4 的值域不动并立 —— 回写按"值域不动、只收结构与命名"执行；若原意含并值（`ga`/`eor`/`evidence` 并一值），复核时改此处与第 5 章 W11.2 的 5. |
-| A6  | **① 删字段** —— 删 `counters.fail` 与 `hitsDropped`，同步 `MudSessionDiag` 与 §12 diag 字段表                                                                                                                                                 |
-| A7  | **① 删缓冲改测试 spy** —— I5 守恒断言改测试侧观测，省每会话最多 2000 行常驻（落地于 W11.5 的 1.）                                                                                                                                             |
-| A8  | **① 一并订正** —— §18 #22 措辞、`ARCHITECTURE.md` 章节地图、README、`preset.yml` 随 W11.2 的 11. 一次改完                                                                                                                                     |
-
-**同日其余裁决**：W11.1 的 3./4. —— legacy `until` 与 `ActionSpec.until` **整体删除**（待实测 1：无消费方）；W11.1 的 7. —— `Config.flows` **记为非目标**；待实测 2 —— `mud_flow_enable/disable/status` **先不注册**（落 W11.2 的 12.）；W11.2 的 8. —— T1 `sessionId` **留痕 + 明确失败**；9. —— `loginTimeoutMs` **删字段**；10. —— `flow.id` **按现口径关闭**（口径写进 §19，关闭 §18 未决 #21）。
-
-## 第 4 章 源码变更清单（切片 × 文件粒度）
-
-| 切片    | 修改                                                                                                                                                                                                                                                  | 新增                                                         | 删除                                             |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ---------------------------------------------- |
-| W11.2 | `agent/flow/flow-spec.ts`、`agent/flow/engine.ts`、`agent/inflight.ts`、`perceive/matcher.ts`、`deliver/adjudicator.ts`、`session/types.ts`、`gate/tiers.ts`、`doc/architecture/*`、`README.md`、`presets/mud-player/preset.yml`                             | 用例 + 装配期校验                                                 | 无消费者的声明字段                                      |
-| W11.3 | `deliver/adjudicator.ts`（拆文件）、`agent/flow/engine.ts`、`perceive/matcher.ts`、`perceive/criteria.ts`、`agent/tools-build.ts`、`agent/gate/{tiers,policy,tool-gate,rules}.ts`、`perceive/types.ts`、`network/ansi.ts`、`world/state.ts`、`log/log-service.ts` | `deliver/frame-splitter.ts`、`agent/tool-spec.ts`（若立项）；类型别名 | `agent/gate/rules.ts`（若工具表声明化落地）               |
-| W11.4 | `agent/flow/flow-spec.ts`、`agent/flow/engine.ts`、`deliver/adjudicator.ts`、`session/types.ts`、`deliver/*`                                                                                                                                            | `FrameContext` 值对象                                         | `normalizeFlowSpecs` + `gaCriteriaOf` + 三处二次派生 |
-| W11.5 | 各 spec、`doc/CHANGELOG.md`、`doc/ARCHITECTURE.md`、`README.md`、`doc/architecture/17-18-roadmap.md`                                                                                                                                                     | `tests/loop-sim-fail.spec.ts`（R4）等                         | 陈旧门面段落                                         |
-
-## 第 5 章 实施切片与测试验收
-
-### W11.2 声明面去伪与口径统一（依赖第 3 章裁决）
-
-本切片条目 = 裁决点 A1–A8（①–⑥、⑪）**加上** §18 未决 #22/#21 的欠账（⑦⑧⑩）、`loginTimeoutMs`（⑨）与待实测 2 的恒失败工具（⑫）；**先补会红的用例（涉及行为的），再改声明与实现，最后改文档**。（裁决结论总表见 3.2 附录。）
-
-1. A1 `settle` 缺省口径三处统一 → **裁决 ①**：统一为一个常量（以步预算为唯一来源，窗口不再自带缺省）；同步订正 §19.7 定案 3。
-2. A2 `classify.branch` → **裁决 ①**：删声明（`branch` 字段 + `validateFlows` 校验）。
-3. A3 `stepBudget` → **裁决 ②**：实现为防 T1 空转的步数预算接进引擎。**行为变更**：先写会红用例，loop-sim 账目不变。
-4. A4 → **裁决（自定义）**：`settled` 保持现值域不动（窗口精确结局独立编码）；`noteToolResult` 的 `outcome` 3 值收 2 值（`'ok'`/`'error'`）；删 `WindowResult` 上无消费者的 `outcome` 残面 —— 两套编码各管各的，不混。**行为相关**：先用 fullme / captcha 用例固定现状。
-5. A5 → **裁决 ①**：`ReplySettle` 收敛为判别式 + 诊断字段带原因 + `parseWindowMarkerId` 只留 `close` 路径；`engine.noteToolResult` 的四选一判断随之简化。（值域按 A4 不动 —— 复核点见 3.2 附录与第 6 章。）
-6. A6 → **裁决 ①**：删 `counters.fail` / `hitsDropped` 字段（同步 `MudSessionDiag` 与 §12 的 diag 字段表）。
-7. **步级** **`settle`** **必填收紧**（§18 未决 #22 前半，T10）：漏写即装配期报错，替换现行"有 `settle` 才走新形校验"的双形分支。
-8. **T1 拿不到** **`sessionId`** **即 fail loud**（§18 未决 #22 后半，T10）→ **裁决**：留痕 + 明确失败（不走 §7 合法退化口径）；先写会红用例。
-9. **`loginTimeoutMs`** **无读取点** → **裁决**：删字段（`session/types.ts` 声明与 `assemble.ts` 两处写入一并删）。
-10. **入口回合区分面**（§18 未决 #21，T11）→ **裁决**：按现口径关闭 —— 不落地 `flow?: {id}`；把"槽 + `ruleId` 前缀"口径写进 §19 并关闭 §18 未决 #21。
-11. **A8 文档与门面订正** → **裁决 ①**：一并订正 —— §18 #22 措辞（"拆桥"单独立项）、`ARCHITECTURE.md` 章节地图、README 与 `preset.yml`。
-12. **`mud_flow_enable/disable/status`** **先不注册**（待实测 2 裁决：无 M4 时间表且 `flowControl` 从未传入 → 恒失败）→ 从工具面与档位可见表撤出，M4 落地再登记；`mud_flow_list` 保留。
-
-### W11.3 结构精简（低风险机械重构，D4 口径）
-
-1. **`closeTrigger`** **从** **`judgementUnits`** **派生** —— "收口与判据不可能分歧"从**人守**变**结构保证**（删一次手工同源遍历）。
-2. **`FrameSplitter`** **拆出** **`deliver/frame-splitter.ts`** —— `adjudicator.ts`（1200 行）变两个单一职责文件，分帧器获得独立测试面。
-3. **裁决器内部切分** —— `settle()`（116 行 / 8 个提前返回）提为站方法；三处 reset 阶梯合并；`queueFlowActions` 的 lined/framed 两循环合并；`needsHuman` 复用。
-4. **流程机四份 teardown 合一** —— `dispose`/`finishFlow`/`failStep`/`reset` 共用的清账清单提一个方法；`slotNames()` 与步数上限改构造期算一次；`pendingFlow` 归位字段区。
-5. **正则编译收口** **`perceive/criteria.ts`** —— 6 处 `new RegExp`（含 `capture` 每步重编译）统一走一层编译口径（`g`/`y` 归一）。
-6. **死代码清尾** —— `PerceptionEngine.reset()`、`MudConnectionManager.list()`、`TriggerMatchService.size`、`log.entries`/`initLogFile`/`fileTarget`、`world` 三函数、`SkillService` 的 registry 面：**逐项定"保留（测试观测面）/ 删"**，保留项如实标注。
-7. **类型去重** —— `ParsedLine`、`EngineHit`/`MatchHit`、`MudDecisionRecord`/`LogEntry`、连接状态四处声明、`WindowSpec` 命名撞车（命中窗口 vs 在途窗口）。
-8. **共享表冻结 + 单一** **`gateRules`** —— 模块级表加 `as const`/`Object.freeze`；`gateRules` 现在 assemble 与每会话各建一份，改为一份注入（消除安全相邻的分叉面）。
-9. **工具面声明化** —— spec 表派生 `name`/`output`/档位/门禁 deriver/散文；新工具从 **7 处登记降到 1 处**；配套两条交叉校验用例（`visibleTools(t) ⊆ keys(buildMudTools())`、每个发命令工具都有 deriver）—— `mud_flow_list` 那类腐烂从此红。
-
-### W11.4 契约与大件（D5：必须能验收再动）
-
-1. **拆过渡桥**（最高收益 / 最高风险）—— 引擎直接消费 `settle`/`classify`/`captures`，删 `normalizeFlowSpecs` + `gaCriteriaOf` + `windowSpecOf`/`judgementUnits` 的二次派生；`FlowStep` 去掉 legacy 双形字段。
-2. **`FrameContext`** **值对象** —— 固化"`inFrame`/`spanFloor` 必须在站③之前取样"，把"禁止重排"从注释变成单向数据流。
-3. **单一步预算时钟** —— 窗口计时器与驱动器步预算同源（A1 的执行面）。
-4. **层级倒挂修正** —— `deliver` 域声明迁出 `session/types.ts`（`actionOf`/`fillSlots`/`parseDeliveryCallId`/`MAX_*`），`t2Allowed` 归位。
-
-### W11.5 观测、测试与门面
-
-1. **`recall()`** **观测面裁决落地**（A7 → **裁决 ①**：删生产缓冲，I5 守恒断言改测试侧 spy）。
-2. **守恒性与预测性测试补强** —— 现有 I5 守恒断言之外，补"幽灵行/丢行"这类对抗性用例（S1–S5 的经验推广）。
-3. **R4 端到端用例**（T12 / §18 #23）—— 流程失败 → `notify='t2'` → T2 接手。
-4. **`pendingEntry`** **端到端用例**（T5 / §19.7 待定 1）。
-5. **`hpbrief`** **应答折叠进 world**（T5 / §19.7 待定 2）。
-6. **装配层测试基建**（T9 / §18.9）—— 装饰器加载链。
-7. **并发调度分类器重估（I11）**（T6）—— 给零发送只读工具声明 `isConcurrencySafe` 时同步重估 I11。
-8. **窗口期分页归属判据**（T7）—— 插话命令归属 + `pager:continue` 的直发豁免策略。
-9. **`halt`** **豁免收紧为打断路径专用并留痕**（T8 / §18.8）。
-10. **README /** **`preset.yml`** **重写为薄指针** —— 设计事实源只在 `doc/`。
-
-## 第 6 章 未决、待实测与完成定义
-
-**裁决状态（2026-09-23）**：A1–A8、W11.2 的 8.–10. 与待实测 1/2 已全部裁决并回写（结论见 3.2 附录与第 5 章对应条目）；W11.1 已实施落地（2026-09-23，CHANGELOG v0.11.3），其对应内容已从本文件删除；本计划已**冻结**（裁决回写经作者复核通过），可作实施依据。
-
-**复核点（1 项）**：A4「settled 值域不动」与 A5 选项原文「五值」并立 —— 回写按"值域不动、只收结构与命名（判别式 + 诊断原因字段 + noteToolResult 简化）"执行；若 A5 原意含并值（`ga`/`eor`/`evidence` 并一值），复核时指出后改 3.2 附录与第 5 章 W11.2 的 5.。
-
-**待实测**：
-
-1. `mud_flow_enable/disable/status` 的 M4 时间表 —— **已核并关闭**（2026-09-23）：全仓无 M4 时间表，`flowControl` 从未传入 → 三工具恒失败；裁决先不注册（W11.2 的 12.）。
-2. W11.3 `6.` 的每一项是"测试观测面"还是"真死" —— 靠全仓引用 + 是否有断言消费逐项判定（**仍开放**，W11.3 实施时逐项定）。
-
-**完成定义（每切片）**：`tsc --noEmit` 清零；全量例数只增不减且以当次实测登记；涉及流程/回合的**必须** loop-sim 账目不变；正式章节 + CHANGELOG 同步；本文件对应内容删除。
-
-**待办池映射**：T5 → W11.5 `4.5.`；T6 → W11.5 `7.`；T7 → W11.5 `8.`；T8 → W11.5 `9.`；T9 → W11.5 `6.`；T10 → W11.2 `7.8.`；T11 → W11.2 `10.`；T12 → W11.5 `3.`。T4（流程内部并行分支）维持 §18 非目标，无真实消费方不立项。
+1. **v1 `packages/mud-core` 退役**：代码留存不删、停止维护；`packages/mud-core/cordis.patch.yml`（`agent-presets` 覆盖）与 `presets/` 不再作为部署路径——该行在现宿主不存在，patch 只会得到 `patch: entry not found`；
+2. **清掉空跑守卫**：`packages/mud-core/tests/preset-agent.spec.ts:293` 的 `HARNESS_STANDARD` 路径已不存在、配 `skipIf` 后恒为绿，须删除或改为显式退役标记（不允许"看起来在守、实际没跑"）；
+3. **脚本与门面**：根 `package.json` 的 `dev:web` 下线；`dev:core2` 升为唯一入口；仓根 `README.md` 的 v1 部署段（`:32-33`、`:65`）改为"mud-core 已退役 → mud-core2"薄指针；
+4. **`doc/DISCUSS.md`**：P2 标 `superseded by doc/PLAN.md「P2 修订 v2」`（D1/D6 及 `rootSessionId` 相关条目作废）；P1（预案档）保持原状、不动；
+5. **本文件**：实施完成后删除本 P2 修订内容；`CHANGELOG` 在基线（§18 八步）完成前不登记。

@@ -1,5 +1,5 @@
 /**
- * flows/login — 登录流程（impl §3.6；实录刻度承自旧实现
+ * flows/login — 登录流程（§13；实录刻度承自旧实现
  * packages/mud-core/src/agent/flow/flows/login.ts，抓包字节实证 2026-09-10/11）。
  *
  * 步骤图（旧实录定案）：等名字提示 → {name} → 等密码提示 → {pass}
@@ -17,8 +17,8 @@ import { FlowError, type Flow, type FlowCtx, type FlowResult } from './types.ts'
 import type { Mud, ReadResult, WaitOpts } from '../../link/mud.ts'
 
 /**
- * 单步兜底超时取 ctx.defaultTimeoutMs（Config → deps 注入；§3.5"必须显式给出
- * 或由工具注入缺省"，取值待 §6 校准）——本文件不设模块级超时常量。
+ * 单步兜底超时取 ctx.defaultTimeoutMs（Config → deps 注入；§12.1"必须显式给出
+ * 或由工具注入缺省"，取值待 §19 校准）——本文件不设模块级超时常量。
  */
 
 /**

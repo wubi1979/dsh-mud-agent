@@ -1,8 +1,8 @@
 /**
- * flows/index — 流程注册表（impl §3.6）。
+ * flows/index — 流程注册表（§13）。
  *
  * 加流程 = 加文件 + 本数组一行；对模型只暴露 `mud_flow({id})`，注册表不进
- * 模型上下文。查无此 id = 越权/不存在，mud_flow 直接拒（§3.5 静态遮蔽）。
+ * 模型上下文。查无此 id = 越权/不存在，mud_flow 直接拒（§12.2 静态遮蔽）。
  */
 
 import { FULLME_FLOW } from './fullme.ts'

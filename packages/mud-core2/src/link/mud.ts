@@ -1,7 +1,7 @@
 /**
  * mud-core2 link/mud — 存在层核心：连接、行流分发、持有者、read 竞速机。
  *
- * 职责（impl §3.1/§3.2）：
+ * 职责（§4/§5）：
  *   - socket → telnet.decode → ansi.write → 逐行 onLine（推送式，不新建循环）；
  *   - GA/EOR 由 telnet 提取为边界事件（协议边界唯一出口），到达时先 flushLine
  *     再消费边界；
@@ -20,12 +20,12 @@
  *   - 重连（再次 connect）：行缓冲/样式游标复位（parser.reset），**abs 连续
  *     递增不归零**（行号空间是 Mud 生命周期的，跨重连不复用，避免行号碰撞）。
  *
- * 判定序（写死，impl §3.2）：同步关窗序 **failOn > until > gaCount > maxLines**
+ * 判定序（写死，§5）：同步关窗序 **failOn > until > gaCount > maxLines**
  * （maxLines 与 gaCount 同属同步关窗、排末位）；quietMs/timeoutMs 是**异步**
  * 收束源（计时器到点），与同步判据竞速。danger 不在本层测 —— 意识层在
  * onLine 钩子里同步判（与意识层同一份 danger.ts），命中即 abortWait('danger')。
  * 声明了 until 却未见完成句收场 → 记 error（判据失配要吵，语料可见）。
- * 失配按**关窗者**判（impl §3.2）：quiet/timeout 收场、或被 **maxLines** 剪断
+ * 失配按**关窗者**判（§5）：quiet/timeout 收场、或被 **maxLines** 剪断
  * （done 且命中来源为 maxLines）而 until 未命中 —— 都算失配；**GA/EOR 边界
  * 关窗（gaCount 命中）不算失配**（mud_flow({id}) 缺省 gaCount=1，完成句未到
  * 而边界先到是正常收束，不是判据写错）；danger/signal/disconnected/failOn
@@ -46,7 +46,7 @@ import { TelnetClient } from './telnet.ts'
 /** 行流持有者身份（fail-loud 用；会话级唯一，单 MUD 连接至多一个）。 */
 export type Holder = 'root' | `child:${string}`
 
-/** read 收束原因（impl §3.1 ReadResult）。 */
+/** read 收束原因（§4 ReadResult）。 */
 export type ReadReason =
   | 'done'          // until / gaCount / maxLines 判据满足
   | 'failOn'        // 负面判据命中
@@ -90,7 +90,7 @@ export interface ReadResult {
   rest?: MudLine[]
 }
 
-/** 有界缓冲上限（impl §3.1：512 行 / 64KB，超限丢最旧记错）。 */
+/** 有界缓冲上限（§4：512 行 / 64KB，超限丢最旧记错）。 */
 const MAX_BUFFER_LINES = 512
 const MAX_BUFFER_BYTES = 64 * 1024
 
@@ -125,7 +125,7 @@ export class Mud {
   /**
    * 每行钩子：装配时注入 awareness.observe（永续，与谁在等无关；缓冲态到达的
    * 行同样经过本钩子，read 预取不重复分发）。返回 'swallow' = 吞触发行（反射
-   * 出口，impl §3.3）：该行不进 acc/缓冲/模型面，反射命令由钩子内自行直发，
+   * 出口，§6）：该行不进 acc/缓冲/模型面，反射命令由钩子内自行直发，
    * 语料与日志由钩子内自记。返回 void = 照常归档。
    */
   onLine: ((line: MudLine) => 'swallow' | void) | null = null
@@ -134,14 +134,14 @@ export class Mud {
   /** 断线钩子：经危险 latch 醒根、登录标志复位由装配层接线。 */
   onDisconnect: (() => void) | null = null
   /**
-   * 直发观测钩子（§3.8 交换级事件 `mud/command-sent` 的发射点）：send 成功
+   * 直发观测钩子（§16.1 交换级事件 `mud/command-sent` 的发射点）：send 成功
    * 后以命令原文回调。**凭据不在此列**（login 的 name/pass 走 sendCredential，
    * 见下——不触发本钩子，连本地 JSONL 都不留明文）。装配侧只接 JSONL 自有
    * 通道（corpus.event），**不接 session.append**（防明文入账；语料/诊断是
    * 本地文件，白名单外天然不进模型上下文）。
    */
   onSend: ((cmd: string) => void) | null = null
-  /** read 收束观测钩子（§3.8 `mud/exchange-complete` 发射点）：收束原因 + 行数。
+  /** read 收束观测钩子（§16.1 `mud/exchange-complete` 发射点）：收束原因 + 行数。
    *  低频（每次 read 一次）；装配接 corpus.event（进 Session 与否归装配裁量）。 */
   onExchange: ((info: { reason: ReadReason; lines: number }) => void) | null = null
 
@@ -154,7 +154,7 @@ export class Mud {
     return this.holder
   }
 
-  /** 建连（幂等）。显式入口；隐式重连策略（§6 待实测）由装配层决定何时调。
+  /** 建连（幂等）。显式入口；隐式重连策略（§19 待实测）由装配层决定何时调。
    *  重连复用 parser（abs 连续递增，跨重连行号不复用），但行缓冲/样式游标
    *  必须复位 —— 上一连接的半截行与样式游标不得污染新连接首行。 */
   connect(host: string, port: number): void {
@@ -168,6 +168,12 @@ export class Mud {
     conn.on('error', (err: Error) => this.onLog?.('error', `连接错误: ${err.message}`))
     conn.on('log', (l: { level: 'info' | 'error', text: string }) => this.onLog?.(l.level, l.text))
     conn.connect()
+  }
+
+  /** 断连（幂等）：§19"连接随会话"——装配层接 session/disposed 调用。
+   *  走 socket 关闭 → 'close' 事件 → onClose 钩子链，与意外断线同路。 */
+  disconnect(): void {
+    this.conn?.close()
   }
 
   /** 直发：反射/流程共用；不占行流、不做任何判据。未连接返回 false。
@@ -191,7 +197,7 @@ export class Mud {
   }
 
   /**
-   * 行等待竞速机（impl §3.2）。
+   * 行等待竞速机（§5）。
    * 1. 持有者检查：已有持有者 → 抛错（fail-loud，不做队列）；
    * 2. 先消费 buffer（本次 send 之前的到达行先结算）；
    * 3. 建竞速状态，已消费行立即参与判定；
@@ -251,7 +257,7 @@ export class Mud {
     })
   }
 
-  /** 中断在途 read（意识层 danger 出口；impl §3.3 reading?.abort('danger')）。
+  /** 中断在途 read（意识层 danger 出口；§6.1 reading?.abort('danger')）。
    *  触发危险的那一行由 abort 收编进结果（现场随 reason:'danger' 上抛）。 */
   abortWait(line?: MudLine): void {
     if (this.reading === null) return
@@ -349,7 +355,7 @@ export class Mud {
     clearTimeout(state.timeoutTimer)
     if (state.quietTimer !== null) clearTimeout(state.quietTimer)
     if (state.onAbort !== null) state.opts.signal?.removeEventListener('abort', state.onAbort)
-    // until 失配记错（impl §3.2 判据失配要吵）：按**关窗者**判——quiet/timeout
+    // until 失配记错（§5 判据失配要吵）：按**关窗者**判——quiet/timeout
     // 收场、或被 maxLines 剪断（done 且来源 maxLines）而 until 未命中。GA/EOR
     // 边界关窗（gaCount 命中）是正常收束，不算失配；danger/signal/disconnected/
     // failOn 是外部中断或负面命中，也不吵。

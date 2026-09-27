@@ -1,17 +1,17 @@
 /**
- * tools — 执行域工具面（impl §3.5）：mud_send / mud_flow / mud_state。
+ * tools — 执行域工具面（§12）：mud_send / mud_flow / mud_state。
  *
  * 三工具一个原则：**原文返回、模型自决**——mud_send 返回 ReadResult.lines
  * 原文（过程即结果）；mud_flow 返回流程三出口的转写；mud_state 返回 world
  * 快照。第一期满（不注册 captchaRecognize）：必然失败的桩会让模型反复调用、
  * 白烧请求。
  *
- * 静态遮蔽（不做动态权限，§3.5）：
+ * 静态遮蔽（不做动态权限，§12.2）：
  *   - 根会话（holder === 'root'）：放行；
  *   - 子会话（`child:*`）：mud_send 工具内**静态禁发表**（suicide/quit/drop
  *     all 类不可逆命令，首词一行判断）命中即拒；mud_flow 查无此 id 同样直接拒；
  *   - 计划边界不进权限系统：经济类动作不被拦（"取钱/买食物"全链路验收依赖它）；
- *     子级自作主张发经济命令目前无例证，按"先例证后机制"不加处理（§6 语料审计）。
+ *     子级自作主张发经济命令目前无例证，按"先例证后机制"不加处理（§12.2 语料审计）。
  *
  * 首次 mud_send 隐式建连 + login（LoginGate：已登录标志防重入；断线复位由
  * 装配层接线 mud.onDisconnect → gate.reset()）。
@@ -46,7 +46,7 @@ export interface MudToolDefinition {
 
 /** 宿主注册面窄结构（对应宿主 `tools.register(ToolDefinition): () => void`；
  *  在 agent 作用域内调用 = 只对该 agent 可见，装配时由 agent/created 监听器
- *  逐 agent 调用，作用域必须是宿主/preset（§3.5 实施前提 2）。 */
+ *  逐 agent 调用，作用域必须是宿主/preset（§10.4 实施前提 2）。 */
 export interface ToolRegistrar {
   register(definition: MudToolDefinition): () => void
 }
@@ -60,15 +60,15 @@ export interface MudToolDeps {
   /** 本工具面所在会话的持有者身份（'root' | `child:<id>`）：deny 判据 + read/流程参数。 */
   holder: Holder
   /**
-   * 交换级事件面（§3.8，可选）：mud_flow 三出口在此发 `mud/flow-result`
+   * 交换级事件面（§16.1，可选）：mud_flow 三出口在此发 `mud/flow-result`
    * （data = { flow, outcome }）；mud_send/login 的 command-sent、
    * exchange-complete 由 mud.onSend/onExchange 发射（装配统一接 corpus）。
    * 白名单外天然 log-only，是否进 Session 归装配裁量。
    */
   onExchange?: (type: string, data?: unknown) => void
   /**
-   * 缺省总超时毫秒（Config 供给，取值待 §6 校准）：兼两用 —— mud_send 的
-   * 缺省总超时（§3.5"必须显式给出或由工具注入缺省"）与流程单步兜底超时
+   * 缺省总超时毫秒（Config 供给，取值待 §19 校准）：兼两用 —— mud_send 的
+   * 缺省总超时（§12.1"必须显式给出或由工具注入缺省"）与流程单步兜底超时
    * （FlowCtx.defaultTimeoutMs，经 LoginGate/mud_flow 双路传入）。
    */
   defaultTimeoutMs: number
@@ -108,7 +108,7 @@ export function denyMatch(cmd: string): string | null {
  * 登录闸门：首次 mud_send 隐式建连 + login；已登录标志防重入（并发调用共乘
  * 同一次 in-flight 登录）；断线复位由装配层接线（mud.onDisconnect → reset）。
  * 登录态同步写世界记忆（world.session.loggedIn，measured）——这是 context
- * 世界摘要"断线/重连判断"的唯一写点（防孤儿字段，§3.4 字段清单判据）。
+ * 世界摘要"断线/重连判断"的唯一写点（防孤儿字段，§9.1 字段清单判据）。
  */
 export class LoginGate {
   private loggedIn = false
@@ -189,7 +189,7 @@ function compileRegexes(sources: string[] | undefined, what: string): RegExp[] |
   })
 }
 
-/** 编译 listen；全空 = 缺省 gaCount:1（一段完整文字，impl §3.5）。 */
+/** 编译 listen；全空 = 缺省 gaCount:1（一段完整文字，§12.1）。 */
 export function compileListen(spec: ListenSpec | undefined): Partial<WaitOpts> {
   if (spec === undefined) return { gaCount: 1 }
   const until = compileRegexes(spec.until, 'listen.until')
@@ -227,7 +227,7 @@ function linesText(lines: readonly MudLine[] | string[]): string {
 
 /**
  * 构建并注册三个 mud 工具（装配时对每个 agent 会话调用一次；子会话依赖
- * agent/created 监听器注册在宿主/preset 作用域，§3.5 实施前提 2）。
+ * agent/created 监听器注册在宿主/preset 作用域，§10.4 实施前提 2）。
  *
  * 返回注册 disposer 列表与登录闸门 —— 装配层把 mud.onDisconnect 接到
  * gate.reset()；闸门以 deps.defaultTimeoutMs 构造（同值兼流程单步兜底
@@ -333,7 +333,7 @@ export function registerMudTools(
         required: ['ok'],
       },
       render: (_args, value) => {
-        // 三出口统一人读文本（§3.5"结果原文返回"原则；问题出口 = question + 行原文）。
+        // 三出口统一人读文本（§12.1"结果原文返回"原则；问题出口 = question + 行原文）。
         const v = value as MudFlowResult
         if (!v.ok) return [{ type: 'text', text: v.error }]
         if ('done' in v) {

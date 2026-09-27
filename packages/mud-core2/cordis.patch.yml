@@ -1,0 +1,32 @@
+# mud-core2 bundle patch: 装配层接线（§3.3；加载机制见 P2 计划 D4）。
+#
+# 本文件作为 `--patch` overlay 传入（同 v1 mud-core 的 dev 启动方式）：
+#   pnpm --dir D:/Code/deepseek-harness dsh web --patch D:/Code/dsh-mud-agent/packages/mud-core2/cordis.patch.yml
+#
+# 纪律（承 v1 头注释的教训）：
+#   - `name` 指向 tsc 构建产物 lib/（plain Node ESM 加载），改码后必须重建：
+#       pnpm --filter mud-core2 build
+#   - 本层是 LAST layer：不要在 profile patch 里引用本包插入的行；
+#   - 一条 insert 只声明 mud-core2 自己，不改宿主其他行的 config。
+
+- insert:
+    - id: mud-core2
+      name: 'file:///D:/Code/dsh-mud-agent/packages/mud-core2/lib/index.js'
+      config:
+        # 绑定根会话（必填；只装配该会话与其直接子级，P2 D1）。
+        rootSessionId: mud-player
+        # MUD 服务器（首次 mud_send 隐式建连，§4）。
+        connect:
+          host: mud.pkuxkx.net
+          port: 8081
+        # 登录凭据（明文只进发送瞬间，§13；留空则 apply fail-loud 拒装）。
+        # 冒烟占位（VERIFY/VERIFY）：mount 通过但不会真实登录——连接惰性，首次 mud_send 才建连。
+        creds:
+          name: VERIFY
+          pass: VERIFY
+        # 静默唤醒 / 缺省超时 / 子 agent 预算（毫秒；缺省见 config.ts，§19 待校准）。
+        # silenceMs: 120000
+        # defaultTimeoutMs: 30000
+        # budgetMs: 600000
+        # 行流语料 JSONL 落盘路径（缺省关闭）。
+        corpusPath: 'D:/Code/dsh-mud-agent/logs/mud-core2-corpus.jsonl'

@@ -1,5 +1,5 @@
 /**
- * link/mud 回放测试 — read 竞速机（impl §4 语料回放四条 + 释放阀门 + 持有者）。
+ * link/mud 回放测试 — read 竞速机（§17 语料回放四条 + 释放阀门 + 持有者）。
  *
  * 四条先红后绿：完成句跨批 / 危险中断 read / rest 同帧移交 / until 失配记错。
  * 另覆盖：先到的行先结算、GA 边界计数、signal/timeout 释放阀门、持有者冲突
@@ -75,7 +75,7 @@ async function setup(): Promise<{ mud: Mud, server: TestServer }> {
 
 const GA_BYTES = Buffer.from([IAC, GA])
 
-describe('语料回放四条 (impl §4)', () => {
+describe('语料回放四条 (§17)', () => {
   it('完成句跨批: until 在累积文本上测, 跨两个 TCP 块命中', async () => {
     const { mud, server } = await setup()
     const p = mud.read({ holder: 'root', until: [/去茶室/], timeoutMs: 2000 })
@@ -173,7 +173,7 @@ describe('read 竞速机', () => {
     await server.close()
   })
 
-  it('onSend 观测钩子: 成功发送才回调命令原文 (§3.8 command-sent 发射点)', async () => {
+  it('onSend 观测钩子: 成功发送才回调命令原文 (§16.1 command-sent 发射点)', async () => {
     const { mud, server } = await setup()
     const sent: string[] = []
     mud.onSend = cmd => sent.push(cmd)
@@ -186,7 +186,7 @@ describe('read 竞速机', () => {
     expect(sent.length).toBe(beforeFail)
   })
 
-  it('onExchange 观测钩子: read 收束时回调 { reason, lines } (§3.8 exchange-complete 发射点)', async () => {
+  it('onExchange 观测钩子: read 收束时回调 { reason, lines } (§16.1 exchange-complete 发射点)', async () => {
     const { mud, server } = await setup()
     const exchanges: Array<{ reason: string; lines: number }> = []
     mud.onExchange = info => exchanges.push(info)

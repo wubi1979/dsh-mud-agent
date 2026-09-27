@@ -1,5 +1,5 @@
 /**
- * flows/fullme 测试 — fullme 验证码链路（impl §5 第 7 步 / §3.6）。
+ * flows/fullme 测试 — fullme 验证码链路（§18 第 7 步 / §13）。
  *
  * 覆盖：取图（URL → question 出口）、冷却（FlowError）、stale 三连舞蹈后
  * 补取（按**出现次数**断言三连发，累积缓冲不空转）、二次 stale 抛错、

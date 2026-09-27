@@ -1,16 +1,16 @@
 /**
- * awareness/world — 工作记忆：世界状态（impl §3.3/§3.7）。
+ * awareness/world — 工作记忆：世界状态（§6/§14）。
  *
  * 职责：
- *   - 所有层读同一份（design4 §2：世界状态是唯一真相）；
+ *   - 所有层读同一份（§1 I3：世界状态是唯一真相）；
  *   - **分区**（vitals / combat / location / session）+ **置信度分档**
  *     （measured = 行文显式字段；inferred = 行为推断，如战斗态）；
  *   - `reduce(line)` 每行抓取（observe 入口调用）：把行文里的世界字段抓进
  *     对应分区，并记录来源行号与时间（来源可追溯，覆盖旧值）；
- *   - `inCombat` 是危险唤醒去重 latch 的锚点（impl §3.3：latch 挂世界状态、
+ *   - `inCombat` 是危险唤醒去重 latch 的锚点（§6.2：latch 挂世界状态、
  *     不挂行模式 —— 行模式会在战斗每回合重新武装，导致每回合唤醒）。
  *
- * 种子判据刻度**待实测语料标定**（impl §6：正则与阈值用实录校准；二期按
+ * 种子判据刻度**待实测语料标定**（§19：正则与阈值用实录校准；二期按
  * 语料审计增补）。本层薄：只抓字段，不解释、不做危险判断（判据在 danger）。
  *
  * 纯度纪律：本文件不 import 宿主（link 类型除外）。
@@ -64,7 +64,7 @@ interface Write {
   (field: string, value: string | number | boolean, confidence: Confidence): void
 }
 
-/** 种子抓取器表（刻度依旧实现实录标定，仍待回放校准 —— impl §6）。 */
+/** 种子抓取器表（刻度依旧实现实录标定，仍待回放校准 —— §19）。 */
 const REDUCERS: Reducer[] = [
   {
     re: VITAL_RE,
@@ -94,7 +94,7 @@ const REDUCERS: Reducer[] = [
     // 战斗态（inCombat 是危险唤醒去重 latch 的锚点，必须覆盖**双向**）：
     // 被攻击（向你袭来/攻来/出手/攻击）+ 主动开战/交战帧 —— 后者采纳旧实现
     // 实录刻度（mud-core/perceive/rules.ts combat:start：杀气/向你扑来/大喝道/
-    // 大喝一声/喝道/扑了上来）。`喝道` 等宽刻度的误命中面待实录校准（§6）。
+    // 大喝一声/喝道/扑了上来）。`喝道` 等宽刻度的误命中面待实录校准（§19）。
     re: /杀气|向你扑来|大喝道|大喝一声|喝道|扑了上来|向你(袭来|攻来|出手|攻击)/,
     part: 'combat',
     apply(_m, line, write) {

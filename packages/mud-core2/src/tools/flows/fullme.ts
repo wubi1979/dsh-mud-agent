@@ -1,7 +1,7 @@
 /**
- * flows/fullme — fullme 验证码链路（impl §5 第 7 步 / §3.6）。
+ * flows/fullme — fullme 验证码链路（§18 第 7 步 / §13）。
  *
- * 链路（impl §3.6 定案）：子 agent 调 mud_flow({id:'fullme'}) → 收图 → 以
+ * 链路（§13 定案）：子 agent 调 mud_flow({id:'fullme'}) → 收图 → 以
  * { done:false, question:'验证码：<URL>' } 结束（问题随结算上浮）→ 根
  * userQuestions 问人 → 根带答案重入（mud_flow({id:'fullme', answer})）→
  * 提交应答。**不注册 captchaRecognize**（必然失败的桩会让模型反复调用、
@@ -92,7 +92,7 @@ async function requestPhase(ctx: FlowCtx): Promise<FlowResult> {
     // gaCount:2 —— 容忍"完成句帧（GA 收尾）与 URL 帧分帧"：缺省 gaCount:1 会
     // 在首帧边界先到时关窗且无 URL，把 mud.ts:28-32 定为正常收束的形态判成
     // 硬失败。代价：stale/冷却判定同样多等一帧（实录中这些应答后服务端总有
-    // 后续输出，不构成白等）——取值待 §6 实机校准。
+    // 后续输出，不构成白等）——取值待 §19 实机校准。
     const r = await step(mud, { holder, until, gaCount: 2, timeoutMs: defaultTimeoutMs }, signal, '等验证码应答')
     if (r.reason === 'danger') return { reason: 'danger' }
 

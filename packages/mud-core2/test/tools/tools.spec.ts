@@ -1,5 +1,5 @@
 /**
- * tools 测试 — 三工具 + 静态禁发表 + 登录闸门（impl §3.5）。
+ * tools 测试 — 三工具 + 静态禁发表 + 登录闸门（§12）。
  *
  * 覆盖：首词禁发表（大小写/分号切分；子会话拒、根不受限、先于隐式登录）、
  * 隐式登录（首次触发、已登录防重入）、listen 编译（缺省 gaCount:1、非法
@@ -230,7 +230,7 @@ describe('mud_flow', () => {
     expect(await flow.execute({ id: 'f-danger' }, { signal })).toEqual({ ok: true, reason: 'danger' })
   })
 
-  it('三出口各发一条 mud/flow-result 交换事件 (§3.8, data={flow,outcome})', async () => {
+  it('三出口各发一条 mud/flow-result 交换事件 (§16.1, data={flow,outcome})', async () => {
     const flows: Flow[] = [
       { id: 'f-done', description: '', async run() { return { done: true } } },
       { id: 'f-q', description: '', async run() { return { done: false, question: 'q', lines: [mkLine('l')] } } },

@@ -1,5 +1,5 @@
 /**
- * subagent 拓扑（impl §5 第 6 步 / §3.4 预算与释放阀门、§3.5 前提 2）。
+ * subagent 拓扑（§18 第 6 步 / §11 预算与释放阀门、§10.4 前提 2）。
  *
  * 纪律（设计事实源）：
  * - 子级状态归宿主——插件侧只保留 deadline 登记与到期 interrupt（本文件），
@@ -18,7 +18,7 @@
  * - 预算耗尽的"超时失败"本身就是一次结算通知，经宿主结算单通道回根
  *   （interrupt → 子级到静止态 → 宿主投递），插件不自报、不另设结算看门狗。
  *
- * agent/created 监听器注册在**宿主/preset 作用域**（§3.5 实施前提 2）——
+ * agent/created 监听器注册在**宿主/preset 作用域**（§10.4 实施前提 2）——
  * 装配层（index.ts）在自己的监听器里调用本文件的 handleCreated；子级同时
  * 经此拿到三工具（子会话静态禁发表由 registerMudTools 按 holder 生效）。
  * 装配还需把 agent/disposed 接到 budget.clear()（终结撤 timer）。
@@ -36,6 +36,16 @@ export interface SubagentAgent {
   readonly id: string
   /** 运行时创建选项：subagentDepth > 0 即子级（top-level 缺省 0/缺席）。 */
   readonly options: { readonly subagentDepth?: number }
+  /**
+   * 会话头窄面：`delegationDepth` 是子级判定的**权威源**（resume 携新 options
+   * 时 options 读法会误判，P2 D2）；`parentSession` 供装配层做会话绑定归属。
+   */
+  readonly session: {
+    readonly header: {
+      readonly delegationDepth?: number
+      readonly parentSession?: string
+    }
+  }
   cancel(
     cause:
       | { readonly kind: 'user' }
@@ -46,7 +56,7 @@ export interface SubagentAgent {
   ): void
 }
 
-/** 预算配置（总体预算，每个子 agent 一份；数值由 Config 缺省供给，§6 校准）。 */
+/** 预算配置（总体预算，每个子 agent 一份；数值由 Config 缺省供给，§19 校准）。 */
 export interface SubagentBudgetConfig {
   /**
    * 子 agent 总体预算毫秒。必须为正整数且 ≤ 2^31−1（setTimeout 溢出上界，
@@ -60,7 +70,7 @@ export interface SubagentBudgetConfig {
    * `agent.cancel({kind:'parent'}, {keepInbox:true})`——**只覆盖** interrupt
    * 的三项可观测效果（只停当前回合/保留 inbox/不释放槽）；宿主
    * `interrupt_agent` 入口（ctx.subagents.interrupt）额外承担的
-   * authority/ownership 归因被跳过，两种动词的可观测差异**待实测**（§6）。
+   * authority/ownership 归因被跳过，两种动词的可观测差异**待实测**（§19）。
    * 装配层应注入宿主入口以走宿主通路。
    */
   interruptAgent?: (childId: string) => void
@@ -68,7 +78,7 @@ export interface SubagentBudgetConfig {
 
 /**
  * 子级预算登记：Map<childId, {timer, deadline}> + timer——插件唯一保留的
- * 子级运营状态（impl §3.4）。到期 interrupt 并自摘条目；终结（agent/disposed）
+ * 子级运营状态（§11）。到期 interrupt 并自摘条目；终结（agent/disposed）
  * 由装配层调 clear() 撤 timer；插件卸载走 dispose()。
  */
 export class BudgetRegistry {
@@ -163,6 +173,14 @@ export type DepthOf = (agent: SubagentAgent) => number
 export const depthByOptions: DepthOf = agent => agent.options.subagentDepth ?? 0
 
 /**
+ * 装配注入的权威判定（P2 D2）：session header 的 `delegationDepth` 权威且
+ * 单调（resume 携新 options 时 header 不变），options 读法兜底（宿主
+ * AgentOptions 现无 subagentDepth 字段，缺席按 0）。子级 ⇔ 判定值 > 0。
+ */
+export const depthByHeader: DepthOf = agent =>
+  Math.max(agent.session.header.delegationDepth ?? 0, agent.options.subagentDepth ?? 0)
+
+/**
  * agent/created 处理器（装配层在自己的宿主作用域监听器里调用）：
  *
  * 1. 判定 root/child（depthOf，必填——见 DepthOf）→ holder `'root'` | `` `child:${id}` ``；
@@ -171,7 +189,7 @@ export const depthByOptions: DepthOf = agent => agent.options.subagentDepth ?? 0
  *    fail-loud。注意这只证明"registerMudTools 三工具注册成功"，**不**证明
  *    "子级可见面含三工具"——后者取决于监听器是否注册在宿主作用域、agent/
  *    created 是否触达每个子级，属装配期探针（随 index.ts 落地；验收口径见
- *    impl §4 验收表"工具可见面"行与 §5 开工前置 2）；
+ *    §17 验收表"工具可见面"行与 §18 开工前置 2）；
  * 4. 子级登记总体预算（到期 interrupt，动词见 SubagentBudgetConfig）。
  *
  * gate/budget 跨 agent 共享：gate 保证全会话一次登录；budget 按 childId 一份。
