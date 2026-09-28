@@ -1,0 +1,16 @@
+{
+  "name": "mud-core3",
+  "description": "MUD agent core v3 (multi-user: server=workspace, account=session, per-session MUD input source). Design docs in doc/.",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "pnpm exec vitest run test",
+    "typecheck": "tsc -p tsconfig.test.json"
+  },
+  "dependencies": {},
+  "peerDependencies": {},
+  "devDependencies": {}
+}

@@ -1,184 +1,203 @@
-# mud-core2 核心心智与总体架构（§1–§3）
+# mud-core3 核心设计（§1–§5，最简版）
 
-> 状态：**设计基线（2026-09-24；2026-09-25 修订：静态遮蔽替代动态权限、派单走宿主原生 subagent 工具、砍结算消化守卫）**
-> 本文只描述目标架构，不记录演进过程。
-
----
-
-## §1 不变量
-
-**第一原则：以"自主玩家"为模型，以 token 预算为第一约束。**（I1）
-
-- **I1 token 第一约束**：agent 的价值在于类人的灵活与自主，架构的责任是保护它，而不是把 agent 编制成机器——若要用程序结构替换它的判断，就不必引入 agent。
-- **I2 T2 闭环先于一切机制**：已实证——入站信息驱动 + 静默到期唤醒 + 大模型 = 完整自主行为（自己取钱、买食物、去茶室喝水、看地图找路），唯一卡点是 token 成本。T2 路径是被证明存在的主干，设计要给它一个省 token 的组织形式，而不是替它玩。设计顺序由此确定：**干 = T2 闭环自身**——三个唤醒源、唤醒上下文、计划编制、单子 agent 串行执行、结算回注、检视；技能沉淀、教训库、反射表、模型降档全部后置为**支**；子 agent 是主干的执行半边，不是支。
-- **I3 世界状态是唯一真相**：所有层读同一份（§6、§14）。
-- **I4 无两执行者、无打断仲裁**：T2 唯一持有目标与意图连贯性；子 agent 是计划执行半边，不是第二个意图主体；没有优先级比大小、无准入判定、无流程复位、无残余队列清除——只有单向的"处置不了就升级"（§6、§10）。
-- **I5 无例证不建机制**：不为推测隐患、也不为宿主已保证的事实设计机制；先例证（语料审计发现），后机制（如禁发表加一行）。
-- **I6 不自建 agent loop**：唤醒、回合、上下文组装、人工交互、凭据、持久化、无密钥回放全部用宿主原生；派单走宿主原生 `subagent` 工具，插件不自建派单/结算通道（§3、§10）。
-- **I7 释放阀门是协作式的，必须自持**：宿主没有任何子 agent 超时；`wait()` 必须响应 `exec.signal` 并自带超时，绝不无界等待（§5、§11）。
-- **I8 计划是意图快照，不是合同**：不做净化机制——人拿到的计划总有废话，人从不卡在"这条好像没必要"上；执行智能消化：前提不成立的步骤跳过，走到半路失效就改；步骤级自决、目标级上报。要改的是计划编制的质量（提示词与示例），不是为模型的平庸输出设计防御机制（§10）。
-- **I9 不注册实现不了的桩工具**：必然失败的工具会教模型怀疑工具面（§12、§13）。
-- **I10 干支护栏**：任何支的引入以 token 账目恶化为否决条件；关掉任何支，系统退化为干（主干不依赖支存在）。
-
-**不做清单**（实施时不得违背）：
-
-- 不自建 agent loop（I6）；
-- 不做打断仲裁（I4）；
-- 不做净化机制：不替模型修剪计划里的废话，不建 plan 存储与进度状态机（I8）；
-- 不自建子 agent 历史管理：一计划一子级、无跨计划记忆，上界由预算给出（§11）；
-- 不做动态权限：只有一张子级静态禁发表（工具内一行判断），计划边界不进权限系统（§12）；
-- 不自建派单/结算通道（I6）；
-- 不做超时/看门狗子系统：只有一个预算与一个协作式释放阀门（§11）；
-- 不注册实现不了的桩工具（I9）；
-- 不为无例证/宿主的事实设计机制（I5）。
+> 状态：v0.1.0 设计基线（2026-09-28）。本文只描述目标架构，不记录演进过程。
+>
+> 设计原则：**只实现被需求直接证实的机制**。core2 的五层心智、T2 闭环、子 agent、预算、唤醒、计数等全部**后置不设计**（§5）——它们不是错的，只是本版不需要先存在。**第一期目标 = MUD 信息进入 agent（等同人工提问）并得到 agent 回答**；工具、流程全部后置。
 
 ---
 
-## §2 术语表
+## §1 核心模型
 
-| 术语 | 含义 |
+### 1.1 实体模型：两级实体，两条绑定
+
+```
+服务器 = 工作区 + 服务器字段（宿主原生 Workspace + roster 按 workspaceId 键存 { host, port }）
+   ——页面上「服务器」的逻辑就是现在的工作区：建工作区流程 + host/port 字段
+   ——呈现沿用 mud-webui 既有实现（v1 已实现，不改）
+账号 Account { id, name, passRef, preset, admitted }   ← 使用者操作的实体，只能建在服务器下
+   ↦ 1:1 绑定 会话 Session（**建账号时自动创建并绑定**：id = accountId，cwd = 工作区 path，agentPreset = preset）
+每个会话独立持有一条 MUD 连接（输入源）——随会话生命周期产生/消亡
+```
+
+使用者全程只面对「服务器 → 账号」两级实体；会话是建账号动作的自动产物与宿主承载，**不作为管理面概念出现**（不提供独立的建/删会话入口）。
+
+| 需求 | 宿主承载 | 自建 |
+|---|---|---|
+| 服务器 = 工作区 + 字段 | `Workspace` 原生实体（`session.header.cwd` 持久身份，建会话时 `mkdir`）；页面呈现沿用 mud-webui 既有实现 | host/port 字段（roster，键 = workspaceId） |
+| 账号 ↔ 会话 | `session/create` 显式 `sessionId`；**建账号时自动创建绑定**，使用者不感知 | 账号记录（roster） |
+| 建账号选 preset | 原生 preset registry（`agentPresets.list/select`；建会话传 `agentPreset`） | 本包 preset 行（mud-player） |
+| 凭据 | 宿主 `credentials`（`set`/`resolve`，页面写入、引擎实时解析） | 无 |
+| 每会话独立 MUD 输入源 | 无（宿主不管 MUD） | `link/` 移植（telnet/ansi/行流/login gate） |
+
+### 1.2 已核实宿主事实（与 core2 归档 §PLAN 1.2 同源）
+
+1. 会话↔agent 严格 1:1；多会话**并发跑回合**（会话内串行、会话间并行），inbox 为 per-Agent 实例，无全局串行点（`core/agent-loop/src/agent.ts:36,159,200`；`docs/subsystems/sandbox.md:79`）；
+2. 建会话可指定 `sessionId`、可传 `agentPreset`（`api/session-controller/src/commands.ts:126,143`、`types.ts:289,295,442`）；无「客户端断开即回收」策略；
+3. preset 定义可 patch 增（`agent-preset-registry.register`）；`default` 为宿主配置（web-app `cordis.patch.yml:558-561`，当前 `standard`）；会话记录可读（`composedPreset` 投影）；
+4. 无每账号环境——preset 一棵树共享，工具定义共享，**数据必须调用期按会话解析**（`agent-preset-registry/src/mount.ts:26-29`）；
+5. 有宿主 storage 域可挂（`ctx.storage` hub，JSON/SQLite 可换）；
+6. 有官方凭据存储（`remote.credentials.{set,unset}` 页面、`ctx.get('credentials').resolve` 插件侧实时解析）；
+7. `Workspace` 实体仅 `{ id, path, title }`，无自定义字段——服务器字段（host/port）因此存我们的 roster（键 = workspaceId）。
+
+### 1.3 归属（哪些会话是我们的）
+
+- **归属 = roster 判定**：会话 id ∈ `accounts`（sessionId = accountId）⇒ 是我们的会话，登记/取用 SessionRuntime；不在 roster 的会话与我们无关（解析不到，零行为）；
+- **preset 不作归属门**（修订）：账号可选任意 preset（含宿主 `standard`），绑定关系在 roster 不在 preset——按 preset 判归属会把选了 standard 的账号错误排除；preset 只是账号属性（建会话时传入，决定 agent 人格与能力面）；
+- 建账号时「系统自带的 preset」= 宿主 `agentPresets.list()`（standard 等）；本包注册 mud-player（最小 persona：玩家身份 + "MUD 消息以用户消息到达，直接回答"）；加自定义 preset = patch 注册一行，建账号即可选，引擎零改动。
+
+---
+
+## §2 生命周期
+
+### 2.1 服务器（= 工作区 + 字段）
+
+```
+建服务器 = 建工作区（宿主原生流程，web-ui 既有呈现）+ 填 host/port
+         → roster.servers 落库（键 = workspaceId，仅存服务器字段）
+账号只能建在服务器下（导航层级：服务器 → 账号；即工作区内建会话）
+删服务器（无账号时）→ 删工作区 + roster 字段删除
+```
+
+### 2.2 账号（= 自动会话）
+
+```
+建账号（在服务器下）→ 填账号名 + 密码（credentials.set，明文不落库）→ 选 preset
+                  → 自动 session/create { sessionId: <账号 id>, cwd: 工作区 path, agentPreset: 所选 } 并绑定
+                  → roster.accounts 落库（sessionId、preset、admitted 持久；admitted 缺省 false——未接入）
+删账号 → 会话销毁 + roster 删除
+```
+- 建账号 = **一个动作**完成「账号实体 + 会话自动创建绑定」；对使用者而言建立的是账号，会话是承载不是操作对象；
+- 账号 → 会话 1:1，`sessionId` = 账号 id（建账号时生成，显式指定）；删账号即销毁会话。
+
+### 2.3 每会话独立 MUD 输入源与连接生命周期
+
+```
+建账号（自动建会话）       → 登记该会话的 SessionRuntime（幂等；无连接，未接入）
+手工 connect（管理面/remote）→ 建连 + login（LoginGate，凭据当次 resolve）→ 输入源产生（行流积累，agent 零行为）
+手工接入 admit             → MUD 信息开始进入 agent：投递通道开（§3.4；水位 = 接入时刻，不回放积压）
+停止接入 stop              → MUD 信息不再进入 agent（投递停；行流照常积累 = 录制）
+手工 disconnect            → 断连（状态可读）
+会话销毁（session/disposed）→ 断连 + 拆 runtime
+插件卸载                  → 全拆
+```
+
+- **连接生命周期第一期 = 手工动词**（`remote.mud.connect/disconnect`）；连接状态显式可读；
+- **接入 = 独立手工开关**（`admit`/`stop`，roster 持久、缺省未接入）：连接了也可不接入（录制/挂机模式）；接入才开始读（§3.4）；
+- 断线（意外）：runtime 保留、状态置断开、世界状态复位；**不自动重连**——等手工 connect；
+- **自动重连后置**（§5）：只在热状态（会话 agent live）自动，冷启动不自动；前置条件 = 先实现**真实心跳**（健康判定依据，无心跳不区分真断线/半开连接）；
+- 冷会话：宿主释放 agent 时 runtime 与连接不受影响（连接归 runtime 自持，与 agent 冷热解耦）；只有会话销毁才拆。
+
+### 2.4 凭据
+
+- 页面 `credentials.set`；connect 时 `ctx.get('credentials').resolve(passRef)`，明文只进登录发送，不进上下文/roster；
+- resolve 失败 = 连接失败，报引用名。
+
+---
+
+## §3 装配与机制
+
+### 3.1 装配面
+
+```ts
+// src/index.ts
+apply(ctx, config):
+  roster: storage 域挂载（servers 键=workspaceId / accounts 含 admitted 与投递水位）
+  remote.mud.* 动词：servers/accounts CRUD、connect/disconnect（手工）、admit/stop（接入开关）、status
+  agent/created（全局层）→ roster 判定（sessionId ∈ accounts）→ 登记该会话的 SessionRuntime（幂等，无连接）
+  session/disposed → 断连 + 拆 runtime
+  投递通道：admitted 的 runtime 把聚合后的行流以用户消息投递进本会话（followup/steer，§3.4）
+  ctx.provide('mudCore3', { runtimeFor })
+```
+
+归属解析（runtimeFor(agent)）：读 agent 身份 → 查 `accounts`（sessionId = accountId）→ 该账号绑定的服务器 → runtime（含连接）。解析不到 ⇒ 与我们无关（第一期无工具面，无拒绝路径；后期工具落地时此处即拒绝点）。
+
+### 3.2 查找面
+
+```ts
+registry: Map<SessionId, SessionRuntime>
+runtimeFor(agent): SessionRuntime | null
+// 每个 SessionRuntime：{ sessionId, server, account, connection（MUD 输入源，可空——未 connect）,
+//                        state（行流解析器 + 聚合缓冲 + 投递水位） }
+```
+
+### 3.3 工具面与流程（后置，第一期不做）
+
+- 第一期**不注册任何 MUD 工具与流程**：`mud_send`/`mud_state`/禁发表/`mud_flow` 全部后置（§5）——agent 对 MUD 的全部行为就是"接消息、给回答"；
+- 后期工具落地时的约束（现在定死，防止返工）：受**接入闸门**约束（未接入 ⇒ 可读拒绝）；未连接 ⇒ 可读拒绝；连接与接入都是手工动词，模型不能自己拉起连接烧凭据、也不能绕过闸门读流。
+
+### 3.4 MUD 信息进入 agent（第一期目标：等同人工提问）
+
+**通路 = 会话消息投递**（与人工提问同一通道）：
+
+```
+MUD 行流 → 聚合（静默窗口，Config）→ 一条用户消息投递进该账号的会话
+        → 宿主原生回合机制（followup 排队 / steer 步边界插话——与 session/prompt 同路）
+        → agent 开回合，产生回答（回答落会话，页面可见）
+```
+
+- **等同人工提问**：MUD 信息以**用户消息**身份进入会话并触发回合，agent 像被提问一样回答。原「LLM 调用监听钩子注入」方案只能改已有调用的上下文、不产生回答，与此目标不符——弃用为注入通路；其拦截角色也不再需要（第一期唯一通路就是投递通道，闸门在源头）；
+- **聚合是必需品不是优化**：行流逐行投递 = 每行一个回合一次模型调用；缺省按**静默窗口**聚合（行流静默 N ms 打包一条投递，N 为 Config），必要时加上限防超长消息；
+- **与人工提问共存**：投递走宿主 followup 队列，人工消息与 MUD 消息同队列自然排队（会话内串行是宿主保证）；
+- **回答的去向**：第一期回答只落会话（页面可见、日志可查）——**不回流 MUD**（发命令是后期工具面的事，§5）；
+- **按会话隔离**：每个 runtime 只向自己的会话投递（两会话互不串线）。
+
+**接入闸门**（唯一许可，作用在投递通道上）：
+
+- **接入 admit**（显式动作，roster `accounts.admitted` 持久，缺省未接入）→ 投递通道开；**水位 = 接入时刻**，不回放积压（接入前的行流不投，要看近况后期用工具裸读）；
+- **停止接入 stop** → **MUD 信息不再进入 agent**：投递停（在途回合自然跑完，后续零投递）；行流照常积累 = 录制；已投递的历史留在会话里不动；
+- **未接入 = 零进入**：第一期无 MUD 工具（§3.3 后置），“不读”天然成立——闸门唯一看住的就是投递通道；
+- **人工提问不受闸门影响**：人工在会话里发消息是宿主原生回合，不拦（未接入时 agent 诚实答"我未接入 MUD"）；
+- **后续任何新通路一律受本闸门约束**（现在定死，防止机制生长时语义漂移）：后期工具面落地，未接入 ⇒ 工具可读拒绝；唤醒类机制落地，必须以"已接入"为前置——闸门定义在通路集合上，不在单一机制上；
+- 与 connect **正交**：connect 管 MUD 源（socket），接入管 MUD→agent 的信息流。"连接 + 未接入" = 录制/挂机模式（连着收流、角色在线、agent 零 MUD 行为）——语料采集、登录调试、离开时省 token 的形态；嫌两步麻烦可在管理面做组合按钮，底层动词仍是两个。
+
+### 3.5 管理面（`packages/mud-webui`）
+
+- **服务器/账号呈现沿用 v1 既有实现，不改**（v1 `MudServer { name, host, port, cwd, users }`：服务器即工作区 + 字段、账号挂服务器下）；
+- 新增/改接：账号表单加 preset 选择与接入开关；手工 connect/disconnect；连接状态查看；
+- 后端换接：roster 从 localStorage 换到宿主 storage 域、remote 从 v1 `ctx.remote.mud.*` 换到 core3 动词——**呈现不变、接线替换**。
+
+---
+
+## §4 验收（最简版）
+
+| 断言 | 内容 |
 |---|---|
-| **行流持有者** | 同一时刻唯一占着行流的东西：根或某个子级。**会话级状态**（单 MUD 连接唯一），冲突时 fail loud（§5）——根与子级都持有全套工具，并发读会各拿半截行 |
-| **静态禁发表** | `mud_send` 工具内的子会话命令拦截表（自杀 / quit / drop all 类不可逆命令）；根会话不受限；经济类动作不拦（§12） |
-| **wait 竞速机** | `read()` 的实现：在缓冲消费与网络到达之间按写死的判定序竞争（§5）。执行域内部动作，不对外暴露 |
-| **危险判据（连续谱）** | 一份数据表，每条自带动作意图（`interrupt?` / `wake?` / `abortWait?`）——同时服务紧急中断、等待中断、唤醒，不许两处派生（§6） |
-| **占线错误** | 服务端对"活动没做完"的拒绝应答；它是天然的教育信号，处置归子 agent 的执行智能（§9 persona） |
-| **预算** | 每个子 agent 一份的时限；耗尽即判失败并上报（§11） |
-| **释放阀门** | 让被中止的等待到达静止态、从而触发结算并回收激活槽的唯一途径：`wait()` 响应中止信号 + 自带超时（§5/§11） |
-| **结算通知** | 子 agent 结束时投递给父会话的消息；**best-effort**（存在四种不唤醒状态，交付失败由预算路径承担）（§8、§11） |
-| **计划级检视** | 结算到达时，根消化该次结算并顺带检查在途计划——而不是每个要点醒一次（§7–§8） |
-| **程序记忆 / 陈述记忆** | 技能与流程 / 经验教训（§14） |
-| **子 agent 历史** | 不设管理：一计划一子级、无跨计划记忆，上界由**总预算**给出（§11） |
-| **续跑** | 指"问人后带答案重入当前计划"；不做冷恢复（重放整个子级历史 + 多个失败先决条件）（§13） |
+| 多账号隔离 | N 账号同时在线：各持一条连接、各向自己的会话投递，互不串线（两会话隔离用例） |
+| 账号=自动会话 | 建账号**一个动作**完成会话自动创建绑定；`sessionId` = 账号 id 持久；无独立会话操作面 |
+| 服务器=工作区+字段 | 建服务器即建工作区；roster 按 workspaceId 存 host/port；页面呈现沿用 v1 不改 |
+| 手工连接 | connect 建连+登录、disconnect 断连；断线后**保持断开态**（不自动重连，等手工） |
+| **MUD→agent 投递** | 接入后：MUD 行流以**用户消息**进入会话并触发回合，agent 产生回答（端到端）；静默窗口聚合生效（一批 = 一条消息，非逐行）；两会话各收各的 |
+| **接入闸门** | 未接入（缺省）与停止接入后：**MUD 信息不再进入**（新投递为零）、行流照常积累；接入**水位 = 接入时刻**（积压不回放）；人工提问不受影响 |
+| preset 选择 | 建账号可选 `standard`/`mud-player`；任意 preset 的账号都有 MUD 源（归属 = roster 判定，不按 preset 排除） |
+| 凭据链路 | 密码不落 roster/上下文；resolve 失败 = 连接失败可读报错 |
+| 零工具面 | 第一期不注册任何 MUD 工具（preset 工具集断言：无 mud_send/mud_state） |
+
+### 4.1 切片
+
+| 切片 | 内容 | 验收 |
+|---|---|---|
+| **C1 骨架** | 包骨架 + `link/` 移植（telnet/ansi/行流/LoginGate）+ 回放用例绿 | `tsc` + 用例绿（移植自 mud-core2 link/，先红后绿） |
+| **C2 多会话** | roster storage + 会话装配（roster 判定 → registry）+ 手工 connect/disconnect + 生命周期（disposed 断连拆 runtime） | 两会话隔离；手工动词生效；disposed 断连拆 runtime |
+| **C3 投递与接入** | 建账号链路（自动会话 + preset 选择）+ mud-player preset 行（最小 persona）+ 聚合投递（followup/steer 用户消息）+ admit/stop + 水位 | **端到端**：接入 → MUD 消息进会话 → agent 回答；停止后零投递；水位断言；零工具断言；preset 任选均有 MUD 源 |
+| **C4 管理面** | `packages/mud-webui` 接线替换（呈现不改）：preset 选择、接入开关、手工 connect/disconnect、状态 | 全流程 UI 可操作 |
+
+### 4.2 完成定义
+
+`tsc` + 用例全绿；§4 验收表全过；`doc/architecture/` 同步 + `CHANGELOG` 一行。
 
 ---
 
-## §3 总体架构
+## §5 后置（按例证生长，本版不做）
 
-### 3.1 五层心智模型
+| 项 | 触发例证 |
+|---|---|
+| **MUD 工具面**（`mud_send`/`mud_state`/禁发表；agent 回答回流 MUD） | 第一期目标达成后——agent 只接消息给回答，需发送命令时上工具；落地时受接入闸门约束（§3.3 现在定死的约束） |
+| **流程 flows**（`mud_flow`/fullme/验证码链路） | 工具面之后 |
+| **自动重连**（热状态自动、冷启动不自动） | 前置 = 先实现**真实心跳**（MUD 侧健康探测）——无心跳不区分真断线/半开；此前一律手工 connect |
+| 投递策略化（字段化摘要、按需投递、水位窗口细化） | 投递内容膨胀实证（token 账目恶化） |
+| 子级预算/看门狗 | 子 agent 失控实证（无则用宿主原生 `maxTokens`/激活槽上限） |
+| ask 超时（askTimeoutMs） | 确认"无人应答必须超时"的实证需求（原生=挂起） |
+| 会话计数/账目 per-runtime | 成本验收需求出现时（先看宿主 telemetry/原生会话事件） |
+| 其他 core2 机制（T2 闭环、唤醒、预算、计数、预案） | 按需求例证逐条引入；唤醒落地时**必须**以"已接入"为前置（§3.4 闸门覆盖新通路） |
 
-| 层 | 定义 | 类人对应 | 成本 | 纪律 |
-|---|---|---|---|---|
-| **存在** | MUD 信息联通：连接生命周期、行流、世界状态维护 | 神经系统的物理在场 | 0 | 世界状态是唯一真相，所有层读同一份（I3） |
-| **反射** | 命令直发：save、翻页、协议应答——刺激→动作，不问为什么、不管后果 | 膝跳反射——不经觉察 | 0 | 只放**天然无后果**的机械反应；需要"知道为什么"的动作归意识层（§6） |
-| **意识** | 持续感知（世界抓取、危险觉察）+ 条件触发：觉察到危险 → 中断当前活动 + 唤醒；子 agent 上报 → 唤醒 T2 | 持续知觉与条件反应——看到车冲过来猛地停下（知道为什么停） | 0 | **必须薄**：只感知与触发，不解释（§6） |
-| **思考** | T2：接收信息 → 目标 → 计划 → 检视 → 学习 | 前额叶——意图与 deliberation | 每次唤醒一次调用 | 唯一持有目标与意图连贯性的层（I4） |
-| **记忆** | 经验教训 | 海马沉淀 | 注入成本 | 三分：工作 / 陈述 / 程序（§14） |
-
-```
-                 ┌─────────────────────────────┐
-                 │ T2 思考层（低频、贵、意图连贯）     │
-                 │ 接收信息→目标→计划→检视→学习       │
-                 └──────┬───────────────┬─────┘
-                 计划下发│           ↑报告/上报/危险唤醒
-                 ┌──────▼───────────────┐
-                 │ 子 agent（无意图执行者）   │
-                 │ 无目标智能·有执行智能      │
-                 │ 引用技能=程序记忆          │
-                 └──────┬───────────────┘
-                        │发命令
-    ┌───────────────────▼──────────────────┐
-    │ 反射层：save/翻页直发（无觉察的机械反应）   │
-    │ 意识层：世界抓取+危险觉察+条件触发（薄）    │←永续，向所有层供给状态
-    │   觉察到危险 → 中断当前活动 + 唤醒          │
-    │ 存在层：连接、行流、世界状态                │
-    └──────────────────────────────────────┘
-    记忆：工作（世界状态）/ 陈述（教训）/ 程序（技能）
-          学习沉淀 ↑    唤醒/任务注入 ↓
-```
-
-### 3.2 决策者拓扑
-
-```
-根 T2 agent（一 session 一 agent，宿主强制 agent/src/index.ts:467）
-  │  计划编制（assistant message 落日志，不建 plan 存储，I8）
-  │  派单 = T2 调宿主原生 `subagent` 工具（provider=spawn、backgroundMode=continuable，
-  │    preset 已挂，宿主 bundle/web-app/presets/standard.patch.yml 的 tool-subagent 行；
-  │    本仓 cordis.patch.yml 为其逐条副本 + 本包 preset 行，漂移守卫 test/patch.spec.ts）
-  │    ——插件不自建派单通道（I6）
-  ▼
-子 agent（每计划一个，串行执行 N 个要点；无跨计划记忆）
-  │  结算（完成/受阻/越界请示/异常终止）→ 宿主投递结算通知（best-effort，§8）
-  │  执行中遇必须问人的事 → 结果携带问题上浮（子 agent 调 ask 被 DELEGATED_CALLER 拒绝，§12）
-  ▼
-根消化结算 → 问人（userQuestions 仅根可达）→ 带答案重入当前计划 或 重规划
-```
-
-**硬约束**（全部宿主强制，设计与之同构）：
-
-1. **一 session 一 agent**（`agent/src/index.ts:467`）——根与子 agent 是不同 session；
-2. **owned 子 agent 不能问人**（`packages/interaction/user-questions/src/index.ts:101-105`）——人工交互天然收敛根一处；
-3. **`agent/created` 对子 agent 同发**（`agent-loop/src/index.ts:614-624`）——工具注册一条路径覆盖两层，无"子 agent 工具注入"专项问题；
-4. **结算通知由宿主投递**（`continuation-activation.ts:881`）——**但是 best-effort**（四种不唤醒状态，§8），交付失败由预算路径承担；
-5. **spawn = 全新会话**（`seed` 缺省，`subagent/src/types.ts:239-243`）——子 agent 无 T2 历史，隔离即安全。
-
-**计划生命周期**：T2 编制 → 调宿主 `subagent` 工具（spawn，fresh）→ 要点串行执行（执行智能消化步骤级意外）→ 一种结算唤醒根 → 根计划级检视（消化本次结算 + 看在途计划）→ 续 / 结 / 重规划。
-
-**预算与释放**（详见 §11）：`agent/created` 时登记 `{childId, deadline}`（Config 缺省预算）；到期 → `interrupt_agent`，报告走宿主结算路径（interrupt → 子级到静止态 → 宿主投递，单一报告，插件不自报）。**`wait()` 必须响应 `exec.signal` 并自带超时**——这是唯一的释放阀门（I7；`interrupt` 只停当前回合、不释放激活槽）。
-
-### 3.3 五层 → 文件与承载映射
-
-```
-mud-core2/
-├── src/
-│   ├── index.ts          # apply(ctx, config) 装配一切（唯一大范围碰 ctx 的文件）：
-│   │                     #   provide mudCore2 引擎窄面（含调用期 resolveHolder：depth 判定
-│   │                     #   + 单根守卫）、agent/created 分流（根→Wake/子→预算）、归属门
-│   │                     #   = composedPreset === 'mud-player'
-│   ├── config.ts         # Config schema（连接、静默/超时缺省、路径、预算缺省、教训上限）
-│   ├── preset.ts         # preset 行插件：三工具 + persona section 在 preset 作用域注册一次
-│   │                     #   （根与子级同见；注册期不依赖引擎，执行期 ctx.get 解析）
-│   ├── persona.ts        # 思考层"软件"：persona 段正文与注册窄接口（经 preset 行注册）
-│   ├── link/             # 存在层（纯 TS，零宿主依赖，可独立回放测试）
-│   │   ├── mud.ts        # 连接、行流分发、持有者、read 竞速机（响应 signal + 自带超时）
-│   │   ├── telnet.ts     # telnet 协议层（IAC/MCCP2/GA/EOR → 边界事件）
-│   │   ├── ansi.ts       # 流式行解析（含跨块终止符与序列缓冲上限）
-│   │   └── corpus.ts     # 行流 JSONL + log-only 事件
-│   ├── awareness/        # 反射 + 意识（纯 TS）
-│   │   ├── observe.ts    # observe 入口：每行调度（薄）
-│   │   ├── reflex.ts     # REFLEX 表（数据；吞触发行、留结果）
-│   │   ├── danger.ts     # 危险判据（一份数据，字段化动作意图）
-│   │   └── world.ts      # 工作记忆：世界状态（分区 + 置信度分档）
-│   ├── wake/             # 唤醒（wake 经注入窄接口；context 纯函数）
-│   │   ├── wake.ts       # 两源自建唤醒 → DSH 动词
-│   │   └── context.ts    # 唤醒正文（事实短消息 + 世界摘要）——瘦
-│   ├── tools/            # 执行域（接线层）
-│   │   ├── tools.ts      # mud_send / mud_flow / mud_state + 子会话静态禁发表
-│   │   │                 #   （holder 由调用期 exec.agent 经引擎窄面 resolveHolder 解析）
-│   │   └── flows/        # types / index / login / fullme
-│   ├── subagent/         # 子级编排（接线层）
-│   │   └── subagent.ts   # BudgetRegistry（预算登记与到期 interrupt，参数源 =
-│   │                     #   header.parentSession）+ depth 判定；agent/created 监听在 index.ts
-│   ├── observe/          # 观测（接线层）
-│   │   └── meter.ts      # 计数护栏（§16 两个量）+ §17 每场景断言面
-│   └── lessons.ts        # 教训库（第二期）
-├── skills/               # 程序记忆（人写种子 SKILL.md；热加载宿主原生）
-├── package.json          # name: mud-core2，main: src/index.ts
-├── cordis.patch.yml      # 接入宿主（registry 覆盖 default: mud-player + preset 行 + 引擎行）
-└── vitest.config.ts
-```
-
-| 心智层 | 文件 | DSH 承载 | 自建 |
-|---|---|---|---|
-| 存在 | link/（mud/telnet/ansi）+ awareness/world | 无（纯自建；telnet/ansi 用实录验证过的解析实现） | socket 生命周期、行流、状态机 |
-| 反射 | awareness/reflex.ts | 经 mud.send 直发（**宿主不可见**，不经工具管线） | 表数据 |
-| 意识 | awareness/observe+danger、wake/ | 危险唤醒经 `steer`（`runtime-types.ts:224-231`）；静默经 `followup`；**结算唤醒由宿主投递** | 判据、静默 timer（参考 `schedule/runtime.ts`） |
-| 思考 | preset.ts（persona+三工具注册）、persona.ts、wake/context、tools/、subagent/ | persona=`systemPrompt.section`（经 preset 行注册，preset 作用域一次、根与子级同见）；三工具=preset 作用域 `tools.register` 一次；历史每请求自动携带（`agent-loop/agent.ts:631`）；派单=宿主原生 `subagent` 工具（preset 已挂）；权限=工具内静态禁发表 | 唤醒正文、计划格式约定、禁发表数据 |
-| 记忆 | awareness/world、lessons、skills+flows | skills 热加载原生（`skill-filesystem:492-557`）；摘要注入 `tool-skill:213-249` | lessons 存储（第二期） |
-
-**四条承载约束**（设计对宿主的硬依赖，实施时不得绕过）：
-
-1. **prompt 不自拼**：注册 `systemPrompt.section`（persona 段 `:127, :158`），由宿主每请求组装（`agent-loop/agent.ts:631`）；
-2. **历史不搬运**：历史**每请求自动全量携带**（`agent-loop/agent.ts:631` + `deriveMessages()`）——计划/报告/技能调用都在历史里，组装器**只补模型看不到的东西**：世界状态 + 唤醒原因（§9）；
-3. **直发可见性**：直发 = socket 写，**宿主与工具管线都不可见**；是否进在途等待的累积文本由我们的分发策略决定——**缺省照常进，实录若误命中再切隔离**（§4、§19）；
-4. **计数口径**：`request/header` 只在首请求/变更/series 时发，**不能计数决策点**；用 `step/start` 计决策点、`assistant/message` ∪ `assistant/attempt` 计实际调用（§16）。
-
-**纯度纪律**（纯度边界落在目录上）：`link/`、`awareness/` 为纯 TypeScript（不 import 宿主）；`wake/context.ts` 为纯函数，`wake/wake.ts` 经注入的窄接口 `{ followup, steer, idle }` 操作 agent；只有 `index / preset / persona / tools/ / subagent/ / lessons` 的接线接触 `ctx`。
-
-**每层禁令**：
-
-- 存在：不解释语义；
-- 反射：只放天然无后果的机械反应，不做后果评估；
-- 意识：**薄**——只感知与触发，加理解即违反 T2 优先；
-- 思考：**T2 唯一持有目标与意图连贯性**；无两执行者、无仲裁——计划内子 agent 是执行半边，不是第二个意图主体；
-- 记忆：无执行权（教训只注入，技能/流程只作为词汇被引用与调用）。
+> AI生成

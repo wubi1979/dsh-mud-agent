@@ -107,6 +107,8 @@ importers:
         specifier: ^0.1.7-rc.2
         version: 0.1.7-rc.2(c3f6948d52fde31c069f51ade6070714)
 
+  packages/mud-core3: {}
+
   packages/mud-webui:
     dependencies:
       '@deepseek-ai/dsh-util-crypto':
