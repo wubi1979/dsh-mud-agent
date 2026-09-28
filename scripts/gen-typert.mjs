@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // typert 宿主工件生成器 (对应官方 tsdown --env.DSH_BUILD_FACE host 的独立脚本形态)。
 //
-// 产出 (写入 packages/mud-core/lib/):
+// 产出 (写入 packages/mud-core3/lib/):
 //   typert.host.js/.d.ts          — TYPERT 贡献: 严格 descriptor + zod schema (assemble 注册进 ctx.typert)
 //   typert.remote-client.js/.d.ts — TYPERT_REMOTE 描述符: webui 侧 ctx.remote.$mount 消费
 //
@@ -9,7 +9,10 @@
 // 真实存在于 <workspace>/packages 内, realPath 判定)。协议解析经根 tsconfig.host.json
 // 的 paths 直达镜像 src/, 无需先构建镜像。
 //
-// 用法: node scripts/gen-typert.mjs
+// 产物运行时依赖 zod (descriptor schema 构建): mud-core3 的 dependencies 必须保留 zod,
+// 否则消费者(webui 打包 / 宿主 import)会得到未解析的 import。
+//
+// 用法: pnpm --filter mud-core3 gen:typert
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
@@ -17,21 +20,16 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '..')
-const PACKAGES = ['@deepseek-ai/dsh-mud-core', 'mud-core3']
-const mudCoreRoot = resolve(root, 'packages/mud-core')
+const PACKAGES = ['mud-core3']
+const mudCore3Root = resolve(root, 'packages/mud-core3')
 
-// 生成器是 mud-core 的 devDep (只在包内 node_modules 链接), 脚本本身在仓库根
-// scripts/ 下 — 挂 mud-core 的 require 作解析基准
-const requireFromMudCore = createRequire(resolve(mudCoreRoot, 'package.json'))
-const { WorkspaceTypertGenerator } = await import(pathToFileURL(requireFromMudCore.resolve('@deepseek-ai/dsh-typert-generator')).href)
+// 生成器是 mud-core3 的 devDep, 脚本本身在仓库根 scripts/ 下 —
+// 挂 mud-core3 的 require 作解析基准
+const requireFromMudCore3 = createRequire(resolve(mudCore3Root, 'package.json'))
+const { WorkspaceTypertGenerator } = await import(pathToFileURL(requireFromMudCore3.resolve('@deepseek-ai/dsh-typert-generator')).href)
 
 const generator = new WorkspaceTypertGenerator(root)
-// 每包独立 pass: mud-core 与 mud-core3 各自的依赖树携带不同版本的传递类型
-// (如 dsh-session), 同一 program 内同名 TypertLookupMap 增强会撞重复键。
-const artifacts = []
-for (const pkg of PACKAGES) {
-  artifacts.push(...generator.generate([pkg], ['host']))
-}
+const artifacts = generator.generate(PACKAGES, ['host'])
 if (artifacts.length === 0) throw new Error(`gen-typert: 未发现 ${PACKAGES.join(' / ')} 的宿主 face 产物`)
 
 for (const artifact of artifacts) {

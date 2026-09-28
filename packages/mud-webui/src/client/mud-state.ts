@@ -11,7 +11,6 @@
  * @module @deepseek-ai/dsh-mud-webui/client/mud-state
  */
 
-import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
 import type { MudRemoteController } from './mud-remote.ts'
 import type { MudCredentialInfo, MudCredentialsController } from './mud-credentials.ts'
 
@@ -177,13 +176,19 @@ export class MudStateController {
     } catch { /* storage unavailable */ }
   }
 
-  addServer(input: { name: string; host: string; port: number; cwd: string }): void {
+  /**
+   * 建档服务器（键 = workspaceId；工作区实体由调用侧经宿主 workspace 面创建）。
+   * @param input - 服务器属性与它的 workspaceId。
+   * @returns 落地的服务器记录。
+   */
+  addServer(input: { id: string; name: string; host: string; port: number; cwd: string }): MudServer {
     const name = input.name.trim() || `${input.host}:${input.port}`
     const server: MudServer = {
-      id: randomUUID(), name, host: input.host.trim(), port: input.port,
+      id: input.id, name, host: input.host.trim(), port: input.port,
       cwd: input.cwd.trim(), users: [],
     }
     this.set({ servers: [...this.state.servers, server] })
+    return server
   }
 
   removeServer(serverId: string): void {
@@ -195,12 +200,21 @@ export class MudStateController {
     })
   }
 
-  addUser(serverId: string, input: { name: string; passRef: string; preset: string }): MudUser | null {
+  /**
+   * 记入账号（id/sessionId 由宿主 `remote.mud.addAccount` 返回：账号 id = 会话 id）。
+   * @param serverId - 所属服务器（= workspaceId）。
+   * @param input - 宿主账号身份与属性。
+   * @returns 落地的账号记录。
+   */
+  addUser(
+    serverId: string,
+    input: { id: string; name: string; passRef: string; preset: string },
+  ): MudUser | null {
     const server = this.state.servers.find(s => s.id === serverId)
     if (server === undefined) return null
     const user: MudUser = {
-      id: randomUUID(), name: input.name.trim(), passRef: input.passRef,
-      sessionId: '', preset: input.preset,
+      id: input.id, name: input.name.trim(), passRef: input.passRef,
+      sessionId: input.id, preset: input.preset,
     }
     this.set({
       servers: this.state.servers.map(s =>

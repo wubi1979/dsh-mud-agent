@@ -188,3 +188,75 @@ describe('行尾静默刷出 (Mudlet posting timer, 300ms)', () => {
     await server.close()
   })
 })
+
+/** 允许半开、可逐条关闭连接的服务端（复现"旧连接迟到的 close"）。 */
+async function startHalfOpenServer(): Promise<{
+  port: number
+  sockets: net.Socket[]
+  close(): Promise<void>
+}> {
+  const sockets: net.Socket[] = []
+  const server = net.createServer({ allowHalfOpen: true }, (s) => {
+    sockets.push(s)
+    s.resume()
+    s.on('error', () => {})
+  })
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  return {
+    port: (server.address() as AddressInfo).port,
+    sockets,
+    close() {
+      for (const s of sockets) s.destroy()
+      return new Promise(resolve => server.close(() => resolve()))
+    },
+  }
+}
+
+describe('重连（连接代次隔离）', () => {
+  it('手工断连后立即重连：旧连接迟到的 close 不改新连接状态', async () => {
+    const server = await startHalfOpenServer()
+    const mud = new Mud()
+    const seen: string[] = []
+    let disconnects = 0
+    mud.onLine = l => { seen.push(l.text) }
+    mud.onDisconnect = () => { disconnects += 1 }
+
+    mud.connect('127.0.0.1', server.port)
+    for (let i = 0; i < 100 && !mud.connected; i += 1) await new Promise(r => setTimeout(r, 10))
+    expect(mud.connected).toBe(true)
+
+    mud.disconnect()
+    expect(disconnects).toBe(1) // 手工断连同步收尾，不等对端 FIN
+    expect(mud.connected).toBe(false)
+
+    mud.connect('127.0.0.1', server.port)
+    for (let i = 0; i < 100 && !mud.connected; i += 1) await new Promise(r => setTimeout(r, 10))
+    expect(mud.connected).toBe(true)
+    expect(server.sockets).toHaveLength(2)
+
+    // 旧连接此刻才真正关闭；代次判定必须丢弃它的事件
+    server.sockets[0]?.destroy()
+    server.sockets[1]?.write('新连接的行\n')
+    await new Promise(r => setTimeout(r, 200))
+
+    expect(disconnects).toBe(1)
+    expect(mud.connected).toBe(true)
+    expect(seen).toContain('新连接的行')
+    mud.close()
+    await server.close()
+  })
+
+  it('断连幂等：重复 disconnect 只通知一次', async () => {
+    const server = await startHalfOpenServer()
+    const mud = new Mud()
+    let disconnects = 0
+    mud.onDisconnect = () => { disconnects += 1 }
+    mud.connect('127.0.0.1', server.port)
+    for (let i = 0; i < 100 && !mud.connected; i += 1) await new Promise(r => setTimeout(r, 10))
+
+    mud.disconnect()
+    mud.disconnect()
+    expect(disconnects).toBe(1)
+    await server.close()
+  })
+})

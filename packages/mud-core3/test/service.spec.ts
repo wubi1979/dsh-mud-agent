@@ -58,9 +58,9 @@ function makeDeps(servers: Map<string, ServerRecord>, accounts: Map<string, Acco
       return acc ? servers.get(acc.serverId) : undefined
     },
     accountLookup: (sessionId: string) => accounts.get(sessionId),
-    resolveCreds: async (passRef: string) => {
-      const c = creds.get(passRef)
-      if (c === undefined) throw new Error(`凭据 ${passRef} 解析失败`)
+    resolveCreds: async (account: AccountRecord) => {
+      const c = creds.get(account.passRef)
+      if (c === undefined) throw new Error(`凭据 ${account.passRef} 解析失败`)
       return c
     },
   }
@@ -332,5 +332,115 @@ describe('SessionRuntime 行流积累', () => {
     expect(service.status('a1').state).toBe('disconnected')
 
     await service.disposeAll()
+  })
+})
+
+describe('MudService 接入闸门错误面', () => {
+  /** 已装配投递器的服务（admit/stop 需要 deliverer 存在）。 */
+  function serviceWithDeliverer(): MudService {
+    const accounts = new Map<string, AccountRecord>([
+      ['a1', { id: 'a1', name: 'u1', passRef: 'c1', serverId: 'w1', preset: 'mud-player', admitted: false }],
+    ])
+    return new MudService({
+      ...makeDeps(new Map(), accounts, new Map()),
+      deliver: () => true,
+      delivererConfig: { quietMs: 10 },
+    })
+  }
+
+  it('未登记会话 admit/stop 抛错（不谎报接入成功）', () => {
+    const service = serviceWithDeliverer()
+    expect(() => service.admit('nope')).toThrow('未登记')
+    expect(() => service.stop('nope')).toThrow('未登记')
+  })
+
+  it('登记后 admit/stop 反映真实接入状态', () => {
+    const service = serviceWithDeliverer()
+    service.register('a1')
+    expect(service.status('a1').admitted).toBe(false)
+    service.admit('a1')
+    expect(service.status('a1').admitted).toBe(true)
+    service.stop('a1')
+    expect(service.status('a1').admitted).toBe(false)
+  })
+
+  it('flushPending：未登记会话是空操作，已登记会话不抛错', () => {
+    const service = serviceWithDeliverer()
+    expect(() => service.flushPending('nope')).not.toThrow()
+    service.register('a1')
+    expect(() => service.flushPending('a1')).not.toThrow()
+  })
+})
+
+describe('MudService 连接失败可诊断', () => {
+  const account = (over: Partial<AccountRecord> = {}): AccountRecord => ({
+    id: 'a1', name: 'u1', passRef: 'MUD_REF', serverId: 'ws-1', preset: 'mud-player', admitted: false, ...over,
+  })
+
+  it('未登记会话：logOf 返回 null（没有日志就没有可读窗口）', () => {
+    const service = new MudService(makeDeps(new Map(), new Map(), new Map()))
+    expect(service.logOf('nope')).toBeNull()
+  })
+
+  it('未绑定服务器：错误写进日志且带原因', async () => {
+    const accounts = new Map<string, AccountRecord>([['a1', account({ serverId: 'ws-missing' })]])
+    const service = new MudService({ ...makeDeps(new Map(), accounts, new Map()), log: { bufferMax: 50 } })
+    service.register('a1')
+
+    await expect(service.connect('a1')).rejects.toThrow('未绑定服务器')
+    const entries = service.logOf('a1')!.entries
+    expect(entries.some(e => e.level === 'error' && e.text.includes('未绑定服务器'))).toBe(true)
+  })
+
+  it('凭据解析失败：错误面与日志都带引用名', async () => {
+    const accounts = new Map<string, AccountRecord>([['a1', account({ passRef: 'MUD_MISSING' })]])
+    const servers = new Map<string, ServerRecord>([
+      ['ws-1', { workspaceId: 'ws-1', name: 'S', host: '127.0.0.1', port: 1 }],
+    ])
+    const service = new MudService({ ...makeDeps(servers, accounts, new Map()), log: { bufferMax: 50 } })
+    service.register('a1')
+
+    await expect(service.connect('a1')).rejects.toThrow('MUD_MISSING')
+    const entries = service.logOf('a1')!.entries
+    expect(entries.some(e => e.level === 'error' && e.text.includes('MUD_MISSING'))).toBe(true)
+  })
+
+  it('端口不可达：日志记下 host:port 与失败原因', async () => {
+    const server = await startMockServer()
+    const servers = new Map<string, ServerRecord>([
+      ['ws-1', { workspaceId: 'ws-1', name: 'S', host: '127.0.0.1', port: server.port }],
+    ])
+    const accounts = new Map<string, AccountRecord>([['a1', account()]])
+    const creds = new Map<string, ResolvedCredentials>([['MUD_REF', { name: 'u1', pass: 'p1' }]])
+    await server.close() // 关掉服务端：该端口不再监听
+
+    const service = new MudService({ ...makeDeps(servers, accounts, creds), log: { bufferMax: 50 } })
+    service.register('a1')
+    await expect(service.connect('a1')).rejects.toThrow('失败')
+
+    const text = service.logOf('a1')!.entries.map(e => e.text).join('\n')
+    expect(text).toContain(`127.0.0.1:${server.port}`)
+    expect(text).toContain('失败')
+  })
+
+  it('成功连接：日志含 host:port、凭据已解析与 login 已发送', async () => {
+    const server = await startMockServer()
+    const servers = new Map<string, ServerRecord>([
+      ['ws-1', { workspaceId: 'ws-1', name: 'S', host: '127.0.0.1', port: server.port }],
+    ])
+    const accounts = new Map<string, AccountRecord>([['a1', account()]])
+    const creds = new Map<string, ResolvedCredentials>([['MUD_REF', { name: 'u1', pass: 'secret-pw' }]])
+    const service = new MudService({ ...makeDeps(servers, accounts, creds), log: { bufferMax: 50 } })
+    service.register('a1')
+
+    await service.connect('a1')
+    const text = service.logOf('a1')!.entries.map(e => e.text).join('\n')
+    expect(text).toContain(`127.0.0.1:${server.port}`)
+    expect(text).toContain('凭据已解析')
+    expect(text).toContain('login 已发送')
+    expect(text).not.toContain('secret-pw') // 明文不进日志
+
+    await service.disposeAll()
+    await server.close()
   })
 })

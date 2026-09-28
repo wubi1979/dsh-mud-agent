@@ -165,6 +165,16 @@ export class TelnetClient extends EventEmitter {
     if (this.socket) this.socket.end()
   }
 
+  /**
+   * Tear the socket down immediately instead of half-closing it. `socket.end()` keeps
+   * the readable side open until the peer sends its own FIN, so a peer that never
+   * answers leaves a socket that still delivers inbound data after "disconnect".
+   * The `close` event still fires, so callers keep their teardown path.
+   */
+  destroy(): void {
+    this.socket?.destroy()
+  }
+
   /** Send one MUD command (line terminated, UTF-8, IAC-escaped). */
   send(text: string): boolean {
     if (!this.connected) return false

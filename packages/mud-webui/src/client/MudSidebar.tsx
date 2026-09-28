@@ -23,14 +23,23 @@ import type {
   SessionStatusRow,
 } from './mud-state.ts'
 import type { MudCredentialInfo } from './mud-credentials.ts'
+import type { MudLogSnapshot } from './mud-log.ts'
 import type { MudRemoteController } from './mud-remote.ts'
 import { ServerDialog, UserDialog } from './MudDialogs.tsx'
 import css from './MudSidebar.module.css'
 
-/** Business face injected into the sidebar. */
+/** Business face injected into the sidebar and the MUD log view. */
 export interface MudClientInjected {
-  hooks: { servers: HostObservable<MudServersSnapshot> }
+  hooks: {
+    servers: HostObservable<MudServersSnapshot>
+    /** 会话日志快照（mud-log 视图用；经 useMudLog 绑定）。 */
+    mudLog: HostObservable<MudLogSnapshot>
+  }
   remote: MudRemoteController
+  /** 日志视图跟随某会话（null = 停止轮询）；身份稳定。 */
+  watchLog: (sessionId: string | null) => void
+  /** 立即刷新日志快照；身份稳定。 */
+  refreshLog: () => void
   addServer: (input: { name: string; host: string; port: number; cwd: string }) => void
   removeServer: (serverId: string) => void
   addUser: (serverId: string, input: { name: string; pass: string; preset: string }) => Promise<void>

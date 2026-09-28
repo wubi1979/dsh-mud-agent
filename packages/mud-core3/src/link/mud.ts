@@ -12,6 +12,10 @@
  *   - 断线 = socket close：flush 残留行 → onDisconnect 钩子上抛；
  *   - 重连（再次 connect）：parser.reset（行缓冲/样式游标复位）。
  *
+ * 连接代次（epoch）：`connect`/`disconnect` 都自增代次，事件回调只在代次未变时生效。
+ * socket 的半开关闭是异步的（`end()` 要等对端 FIN 才真正关闭），旧连接晚到的
+ * text/boundary/close 若不加代次判定，会把已经建立的新连接标记成断开。
+ *
  * 纯度纪律：本文件不 import 宿主。
  */
 
@@ -26,6 +30,8 @@ export class Mud {
   private conn: TelnetClient | null = null
   private readonly parser = new AnsiStreamParser()
   private flushTimer: ReturnType<typeof setTimeout> | null = null
+  /** 连接代次：建连/断连自增；旧连接晚到的事件按代次丢弃。 */
+  private epoch = 0
 
   /** 记错通道（缓冲超限等；语料可见）。 */
   onLog: ((level: 'info' | 'error', text: string) => void) | null = null
@@ -45,20 +51,48 @@ export class Mud {
   /** 建连（幂等）。重连时复位 parser（行缓冲/样式游标），但 abs 连续递增不归零。 */
   connect(host: string, port: number): void {
     if (this.conn?.connected) return
+    // 上一次连接可能还在半开/收尾中：作废旧代次并立即销毁，
+    // 否则它的 text/close 回调会落到新连接上（把新连接判成断开）。
+    this.clearFlushTimer()
+    const stale = this.conn
+    this.conn = null
+    stale?.destroy()
+    const epoch = (this.epoch += 1)
+
     this.parser.reset()
     const conn = new TelnetClient({ host, port })
     this.conn = conn
-    conn.on('text', (text: string) => this.onText(text))
-    conn.on('boundary', (b: { kind: 'ga' | 'eor' }) => this.onBoundaryEvent(b.kind))
-    conn.on('close', () => this.onClose())
-    conn.on('error', (err: Error) => this.onLog?.('error', `连接错误: ${err.message}`))
-    conn.on('log', (l: { level: 'info' | 'error', text: string }) => this.onLog?.(l.level, l.text))
+    conn.on('text', (text: string) => { if (this.epoch === epoch) this.onText(text) })
+    conn.on('boundary', (b: { kind: 'ga' | 'eor' }) => {
+      if (this.epoch === epoch) this.onBoundaryEvent(b.kind)
+    })
+    conn.on('close', () => {
+      if (this.epoch !== epoch) return
+      // 连接已终结：清引用并作废代次，后续 disconnect 不会重复收尾。
+      this.conn = null
+      this.epoch += 1
+      this.onClose()
+    })
+    conn.on('error', (err: Error) => {
+      if (this.epoch === epoch) this.onLog?.('error', `连接错误: ${err.message}`)
+    })
+    conn.on('log', (l: { level: 'info' | 'error', text: string }) => {
+      if (this.epoch === epoch) this.onLog?.(l.level, l.text)
+    })
     conn.connect()
   }
 
-  /** 断连（幂等）：走 socket 关闭 → 'close' 事件 → onClose 钩子链。 */
+  /**
+   * 断连（幂等）：立即销毁 socket 并同步走完收尾（flush 残留行 → onDisconnect），
+   * 不等对端 FIN —— 否则"已断开"的连接仍会继续收数据，且其迟到的 close 会污染后续连接。
+   */
   disconnect(): void {
-    this.conn?.close()
+    const conn = this.conn
+    if (conn === null) return
+    this.conn = null
+    this.epoch += 1
+    conn.destroy()
+    this.onClose()
   }
 
   /** 直发：不占行流、不做任何判据。未连接返回 false。成功才触发 onSend。 */
@@ -73,9 +107,9 @@ export class Mud {
     return this.conn?.send(cmd) ?? false
   }
 
-  /** 断开（session/disposed 等装配层生命周期用）。 */
+  /** 断开（session/disposed 等装配层生命周期用）：与 disconnect 同一收尾路径。 */
   close(): void {
-    this.conn?.close()
+    this.disconnect()
   }
 
   // ---------------------------------------------------------------------

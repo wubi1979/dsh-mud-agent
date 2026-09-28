@@ -1,8 +1,7 @@
 /**
- * mud-core3 roster — 服务器与账号记录类型。
+ * mud-core3 roster — 服务器与账号记录类型 + 名册存储接口。
  *
- * 纯类型 + 验证，零宿主依赖。宿主接线层（index.ts）用这些类型定义 storage
- * domain spec（zod schema），测试用纯对象。
+ * 纯类型（+存储接口），零宿主依赖。存储实现见 store.ts（宿主 storage 域 / 内存降级）。
  */
 
 /** 服务器记录（roster.servers，键 = workspaceId）。 */
@@ -29,8 +28,23 @@ export interface AccountRecord {
   readonly serverId: string
   /** 建账号时选的 preset id（如 'mud-player' / 'standard'）。 */
   readonly preset: string
-  /** 接入状态（缺省 false = 未接入）。 */
+  /** 接入状态（缺省 false = 未接入；持久化，重启保留）。 */
   readonly admitted: boolean
+}
+
+/**
+ * 名册存储：服务器/账号记录的读写面（宿主 storage 域或内存实现）。
+ * 读同步（域表的内存视图），写异步（等待持久化）。
+ */
+export interface RosterStore {
+  server(workspaceId: string): ServerRecord | undefined
+  servers(): readonly ServerRecord[]
+  putServer(record: ServerRecord): Promise<void>
+  deleteServer(workspaceId: string): Promise<boolean>
+  account(sessionId: string): AccountRecord | undefined
+  accounts(): readonly AccountRecord[]
+  putAccount(record: AccountRecord): Promise<void>
+  deleteAccount(sessionId: string): Promise<boolean>
 }
 
 /** 连接状态（runtime 对外暴露面）。 */
@@ -43,10 +57,11 @@ export interface ResolvedCredentials {
 }
 
 /**
- * 凭据解析器接口（宿主注入 `ctx.get('credentials').resolve`；测试注入 mock）。
- * passRef → { name, pass }；解析失败抛错。
+ * 凭据解析器接口（宿主注入凭据服务解析；测试注入 mock）。
+ * 账号记录 → `{ name, pass }`：name 取自 roster（MUD 登录名），pass 由 `passRef`
+ * 指向的密文解析得到。引用不存在/不可读 = 解析失败，抛错并附引用名。
  */
-export type CredentialResolver = (passRef: string) => Promise<ResolvedCredentials>
+export type CredentialResolver = (account: AccountRecord) => Promise<ResolvedCredentials>
 
 /**
  * 服务器查找器接口（宿主从 roster storage 读取；测试注入内存 map）。

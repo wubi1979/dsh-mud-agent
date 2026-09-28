@@ -67,7 +67,8 @@
 删账号 → 会话销毁 + roster 删除
 ```
 - 建账号 = **一个动作**完成「账号实体 + 会话自动创建绑定」；对使用者而言建立的是账号，会话是承载不是操作对象；
-- 账号 → 会话 1:1，`sessionId` = 账号 id（建账号时生成，显式指定）；删账号即销毁会话。
+- 账号 → 会话 1:1，`sessionId` = 账号 id（建账号时生成，显式指定）；删账号即销毁会话（**会话销毁受宿主能力限制**：插件拿不到 agent 的 dispose 能力，宿主也没有会话删除面，见 §3.1）；
+- **开场消息（翻 blank）**：宿主的会话列表投影只在 `turn/start` 事件上把 `blank` 翻成 false（`session-controller/src/list.ts`），而 blank 会话不渲染会话头/会话体（含自建 view）。因此建账号成功后核心层投递一条**真实用户消息**（MUD 源，内容为账号事实 + 当前状态 + "不要调用工具"）触发一次真实回合，会话立刻可交互、会话体与「MUD 日志」tab 才出现。**不伪造 `turn/start`**（会污染回合计数与 replay）。代价 = 每账号一次模型调用，`bootstrapOnCreate: false` 可关（关掉后会话保持 blank，直到用户首次发消息或 MUD 信息被投递而自动翻）。
 
 ### 2.3 每会话独立 MUD 输入源与连接生命周期
 
@@ -82,6 +83,7 @@
 ```
 
 - **连接生命周期第一期 = 手工动词**（`remote.mud.connect/disconnect`）；连接状态显式可读；
+- **断连是硬收尾**：`disconnect` 立即销毁 socket 并同步走完收尾（flush 残留行 → 状态置断开），不做半开关闭等待——半开连接仍会继续收数据，其迟到的 close 会污染后续连接；重连时旧连接的事件按**连接代次**丢弃，不得改变新连接状态。建连失败（对端拒绝/关闭）立即失败并销毁 socket，不等满超时；
 - **接入 = 独立手工开关**（`admit`/`stop`，roster 持久、缺省未接入）：连接了也可不接入（录制/挂机模式）；接入才开始读（§3.4）；
 - 断线（意外）：runtime 保留、状态置断开、世界状态复位；**不自动重连**——等手工 connect；
 - **自动重连后置**（§5）：只在热状态（会话 agent live）自动，冷启动不自动；前置条件 = 先实现**真实心跳**（健康判定依据，无心跳不区分真断线/半开连接）；
@@ -102,12 +104,26 @@
 // src/index.ts
 apply(ctx, config):
   roster: storage 域挂载（servers 键=workspaceId / accounts 含 admitted 与投递水位）
-  remote.mud.* 动词：servers/accounts CRUD、connect/disconnect（手工）、admit/stop（接入开关）、status
+  remote.mud.* 动词：servers/accounts CRUD、connect/disconnect（手工）、admit/stop（接入开关）、status、logs
   agent/created（全局层）→ roster 判定（sessionId ∈ accounts）→ 登记该会话的 SessionRuntime（幂等，无连接）
   session/disposed → 断连 + 拆 runtime
   投递通道：admitted 的 runtime 把聚合后的行流以用户消息投递进本会话（followup/steer，§3.4）
   ctx.provide('mudCore3', { runtimeFor })
 ```
+
+**名册落库（§1.1/§2.2 的落点）**：名册挂宿主 storage 域（域 `mud` v1，两表 `servers`/`accounts`，记录 schema 是 zod 事实源）；域不可用时降级内存并告警（重启丢账号）。写路径在 `src/accounts.ts`：
+- `addServer` 记 `{workspaceId, name, host, port}`（工作区实体由页面经宿主 workspace 面创建，键 = workspaceId）；
+- **`addAccount` = 一个动作**：分配账号 id（`session-<uuid>`，即 sessionId）→ **先写名册** → 宿主 `sessionController.create({ sessionId, cwd, agentPreset })` 建会话并绑定 preset；建会话失败回滚名册（不留半成品）。先写名册是硬要求：`agent/created` 的归属判定据此命中，否则 runtime 不会登记；
+- 密码不经本插件：页面 `credentials.set(passRef, …)`，`addAccount` 只收引用名；`connect` 时 `ctx.get('credentials').resolve` 实时解析；
+- `removeServer` 在该服务器仍有账号时拒绝（§2.1）；`removeAccount` 清名册 + 清该账号日志文件。**会话销毁本期做不到**：宿主没有给插件的会话删除面（`AgentHandle.dispose` 是创建者的能力，`ctx.sessionController` 无 delete 动词），删账号后会话本身仍在宿主内，需宿主侧补面；
+- `admit`/`stop` 同步写 `accounts.admitted`（持久，重启保留）。
+
+**归属解析服务**：`ctx.provide('mudCore3', { runtimeFor })` —— 由 agent 解析所属 runtime，不属于本插件返回 null（后期工具面即在此拒绝）。
+
+
+**诊断面（log）**：每会话一个 `SessionLog`——内存环（缺省 2000 条；运行/网络/投递/闸门事件）+ 按天 JSONL 落盘（`<logDir>/mud-YYYYMMDD-<sessionId>.log`，5MB 滚动 ×3）。原始行流**只落盘、不进环**（否则刷屏行会冲掉诊断信息）。warn/error 同时镜像到宿主 `ctx.logger`（控制台可查）；`remote.mud.logs(sessionId)` 返回环条目 + 落盘目录，前端会话头「MUD 日志」tab 据此渲染。连接失败、凭据解析失败、投递缓冲溢出都在这里，不再只有一句 remote 错误。
+
+**加载与模块解析（宿主事实）**：插件包位于宿主 profile 之外时，dsh 的 peer 拦截只在 importer 处于 `$DSH_HOME/profiles/**` 或某个 **linked root**（`<profile>/node_modules` 下指向插件真实目录的链接）之下才参与。所以本包必须在活动 profile 的 `node_modules` 里有一条指向本包真实目录的链接（junction/symlink）：`peerDependencies` 里的 dsh 包才会解析到**运行中的安装**（与宿主共用一份实例；devDependency 那份只服务 tsc 与单测），否则插件 import 自己那份副本。`dsh plugin add` 就是建立该链接并登记 bundle 层的封装；`--patch` 直挂时不建立链接，需手工建。链接在启动时一次性读取，改动后要重启。
 
 归属解析（runtimeFor(agent)）：读 agent 身份 → 查 `accounts`（sessionId = accountId）→ 该账号绑定的服务器 → runtime（含连接）。解析不到 ⇒ 与我们无关（第一期无工具面，无拒绝路径；后期工具落地时此处即拒绝点）。
 
@@ -137,6 +153,9 @@ MUD 行流 → 聚合（静默窗口，Config）→ 一条用户消息投递进�
 
 - **等同人工提问**：MUD 信息以**用户消息**身份进入会话并触发回合，agent 像被提问一样回答。原「LLM 调用监听钩子注入」方案只能改已有调用的上下文、不产生回答，与此目标不符——弃用为注入通路；其拦截角色也不再需要（第一期唯一通路就是投递通道，闸门在源头）；
 - **聚合是必需品不是优化**：行流逐行投递 = 每行一个回合一次模型调用；缺省按**静默窗口**聚合（行流静默 N ms 打包一条投递，N 为 Config），必要时加上限防超长消息；
+- **聚合的边界（全部可配，Config）**：静默窗口 N ms；**批次最长等待** M ms——行流持续不静默时也在此上限内投出（否则刷屏流永不投递）；单条上限 = maxLines 行 / maxChars 字符，**超限拆成多条依次投递，不丢行**；缓冲上限 = maxPendingLines 行，超出丢最旧并上报；
+- **agent 离线（冷会话）不丢投递**：deliver 回调返回 false 时批次**保留在缓冲**（受上限约束），`agent/created` 时补投；接入水位语义不变（admit 清空积压、不回放）；
+- **录制缓冲**：runtime 保留最近 recordLines 行（缺省 2000，环形丢最旧）供后续工具裸读，与投递缓冲相互独立——挂机模式两条缓冲都有界；
 - **与人工提问共存**：投递走宿主 followup 队列，人工消息与 MUD 消息同队列自然排队（会话内串行是宿主保证）；
 - **回答的去向**：第一期回答只落会话（页面可见、日志可查）——**不回流 MUD**（发命令是后期工具面的事，§5）；
 - **按会话隔离**：每个 runtime 只向自己的会话投递（两会话互不串线）。
@@ -154,7 +173,9 @@ MUD 行流 → 聚合（静默窗口，Config）→ 一条用户消息投递进�
 
 - **服务器/账号呈现沿用 v1 既有实现，不改**（v1 `MudServer { name, host, port, cwd, users }`：服务器即工作区 + 字段、账号挂服务器下）；
 - 新增/改接：账号表单加 preset 选择与接入开关；手工 connect/disconnect；连接状态查看；
-- 后端换接：roster 从 localStorage 换到宿主 storage 域、remote 从 v1 `ctx.remote.mud.*` 换到 core3 动词——**呈现不变、接线替换**。
+- **会话头 tab「MUD 日志」**（`conversation.view` 条目 `mud-log`）：渲染该会话的 `remote.mud.logs` 环条目（按级别/通道着色）与落盘目录，作为连接/投递/闸门的诊断面。tab 只在会话体渲染时出现（宿主 blank 会话不渲染会话体——连接后第一批 MUD 行开启回合即脱离 blank），视图选择按会话持久化（宿主持有，插件不代选）；
+- 后端换接：**服务器/账号经 `remote.mud.addServer/addAccount` 登记到宿主名册**（页面 localStorage 只作呈现缓存），**建账号在宿主侧一个动作完成**（写名册 + 建会话，sessionId = 账号 id、绑定 preset）；页面不再自己 `sessions.create`/`agentPresets.select`。删账号/删服务器同样先过宿主再改本地；
+**凭据接线**：`connect` 时账号名取自 roster（`accounts.name`），密文经宿主 `ctx.get('credentials').resolve(passRef)` 实时解析；引用不存在/不可读 = 连接失败，错误与日志都带引用名；明文只进登录发送，不进 roster、日志、上下文。
 
 ---
 

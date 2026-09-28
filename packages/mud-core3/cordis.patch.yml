@@ -1,15 +1,23 @@
 # mud-core3 bundle patch.
 #
-# 启动命令（完整三步）：
-#   1. 构建引擎：  pnpm --filter mud-core3 build
-#   2. 构建前端：  pnpm --filter @deepseek-ai/dsh-mud-webui build
-#   3. 启动宿主：  pnpm --dir D:/Code/deepseek-harness dsh web --patch D:/Code/dsh-mud-agent/packages/mud-core3/cordis.patch.yml --port 3082
+# 启动命令：
+#   pnpm dev            # = gen:typert → core3 build → webui build → 启动宿主（端口 3082）
+# 或逐步：
+#   1. 生成 RPC 工件： pnpm --filter mud-core3 gen:typert   （改了 remote.mud 动词面后必跑）
+#   2. 构建引擎：      pnpm --filter mud-core3 build
+#   3. 构建前端：      pnpm --filter @deepseek-ai/dsh-mud-webui build
+#   4. 启动宿主：      pnpm --dir D:/Code/deepseek-harness dsh web --patch D:/Code/dsh-mud-agent/packages/mud-core3/cordis.patch.yml --port 3082
 #
 # 纪律：
 #   - 必须用 `pnpm dsh`（宿主检出内运行），不能用 `pnpm exec dsh`（全局旧版）
 #   - 引擎行 name 指向 tsc 构建产物 lib/，改码后必须重建
 #   - 不覆盖 registry default（保持 standard）；建账号时显式选 preset
 #   - 本层是 LAST layer
+#   - 插件包在宿主 profile 之外：`<profile>/node_modules/mud-core3` 必须有一条指向本包真实
+#     目录的链接（junction/symlink），否则 dsh 的 peer 拦截不生效，插件会 import 自己那份
+#     devDependency 副本（与宿主各持一份实例）。建链接后需重启宿主。
+#     切换 `dsh plugin add` 流程时：本包加 dsh.bundle 声明，并从 profile 里去掉 --patch
+#     （同一个 patch 层应用两次会插入重复 id 行）。
 
 - insert:
     # preset 行：mud-player = standard 全部插件 + MUD persona + mud-core3 preset 行
@@ -151,10 +159,12 @@
           # mud-core3 preset 行：第一期无工具面，preset 作用域不加载 core3 引擎。
           # 工具面落地后（第二期）在此行注册 mud_send/mud_state 工具。
 
-    # 引擎行：全局作用域加载 mud-core3（agent/created 监听、session/disposed 监听、remote 服务、投递）
+    # 引擎行：全局作用域加载 mud-core3（agent/created 监听、session/disposed 监听、remote 服务、投递、会话日志）
+    # 日志落盘目录固定到本仓 logs/（缺省是启动目录下的 mud-logs）；logFile: false 可只留内存环。
     - id: mud-core3
       name: 'file:///D:/Code/dsh-mud-agent/packages/mud-core3/lib/index.js'
-      config: {}
+      config:
+        logDir: D:/code/dsh-mud-agent/logs
 
     # WebUI 行：浏览器侧（服务器/账号管理面）
     - id: mud-webui

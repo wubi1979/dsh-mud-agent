@@ -1,17 +1,18 @@
 /**
- * dsh-mud-webui — WebUI client half (core3).
+ * dsh-mud-webui — WebUI client half (core3)。
  *
- * C4 接线替换：呈现不改（服务器/账号树形导航），后端从 v1 mud-core 换到 core3。
+ * 接线（设计 §3.5：呈现不变、接线替换）：
  * - sidebar：服务器/账号向导（遮蔽 SidebarRoot）
- * - 移除：game/log conversation views、rail、socket（core3 第一期不需要）
- * - 移除：bind/purge/command/captcha/tier（core3 remote 只有 5 个方法）
- * - 新增：preset 选择 + admit/stop 接入开关
+ * - conversation.view：`mud-log` 会话头 tab（连接/投递/闸门诊断面）
+ * - **名册落宿主**：服务器/账号经 `remote.mud.addServer/addAccount` 登记（宿主 storage 域持久），
+ *   页面 localStorage 只作呈现缓存
+ * - **建账号 = 一个动作（宿主侧）**：页面写凭据 → `addAccount` 在宿主写名册 + 建会话
+ *   （sessionId = 账号 id，绑定 preset）；页面不再自己 `sessions.create`
  *
  * @module @deepseek-ai/dsh-mud-webui/client
  */
 
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { IWorkspaces } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -21,58 +22,44 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type { UiWorkspace } from '@deepseek-ai/dsh-client-ui-workspace/client'
 import { MudStateController, type MudUser } from './mud-state.ts'
 import { MudRemoteController } from './mud-remote.ts'
+import { MudLogController } from './mud-log.ts'
 import { MudCredentialsController, mintPassRef } from './mud-credentials.ts'
 import { MudSidebar, type MudClientInjected } from './MudSidebar.tsx'
+import { MudLogView } from './MudLogView.tsx'
 
-export const inject = ['slots', 'layout', 'sessions', 'workspaces', 'remote', 'uiWorkspace']
+export const inject = ['slots', 'layout', 'workspaces', 'remote', 'uiWorkspace']
 
 export function apply(ctx: ClientContext): void {
   const mudRemote = new MudRemoteController()
   const credentials = new MudCredentialsController(ctx)
   const mud = new MudStateController(mudRemote, credentials)
+  const mudLog = new MudLogController(mudRemote)
+  ctx.effect(() => () => { mudLog.dispose() }, 'mud-webui: 日志控制器')
 
   // typert 客户端挂载（官方 RPC envelope；'remote' 已在 inject 里保证 gateway client 可用）
   void mudRemote.mount(ctx).catch((err: unknown) => {
     console.error('[mud] remote mount 失败:', err)
   })
 
-  /**
-   * 建账号 = 建会话：走官方 sessions.create（id 由 host 分配），登记进 roster。
-   * 0.1.7 起 sessions.open 移除，打开会话 = uiWorkspace 导航；preset 用
-   * remote.agentPresets.select 在 blank 会话上选（create 不再收 agentPreset）。
-   */
-  const ensureAndOpenUserSession = (serverId: string, userId: string): void => {
+  /** 打开某账号的会话（会话由宿主在 addAccount 时建好）。 */
+  const openUserSession = (serverId: string, userId: string): void => {
     const server = mud.getSnapshot().servers.find(s => s.id === serverId)
     const user = server?.users.find(u => u.id === userId)
     if (server === undefined || user === undefined) return
-    const sessions = ctx.get('sessions') as ISessions | undefined
-    if (sessions === undefined) return
-    const open = (id: string): void => {
-      const uiWorkspace = ctx.get('uiWorkspace') as UiWorkspace | undefined
-      if (uiWorkspace !== undefined) uiWorkspace.openSession(id as SessionId)
-    }
-    if (user.sessionId !== '') {
-      open(user.sessionId)
-      return
-    }
-    // 用户尚无会话：官方创建（带 cwd），随后在 blank 会话上选 preset
-    void sessions.create({
-      ...(server.cwd !== '' ? { cwd: server.cwd } : {}),
-    }).then(async (created) => {
-      const sessionId = String(created)
-      if (user.preset !== '') {
-        const remote = (ctx as unknown as { remote?: { agentPresets?: { select: (sessionId: string, preset: string) => Promise<unknown> } } }).remote
-        try { await remote?.agentPresets?.select(sessionId, user.preset) } catch { /* preset 不可选不阻塞开屏 */ }
-      }
-      mud.setUserSession(serverId, userId, sessionId)
-      open(sessionId)
-    }).catch((err: unknown) => {
-      mud.setConn({
-        ...mud.getSnapshot().conn,
-        state: 'error', serverId, userId, sessionId: null,
-        label: `${server.name} / ${user.name}`,
-        error: err instanceof Error ? err.message : String(err),
-      })
+    mud.setActive(serverId, userId)
+    if (user.sessionId === '') return
+    const uiWorkspace = ctx.get('uiWorkspace') as UiWorkspace | undefined
+    uiWorkspace?.openSession(user.sessionId as SessionId)
+  }
+
+  /** 把失败写进侧栏状态行（连接/名册错误都要看得见）。 */
+  const reportError = (serverId: string | null, userId: string | null, error: unknown): void => {
+    mud.setConn({
+      ...mud.getSnapshot().conn,
+      state: 'error',
+      serverId,
+      userId,
+      error: error instanceof Error ? error.message : String(error),
     })
   }
 
@@ -83,34 +70,64 @@ export function apply(ctx: ClientContext): void {
     users.map(u => u.passRef).filter(r => r !== '')
 
   const injectFace = (): MudClientInjected => ({
-    hooks: { servers: mud },
+    hooks: { servers: mud, mudLog },
     remote: mudRemote,
+    watchLog: mudLog.watchLog,
+    refreshLog: mudLog.refreshLog,
     addServer: (input) => {
-      mud.addServer(input)
-      if (input.cwd.trim() !== '') {
-        const workspaces = ctx.get('workspaces') as IWorkspaces | undefined
-        void workspaces?.create({ path: input.cwd.trim() }).catch(() => { /* exists */ })
+      const cwd = input.cwd.trim()
+      const workspaces = ctx.get('workspaces') as IWorkspaces | undefined
+      // 服务器 = 工作区 + 字段：先建（或复用）工作区，再以它的 id 作名册键。
+      const register = (workspaceId: string): void => {
+        const record = {
+          workspaceId, name: input.name.trim() || `${input.host}:${input.port}`,
+          host: input.host.trim(), port: input.port,
+        }
+        mud.addServer({ id: workspaceId, name: record.name, host: record.host, port: record.port, cwd })
+        void mudRemote.addServer(record).catch((error: unknown) => { reportError(null, null, error) })
       }
+      if (workspaces === undefined || cwd === '') {
+        // 没有工作区面或未填目录：用本地生成的键登记（宿主名册同样持久）。
+        register(crypto.randomUUID())
+        return
+      }
+      void workspaces.create({ path: cwd }).then((workspace) => {
+        register(String(workspace.workspaceId))
+      }).catch((error: unknown) => { reportError(null, null, error) })
     },
     removeServer: (serverId) => {
-      mud.removeServer(serverId)
+      void mudRemote.removeServer(serverId)
+        .catch((error: unknown) => { reportError(serverId, null, error) })
+        .finally(() => { mud.removeServer(serverId) })
     },
     addUser: async (serverId, input) => {
       const server = mud.getSnapshot().servers.find(s => s.id === serverId)
       if (server === undefined) throw new Error('服务器已不存在')
       const passRef = mintPassRef(server.users.map(u => u.passRef), input.name)
       await credentials.set(passRef, input.pass)
-      const user = mud.addUser(serverId, { name: input.name, passRef, preset: input.preset })
-      if (user === null) {
-        void releasePassRef(passRef)
-        throw new Error('服务器已不存在')
+      try {
+        // 宿主机建账号 = 写名册 + 建会话（sessionId = 账号 id，绑定 preset）
+        const { account } = await mudRemote.addAccount({
+          serverId, name: input.name, passRef, preset: input.preset, cwd: server.cwd,
+        })
+        const user = mud.addUser(serverId, {
+          id: account.id, name: account.name, passRef: account.passRef, preset: account.preset,
+        })
+        if (user === null) throw new Error('服务器已不存在')
+        void mud.refreshCredentials()
+        openUserSession(serverId, user.id)
+      } catch (error) {
+        await releasePassRef(passRef) // 建账号失败不留下孤儿凭据
+        throw error
       }
-      void mud.refreshCredentials()
-      ensureAndOpenUserSession(serverId, user.id)
     },
     removeUser: (serverId, userId) => {
       const server = mud.getSnapshot().servers.find(s => s.id === serverId)
       const user = server?.users.find(u => u.id === userId)
+      if (user !== undefined && user.sessionId !== '') {
+        void mudRemote.removeAccount(user.sessionId)
+          .catch((error: unknown) => { reportError(serverId, userId, error) })
+      }
       mud.removeUser(serverId, userId)
       if (user !== undefined) {
         for (const ref of passRefsOf([user])) void releasePassRef(ref)
@@ -122,10 +139,7 @@ export function apply(ctx: ClientContext): void {
     admit: (sessionId) => mud.admit(sessionId),
     stopAdmit: (sessionId) => mud.stopAdmit(sessionId),
     refreshStatus: (sessionId) => mud.refreshStatus(sessionId),
-    openUserSession: (serverId, userId) => {
-      mud.setActive(serverId, userId)
-      ensureAndOpenUserSession(serverId, userId)
-    },
+    openUserSession,
     toggleSidebar: () => { ctx.layout.toggleSidebar() },
   })
 
@@ -135,4 +149,13 @@ export function apply(ctx: ClientContext): void {
     priority: -100,
     inject: injectFace,
   }, MudSidebar))
+
+  // 会话头 tab：MUD 日志（连接/投递/闸门的诊断面；日志控制器按当前会话拉取）
+  ctx.slots.inject('conversation.view', () => ctx.slots.register({
+    name: 'conversation.view',
+    id: 'mud-log',
+    order: 10,
+    label: () => 'MUD 日志',
+    inject: injectFace,
+  }, MudLogView))
 }

@@ -58,4 +58,45 @@
 - 创建 `cordis.patch.yml`：mud-player preset（standard 全部插件 + MUD persona + mud-core3 preset 行）+ 引擎行 + webui 行；不覆盖 registry default（建账号时显式选 preset）
 - 启动命令：`pnpm --filter mud-core3 build && pnpm --filter @deepseek-ai/dsh-mud-webui build && pnpm --dir D:/Code/deepseek-harness dsh web --patch D:/Code/dsh-mud-agent/packages/mud-core3/cordis.patch.yml --port 3082`
 
+## [v0.0.6]C3/C4 审阅修正：连接与投递缺陷 + 装配接线 (2026-09-28 19:28)
+> 总结：重连状态污染、投递无界/丢行、闸门谎报、插件包解析路径四类问题的修复与接线
+
+- **连接（§2.3）**：`Mud` 引入连接代次——建连/断连自增，旧连接迟到的 text/boundary/close 一律丢弃；`disconnect` 改为**硬收尾**（立即销毁 socket + 同步 flush 残留行 → onDisconnect），不再半开关闭等待（半开连接仍收数据、迟到的 close 会把新连接判成断开）；`TelnetClient.destroy()` 新增；建连失败（对端拒绝/关闭）立即失败并销毁 socket，不等满超时；`runtime.connect` 增加"正在连接"并发保护
+- **投递（§3.4）**：`Deliverer` 增加**批次最长等待** `maxWaitMs`（连续不静默也投出，原实现刷屏流永不投递）；超 `maxLines`/`maxChars` 改为**拆成多条依次投递（不再静默丢行）**；新增**缓冲上限** `maxPendingLines`（超出丢最旧 + `onDrop` 上报，index 侧限流告警）；`deliver` 回调返回 `false`（agent 离线/投递抛错）时**批次保留**，`agent/created` 经 `service.flushPending` 补投（原实现：注释说"等 agent 回来"，实际已丢）
+- **runtime**：录制缓冲改为环形上限 `recordLines`（缺省 2000，`droppedLineCount` 可观），挂机模式不再无界增长
+- **闸门错误面**：`admit`/`stop` 对未登记会话抛错（原为静默 no-op 却回报 `admitted: true/false`）；remote 动词返回真实 `admitted`（顺带消除 `status` 重复调用）
+- **配置**：`MudCore3Config` 暴露 `deliverMaxWaitMs`/`deliverMaxLines`/`deliverMaxChars`/`deliverMaxPendingLines`/`recordLines`
+- **清单与接线**：`main`/`exports["."]` 指向 `lib/` 构建产物；`@deepseek-ai/dsh-llm` 移出 `dependencies`（保留 peer+dev，避免 pnpm 提升到 profile 的 ② 层遮蔽 peer 拦截）；`zod` **保留**在 `dependencies`（生成工件 `typert.remote-client.js` 的运行时依赖，删除会导致 webui 打包出未解析 import）；cordis 4.0.2 → **4.0.4** 与宿主检出对齐（typert-protocol 镜像同步）并消除双副本；`gen:typert` 迁到 `mud-core3`（退役包移出 `PACKAGES` 与 `tsconfig.host.json` references，生成器依赖挂到 core3）；根 `pnpm dev` 增加 gen:typert 步，移除退役的 `dev:core2`；webui 移除退役 `@deepseek-ai/dsh-mud-core` 依赖、陈旧注释与死配置
+- **装配（§3.1）**：活动 profile `node_modules` 建 `mud-core3` junction；实测 peer 拦截生效——**把插件本地 `@deepseek-ai` 挪走后插件仍可加载**，`dsh-llm`/`dsh-typert-protocol`/`cordis` 均解析到 DSH 检出的副本（0.1.7-rc.2 / 0.1.7-rc.2 / 4.0.4）
+- 测试 79 → **93 项全绿**（新增重连隔离、建连失败、并发 connect、录制上限、最长等待、拆批不丢行、缓冲溢出、离线补投、闸门错误面）；新增回归用例在旧实现下 6 项失败、新实现下全过；core3 `tsc`（含 `index.ts`）+ `gen:typert` + webui `tsc`/build 全部通过
+- 未动（待定范围）：§3.1 的 roster storage 域与 `remote.mud.*` servers/accounts CRUD、§2.2 建账号链路（`sessionId` = 账号 id + preset 选择）、`ctx.provide('mudCore3')`、接入状态持久化——属功能缺失而非缺陷，需产品决策后再实施
+
+## [v0.0.7]C3 凭据接线 + 会话日志 + MUD 日志视图 (2026-09-28 20:05)
+> 总结：连接失败的真实原因（凭据从未接线）修复；新增会话日志系统与诊断视图
+
+- **凭据接线（真实连接失败原因）**：`apply` 的 `resolveCreds` 原为「未配置即抛错」的占位实现，`connect` 必然失败且只暴露一句占位错误。现改为接宿主 `ctx.get('credentials').resolve(passRef)`（账号名取自 roster，密文实时解析，明文不进日志/上下文）；`CredentialResolver` 签名从 `(passRef)` 改为 `(account)`，引用不存在时错误与日志都带引用名
+- **会话日志系统**（`src/log/log-service.ts`，移植 v1 `MudLogService` 并改为按会话实例）：内存环（`logBufferMax`，缺省 2000）+ 按天 JSONL 落盘 `mud-YYYYMMDD-<sessionId>.log`（5MB 滚动 ×3，`logDir` 缺省 `<cwd>/mud-logs`，`logFile` 可关）；`seq` 从当日文件最大号续起；原始行流 `stream()` **只落盘不进环**；`purgeSessionLogs` 供删账号清理（只删本人文件）。滚动实现修正为真正的分片重命名（v1 版本会清零旧分片）
+- **全程可诊断**：登记/建连/凭据解析/login 已发送/断连/销毁/接入/停止/投递（批次、离线保留、缓冲溢出）/网络层（telnet 协商、断线、协议异常）全部落日志；warn/error 同时镜像 `ctx.logger`；连接失败在日志里带 `host:port` 与完整错误（含 cause）
+- **新动词 `remote.mud.logs(sessionId)`**：返回环条目 + 落盘目录；为此新增 `mud-core3/types` 公开子路径（typert 要求跨 Remote 边界的具名类型必须从非根子路径导出）
+- **前端「MUD 日志」视图**（`conversation.view` 条目 `mud-log`）：`MudLogController` 按当前会话轮询 `remote.mud.logs`（1.5s，切换会话即换目标、丢弃过期响应），经 inject 面 `hooks.mudLog` 绑成 `useMudLog`；视图渲染级别/通道着色的日志行与落盘目录，含刷新按钮与空态。数据只走 hooks + inject 回调（组件不自订阅）
+- 测试 106 项全绿（93 → 106）：新增 `test/log/log-service.spec.ts`（环/seq/落盘/流只落盘/清理/降级）与「连接失败可诊断」用例组（未绑定服务器、凭据失败带引用名、端口不可达、成功连接含 host:port 且明文不入日志）
+
+## [v0.0.8]B 节补齐：名册落库 + 建账号一个动作 + 归属服务 (2026-09-28 20:05)
+> 总结：名册有了写入者与持久化，建账号在宿主侧一个动作完成，连接链路端到端打通
+
+- **名册落宿主 storage 域**（`src/store.ts`）：域 `mud` v1 两表 `servers`（键 = workspaceId）/`accounts`（键 = accountId = sessionId），记录 schema 是 zod 持久化边界事实源；`ctx.storageDomain.open` 打开，域不可用/打开失败降级 `MemoryRosterStore` 并 `ctx.logger.warn` 点名（`rosterStorage: false` 可强制内存）。记录里含 `admitted`（持久）
+- **名册写路径**（`src/accounts.ts`，宿主解耦可单测）：`addServer`（键 = workspaceId）、**`addAccount` = 一个动作**（分配 `session-<uuid>` 作账号 id/sessionId → **先写名册** → 宿主 `sessionController.create({sessionId, cwd, agentPreset})` 建会话绑定 preset；失败回滚名册）、`removeServer`（仍有账号时拒绝）、`removeAccount`（清名册 + 清该账号日志）、`setAdmitted`（接入状态持久化）
+- **新动词**：`remote.mud.{servers,addServer,removeServer,accounts,addAccount,removeAccount}`；`admit`/`stop` 同步落 `admitted`。`AccountRecord`/`ServerRecord` 随之跨 Remote 边界，`mud-core3/types` 子路径同步转发（typert 要求非根子路径导出）
+- **归属服务**：`ctx.provide('mudCore3', { runtimeFor })`（§3.1；后期工具面的拒绝点）
+- **前端接线替换**（§3.5，呈现不改）：页面 localStorage 降为呈现缓存，服务器/账号的增删经宿主动词；**建账号不再自己 `sessions.create`** —— 宿主 `addAccount` 返回账号（= 会话 id）后页面直接开屏；删账号/服务器先过宿主再改本地；失败写进侧栏状态行
+- **本期做不到（宿主能力缺口，已记入设计）**：删除账号后会话本身无法销毁 —— 插件拿不到 `AgentHandle.dispose` 能力，`ctx.sessionController` 也没有 delete 动词；名册与日志会清，会话留在宿主体内
+- 测试 119 项全绿（106 → 119）：新增 `test/store.spec.ts`（内存/域表/记录 schema/降级）与 `test/accounts.spec.ts`（先落名册的顺序可观测、id 与 preset 透传、失败回滚、删服务器保护、admitted 持久化）
+
+## [v0.0.9]建账号开场消息：让新会话脱离 blank (2026-09-28 20:05)
+> 总结：会话体只在非 blank 时渲染，而 blank 只由 turn/start 翻 —— 用一条真实开场消息解决
+
+- **机制事实（写进设计 §2.2）**：宿主会话列表投影 `blank = state.blank && event.type !== 'turn/start'`（`api/session-controller/src/list.ts`）；blank 会话不渲染会话头/会话体（`DefaultConversationViews` 返回 null），所以 `conversation.view` 条目（含「MUD 日志」tab）在 blank 期间不可见；客户端另有一条 `promptAttempted` 的 engaging 边（用户首次发送即脱离 blank）
+- **实现（`src/bootstrap.ts` + addAccount 动词）**：建账号成功后投递一条 MUD 源的**真实用户消息**（服务器/地址/账号/preset + 当前"未连接"状态 + "不要调用任何工具"），触发一次真实回合 → `turn/start` → 会话立刻活跃、会话体与 tab 渲染。**不伪造 `turn/start`**（会污染回合计数与 replay）；投递失败不影响账号落库。`bootstrapOnCreate: false` 可关（省一次模型调用；关掉后靠用户首条消息或 MUD 投递自动翻）
+- 测试 121 项全绿（119 → 121）：新增 `test/bootstrap.spec.ts`（文本点名服务器/账号/preset/状态与"不调工具"；未登记服务器占位不抛错）
+
 > AI生成

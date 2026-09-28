@@ -16,11 +16,10 @@ export const inject = ['invariants']
 
 /**
  * No runtime invariant: the WebUI shell is a browser-only plugin. It owns the
- * roster/connection controller (MudStateController) and the /mud/ws socket
- * controller (MudSocketController) inside its own client apply fiber, disposed
- * by that fiber's teardown, and registers slots and conversation-view
- * definitions whose disposal is the slot/registry contract. The package holds
- * no cross-plugin mutable state.
+ * roster/connection controller (MudStateController) inside its own client apply
+ * fiber, disposed by that fiber's teardown, and registers one sidebar slot whose
+ * disposal is the slot registry's contract. The package holds no cross-plugin
+ * mutable state.
  */
 const install: InvariantInstaller = () => {}
 

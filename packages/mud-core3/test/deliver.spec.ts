@@ -7,7 +7,10 @@
  *   - 停止接入：零投递（行流照常积累）
  *   - 水位 = 接入时刻：接入前的积压不回放
  *   - 静默窗口聚合：一批 = 一条消息（非逐行）
- *   - 截断护栏：超长消息截断
+ *   - 最长等待：行流持续不静默也在上限内投出
+ *   - 超 maxLines / maxChars：拆成多条依次投递（不丢行）
+ *   - 缓冲上限：未接入时不无界增长，超出丢最旧并回调 onDrop
+ *   - agent 离线（deliver 返回 false）：批次保留，唤醒后 flushNow 补投
  *   - 两会话各投各的（互不串线）
  */
 
@@ -129,7 +132,7 @@ describe('Deliverer 聚合行为', () => {
     d.dispose()
   })
 
-  it('行数截断：超过 maxLines 截断', async () => {
+  it('超 maxLines：拆成多条依次投递，不丢行', async () => {
     const delivered: string[] = []
     const d = new Deliverer('s1', (_id, text) => { delivered.push(text) }, {
       quietMs: 50,
@@ -142,9 +145,71 @@ describe('Deliverer 聚合行为', () => {
     d.onLine(line('4', 3))
     d.onLine(line('5', 4))
     await new Promise(r => setTimeout(r, 100))
-    expect(delivered).toHaveLength(1)
-    expect(delivered[0]!.split('\n')).toHaveLength(3)
-    expect(delivered[0]).toBe('1\n2\n3')
+    expect(delivered).toEqual(['1\n2\n3', '4\n5'])
+    d.dispose()
+  })
+
+  it('超 maxChars：拆成多条依次投递，不丢行', async () => {
+    const delivered: string[] = []
+    const d = new Deliverer('s1', (_id, text) => { delivered.push(text) }, {
+      quietMs: 50,
+      maxChars: 10,
+    })
+    d.admit()
+    d.onLine(line('aaaa', 0))
+    d.onLine(line('bbbb', 1))
+    d.onLine(line('cccc', 2))
+    await new Promise(r => setTimeout(r, 100))
+    expect(delivered).toEqual(['aaaa\nbbbb', 'cccc'])
+    d.dispose()
+  })
+
+  it('行流持续不静默：最长等待到期仍强制投出', async () => {
+    const delivered: string[] = []
+    const d = new Deliverer('s1', (_id, text) => { delivered.push(text) }, {
+      quietMs: 500,
+      maxWaitMs: 120,
+    })
+    d.admit()
+    const ticker = setInterval(() => d.onLine(line('刷屏', 0)), 30)
+    await new Promise(r => setTimeout(r, 260))
+    clearInterval(ticker)
+    expect(delivered.length).toBeGreaterThanOrEqual(1)
+    d.dispose()
+  })
+
+  it('未接入时缓冲有上限：超出丢最旧并回调 onDrop', () => {
+    const drops: [number, number][] = []
+    const d = new Deliverer('s1', () => {}, {
+      quietMs: 50,
+      maxPendingLines: 3,
+      onDrop: (_id, droppedNow, droppedTotal) => { drops.push([droppedNow, droppedTotal]) },
+    })
+    for (const [i, t] of ['1', '2', '3', '4', '5'].entries()) d.onLine(line(t, i))
+    expect(d.pendingCount).toBe(3)
+    expect(d.droppedLineCount).toBe(2)
+    expect(drops).toEqual([[1, 1], [1, 2]])
+    d.dispose()
+  })
+
+  it('agent 离线（deliver 返回 false）：批次保留，flushNow 补投', async () => {
+    const delivered: string[] = []
+    let online = false
+    const d = new Deliverer('s1', (_id, text) => {
+      if (!online) return false
+      delivered.push(text)
+      return true
+    }, { quietMs: 50 })
+    d.admit()
+    d.onLine(line('离线期行', 0))
+    await new Promise(r => setTimeout(r, 90))
+    expect(delivered).toEqual([])
+    expect(d.pendingCount).toBe(1) // 未投出但不丢
+
+    online = true
+    d.flushNow()
+    expect(delivered).toEqual(['离线期行'])
+    expect(d.pendingCount).toBe(0)
     d.dispose()
   })
 })

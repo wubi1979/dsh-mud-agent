@@ -11,11 +11,29 @@
 import TYPERT_REMOTE from 'mud-core3/remote'
 // Type-only: pulls the TypertRemoteNamespaceMap augmentation (mud namespace) into the program.
 import type {} from 'mud-core3/remote'
+// Type-only: Remote 边界类型（日志条目、名册记录）由非根子路径导出。
+import type { AccountRecord, LogEntry, ServerRecord } from 'mud-core3/types'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { RemoteResult, TypertClientRemote } from '@deepseek-ai/dsh-typert-protocol'
 
-/** 生成客户端的 mud 命名空间（connect/disconnect/admit/stop/status，全类型化）。 */
+/** 生成客户端的 mud 命名空间（名册 CRUD + connect/disconnect/admit/stop/status/logs，全类型化）。 */
 export type MudNamespace = TypertClientRemote['mud']
+
+/** 一条 MUD 会话日志条目（与宿主 mud-core3/types 同源）。 */
+export type MudLogEntry = LogEntry
+
+/** 宿主名册里的服务器记录（键 = workspaceId）。 */
+export type MudServerRecord = ServerRecord
+
+/** 宿主名册里的账号记录（键 = accountId = sessionId）。 */
+export type MudAccountRecord = AccountRecord
+
+/** 会话日志返回面（内存环 + 落盘目录）。 */
+export interface MudSessionLog {
+  readonly sessionId: string
+  readonly entries: readonly MudLogEntry[]
+  readonly fileTarget: string | null
+}
 
 /**
  * 页面唯一的 MUD RPC 控制器：mount 一次，全组件共享。
@@ -87,6 +105,43 @@ export class MudRemoteController {
     return this.call(mud => mud.connect(sessionId))
   }
 
+  // ── 名册（宿主侧持久：storage 域，重启不丢）────────────────────
+
+  /** 服务器名册（键 = workspaceId）。 */
+  servers(): Promise<{ servers: readonly MudServerRecord[] }> {
+    return this.call(mud => mud.servers())
+  }
+
+  /** 建服务器（工作区实体由页面先用 workspaces.create 建好，这里只登记 host/port/name）。 */
+  addServer(record: MudServerRecord): Promise<{ server: MudServerRecord }> {
+    return this.call(mud => mud.addServer(record))
+  }
+
+  /** 删服务器（该服务器下仍有账号时拒绝）。 */
+  removeServer(workspaceId: string): Promise<{ workspaceId: string; removed: boolean }> {
+    return this.call(mud => mud.removeServer(workspaceId))
+  }
+
+  /** 账号名册（键 = accountId = sessionId）。 */
+  accounts(): Promise<{ accounts: readonly MudAccountRecord[] }> {
+    return this.call(mud => mud.accounts())
+  }
+
+  /**
+   * 建账号 = 一个动作：宿主写名册 → 建会话（sessionId = 账号 id，绑定 preset）。
+   * 密码先经 `remote.credentials.set(passRef, …)` 写入宿主凭据域，这里只传引用名。
+   */
+  addAccount(input: {
+    serverId: string; name: string; passRef: string; preset: string; cwd: string
+  }): Promise<{ account: MudAccountRecord }> {
+    return this.call(mud => mud.addAccount(input))
+  }
+
+  /** 删账号：清宿主名册 + 清该账号日志（会话销毁由宿主侧负责）。 */
+  removeAccount(sessionId: string): Promise<{ sessionId: string; removed: boolean }> {
+    return this.call(mud => mud.removeAccount(sessionId))
+  }
+
   /** 断连。 */
   disconnect(sessionId: string): Promise<{ sessionId: string; state: string }> {
     return this.call(mud => mud.disconnect(sessionId))
@@ -109,5 +164,13 @@ export class MudRemoteController {
     sessions: readonly { sessionId: string; state: string; admitted: boolean }[]
   }> {
     return this.call(mud => mud.status(sessionId))
+  }
+
+  /**
+   * 会话日志：内存环条目（运行/网络/投递/闸门事件）+ 落盘目录。
+   * 连接失败的原因在这里；原始行流只落盘，从 fileTarget 目录读。
+   */
+  logs(sessionId: string): Promise<MudSessionLog> {
+    return this.call(mud => mud.logs(sessionId))
   }
 }
