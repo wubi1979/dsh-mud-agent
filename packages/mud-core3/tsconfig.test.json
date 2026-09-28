@@ -7,5 +7,6 @@
     "sourceMap": false,
     "rootDir": ".."
   },
-  "include": ["src", "test"]
+  "include": ["src", "test"],
+  "exclude": ["src/index.ts"]
 }

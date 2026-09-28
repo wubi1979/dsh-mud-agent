@@ -311,6 +311,37 @@
   height: 36px;
 }
 
+/* 收缩 rail 的品牌切换钮：常驻 globe 标记，hover 换 panel 展开图标
+   （原生 SidebarRoot rail 同款互换；rest 无 hover 圆底）。 */
+.railBrand {
+  flex: none;
+  padding: 4px;
+}
+
+.railBrand:hover {
+  background: transparent;
+}
+
+.railHoverIcon {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  color: var(--dsw-alias-label-primary);
+}
+
+.railBrand:hover .railHoverIcon {
+  display: flex;
+}
+
+.railBrand:hover .brandMark {
+  display: none;
+}
+
+.collapsed .logoRow {
+  justify-content: center;
+  padding: 12px 0 6px;
+}
+
 .railOnly {
   display: none;
 }

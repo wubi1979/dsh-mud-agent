@@ -1,18 +1,13 @@
 /**
- * dsh-mud-webui — sidebar replacement (client half).
+ * dsh-mud-webui — sidebar replacement (client half, core3).
  *
- * Occupies the layout `sidebar` slot at priority -100 (shadows SidebarRoot):
- * a server/user wizard tree instead of the workspace browser. Structure
- * mirrors the native shell — brand row, primary action button, scrolling
- * roster region, connection foot — and both the wide column and the 56px
- * collapsed rail are handled (owner `{ collapsed, width }`).
- *
- * Per-server rows carry a ➕ add-user control and a ⋯ delete menu; per-user
- * rows open their session view on click, and their ⋯ menu carries 连接/断开
- * (the session body does not render while the session is blank, so the connect
- * gesture must live outside it) plus 删除用户. Connection state is polled from
- * GET /mud/status (2.5s) and reconciled by the MudStateController; the game
- * page toolbar mirrors the same actions once its tab is visible.
+ * 服务器/账号向导树（v1 呈现不改），新增：
+ * - 用户行 ⋯ 菜单加「接入/停止接入」
+ * - 添加用户弹窗加 preset 选择
+ * 移除（core3 第一期不需要）：
+ * - 权限档位（tier/capability）
+ * - command/captcha
+ * - mudSocket/GameView/LogView/Rail
  * @module @deepseek-ai/dsh-mud-webui/client/MudSidebar
  */
 
@@ -20,83 +15,48 @@ import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import type { HostObservable, InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import {
-  IconEllipsisOutline16, IconGlobeOutline14, IconPanelLeftOutline16, IconPlusOutline16,
-  IconRefreshOutline16, IconUserOutline16, Menu, Tooltip,
+  IconEllipsisOutlineRegular, IconGlobeOutlineRegular, IconPanelLeftOutlineRegular, IconPlusOutlineRegular,
+  IconRefreshOutlineRegular, IconUserOutlineRegular, Menu, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
-  MudConnInfo, MudConnState, MudServer, MudServersSnapshot, MudTier, MudUser,
+  MudConnInfo, MudConnState, MudServer, MudServersSnapshot, MudUser,
+  SessionStatusRow,
 } from './mud-state.ts'
-import { MUD_TIER_CHOICES } from './mud-state.ts'
 import type { MudCredentialInfo } from './mud-credentials.ts'
-import type { MudSocketController } from './mud-socket.ts'
 import type { MudRemoteController } from './mud-remote.ts'
 import { ServerDialog, UserDialog } from './MudDialogs.tsx'
 import css from './MudSidebar.module.css'
 
-/** Business face injected into the sidebar (and center) registrations. */
+/** Business face injected into the sidebar. */
 export interface MudClientInjected {
-  /** Roster observable bound to the `useServers` selector hook. */
-  hooks: {
-    servers: HostObservable<MudServersSnapshot>
-  }
-  /** Shared MUD stream consumer (per-session view retention + captcha). */
-  mudSocket: MudSocketController
-  /** Shared MUD RPC controller (官方 typert 客户端; LogView 当日恢复等用)。 */
+  hooks: { servers: HostObservable<MudServersSnapshot> }
   remote: MudRemoteController
   addServer: (input: { name: string; host: string; port: number; cwd: string }) => void
   removeServer: (serverId: string) => void
-  /**
-   * 添加用户 = 写凭据 + 落名单行 (`{name, pass}` 里的明文只进 host 凭据存储)。
-   * 失败抛出 (凭据被拒 / 本部署无凭据服务), 调用方 (弹窗) 负责显示并保持打开。
-   */
-  addUser: (serverId: string, input: { name: string; pass: string }) => Promise<void>
+  addUser: (serverId: string, input: { name: string; pass: string; preset: string }) => Promise<void>
   removeUser: (serverId: string, userId: string) => void
-  /** 连接入口在用户行 ⋯ 菜单 (会话体渲染之前就可用)。 */
   connectUser: (serverId: string, userId: string) => Promise<void>
-  /** 断开某会话 (缺省 = 当前活动会话)。 */
   disconnect: (sessionId?: string) => Promise<void>
-  /** 轮询连接状态 (缺省 = 当前活动会话; 快照含每会话状态表)。 */
+  /** 接入：MUD 信息开始进入 agent。 */
+  admit: (sessionId: string) => Promise<void>
+  /** 停止接入：MUD 信息不再进入 agent。 */
+  stopAdmit: (sessionId: string) => Promise<void>
   refreshStatus: (sessionId?: string) => Promise<void>
-  /** Select a user and open its dedicated session view. */
   openUserSession: (serverId: string, userId: string) => void
-  /**
-   * Ensure a user's session exists in the list (幂等 create) and open it.
-   * 不发送占位消息: blank 由连接后第一批游戏输出的 turn/start 自然翻转。
-   */
-  ensureAndOpenUserSession: (serverId: string, userId: string) => void
-  /** Send one game command straight to the game (bypasses the agent) — 目标会话可指定。 */
-  sendCommand: (cmd: string, sessionId?: string) => Promise<boolean>
-  /** 切换某会话的权限档位 (只读/读写/完全; 用户行 ⋯ 菜单)。 */
-  setTier: (sessionId: string, tier: MudTier) => Promise<boolean>
-  /** Refresh the captcha image (re-fetch robot.php and push a new captcha event). */
-  refreshCaptcha: (imageUrl: string, sessionId?: string) => Promise<string | null>
-  /** 中止验证码人工等待 (弹窗"中止"; fail-closed: 所在流程步失败收束)。 */
-  abortCaptcha: (sessionId?: string) => Promise<boolean>
   toggleSidebar: () => void
 }
 
-/** Full composed sidebar props: runtime owner share + injected face. */
-export type MudSidebarProps =
-  PropsRuntime<'sidebar'>
-  & InjectFace<MudClientInjected>
+export type MudSidebarProps = PropsRuntime<'sidebar'> & InjectFace<MudClientInjected>
 
-/**
- * Connection-state class for one roster row: 该用户绑定的会话状态优先, 回落
- * 活动目标的连接状态 (roster 尚未拿到 sessionId 时)。
- */
-function rowState(
-  conn: MudConnInfo,
-  sessionState: Readonly<Record<string, MudConnState>>,
-  user: MudUser,
-): MudConnState {
+function rowState(conn: MudConnInfo, sessionStatus: Readonly<Record<string, SessionStatusRow>>, user: MudUser): MudConnState {
   if (user.sessionId !== '') {
-    const perSession = sessionState[user.sessionId]
-    if (perSession !== undefined && perSession !== 'idle') return perSession
+    const row = sessionStatus[user.sessionId]
+    if (row !== undefined && row.state === 'connected') return 'connected'
+    if (row !== undefined && row.state === 'connecting') return 'connecting'
   }
   return conn.userId === user.id ? conn.state : 'idle'
 }
 
-/** Dot class for a connection state (indexed access is optional under noUncheckedIndexedAccess). */
 function dotClass(state: MudConnState): string {
   switch (state) {
     case 'connecting': return css.stateConnecting ?? css.stateIdle ?? ''
@@ -106,8 +66,7 @@ function dotClass(state: MudConnState): string {
   }
 }
 
-/** Foot text for the current connection (shared with the center header). */
-export function connText(conn: MudConnInfo): string {
+function connText(conn: MudConnInfo): string {
   switch (conn.state) {
     case 'connected': return `已连接: ${conn.label ?? ''}`
     case 'connecting': return '连接中…'
@@ -116,20 +75,7 @@ export function connText(conn: MudConnInfo): string {
   }
 }
 
-/**
- * 一条名单用户的**凭据徽标** (值永不进页面, 这里只区分四种可行动状态)。
- *
- * `writable: false` 是必须显示的第三种状态: 进程环境里有同名引用时, 官方
- * seam 会以只读源遮蔽它, `set`/`unset` 都会被拒 —— 用户看到"已配置"却改不动,
- * 不说清楚就是死胡同。
- * @param passRef 该用户的凭据引用名 (`''` = 没配密码)。
- * @param status 引用的状态 (缺席 = 还没轮询到)。
- * @returns 徽标文案与样式类; 无状态时不显示。
- */
-function credBadge(passRef: string, status: MudCredentialInfo | undefined): {
-  text: string
-  className: string
-} | null {
+function credBadge(passRef: string, status: MudCredentialInfo | undefined): { text: string; className: string } | null {
   if (passRef === '') return { text: '无密码', className: css.credMissing ?? '' }
   if (status === undefined) return null
   if (!status.configured) return { text: '凭据未配置', className: css.credMissing ?? '' }
@@ -137,32 +83,25 @@ function credBadge(passRef: string, status: MudCredentialInfo | undefined): {
   return { text: '凭据已配置', className: css.credOk ?? '' }
 }
 
-/**
- * Render the MUD sidebar column.
- * @param props - composed slot props (owner share + injected actions/hooks).
- * @returns the sidebar element tree.
- */
+/** 接入状态徽标。 */
+function admitBadge(sessionStatus: Readonly<Record<string, SessionStatusRow>>, sessionId: string): string | null {
+  const row = sessionStatus[sessionId]
+  if (row === undefined) return null
+  return row.admitted ? '已接入' : null
+}
+
 export function MudSidebar({
-  collapsed,
-  useServers,
-  addServer,
-  removeServer,
-  addUser,
-  removeUser,
-  connectUser,
-  disconnect,
-  refreshStatus,
-  openUserSession,
-  setTier,
-  toggleSidebar,
+  collapsed, useServers,
+  addServer, removeServer, addUser, removeUser,
+  connectUser, disconnect, admit, stopAdmit, refreshStatus,
+  openUserSession, toggleSidebar,
 }: MudSidebarProps) {
-  const { servers, conn, sessionState, sessionTier, credentialStatus } = useServers(s => s)
+  const { servers, conn, sessionStatus, credentialStatus } = useServers(s => s)
   const [serverDialogOpen, setServerDialogOpen] = useState(false)
   const [userDialogTarget, setUserDialogTarget] = useState<MudServer | null>(null)
   const [serverMenuFor, setServerMenuFor] = useState<MudServer | null>(null)
   const [userMenuFor, setUserMenuFor] = useState<{ serverId: string; userId: string } | null>(null)
 
-  // Poll the host connection status so the foot/rows reflect the live state.
   useEffect(() => {
     void refreshStatus()
     const timer = window.setInterval(() => { void refreshStatus() }, 2500)
@@ -171,84 +110,86 @@ export function MudSidebar({
 
   return (
     <div className={clsx(css.root, collapsed && css.collapsed)}>
-      {/* Wide brand row; the collapsed rail keeps only the expand toggle. */}
       <div className={clsx(css.logoRow, !collapsed && css.wideOnly)}>
-        <button type="button" className={css.brand} aria-label="MUD 玩家控制台" onClick={() => { toggleSidebar() }}>
-          <span className={css.brandMark}><IconGlobeOutline14 size={16} /></span>
-          <span className={css.brandText}>
-            <span className={css.brandName}>MUD 玩家</span>
-            <span className={css.brandSub}>服务器 / 用户</span>
-          </span>
-        </button>
+        {collapsed ? (
+          /* 收缩 rail：原生同款单切换钮 — 常驻 globe 标记，hover 换 panel 展开图标。 */
+          <Tooltip label="展开侧栏" delayMs={500}>
+            <button type="button" className={clsx(css.brand, css.railBrand)} aria-label="展开侧栏" onClick={() => { toggleSidebar() }}>
+              <span className={css.brandMark}><IconGlobeOutlineRegular size={18} /></span>
+              <span className={css.railHoverIcon}><IconPanelLeftOutlineRegular size={18} /></span>
+            </button>
+          </Tooltip>
+        ) : (
+          <button type="button" className={css.brand} aria-label="MUD 玩家控制台" onClick={() => { toggleSidebar() }}>
+            <span className={css.brandMark}><IconGlobeOutlineRegular size={16} /></span>
+            <span className={css.brandText}>
+              <span className={css.brandName}>MUD 玩家</span>
+              <span className={css.brandSub}>服务器 / 账号</span>
+            </span>
+          </button>
+        )}
+        {/* 收起侧栏：仅展开态渲染（原生展开态同款 panel 图标）。 */}
+        {!collapsed && (
+          <Tooltip label="收起侧栏" delayMs={500}>
+            <button type="button" className={css.iconButton} aria-label="收起侧栏" onClick={() => { toggleSidebar() }}>
+              <IconPanelLeftOutlineRegular size={16} />
+            </button>
+          </Tooltip>
+        )}
       </div>
 
       {!collapsed && (
-        <button
-          type="button"
-          className={css.addServer}
-          onClick={() => { setServerDialogOpen(true) }}
-        >
-          <IconPlusOutline16 size={14} />
+        <button type="button" className={css.addServer} onClick={() => { setServerDialogOpen(true) }}>
+          <IconPlusOutlineRegular size={14} />
           <span className={css.addServerLabel}>添加服务器</span>
         </button>
       )}
 
-      {/* Wide roster region. */}
       {!collapsed && (
         <div className={css.listArea}>
           <span className={css.sectionLabel}>服务器</span>
           {servers.length === 0 && (
-            <div className={css.empty}>
-              尚无服务器
-              <br />
-              点击上方「添加服务器」开始
-            </div>
+            <div className={css.empty}>尚无服务器<br />点击上方「添加服务器」开始</div>
           )}
           {servers.map(server => (
             <div key={server.id} className={css.serverGroup}>
               <div className={css.serverRow}>
-                <span className={css.serverIcon}><IconGlobeOutline14 size={14} /></span>
+                <span className={css.serverIcon}><IconGlobeOutlineRegular size={14} /></span>
                 <span className={css.serverBody}>
                   <span className={css.serverName}>{server.name}</span>
                   <span className={css.serverMeta}>{server.host}:{server.port}</span>
                 </span>
                 <div className={css.rowActions}>
-                  <Tooltip label="添加用户" delayMs={500}>
-                    <button
-                      type="button"
-                      className={clsx(css.iconButton, css.smallIcon)}
-                      aria-label={`添加用户 — ${server.name}`}
+                  <Tooltip label="添加账号" delayMs={500}>
+                    <button type="button" className={clsx(css.iconButton, css.smallIcon)}
+                      aria-label={`添加账号 — ${server.name}`}
                       onClick={() => { setUserDialogTarget(server) }}
                     >
-                      <IconPlusOutline16 size={14} />
+                      <IconPlusOutlineRegular size={14} />
                     </button>
                   </Tooltip>
                   <Menu
                     open={serverMenuFor?.id === server.id}
                     onClose={() => { setServerMenuFor(null) }}
                     anchor={(
-                      <button
-                        type="button"
-                        className={clsx(css.iconButton, css.smallIcon)}
+                      <button type="button" className={clsx(css.iconButton, css.smallIcon)}
                         aria-label={`服务器选项 — ${server.name}`}
                         onClick={() => { setServerMenuFor(serverMenuFor?.id === server.id ? null : server) }}
                       >
-                        <IconEllipsisOutline16 size={14} />
+                        <IconEllipsisOutlineRegular size={14} />
                       </button>
                     )}
                     items={[{ id: 'delete-server', label: '删除服务器' }]}
-                    onSelect={(id) => {
-                      if (id === 'delete-server') removeServer(server.id)
-                      setServerMenuFor(null)
-                    }}
-                    portal
-                    align="start"
+                    onSelect={(id) => { if (id === 'delete-server') removeServer(server.id); setServerMenuFor(null) }}
+                    portal align="start"
                   />
                 </div>
               </div>
               {server.users.map((user) => {
-                const state = rowState(conn, sessionState, user)
+                const state = rowState(conn, sessionStatus, user)
                 const badge = credBadge(user.passRef, credentialStatus[user.passRef])
+                const admitted = admitBadge(sessionStatus, user.sessionId)
+                const isAdmitted = sessionStatus[user.sessionId]?.admitted === true
                 return (
                   <div
                     key={user.id}
@@ -258,66 +199,50 @@ export function MudSidebar({
                     aria-label={`打开会话 — ${server.name} / ${user.name}`}
                     onClick={() => { openUserSession(server.id, user.id) }}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        openUserSession(server.id, user.id)
-                      }
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openUserSession(server.id, user.id) }
                     }}
                   >
-                    <span className={css.userIcon}><IconUserOutline16 size={13} /></span>
+                    <span className={css.userIcon}><IconUserOutlineRegular size={13} /></span>
                     <span className={css.userName}>{user.name}</span>
-                    {badge !== null && (
-                      <span className={clsx(css.credBadge, badge.className)}>{badge.text}</span>
-                    )}
+                    {badge !== null && <span className={clsx(css.credBadge, badge.className)}>{badge.text}</span>}
+                    {admitted !== null && <span className={clsx(css.credBadge, css.credOk ?? '')}>{admitted}</span>}
                     <span className={clsx(css.stateDot, dotClass(state))} aria-hidden="true" />
                     <Menu
                       open={userMenuFor?.serverId === server.id && userMenuFor?.userId === user.id}
                       onClose={() => { setUserMenuFor(null) }}
                       anchor={(
-                        <button
-                          type="button"
-                          className={clsx(css.iconButton, css.smallIcon)}
-                          aria-label={`用户选项 — ${user.name}`}
+                        <button type="button" className={clsx(css.iconButton, css.smallIcon)}
+                          aria-label={`账号选项 — ${user.name}`}
                           onClick={(e) => {
                             e.stopPropagation()
                             setUserMenuFor(
                               userMenuFor?.serverId === server.id && userMenuFor?.userId === user.id
-                                ? null
-                                : { serverId: server.id, userId: user.id },
+                                ? null : { serverId: server.id, userId: user.id },
                             )
                           }}
                         >
-                          <IconEllipsisOutline16 size={14} />
+                          <IconEllipsisOutlineRegular size={14} />
                         </button>
                       )}
                       items={[
-                        // 连接/断开放在这里: 会话体 (游戏页) 在 blank 期间不渲染,
-                        // 而连接必须先于第一批游戏输出 — 用户行菜单是唯一始终可用的入口。
                         state === 'connected' || state === 'connecting'
                           ? { id: 'disconnect', label: '断开连接' }
                           : { id: 'connect', label: '连接' },
-                        // 权限档位 (用户即会话): 三个档位各自一项, 当前档带标记。
-                        // 只读者不能发送游戏命令 (登录流程除外), 见文档 §10。
-                        ...MUD_TIER_CHOICES.map(choice => ({
-                          id: `tier:${choice.tier}`,
-                          label: `${user.sessionId !== '' && sessionTier[user.sessionId] === choice.tier ? '● ' : '　'}${choice.label}`,
-                        })),
-                        { id: 'delete-user', label: '删除用户' },
+                        // 接入/停止接入
+                        isAdmitted
+                          ? { id: 'stop-admit', label: '停止接入' }
+                          : { id: 'admit', label: '接入' },
+                        { id: 'delete-user', label: '删除账号' },
                       ]}
                       onSelect={(id) => {
                         if (id === 'delete-user') removeUser(server.id, user.id)
                         if (id === 'connect') void connectUser(server.id, user.id)
                         if (id === 'disconnect') void disconnect(user.sessionId === '' ? undefined : user.sessionId)
-                        if (id.startsWith('tier:') && user.sessionId !== '') {
-                          const tier = id.slice('tier:'.length)
-                          if (tier === 'observe' || tier === 'operate' || tier === 'full') {
-                            void setTier(user.sessionId, tier)
-                          }
-                        }
+                        if (id === 'admit' && user.sessionId !== '') void admit(user.sessionId)
+                        if (id === 'stop-admit' && user.sessionId !== '') void stopAdmit(user.sessionId)
                         setUserMenuFor(null)
                       }}
-                      portal
-                      align="start"
+                      portal align="start"
                     />
                   </div>
                 )
@@ -325,7 +250,7 @@ export function MudSidebar({
               {server.users.length === 0 && (
                 <div className={css.userRow}>
                   <span style={{ flex: 1, fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)', paddingLeft: 22 }}>
-                    暂无用户 — 点击 ➕ 添加
+                    暂无账号 — 点击 ➕ 添加
                   </span>
                 </div>
               )}
@@ -334,47 +259,30 @@ export function MudSidebar({
         </div>
       )}
 
-      {/* Collapsed rail: toggle + add-server icon. */}
       {collapsed && (
         <div className={css.railControls}>
-          <Tooltip label="展开侧栏" delayMs={500}>
-            <button
-              type="button"
-              className={clsx(css.iconButton, css.railToggle)}
-              aria-label="展开侧栏"
-              onClick={() => { toggleSidebar() }}
-            >
-              <IconPanelLeftOutline16 size={18} />
-            </button>
-          </Tooltip>
+          {/* 展开由顶部品牌切换钮承担（原生 rail 语义），rail 里只留业务动作。 */}
           <Tooltip label="添加服务器" delayMs={500}>
-            <button
-              type="button"
-              className={clsx(css.iconButton, css.railToggle)}
-              aria-label="添加服务器"
-              onClick={() => { setServerDialogOpen(true) }}
+            <button type="button" className={clsx(css.iconButton, css.railToggle)}
+              aria-label="添加服务器" onClick={() => { setServerDialogOpen(true) }}
             >
-              <IconPlusOutline16 size={18} />
+              <IconPlusOutlineRegular size={18} />
             </button>
           </Tooltip>
           <span className={clsx(css.stateDot, dotClass(conn.state))} aria-hidden="true" />
         </div>
       )}
 
-      {/* Connection foot (wide). */}
       {!collapsed && (
         <div className={css.footArea}>
           <div className={css.connLine}>
             <span className={clsx(css.stateDot, dotClass(conn.state))} aria-hidden="true" />
             <span className={clsx(css.connLabel, conn.state === 'error' && css.connError)}>{connText(conn)}</span>
             <Tooltip label="刷新状态" delayMs={500}>
-              <button
-                type="button"
-                className={clsx(css.iconButton, css.smallIcon)}
-                aria-label="刷新状态"
-                onClick={() => { void refreshStatus() }}
+              <button type="button" className={clsx(css.iconButton, css.smallIcon)}
+                aria-label="刷新状态" onClick={() => { void refreshStatus() }}
               >
-                <IconRefreshOutline16 size={13} />
+                <IconRefreshOutlineRegular size={13} />
               </button>
             </Tooltip>
           </div>
@@ -390,7 +298,6 @@ export function MudSidebar({
         open={userDialogTarget !== null}
         serverName={userDialogTarget?.name ?? ''}
         onClose={() => { setUserDialogTarget(null) }}
-        // 弹窗 await 这次调用: 凭据写入失败时它保持打开并显示 host 的原话。
         onAdd={(input) => {
           if (userDialogTarget === null) return Promise.resolve()
           return addUser(userDialogTarget.id, input)

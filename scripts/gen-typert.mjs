@@ -9,7 +9,7 @@
 // 真实存在于 <workspace>/packages 内, realPath 判定)。协议解析经根 tsconfig.host.json
 // 的 paths 直达镜像 src/, 无需先构建镜像。
 //
-// 用法: pnpm --dir packages/mud-core gen:typert
+// 用法: node scripts/gen-typert.mjs
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
@@ -17,20 +17,25 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '..')
-const PACKAGE = '@deepseek-ai/dsh-mud-core'
-const packageRoot = resolve(root, 'packages/mud-core')
-const libRoot = resolve(packageRoot, 'lib')
+const PACKAGES = ['@deepseek-ai/dsh-mud-core', 'mud-core3']
+const mudCoreRoot = resolve(root, 'packages/mud-core')
 
 // 生成器是 mud-core 的 devDep (只在包内 node_modules 链接), 脚本本身在仓库根
 // scripts/ 下 — 挂 mud-core 的 require 作解析基准
-const requireFromMudCore = createRequire(resolve(packageRoot, 'package.json'))
+const requireFromMudCore = createRequire(resolve(mudCoreRoot, 'package.json'))
 const { WorkspaceTypertGenerator } = await import(pathToFileURL(requireFromMudCore.resolve('@deepseek-ai/dsh-typert-generator')).href)
 
 const generator = new WorkspaceTypertGenerator(root)
-const artifacts = generator.generate([PACKAGE], ['host'])
-if (artifacts.length === 0) throw new Error(`gen-typert: 未发现 ${PACKAGE} 的宿主 face 产物`)
+// 每包独立 pass: mud-core 与 mud-core3 各自的依赖树携带不同版本的传递类型
+// (如 dsh-session), 同一 program 内同名 TypertLookupMap 增强会撞重复键。
+const artifacts = []
+for (const pkg of PACKAGES) {
+  artifacts.push(...generator.generate([pkg], ['host']))
+}
+if (artifacts.length === 0) throw new Error(`gen-typert: 未发现 ${PACKAGES.join(' / ')} 的宿主 face 产物`)
 
 for (const artifact of artifacts) {
+  const libRoot = resolve(root, artifact.packageRoot, 'lib')
   const files = [
     [`typert.${artifact.face}.js`, artifact.js],
     [`typert.${artifact.face}.d.ts`, artifact.dts],
