@@ -22,6 +22,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type { UiWorkspace } from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type { SidebarRightTabParamsMap, TabId } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
+import { IconPlayOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { MudStateController, type MudUser } from './mud-state.ts'
 import { MudRemoteController } from './mud-remote.ts'
 import { MudLogController } from './mud-log.ts'
@@ -59,8 +60,42 @@ export function apply(ctx: ClientContext): void {
   // 文案走内置词典（本包惯例，未接宿主 locale 服务），见 ./locales.ts。
   const GAME_ID = '@deepseek-ai/dsh-mud-webui#mud-game'
   ctx.effect(() => ctx.sidebarRightTabs.register({
-    id: GAME_ID, kind: 'mud-game', multiple: true, priority: 'builtin', title: () => zh.title,
+    // 页面类型：宿主去重语义是每 pane 一个（跨 pane 仍可多开）；全局单开由
+    // 下方守卫保证。guide（右侧栏「开始」页）入口卡片：与文件/终端同一排；
+    // 无 params 打开，MudGameView 回退跟随 tab 所在会话（= 当前查看的账号会话）。
+    id: GAME_ID, kind: 'mud-game', priority: 'builtin', title: () => zh.title,
+    guide: [{
+      id: 'mud-game', order: 50,
+      title: () => zh.title,
+      description: () => zh.guideDesc,
+      icon: IconPlayOutlineRegular,
+    }],
   }), 'mud-webui: 画面 tab 类型')
+
+  // ── 画面单开守卫 ───────────────────────────────────────────────
+  // guide 入口走宿主 openTab（page 语义，每 pane 去重），split 后跨 pane 仍会
+  // 多开画面 tab，且新实例会重挂导致工具栏状态重置。这里订阅全局 tab 清单
+  // （openTabs 跨会话可观察源），同一会话出现第二个画面 tab 即关掉较新的：
+  // 保留最旧实例（记录序即开出序），其 follow 流与工具栏状态不中断。
+  ctx.effect(() => {
+    let scheduled = false
+    const sweep = (): void => {
+      const seen = new Set<string>()
+      for (const tab of ctx.sidebarRight.openTabs.getSnapshot()) {
+        if (tab.kind !== 'mud-game') continue
+        if (!seen.has(tab.sessionId)) seen.add(tab.sessionId)
+        else ctx.sidebarRight.closeIn(tab.sessionId, tab.tabId)
+      }
+    }
+    // 失效回调可能在 store 提交中途触发，入微任务避让发布回路；幂等。
+    const schedule = (): void => {
+      if (scheduled) return
+      scheduled = true
+      queueMicrotask(() => { scheduled = false; sweep() })
+    }
+    schedule()
+    return ctx.sidebarRight.openTabs.subscribe(schedule)
+  }, 'mud-webui: 画面单开守卫')
   // 关闭 tab：同步 abort follow 流（close 契约是同步的；流退出收尾在 body 卸载路径）
   ctx.effect(() => ctx.sidebarRight.registerCloseHandler('mud-game', (sessionId, tab) => {
     gameFollows.get(gameFollowKey(sessionId, tab.id))?.abort()
@@ -76,6 +111,8 @@ export function apply(ctx: ClientContext): void {
         remote: mudRemote,
         sessionId: String(sessionId),
         params: key => gameParams(sessionId, key),
+        connect: (id) => mud.connectSession(id),
+        disconnect: (id) => mud.disconnect(id),
       }),
     }, MudGameView,
   )), 'mud-webui: 画面 body')
@@ -173,20 +210,11 @@ export function apply(ctx: ClientContext): void {
       }
       void mud.refreshCredentials()
     },
-    connectUser: (serverId, userId) => mud.connectUser(serverId, userId),
-    disconnect: (sessionId) => mud.disconnect(sessionId),
     admit: (sessionId) => mud.admit(sessionId),
     stopAdmit: (sessionId) => mud.stopAdmit(sessionId),
     refreshStatus: (sessionId) => mud.refreshStatus(sessionId),
     startStatusWatch: () => mud.startStatusWatch(),
     openUserSession,
-    openGameView: (id) => {
-      ctx.sidebarRight.openTabIn(
-        id as Parameters<typeof ctx.sidebarRight.openTabIn>[0],
-        'mud-game',
-        { params: { sessionId: id } },
-      )
-    },
     toggleSidebar: () => { ctx.layout.toggleSidebar() },
   })
 

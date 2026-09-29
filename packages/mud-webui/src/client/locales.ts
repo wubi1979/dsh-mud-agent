@@ -11,23 +11,29 @@
 /** 简体中文文案。 */
 export const zh = {
   title: '游戏画面',
+  guideDesc: '打开当前会话的只读游戏画面',
   loading: '正在接入画面…',
   connected: '已连接',
   connecting: '连接中…',
   disconnected: '已断开',
   failed: '画面中断：{message}',
   reload: '刷新画面',
+  connect: '连接',
+  disconnect: '断开',
 } as const
 
 /** English copy（词典位先占；本包未接 locale 服务，EN 暂不启用）。 */
 export const en = {
   title: 'Game view',
+  guideDesc: "Open the current session's read-only game view",
   loading: 'Attaching to the game view…',
   connected: 'Connected',
   connecting: 'Connecting…',
   disconnected: 'Disconnected',
   failed: 'View interrupted: {message}',
   reload: 'Reload view',
+  connect: 'Connect',
+  disconnect: 'Disconnect',
 } as const
 
 /** 按 {name} 占位符填充文案。 */

@@ -44,9 +44,6 @@ export interface MudClientInjected {
   removeServer: (serverId: string) => void
   addUser: (serverId: string, input: { name: string; pass: string; preset: string }) => Promise<void>
   removeUser: (serverId: string, userId: string) => void
-  connectUser: (serverId: string, userId: string) => Promise<void>
-  disconnect: (sessionId?: string) => Promise<void>
-  /** 接入：MUD 信息开始进入 agent。 */
   admit: (sessionId: string) => Promise<void>
   /** 停止接入：MUD 信息不再进入 agent。 */
   stopAdmit: (sessionId: string) => Promise<void>
@@ -54,8 +51,6 @@ export interface MudClientInjected {
   /** 订阅服务端 watchStatus 状态流（C5.1：首帧快照 + 变化推帧）；返回停止函数。 */
   startStatusWatch: () => () => void
   openUserSession: (serverId: string, userId: string) => void
-  /** 打开账号的只读游戏画面 tab（右侧栏；关闭不影响后台连接）。 */
-  openGameView: (sessionId: string) => void
   toggleSidebar: () => void
 }
 
@@ -106,8 +101,8 @@ function admitBadge(sessionStatus: Readonly<Record<string, SessionStatusRow>>, s
 export function MudSidebar({
   collapsed, useServers,
   addServer, removeServer, addUser, removeUser,
-  connectUser, disconnect, admit, stopAdmit, refreshStatus, startStatusWatch,
-  openUserSession, openGameView, toggleSidebar,
+  admit, stopAdmit, refreshStatus, startStatusWatch,
+  openUserSession, toggleSidebar,
 }: MudSidebarProps) {
   const { servers, conn, sessionStatus, credentialStatus } = useServers(s => s)
   const [serverDialogOpen, setServerDialogOpen] = useState(false)
@@ -238,24 +233,16 @@ export function MudSidebar({
                         </button>
                       )}
                       items={[
-                        state === 'connected' || state === 'connecting'
-                          ? { id: 'disconnect', label: '断开连接' }
-                          : { id: 'connect', label: '连接' },
                         // 接入/停止接入
                         isAdmitted
                           ? { id: 'stop-admit', label: '停止接入' }
                           : { id: 'admit', label: '接入' },
-                        // 只读游戏画面（右侧栏 tab；已有会话才可看）
-                        ...(user.sessionId !== '' ? [{ id: 'open-view', label: '画面' }] : []),
                         { id: 'delete-user', label: '删除账号' },
                       ]}
                       onSelect={(id) => {
                         if (id === 'delete-user') removeUser(server.id, user.id)
-                        if (id === 'connect') void connectUser(server.id, user.id)
-                        if (id === 'disconnect') void disconnect(user.sessionId === '' ? undefined : user.sessionId)
                         if (id === 'admit' && user.sessionId !== '') void admit(user.sessionId)
                         if (id === 'stop-admit' && user.sessionId !== '') void stopAdmit(user.sessionId)
-                        if (id === 'open-view' && user.sessionId !== '') openGameView(user.sessionId)
                         setUserMenuFor(null)
                       }}
                       portal align="start"

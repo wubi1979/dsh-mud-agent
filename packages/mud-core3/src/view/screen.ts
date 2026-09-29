@@ -173,7 +173,7 @@ export class GameScreen {
   ) {
     this.maxBufferedBytes = options.maxBufferedBytes ?? 2 * 1024 * 1024
     this.term = new HeadlessTerminal({
-      cols: options.cols ?? 80,
+      cols: options.cols ?? 120,
       rows: 24,
       scrollback: options.scrollback ?? 2000,
       allowProposedApi: true, // SerializeAddon 依赖 proposed API（宿主同款）

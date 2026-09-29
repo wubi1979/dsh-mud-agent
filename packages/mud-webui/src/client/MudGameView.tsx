@@ -38,6 +38,10 @@ export interface MudGameViewInjected {
   readonly sessionId: string
   /** tab 打开时的导航参数（布局持久化恢复后的会话依据）。 */
   readonly params: (tabId: string) => { readonly sessionId: string } | undefined
+  /** 连接本 tab 会话的 MUD 账号（宿主侧名册找回账号）；身份稳定。 */
+  readonly connect: (sessionId: string) => Promise<void>
+  /** 断开本 tab 会话的 MUD 连接；身份稳定。 */
+  readonly disconnect: (sessionId: string) => Promise<void>
 }
 
 export type MudGameViewProps =
@@ -57,7 +61,7 @@ export const gameFollows = new Map<string, GameFollowHandle>()
 export const gameFollowKey = (sessionId: string, tabId: string): string => `${sessionId}#${tabId}`
 
 /** 右侧栏只读游戏画面。 */
-export function MudGameView({ useTabInfo, sessionId, params, remote }: MudGameViewProps): ReactNode {
+export function MudGameView({ useTabInfo, sessionId, params, remote, connect, disconnect }: MudGameViewProps): ReactNode {
   const { tab } = useTabInfo()
   const target = params(tab.id)?.sessionId ?? sessionId
   const [serverState, setServerState] = useState<string | null>(null)
@@ -79,7 +83,8 @@ export function MudGameView({ useTabInfo, sessionId, params, remote }: MudGameVi
       disableStdin: true, cursorBlink: false,
       fontSize: 13, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
       scrollback: 2000,
-      theme: { background: '#0a0a0a' },
+      // 只读展示不画光标：cursor 透明即不留光标块（含非闪烁的常驻块）。
+      theme: { background: '#0a0a0a', cursor: 'transparent', cursorAccent: 'transparent' },
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
@@ -118,6 +123,9 @@ export function MudGameView({ useTabInfo, sessionId, params, remote }: MudGameVi
         s.term.reset()
         s.term.resize(cols.current, rows.current)
         s.term.write(frame.screen)
+        // 快照携带当前连接态：state 帧只在状态变化时广播，重挂后若状态未变
+        // 则不会再有 state 帧——工具栏必须从快照回填，否则永远停在 loading。
+        setServerState(frame.info.state)
         setError(null)
       } else if (frame.type === 'output') {
         s.term.write(frame.data)
@@ -156,6 +164,14 @@ export function MudGameView({ useTabInfo, sessionId, params, remote }: MudGameVi
       {/* 分割线 + 状态 + 按钮：对齐原生文件窗口（ui-sidebar-files FilesBody header）。 */}
       <div className={css.toolbar}>
         <span className={css.toolbarStatus} role="status">{status}</span>
+        {/* 连接/断开：连接动作收进画面窗口（跟随本 tab 会话），侧栏菜单不再承担。
+            未连接为蓝色主按钮引导点击，连接后回落白色描边。 */}
+        <button type="button"
+          className={serverState === 'connected' ? css.toolText : `${css.toolText} ${css.toolPrimary}`}
+          disabled={serverState === 'connecting'}
+          onClick={() => { void (serverState === 'connected' ? disconnect(target) : connect(target)) }}>
+          {serverState === 'connected' ? zh.disconnect : zh.connect}
+        </button>
         <Tooltip label={zh.reload} side="bottom" delayMs={500}>
           <button type="button" className={css.tool} aria-label={zh.reload}
             onClick={() => { setReloadKey(k => k + 1) }}>

@@ -59,6 +59,41 @@
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
+/* Text action button (Connect/Disconnect): matches the icon button's row height, quiet stroke. */
+.toolText {
+  flex: none;
+  height: 24px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-sm);
+  cursor: pointer;
+}
+
+.toolText:hover:not(:disabled) {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.toolText:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 主行动态（未连接）：蓝色实底引导点击；置于末尾以覆盖上方 hover 规则。 */
+.toolPrimary {
+  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--dsw-alias-button-primary-fill);
+  border-color: transparent;
+}
+
+.toolPrimary:hover:not(:disabled) {
+  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--dsw-alias-button-primary-hover);
+}
+
 .toolbarStatus {
   flex: 1;
   min-width: 0;
@@ -94,7 +129,7 @@
 .xtermHost :global(.xterm) {
   height: 100%;
   width: 100%;
-  padding: 4px 10px;
+  padding: 8px 0px 8px 8px;
   box-sizing: border-box;
   background: #0a0a0a;
 }

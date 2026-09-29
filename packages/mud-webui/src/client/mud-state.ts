@@ -312,6 +312,13 @@ export class MudStateController {
     }
   }
 
+  /** 按会话连接（游戏画面按钮路径）：以 sessionId 找回账号，复用 connectUser。 */
+  async connectSession(sessionId: string): Promise<void> {
+    const server = this.state.servers.find(s => s.users.some(u => u.sessionId === sessionId))
+    const user = server?.users.find(u => u.sessionId === sessionId)
+    if (server !== undefined && user !== undefined) await this.connectUser(server.id, user.id)
+  }
+
   /** Disconnect. */
   async disconnect(sessionId?: string): Promise<void> {
     const target = sessionId ?? this.state.conn.sessionId
