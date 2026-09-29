@@ -154,7 +154,9 @@ export async function openDomainRosterStore(domain: HostStorageDomain): Promise<
       servers: opened.table('servers') as HostTable<ServerRecord>,
       accounts: opened.table('accounts') as HostTable<AccountRecord>,
     })
-  } catch {
+  } catch (error) {
+    // 失败原因必须可见：吞掉后调用方只能看到「退回内存」，无从定位（排查实录）。
+    console.error('[mud-core3] 名册 storage 域打开失败:', error instanceof Error ? error.stack : error)
     return null
   }
 }

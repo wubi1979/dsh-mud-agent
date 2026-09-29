@@ -20,14 +20,18 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type { UiWorkspace } from '@deepseek-ai/dsh-client-ui-workspace/client'
+import type { SidebarRightTabParamsMap, TabId } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { MudStateController, type MudUser } from './mud-state.ts'
 import { MudRemoteController } from './mud-remote.ts'
 import { MudLogController } from './mud-log.ts'
 import { MudCredentialsController, mintPassRef } from './mud-credentials.ts'
 import { MudSidebar, type MudClientInjected } from './MudSidebar.tsx'
 import { MudLogView } from './MudLogView.tsx'
+import { MudGameView, gameFollows, gameFollowKey, type MudGameViewInjected } from './MudGameView.tsx'
+import { zh } from './locales.ts'
 
-export const inject = ['slots', 'layout', 'workspaces', 'remote', 'uiWorkspace']
+export const inject = ['slots', 'layout', 'workspaces', 'remote', 'uiWorkspace', 'sidebarRight', 'sidebarRightTabs']
 
 export function apply(ctx: ClientContext): void {
   const mudRemote = new MudRemoteController()
@@ -36,10 +40,45 @@ export function apply(ctx: ClientContext): void {
   const mudLog = new MudLogController(mudRemote)
   ctx.effect(() => () => { mudLog.dispose() }, 'mud-webui: 日志控制器')
 
-  // typert 客户端挂载（官方 RPC envelope；'remote' 已在 inject 里保证 gateway client 可用）
-  void mudRemote.mount(ctx).catch((err: unknown) => {
+  // typert 客户端挂载（官方 RPC envelope；'remote' 已在 inject 里保证 gateway client 可用）。
+  // 挂载成功即与宿主名册对齐一次：localStorage 只是呈现缓存，宿主才是事实源 ——
+  // 刷新/宿主重启后的本地残留（假服务器/死会话）在启动时被服务端真值覆盖。
+  void mudRemote.mount(ctx).then(() => {
+    void Promise.all([mudRemote.servers(), mudRemote.accounts()])
+      .then(([roster, accounts]) => {
+        mud.hydrate({ servers: roster.servers, accounts: accounts.accounts })
+      })
+      .catch((error: unknown) => {
+        console.warn('[mud] 启动名册同步失败（沿用本地缓存）:', error)
+      })
+  }).catch((err: unknown) => {
     console.error('[mud] remote mount 失败:', err)
   })
+
+  // ── 右侧栏「游戏画面」tab（只读；core3 mud.follow 流）──────────
+  // 文案走内置词典（本包惯例，未接宿主 locale 服务），见 ./locales.ts。
+  const GAME_ID = '@deepseek-ai/dsh-mud-webui#mud-game'
+  ctx.effect(() => ctx.sidebarRightTabs.register({
+    id: GAME_ID, kind: 'mud-game', multiple: true, priority: 'builtin', title: () => zh.title,
+  }), 'mud-webui: 画面 tab 类型')
+  // 关闭 tab：同步 abort follow 流（close 契约是同步的；流退出收尾在 body 卸载路径）
+  ctx.effect(() => ctx.sidebarRight.registerCloseHandler('mud-game', (sessionId, tab) => {
+    gameFollows.get(gameFollowKey(sessionId, tab.id))?.abort()
+  }), 'mud-webui: 画面 tab 关闭')
+  /** tab 打开时的导航参数（布局持久化携带 params，刷新/重开 tab 自动恢复）。 */
+  const gameParams = (sessionId: Parameters<typeof ctx.sidebarRight.tabDomain.occurrence>[0],
+    key: string): SidebarRightTabParamsMap['mud-game'] | undefined =>
+    ctx.sidebarRight.tabDomain.occurrence(sessionId, { id: key as TabId }).navigation.getSnapshot().params
+  ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
+    {
+      name: 'sidebar.right.pane.tab', key: GAME_ID,
+      inject: (sessionId): MudGameViewInjected => ({
+        remote: mudRemote,
+        sessionId: String(sessionId),
+        params: key => gameParams(sessionId, key),
+      }),
+    }, MudGameView,
+  )), 'mud-webui: 画面 body')
 
   /** 打开某账号的会话（会话由宿主在 addAccount 时建好）。 */
   const openUserSession = (serverId: string, userId: string): void => {
@@ -140,6 +179,13 @@ export function apply(ctx: ClientContext): void {
     stopAdmit: (sessionId) => mud.stopAdmit(sessionId),
     refreshStatus: (sessionId) => mud.refreshStatus(sessionId),
     openUserSession,
+    openGameView: (id) => {
+      ctx.sidebarRight.openTabIn(
+        id as Parameters<typeof ctx.sidebarRight.openTabIn>[0],
+        'mud-game',
+        { params: { sessionId: id } },
+      )
+    },
     toggleSidebar: () => { ctx.layout.toggleSidebar() },
   })
 

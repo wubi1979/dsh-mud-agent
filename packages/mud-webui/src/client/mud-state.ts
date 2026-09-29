@@ -156,6 +156,37 @@ export class MudStateController {
 
   getSnapshot(): MudServersSnapshot { return this.state }
 
+  /**
+   * 用宿主名册覆盖本地呈现缓存（localStorage 只是缓存，宿主才是事实源）。
+   * 页面加载挂载成功后调用一次：刷新/宿主重启后本地残留的「假服务器/死会话」
+   * 被服务端真值覆盖，避免对着已不存在的记录做操作。
+   * 服务端记录没有 cwd：同 id 服务器保留本地 cwd，新服务器补空串。
+   */
+  hydrate(
+    body: {
+      servers: readonly { workspaceId: string; name: string; host: string; port: number }[]
+      accounts: readonly { id: string; name: string; passRef: string; serverId: string; preset: string }[]
+    },
+  ): void {
+    const cwdOf = new Map(this.state.servers.map(s => [s.id, s.cwd]))
+    const usersOf = new Map<string, MudUser[]>()
+    for (const account of body.accounts) {
+      const users = usersOf.get(account.serverId) ?? []
+      users.push({
+        id: account.id, name: account.name, passRef: account.passRef,
+        sessionId: account.id, preset: account.preset,
+      })
+      usersOf.set(account.serverId, users)
+    }
+    this.set({
+      servers: body.servers.map(s => ({
+        id: s.workspaceId, name: s.name, host: s.host, port: s.port,
+        cwd: cwdOf.get(s.workspaceId) ?? '',
+        users: usersOf.get(s.workspaceId) ?? [],
+      })),
+    })
+  }
+
   subscribe(fn: () => void): () => void {
     this.listeners.add(fn)
     return () => { this.listeners.delete(fn) }

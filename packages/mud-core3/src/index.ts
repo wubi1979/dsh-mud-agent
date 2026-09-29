@@ -25,12 +25,12 @@ import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-agent'
 import { join } from 'node:path'
 
-import { MudService } from './service.ts'
+import { MudService, sessionNotRegistered } from './service.ts'
 import type { SessionRuntime } from './runtime.ts'
 import type { SessionLogOptions } from './log/log-service.ts'
 import { resolveLogDir, purgeSessionLogs } from './log/log-service.ts'
 // Remote 边界类型从非根子路径取（typert 要求，见 src/types.ts）。
-import type { AccountRecord, LogEntry, ServerRecord } from './types.ts'
+import type { AccountRecord, GameFrame, LogEntry, ServerRecord } from './types.ts'
 import type { DelivererConfig } from './deliver.ts'
 import type {
   CredentialResolver, ResolvedCredentials, RosterStore,
@@ -67,6 +67,12 @@ export interface MudCore3Config {
   deliverMaxPendingLines?: number
   /** 每会话录制缓冲上限行数（未接入期间保留的最近行数）。缺省 2000。 */
   recordLines?: number
+  /** 画面通道 scrollback 行数（snapshot 回放深度）。缺省 2000（对齐录制缓冲）。 */
+  viewScrollback?: number
+  /** 画面通道列数（固定，不做 resize 回传）。缺省 80。 */
+  viewCols?: number
+  /** 画面通道单 follower 缓冲上限字节（超限显式断流，重连恢复）。缺省 2MB。 */
+  viewMaxBufferedBytes?: number
   /** 是否把会话日志落盘（JSONL）。缺省 true。 */
   logFile?: boolean
   /** 会话日志落盘目录。缺省 `<cwd>/mud-logs`。 */
@@ -315,8 +321,29 @@ export class MudRemoteService extends TypertRemoteService {
   } {
     const id = requireId(sessionId, 'sessionId')
     const view = this.service.logOf(id)
-    if (view === null) throw new Error(`会话 ${id} 未登记`)
+    if (view === null) throw sessionNotRegistered(id)
     return { sessionId: view.sessionId, entries: view.entries, fileTarget: view.fileTarget }
+  }
+
+  // ── 画面通道（C5：只读视图；对齐 v1 流动词形态）────────────────
+
+  /**
+   * 游戏画面流（stream 动词，v1 game/ui/world 同型）。
+   *
+   * 首帧 snapshot（无头屏整屏序列化，含 scrollback 历史）→ 有序 output/state。
+   * **纯扇出、无输入路径**：不收客户端任何数据；tab 关闭（abort）即摘除
+   * follower，连接/投递不受影响。慢 follower 超限显式失败，重连恢复。
+   * 画面是 MUD→人的显示面，不经 admit 闸门（未接入 = 录制模式照样可看）。
+   */
+  @Remote({ mode: 'stream' })
+  async *follow(
+    sessionId: string | undefined,
+    signal: AbortSignal,
+  ): AsyncIterable<GameFrame> {
+    const id = requireId(sessionId, 'sessionId')
+    const screen = this.service.screenOf(id)
+    if (screen === null) throw sessionNotRegistered(id)
+    yield* screen.attach(signal)
   }
 }
 
@@ -353,24 +380,48 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     },
   }
 
-  // ── 名册：优先宿主 storage 域，不可用时降级内存（点名告警）──
+  // ── 名册：宿主 storage 域 + 内存降级（双态）──────────────────
+  // 时序真相（排查实录）：storage-domain 的 provide 发生在其异步装配之后，
+  // 同步 ctx.get('storageDomain') 在插件 apply 期拿到的是 undefined —— 宿主里
+  // workspace/schedule 等消费者都用 inject 声明依赖让 cordis 等待就绪。
+  // 本插件把 storageDomain 视为可选依赖：RPC 不等域，内存名册先行（ready 立即
+  // open）；域就绪（inject 回调）后挂上域存储并把内存已有记录迁入 —— 档位齐全：
+  // 测试 mock（同步 provide）立即挂域，rosterStorage: false 纯内存，宿主缺失域
+  // 则长期内存运行（重启丢名册，warn 点名）。
   let store: RosterStore = new MemoryRosterStore()
   let readyResolve: () => void = () => {}
   const ready = new Promise<void>((resolve) => { readyResolve = resolve })
-  const storageDomain = config.rosterStorage === false ? undefined : hostStorageDomain(ctx)
-  if (storageDomain === undefined) {
-    ctx.logger.warn('mud-core3: 宿主 storage 域不可用，名册退回内存（重启丢服务器/账号）')
-    readyResolve()
-  } else {
-    void openDomainRosterStore(storageDomain).then((opened) => {
+  let domainAttached = false
+  const attachDomain = (domain: HostStorageDomain): void => {
+    if (domainAttached) return
+    domainAttached = true
+    void openDomainRosterStore(domain).then(async (opened) => {
       if (opened === null) {
         ctx.logger.warn('mud-core3: storage 域打开失败，名册退回内存（重启丢服务器/账号）')
-      } else {
-        store = opened
-        ctx.logger.info(`mud-core3: 名册已挂 storage 域（servers=${store.servers().length}，accounts=${store.accounts().length}）`)
+        return
       }
-      readyResolve()
+      // 挂域前的记录（内存先行期写入的）迁入域存储，切换不丢数据。
+      for (const record of store.servers()) await opened.putServer(record)
+      for (const record of store.accounts()) await opened.putAccount(record)
+      store = opened
+      ctx.logger.info(`mud-core3: 名册已挂 storage 域（servers=${store.servers().length}，accounts=${store.accounts().length}）`)
     })
+  }
+  if (config.rosterStorage === false) {
+    readyResolve()
+  } else {
+    const immediate = hostStorageDomain(ctx)
+    if (immediate !== undefined) {
+      attachDomain(immediate)
+      readyResolve()
+    } else {
+      ctx.logger.warn('mud-core3: storage 域尚未就绪，名册暂以内存运行（域就绪后自动挂载）')
+      ctx.inject(['storageDomain'], (injected: Context) => {
+        const domain = hostStorageDomain(injected)
+        if (domain !== undefined) attachDomain(domain)
+      })
+      readyResolve()
+    }
   }
 
   // 名册写路径依赖：建会话走宿主 sessionController（sessionId = 账号 id，绑定 preset）。
@@ -437,6 +488,12 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     delivererConfig,
     log: logOptions,
     ...(config.recordLines !== undefined ? { recordLines: config.recordLines } : {}),
+    view: {
+      ...(config.viewScrollback !== undefined ? { scrollback: config.viewScrollback } : {}),
+      ...(config.viewCols !== undefined ? { cols: config.viewCols } : {}),
+      ...(config.viewMaxBufferedBytes !== undefined
+        ? { maxBufferedBytes: config.viewMaxBufferedBytes } : {}),
+    },
   })
 
   // 建账号后的开场投递：真发一条用户消息 → 一次真实回合 → `turn/start` → 会话脱离 blank。

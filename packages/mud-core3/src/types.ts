@@ -9,3 +9,7 @@
 
 export type { AccountRecord, ServerRecord } from './roster.ts'
 export type { LogChannel, LogEntry, LogLevel } from './log/log-service.ts'
+export type {
+  GameFrame, GameOutputFrame, GameSnapshotFrame, GameStateFrame,
+  GameViewInfo, GameViewOptions,
+} from './view/screen.ts'

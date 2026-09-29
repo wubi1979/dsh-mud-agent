@@ -11,8 +11,8 @@
 import TYPERT_REMOTE from 'mud-core3/remote'
 // Type-only: pulls the TypertRemoteNamespaceMap augmentation (mud namespace) into the program.
 import type {} from 'mud-core3/remote'
-// Type-only: Remote 边界类型（日志条目、名册记录）由非根子路径导出。
-import type { AccountRecord, LogEntry, ServerRecord } from 'mud-core3/types'
+// Type-only: Remote 边界类型（日志条目、名册记录、画面帧）由非根子路径导出。
+import type { AccountRecord, GameFrame, LogEntry, ServerRecord } from 'mud-core3/types'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { RemoteResult, TypertClientRemote } from '@deepseek-ai/dsh-typert-protocol'
 
@@ -103,6 +103,21 @@ export class MudRemoteController {
   /** 建连 + login（服务器/凭据在宿主侧 roster 查找）。 */
   connect(sessionId: string): Promise<{ sessionId: string; state: string }> {
     return this.call(mud => mud.connect(sessionId))
+  }
+
+  /**
+   * 跟随某会话的画面流（首帧 snapshot 整屏，随后 output/state 增量）。
+   * 流动词不返回 RemoteResult：直接给 AsyncIterable；signal abort 即停，
+   * 服务端 follower 随之清理（typert cancellation 走 descriptor 声明的 signal 参数）。
+   */
+  follow(sessionId: string, signal?: AbortSignal): AsyncIterable<GameFrame> {
+    const mud = this.mud
+    if (mud === null) {
+      throw new Error(this.mountError !== null
+        ? `[mud] remote 尚未挂载（挂载失败: ${this.mountError}）`
+        : '[mud] remote 尚未挂载')
+    }
+    return mud.follow(sessionId, signal)
   }
 
   // ── 名册（宿主侧持久：storage 域，重启不丢）────────────────────

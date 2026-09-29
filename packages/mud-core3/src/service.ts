@@ -26,6 +26,7 @@
 import { SessionRuntime, type ConnectParams } from './runtime.ts'
 import { Deliverer, type DeliverFn, type DelivererConfig } from './deliver.ts'
 import { SessionLog, type LogEntry, type SessionLogOptions } from './log/log-service.ts'
+import type { GameScreen, GameViewOptions } from './view/screen.ts'
 import type {
   AccountLookup,
   AccountRecord,
@@ -46,6 +47,8 @@ export interface MudServiceDeps {
   readonly delivererConfig?: DelivererConfig
   /** 每会话录制缓冲上限行数（缺省 2000）。 */
   readonly recordLines?: number
+  /** 画面通道参数（C5：scrollback/cols/maxBufferedBytes；缺省取内置缺省）。 */
+  readonly view?: GameViewOptions
   /** 会话日志选项（落盘目录等；缺省仅内存）。 */
   readonly log?: SessionLogOptions
 }
@@ -83,6 +86,17 @@ function describeError(error: unknown): string {
   return String(error)
 }
 
+/**
+ * 「会话不存在」的统一错误面（connect/admit/stop/logs/follow 共用）：
+ * 宿主重启丢内存态或页面残留旧会话时，错误必须指路，不能只报一个裸 id。
+ * 文案保留「未登记」子串（测试与既有调用方按子串匹配）。
+ */
+export function sessionNotRegistered(sessionId: string): Error {
+  return new Error(
+    `会话 ${sessionId} 未登记（宿主不认识该会话：可能宿主重启过或页面残留旧会话），请刷新页面后重连或重建账号`,
+  )
+}
+
 /** 多会话管理服务。 */
 export class MudService {
   private readonly runtimes = new Map<string, SessionRuntime>()
@@ -98,7 +112,7 @@ export class MudService {
   register(sessionId: string): SessionRuntime {
     let rt = this.runtimes.get(sessionId)
     if (rt !== undefined) return rt
-    rt = new SessionRuntime(sessionId, this.deps.recordLines)
+    rt = new SessionRuntime(sessionId, this.deps.recordLines, this.deps.view)
     this.runtimes.set(sessionId, rt)
 
     const log = new SessionLog(sessionId, this.deps.log)
@@ -140,6 +154,11 @@ export class MudService {
     return this.runtimes.get(sessionId) ?? null
   }
 
+  /** 取会话画面通道（remote.mud.follow 用；未登记返回 null，动词侧抛错）。 */
+  screenOf(sessionId: string): GameScreen | null {
+    return this.runtimes.get(sessionId)?.view ?? null
+  }
+
   /** 取投递器（测试/观测用）。 */
   getDeliverer(sessionId: string): Deliverer | null {
     return this.deliverers.get(sessionId) ?? null
@@ -151,7 +170,7 @@ export class MudService {
    * @returns 该会话的投递器。
    */
   private requireDeliverer(sessionId: string): Deliverer {
-    if (!this.runtimes.has(sessionId)) throw new Error(`会话 ${sessionId} 未登记`)
+    if (!this.runtimes.has(sessionId)) throw sessionNotRegistered(sessionId)
     const deliverer = this.deliverers.get(sessionId)
     if (deliverer === undefined) throw new Error(`会话 ${sessionId} 未装配投递器`)
     return deliverer
@@ -166,8 +185,8 @@ export class MudService {
   async connect(sessionId: string): Promise<ConnectResult> {
     const log = this.logs.get(sessionId)
     const rt = this.runtimes.get(sessionId)
-    if (rt === undefined) throw new Error(`会话 ${sessionId} 未登记`)
-    if (rt.isDisposed) throw new Error(`会话 ${sessionId} 已销毁`)
+    if (rt === undefined) throw sessionNotRegistered(sessionId)
+    if (rt.isDisposed) throw new Error(`会话 ${sessionId} 已销毁：请刷新页面后重建账号`)
 
     const server = this.deps.serverLookup(sessionId)
     if (server === undefined) {

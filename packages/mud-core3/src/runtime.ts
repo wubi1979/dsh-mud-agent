@@ -9,6 +9,7 @@
 
 import { Mud } from './link/mud.ts'
 import type { MudLine } from './link/line.ts'
+import { GameScreen, type GameViewOptions } from './view/screen.ts'
 import type { ConnState, ResolvedCredentials } from './roster.ts'
 
 /** 连接参数。 */
@@ -31,6 +32,8 @@ export class SessionRuntime {
   readonly sessionId: string
   private readonly mud = new Mud()
   private state: ConnState = 'disconnected'
+  /** 画面通道（C5）：无头屏 + follower 扇出；行/回显/状态在此汇合。 */
+  private readonly screen: GameScreen
   /** 行流缓冲（未接入=录制 / 后续工具裸读用；环形上限，超出丢最旧）。 */
   private pendingLines: MudLine[] = []
   /** 录制上限（行）：挂机模式长期不收时，内存不随行数无界增长。 */
@@ -50,10 +53,12 @@ export class SessionRuntime {
   /**
    * @param sessionId - 会话 id（= 账号 id）。
    * @param recordLimit - 录制缓冲上限行数（缺省 2000；超出丢最旧）。
+   * @param view - 画面通道参数（scrollback/cols/maxBufferedBytes；缺省取内置缺省）。
    */
-  constructor(sessionId: string, recordLimit = 2000) {
+  constructor(sessionId: string, recordLimit = 2000, view?: GameViewOptions) {
     this.sessionId = sessionId
     this.recordLimit = recordLimit < 1 ? 1 : recordLimit
+    this.screen = new GameScreen(sessionId, view)
     this.mud.onLog = (level, text) => { this.onLog?.(level, text) }
     this.mud.onLine = line => {
       this.pendingLines.push(line)
@@ -62,12 +67,16 @@ export class SessionRuntime {
         this.pendingLines.splice(0, over)
         this.dropped += over
       }
+      this.screen.write(line.raw + '\r\n')
       this.onLine?.(line)
     }
+    // 直发命令回显进画面（凭据走 sendCredential 不触发 onSend —— 永不进画面）。
+    this.mud.onSend = cmd => { this.screen.echo(cmd) }
     this.mud.onDisconnect = () => {
       if (this.state === 'connecting') this.connectAborted = true
       this.state = 'disconnected'
       this.pendingLines = []
+      this.screen.setState('disconnected')
       this.onDisconnect?.()
     }
   }
@@ -78,6 +87,11 @@ export class SessionRuntime {
 
   get connState(): ConnState {
     return this.state
+  }
+
+  /** 画面通道（remote.mud.follow 经 service.screenOf 取用）。 */
+  get view(): GameScreen {
+    return this.screen
   }
 
   /** 自上次消费以来的待处理行（C3 投递水位用；C2 不消费）。 */
@@ -104,6 +118,7 @@ export class SessionRuntime {
    * 3. 发送账号名（sendCredential）
    * 4. 等待短暂时间让服务器处理
    * 5. 发送密码（sendCredential）
+   * 6. 再补发一次回车（pkuxkx 登录末尾等回车，缺它行流停在欢迎屏）
    * 任一步失败都销毁 socket —— 否则半开/残留连接会继续收数据并晚到 close 事件。
    * @param params 连接参数（host/port/credentials）
    * @param loginTimeoutMs login 等待超时（缺省 5000ms）
@@ -115,6 +130,7 @@ export class SessionRuntime {
 
     this.state = 'connecting'
     this.connectAborted = false
+    this.screen.setState('connecting')
     const started = Date.now()
     this.mud.connect(params.host, params.port)
 
@@ -133,6 +149,7 @@ export class SessionRuntime {
     }
 
     this.state = 'connected'
+    this.screen.setState('connected')
     this.onLog?.('info', `TCP 已建立（${Date.now() - started}ms），发送账号名`)
 
     // login：发账号名 → 短暂等待 → 发密码
@@ -150,7 +167,15 @@ export class SessionRuntime {
       this.mud.disconnect()
       throw new Error(`连接 ${params.host}:${params.port} 在 login 中关闭`)
     }
-    this.onLog?.('info', '账号名/密码已发送（等待服务器响应）')
+    // 盲发回车（一期最简）：pkuxkx 类 MUD 在登录末尾等一次「回车」（欢迎页/普通
+    // 模式解锁），不补这行则行流停在欢迎屏，房间之后的闲聊/进出全部不来。
+    await new Promise(r => setTimeout(r, 200))
+    if (!this.mud.sendCredential('')) {
+      this.state = 'disconnected'
+      this.mud.disconnect()
+      throw new Error(`连接 ${params.host}:${params.port} 在 login 收尾时关闭`)
+    }
+    this.onLog?.('info', '账号名/密码/回车已发送（等待服务器响应）')
   }
 
   /** 断连（幂等）。 */
@@ -165,6 +190,7 @@ export class SessionRuntime {
     this.disposed = true
     this.disconnect()
     this.pendingLines = []
+    this.screen.dispose()
   }
 
   get isDisposed(): boolean {

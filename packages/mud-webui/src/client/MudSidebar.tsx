@@ -52,6 +52,8 @@ export interface MudClientInjected {
   stopAdmit: (sessionId: string) => Promise<void>
   refreshStatus: (sessionId?: string) => Promise<void>
   openUserSession: (serverId: string, userId: string) => void
+  /** 打开账号的只读游戏画面 tab（右侧栏；关闭不影响后台连接）。 */
+  openGameView: (sessionId: string) => void
   toggleSidebar: () => void
 }
 
@@ -103,7 +105,7 @@ export function MudSidebar({
   collapsed, useServers,
   addServer, removeServer, addUser, removeUser,
   connectUser, disconnect, admit, stopAdmit, refreshStatus,
-  openUserSession, toggleSidebar,
+  openUserSession, openGameView, toggleSidebar,
 }: MudSidebarProps) {
   const { servers, conn, sessionStatus, credentialStatus } = useServers(s => s)
   const [serverDialogOpen, setServerDialogOpen] = useState(false)
@@ -241,6 +243,8 @@ export function MudSidebar({
                         isAdmitted
                           ? { id: 'stop-admit', label: '停止接入' }
                           : { id: 'admit', label: '接入' },
+                        // 只读游戏画面（右侧栏 tab；已有会话才可看）
+                        ...(user.sessionId !== '' ? [{ id: 'open-view', label: '画面' }] : []),
                         { id: 'delete-user', label: '删除账号' },
                       ]}
                       onSelect={(id) => {
@@ -249,6 +253,7 @@ export function MudSidebar({
                         if (id === 'disconnect') void disconnect(user.sessionId === '' ? undefined : user.sessionId)
                         if (id === 'admit' && user.sessionId !== '') void admit(user.sessionId)
                         if (id === 'stop-admit' && user.sessionId !== '') void stopAdmit(user.sessionId)
+                        if (id === 'open-view' && user.sessionId !== '') openGameView(user.sessionId)
                         setUserMenuFor(null)
                       }}
                       portal align="start"
