@@ -74,26 +74,27 @@
  * height minus the xterm ELEMENT's own padding; parent padding is not
  * deducted and would overflow the last line (a few px of vertical scroll).
  * Padding lives on `.xterm` itself so fit accounts for it.
- * 左、下侧 8px 间距用 margin 承载: 只让终端面板内缩, 不推挤顶部工具栏也
- * 不打父级 padding (避免 fit 末行溢出); margin-bottom 使 flex 分配高度变小,
- * fit 按新高度重算行数, 无溢出。 */
+ * 左、下、上侧 8px 间距用 margin 承载: 只让终端面板内缩, 与顶部工具栏分割线
+ * 之间留出空隙, 也不打父级 padding (避免 fit 末行溢出); margin 使 flex 分配
+ * 高度变小, fit 按新高度重算行数, 无溢出。 */
 .xtermHost {
   flex: 1;
   min-height: 0;
   position: relative;
   overflow: hidden;
-  margin: 0 0 8px 8px;
+  margin: 8px 8px 8px 8px;
   /* 背景交由终端自身 (theme) 承载: 这里不设深色, 避免 fit 间隙漏出
      #0a0a0a 形成"黑边"。 */
 }
 
 /* Pin the terminal element to the host box (fit only tunes rows/cols inside);
  * padding here is measured by fit and deducted from the available area.
- * 终端面板底色放 .xterm 本体 (被 host overflow 裁剪, 不越界)。 */
+ * 终端面板底色放 .xterm 本体 (被 host overflow 裁剪, 不越界)。
+ * 内边距 4px 10px: 行盒上下自带行距留白, 纵向取更小值使观感均匀。 */
 .xtermHost :global(.xterm) {
   height: 100%;
   width: 100%;
-  padding: 8px 12px;
+  padding: 4px 10px;
   box-sizing: border-box;
   background: #0a0a0a;
 }
@@ -109,4 +110,15 @@
 .xtermHost :global(.xterm .xterm-screen) {
   max-width: 100%;
   max-height: 100%;
+}
+
+/* 收窄竖向滚动条: xterm (VS Code 派生 ScrollableElement) 以内联样式写死
+ * verticalScrollbarSize = 14px (容器与 slider 各一份), 故均需 !important 覆盖。 */
+.xtermHost :global(.xterm .xterm-scrollable-element > .scrollbar.vertical) {
+  width: 8px !important;
+}
+
+.xtermHost :global(.xterm .xterm-scrollable-element > .scrollbar.vertical > .slider) {
+  left: 0 !important;
+  width: 8px !important;
 }
