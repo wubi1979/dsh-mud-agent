@@ -60,6 +60,11 @@ export interface SessionStatus {
   readonly admitted: boolean
 }
 
+/** 状态流帧（watchStatus）：全量会话状态快照，变化时整体重推。 */
+export interface StatusFrame {
+  readonly sessions: readonly SessionStatus[]
+}
+
 /** 连接结果。 */
 export interface ConnectResult {
   readonly sessionId: string
@@ -102,6 +107,8 @@ export class MudService {
   private readonly runtimes = new Map<string, SessionRuntime>()
   private readonly deliverers = new Map<string, Deliverer>()
   private readonly logs = new Map<string, SessionLog>()
+  /** 状态流订阅者（watchStatus 广播面；多订阅者互不影响）。 */
+  private readonly statusListeners = new Set<(frame: StatusFrame) => void>()
   private readonly deps: MudServiceDeps
 
   constructor(deps: MudServiceDeps) {
@@ -118,6 +125,9 @@ export class MudService {
     const log = new SessionLog(sessionId, this.deps.log)
     this.logs.set(sessionId, log)
     log.info('runtime', '会话登记（无连接）')
+
+    // 状态迁移 → 广播（C5.1 watchStatus 的推帧源；值变化才触发）
+    rt.onStateChange = () => { this.emitStatus() }
 
     // 网络层日志（telnet 协商/断线/协议异常）→ 会话日志
     rt.onLog = (level, text) => { log.append({ level, channel: 'network', text }) }
@@ -146,6 +156,8 @@ export class MudService {
       this.deliverers.get(sessionId)?.onLine(line)
     }
 
+    // 新会话进入状态面：广播登记
+    this.emitStatus()
     return rt
   }
 
@@ -233,6 +245,7 @@ export class MudService {
   admit(sessionId: string): void {
     this.requireDeliverer(sessionId).admit()
     this.logs.get(sessionId)?.info('gate', '接入：MUD 信息开始进入 agent')
+    this.emitStatus()
   }
 
   /**
@@ -242,6 +255,7 @@ export class MudService {
   stop(sessionId: string): void {
     this.requireDeliverer(sessionId).stop()
     this.logs.get(sessionId)?.info('gate', '停止接入：后续 MUD 行不再进入 agent（行流照常落盘）')
+    this.emitStatus()
   }
 
   /**
@@ -272,6 +286,56 @@ export class MudService {
   }
 
   /**
+   * 订阅状态变化（C5.1 watchStatus 的广播源）：任何状态面变更点回调全量快照。
+   * @returns 注销函数（多订阅者互不影响）。
+   */
+  subscribeStatus(listener: (frame: StatusFrame) => void): () => void {
+    this.statusListeners.add(listener)
+    return () => { this.statusListeners.delete(listener) }
+  }
+
+  /** 广播当前全量状态（fire-and-forget；单订阅者异常不拖累其他订阅者）。 */
+  private emitStatus(): void {
+    if (this.statusListeners.size === 0) return
+    const frame: StatusFrame = { sessions: this.statuses() }
+    for (const listener of [...this.statusListeners]) {
+      try { listener(frame) } catch { /* 订阅者异常不拖累广播 */ }
+    }
+  }
+
+  /**
+   * 状态流（watchStatus 动词的流实现）：首帧全量快照，随后仅在状态变化时推帧
+   * （无变化零流量）。signal abort / 迭代器 return（客户端断开）即清订阅。
+   */
+  async *watchStatusStream(signal: AbortSignal): AsyncIterable<StatusFrame> {
+    const queue: StatusFrame[] = []
+    let wake: (() => void) | null = null
+    const pulse = (): void => {
+      if (wake !== null) { wake(); wake = null }
+    }
+    const unsubscribe = this.subscribeStatus(frame => {
+      queue.push(frame)
+      pulse()
+    })
+    const onAbort = (): void => { pulse() }
+    signal.addEventListener('abort', onAbort, { once: true })
+    try {
+      queue.push({ sessions: this.statuses() })
+      while (!signal.aborted) {
+        const frame = queue.shift()
+        if (frame !== undefined) {
+          yield frame
+          continue
+        }
+        await new Promise<void>(resolve => { wake = resolve })
+      }
+    } finally {
+      signal.removeEventListener('abort', onAbort)
+      unsubscribe()
+    }
+  }
+
+  /**
    * 读会话日志（内存环条目 + 落盘目标）。
    * 原始行流只落盘不进环（见 SessionLog.stream），所以环里是运行/网络/投递/闸门事件。
    * @param sessionId - 会话 id。
@@ -294,6 +358,8 @@ export class MudService {
     rt.dispose()
     this.runtimes.delete(sessionId)
     this.logs.delete(sessionId)
+    // 会话离开状态面：广播销毁
+    this.emitStatus()
   }
 
   /** 销毁全部（插件卸载用）。 */

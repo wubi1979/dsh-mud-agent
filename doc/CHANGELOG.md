@@ -99,4 +99,16 @@
 - **实现（`src/bootstrap.ts` + addAccount 动词）**：建账号成功后投递一条 MUD 源的**真实用户消息**（服务器/地址/账号/preset + 当前"未连接"状态 + "不要调用任何工具"），触发一次真实回合 → `turn/start` → 会话立刻活跃、会话体与 tab 渲染。**不伪造 `turn/start`**（会污染回合计数与 replay）；投递失败不影响账号落库。`bootstrapOnCreate: false` 可关（省一次模型调用；关掉后靠用户首条消息或 MUD 投递自动翻）
 - 测试 121 项全绿（119 → 121）：新增 `test/bootstrap.spec.ts`（文本点名服务器/账号/preset/状态与"不调工具"；未登记服务器占位不抛错）
 
+## [v0.0.10]C5 游戏画面视图 + C5.1 状态推送 (2026-09-29)
+> 总结：右侧栏只读画面（headless 屏 + follow 流）端到端跑通；状态 tab 从 2.5s 轮询改为 watchStatus 推送；名册持久化与画面行流两处阻塞故障修复
+
+- **画面通道（C5，`src/screen.ts`）**：每 runtime 一个 `@xterm/headless` Terminal + `@xterm/addon-serialize` 无头屏；游戏行与 send 回显（凭据走 sendCredential 不触发 onSend）同屏写入，区分色前缀；屏幕跨重连保留；Config 视图参数成组 `viewScrollback`(2000)/`viewCols`(80)/`viewMaxBufferedBytes`(2MB)
+- **follow 流动词（抄 v1 typert stream 形态）**：`@Remote({ mode: 'stream' }) async *follow(sessionId, signal)`；roster 归属校验（未登记抛 session/not-found 语义错误，与 connect/logs/follow 共用统一错误面）；首帧 snapshot（serializer 整屏，含 ANSI）→ output 增量帧（同 tick 合批，超上限直吐）；follower 注册与 snapshot 生成共用一条 enqueue 写操作链（与行写入互斥，attach 瞬间不丢帧不乱序不重复）；follower 有界队列背压，超限显式断流，重新 follow 以新 snapshot 恢复
+- **webui 画面 tab**：`sidebar-right` tab 类型 `mud-game`（multiple，params 随布局持久化，刷新/重开自动恢复）；只读 xterm（不挂 onData）+ addon-fit；`for await` + AbortController 消费，tab 关闭 abort 清服务端 follower；close handler 同步 abort；i18n locales（zh/en）；侧栏账号行「画面」按钮 + openTabIn 入口
+- **状态推送（C5.1）**：runtime `onStateChange` 钩子（setState 统一入口，值变化才触发，全部赋值点迁移）；service 状态广播器 `subscribeStatus/emitStatus`（register/admit/stop/dispose 与连接迁移各点广播，单订阅者异常不拖累）+ `watchStatusStream`（queue + wake，首帧全量快照、之后仅变化推帧、finally 清订阅）；`remote.mud.watchStatus()` 流动词；webui `startStatusWatch` 替换 MudSidebar 2.5s 轮询定时器，`applyStatusRows` 复用原有落账逻辑
+- **登录盲发回车（pkuxkx 类 MXP 探测闸解锁，一期最简方案）**：pkuxkx 在登录末尾等一次「回车」解锁普通模式，客户端不补这行则行流停在欢迎屏（房间后的闲聊/进出全部不来）；login 序列末尾（密码后 200ms）盲发一个空行
+- **名册 storage 域时序修复（mud.json 不落盘的根因）**：storage-domain 的 provide 在异步装配之后，插件 apply 期同步 `ctx.get('storageDomain')` 拿 undefined；改为可选依赖三态——同步命中即挂 / 未命中 `ctx.inject(['storageDomain'], …)` 域就绪后挂 / `rosterStorage: false` 强制内存；域打开成功先将内存已写记录迁入域存储再切换（迁移幂等）；RPC 不等域（readyResolve 不阻塞）；`store.ts` open 失败的真实错误打到控制台（原空 catch 吞掉，困了排查两小时）
+- **webui 启动对齐 + 统一错误面**：`mud-state.ts` 加 `hydrate()`——remote 挂载成功即拉 servers()/accounts() 用宿主真值覆盖 localStorage 呈现缓存（刷新/宿主重启后的假服务器/死会话在启动时清掉）；service.ts 统一「会话未登记」错误提示（可能宿主重启过或页面残留旧会话，请刷新页面后重连或重建账号）
+- 测试 121 → **132 项全绿**：新增 `test/screen.spec.ts` 8 条（行写入含 ANSI 入 snapshot、send 回显入屏且凭据缺席、背压超限断流、断流后 re-follow 恢复、两会话屏幕隔离、headless 跨重连续写、follower 注册原子性、合批）+ watchStatus 3 条（首帧快照与变化推帧、连接生命周期推帧、多订阅者互不影响）；core3 构建 + `gen:typert`（follow/watchStatus stream descriptor）+ webui 构建全通过
+
 > AI生成

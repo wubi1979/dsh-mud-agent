@@ -76,6 +76,21 @@
 
 **实施后**：同步 `doc/architecture/00-core.md`（§3.5 管理面补一条）+ `CHANGELOG.md` 一行。
 
+### C5.1 详细设计起草：会话状态推送 watchStatus（2026-09-29，定稿即实施）
+
+> **需求**：状态 tab 由轮询 `status()` 改为服务端事件推送——状态变化毫秒级可见，无变化零流量。follow 流已验证 typert stream 通路，本切片是同型复用（无画面侧的合批/背压问题，状态帧很小）。
+
+**设计**：
+
+1. **事件源（复用现有钩子点）**：SessionRuntime 加 `onStateChange` 钩子（connecting/connected/disconnected 迁移且值变化时触发）；MudService 加状态广播器 `subscribeStatus(cb): unsubscribe`（多订阅者互不影响）；admit/stop/register/dispose 等同步变更点直接广播；
+2. **watchStatus 流动词**（抄 follow 形态）：`async *watchStatus(signal): AsyncIterable<StatusFrame>`；**首帧立即推全量快照**（statuses() 语义，覆盖全部已登记会话，与 follow 的 snapshot 语义对齐），之后仅变化时推帧；无 sessionId 参数——页面是全局状态面，一次订阅覆盖全部会话；
+3. **订阅生命周期**：客户端 abort（tab 关闭/页面刷新）→ generator finally + signal 清服务端订阅者（follow 的 follower 清理同一条路）；status() 单次动词保留做初始回填/兜底；
+4. **webui**：状态面板挂载即 `watchStatus()`，`for await` + AbortController 消费，轮询定时器移除。
+
+**测试面（vitest 先红后绿）**：状态变化推帧（connect/disconnect/admit/stop）；首帧快照；abort 清订阅；多订阅者互不影响。
+
+**实施后**：同步 `doc/architecture/00-core.md` §3.5 + `CHANGELOG.md` 一行。
+
 ### 第二期：工具面
 
 > **触发**：一期跑通后，agent 需要向 MUD 发命令、主动读状态（只接消息不够用）。

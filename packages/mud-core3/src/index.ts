@@ -30,7 +30,7 @@ import type { SessionRuntime } from './runtime.ts'
 import type { SessionLogOptions } from './log/log-service.ts'
 import { resolveLogDir, purgeSessionLogs } from './log/log-service.ts'
 // Remote 边界类型从非根子路径取（typert 要求，见 src/types.ts）。
-import type { AccountRecord, GameFrame, LogEntry, ServerRecord } from './types.ts'
+import type { AccountRecord, GameFrame, LogEntry, ServerRecord, StatusFrame } from './types.ts'
 import type { DelivererConfig } from './deliver.ts'
 import type {
   CredentialResolver, ResolvedCredentials, RosterStore,
@@ -344,6 +344,18 @@ export class MudRemoteService extends TypertRemoteService {
     const screen = this.service.screenOf(id)
     if (screen === null) throw sessionNotRegistered(id)
     yield* screen.attach(signal)
+  }
+
+  // ── 状态推送（C5.1：轮询 → 事件流）────────────────────────────
+
+  /**
+   * 会话状态流（stream 动词，follow 同型）：首帧全量快照（statuses() 语义），
+   * 之后仅在状态变化时推帧 —— 页面全局状态面，一次订阅覆盖全部已登记会话。
+   * abort（tab 关闭/页面刷新）即清服务端订阅；status() 单次动词保留做初始回填。
+   */
+  @Remote({ mode: 'stream' })
+  async *watchStatus(signal: AbortSignal): AsyncIterable<StatusFrame> {
+    yield* this.service.watchStatusStream(signal)
   }
 }
 

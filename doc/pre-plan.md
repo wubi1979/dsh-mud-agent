@@ -1,6 +1,6 @@
 # 二期工具面详细设计起草（pre-plan）
 
-> **当前状态（2026-09-29）**：**已定稿**（两轮审阅定稿：①水位线 pull 模型（投递/工具读推进、状态/规则不推进、规则吞行留摘要）；②turn/end 驱动投递；③ReadMachine 保留 abortWait/danger + swallow 钩子；④禁词表最小集 suicide；⑤mud_state 不受闸门；⑥deny 先于闸门/连接）。下一步：并入 `doc/PLAN.md` 第二期节后按切片开工。
+> **当前状态（2026-09-29）**：**已定稿**（三轮审阅：①水位线 pull 模型（投递/工具读推进、状态/规则不推进、规则吞行留摘要）；②turn/end 驱动投递；③ReadMachine 保留 abortWait/danger + swallow 钩子；④禁词表最小集 suicide；⑤mud_state 不受闸门；⑥deny 先于闸门/连接；⑦第三轮补：投递失败语义、冷启动补投、未接入零积累、裸读快照语义、行粒度说明）。下一步：并入 `doc/PLAN.md` 第二期节后按切片开工。
 >
 > **文件角色**：二期（工具面）的详细设计起草区。只写设计不写演进过程；落地后同步 `doc/architecture/00-core.md`（§3.3 工具面后置节改为现役）+ `CHANGELOG.md` 登记一行。
 
@@ -114,20 +114,25 @@ class ReadMachine {
   deliveredAbs —— 投递推进：本会话已投递给 agent 的最远行号
   readAbs      —— 工具读推进：最近一次 read 返回结果的最大行号
   已见线 seen = max(deliveredAbs, readAbs)   ← agent 已经见过的行边界
+  初始/断线重置 = -1（无已见行）
 
 投递时机：
   A. turn 期间（turn/start → turn/end）：投递器「抑制模式」——不 fire 定时器，
-     行只进 pending 积累；
+     行只进 pending 积累，turn/end 统一冲刷；
   B. turn/end：flush 一次——从 pending 取 abs > seen 的行，按 maxLines/maxChars
-      拆条投出 → delivered 推进到实际投出的最大行号；
+      拆条投出 → **delivered 只推进到成功投出的批次**（失败批次不推进、行仍在
+      pending，下次从失败点自然重试 —— 与现有 deliverer「失败保留」语义等价）；
   C. 空闲模式（agent 不在 turn）：quiet/maxWait 定时器到期即 flush（§3.4 静默窗口语义）。
 投递内容（A/B/C 同一逻辑）：
-  take(seen, maxLines) → 投递 → delivered = 取到的最大 abs
-  （未接入：不投，delivered 不推进——闸门在源头）
+  take(seen) → 拆条投出 → delivered = 成功投出的最大 abs
+  （未接入：不投、不拉取、不积累，delivered 不推进 —— 闸门在源头）
 
 admit（接入）：delivered = 当前末端（水位 = 接入时刻，积压不回放 —— §3.4 语义）；
-stop：不投（pending 照常积累 = 录制）。
+stop：不投（pending 照常积累 = 录制）；
+冷启动补投：agent/created → flushOnce（从 seen 拉取一次，触发首个回合）。
 ```
+
+**批次粒度（已实证）**：投递条目 = 静默窗口聚合，**与 TCP 块边界无关**——服务器一次推 4000 字节含几十行，line 层批量产出、分发层逐行回调（同步循环）；同块内的行**永不拆入不同投递批次**（定时器只能在同步循环结束后触发），批次边界只落在块间静默 ≥ quietMs 或跨块持续 ≥ maxWaitMs 上。
 
 **read（mud_send）与水位线**：
 
@@ -154,8 +159,10 @@ stop：不投（pending 照常积累 = 录制）。
 | 模式 | initial（read 开始时从 pending 取） | 缺省完成判据 |
 |---|---|---|
 | **有 cmd**（send + 等应答） | 空（acc 只收 send 后新行；send 前积压行走投递/已投递） | `gaCount: 1`（一段完整文字）+ `maxLines: 50` 兜底 |
-| **无 cmd**（裸读近况） | pending 尾部 maxLines 行（默认 50，超量丢头部记 dropped） | `maxLines: 50` + `quietMs: 300`（短静默窗口收正在到达的尾巴） |
+| **无 cmd**（裸读近况） | pending 尾部 maxLines 行（默认 50，快照式读取，**不物理消费**） | `maxLines: 50` + `quietMs: 300`（短静默窗口收正在到达的尾巴） |
 
+- 裸读范围 = pending 尾部**含 admit 前的录制行**（挂机期间发生了什么——§3.4「要看近况用裸读」的本意；旧行不进投递是 delivered 水位的裁决，但不妨碍裸读回看）；
+- 「超尾部丢头部」是**环形缓冲自身的淘汰**（recordLimit=2000 满丢最旧），不是裸读主动消费——裸读只读尾部快照 + 推进 readAbs；
 - initial 参与判定（先到先结算，可立即命中收束）；
 - 裸读返回时推进 readAbs = initial 末行号（防重复投递）；
 - 模型可显式给 until/failOn/gaCount/quietMs/maxLines 覆盖缺省；
@@ -220,10 +227,12 @@ interface ToolContext { sessionId: string; runtime: SessionRuntime; admitted: bo
 ### 12. 接线面（index.ts 增补）
 
 - 订阅 `session/event`（global）：按 `event.type === 'turn/start'` / `'turn/end'` 且会话 ∈ roster 过滤，调 `deliverer.onTurnStart/onTurnEnd`；
-- 投递器新增 `onTurnStart`（抑制模式）、`onTurnEnd`（flush）：
-  - 抑制模式：定时器不 fire，行只进 pending（拉取逻辑在 flush 时统一）；
-  - flush：从 pending 取 abs > seen（delivered/read 最大值）→ 拆条投递 → delivered 推进；
-- 空闲模式保留 quiet/maxWait 定时器（静默投递，§3.1 语义不变）。
+- 投递器改造（pull 化，`deliver.ts`）：
+  - 去掉自持缓冲（现 500 行 buffer 废弃）；注入 `take()` 函数 = 从 runtime.pendingLines 取 abs > seen 的行（runtime 侧实现，含 seen 更新）；
+  - `onLine` 只在空闲模式武装 quiet/maxWait 定时器（turn 模式抑制）；flush 时 `take()` + 拆条投出；
+  - `onTurnStart`（抑制）、`onTurnEnd`（flush）、`admit/stop/flushOnce` 同一 take/投出逻辑；
+- 冷启动补投：`agent/created` → `flushPending` 改为 `flushOnce`（从 seen 拉取一次，触发首个回合）；
+- 未接入：不 take、不武装定时器、零缓冲零丢弃（现状「未接入刷丢弃日志」在改造后消失，作为验收用例）。
 
 ## 与 core2 的差异汇总（裁决表）
 
@@ -257,7 +266,8 @@ interface ToolContext { sessionId: string; runtime: SessionRuntime; admitted: bo
   3. 裸读：历史行立即返回 + quiet 窗口收尾巴；
   4. 断线中断在途 read（reason: 'disconnected'）；
   5. 水位线：read 消费的行 turn/end 不重复投递（delivered 推进）；
-  6. turn/end 冲刷：turn 内积累的行一次投出（一个批次，不重复）。
+  6. turn/end 冲刷：turn 内积累的行一次投出（一个批次，不重复）；
+  7. 投递失败重试：拆条中后段投出失败（deliver 返回 false）→ 该段不推 delivered、下次 flush 从失败点重试，不丢行。
 - `test/tools.spec.ts`（假 registrar + 假 core()）：
   1. 注册完整性自检（缺一 fail-loud）；
   2. 引擎缺席 / 归属 null 拒绝；
@@ -267,7 +277,7 @@ interface ToolContext { sessionId: string; runtime: SessionRuntime; admitted: bo
   6. **mud_state 未接入可读**（不受闸门）；
   7. listen 编译：非法正则报可读错；
   8. timeoutMs 钳制到 MAX_TIMEOUT_MS。
-- `test/deliver.spec.ts` 增：turn 模式抑制（turn/start 后不 fire）、turn/end 冲刷（从 pending 取未投行）、水位线推进（投后 delivered 更新）、裸读推水位后不重复投。
+- `test/deliver.spec.ts` 增：turn 模式抑制（turn/start 后不 fire）、turn/end 冲刷（从 pending 取未投行）、水位线推进（投后 delivered 更新）、裸读推水位后不重复投、**未接入零积累**（未 admit 时 take 不被调用、零丢弃日志）、**冷启动补投**（agent/created 后 flushOnce 拉取 seen 后行）。
 - `test/service.spec.ts` 增：toolContextFor 流转（admit 前/后、断连、销毁后 null）。
 
 ## 验收（对齐 PLAN 二期范围）
@@ -279,8 +289,9 @@ interface ToolContext { sessionId: string; runtime: SessionRuntime; admitted: bo
 | 连接约束 | 未连接 ⇒ mud_send 可读拒绝；模型无任何自行建连通路 |
 | 禁词表 | suicide 全段拦截、可读拒绝带命中词；quit/drop/passwd 等放行 |
 | 端到端 | 连接+接入后：mud_send(cmd) 返回应答原文，agent 能据此继续决策 |
-| 水位线 | turn/end 一次投出回合内未消费行；read/裸读消费的行不重复投递；投递只投 seen 之后 |
-| 裸读 | 无 cmd 返回近期行（尾部截断生效），不等无限，不重复投 |
+| 水位线 | turn/end 一次投出回合内未消费行；read/裸读消费的行不重复投递；投递只投 seen 之后；投递失败不丢行（失败批次下次重试） |
+| 未接入 | 投递器零积累、零丢弃日志（改造后无自持缓冲；现状「未接入刷丢弃日志」在验收中消失） |
+| 裸读 | 无 cmd 返回近期行（尾部截断生效），不等无限，不重复投，范围含 admit 前录制行 |
 | 回归 | 新增用例全绿 + 既有 79 项不回归 |
 
 ## 前置验证（宿主环境，开工后第一步）
@@ -292,6 +303,10 @@ interface ToolContext { sessionId: string; runtime: SessionRuntime; admitted: bo
 5. 未接入调用 → 可读拒绝 → agent 如实转告（不回退、不假死）。
 6. gen:typert 不涉及（工具面无 remote 动词新增）。
 
+## 已知限制（不引机制，记录在案）
+
+- **超长回合 + 持续刷屏**：一次回合内若 MUD 持续输出（minutes 级），pending 可积累至上限；turn/end 一次性拉取会拆成多条 followup 排队（多回合）。无例证不引机制（如 turn 内 maxWait 强刷）；若实测 token 账目恶化，按例证加。
+
 ## 后置（不在本期）
 
 - `mud_flow`（三期：登录/验证码/多步编排，从 core2 移植）；流程消费行推进水位（语义已定）；
@@ -301,7 +316,7 @@ interface ToolContext { sessionId: string; runtime: SessionRuntime; admitted: bo
 - 唤醒类机制落地（闸门前置已定，§3.4）；
 - C5 screen 的 onBoundary 占用协调——实施时检查接线。
 
-## 定稿裁决记录（2026-09-29 两轮审阅）
+## 定稿裁决记录（2026-09-29 三轮审阅）
 
 1. **水位线 pull 模型**（核心）：单一真相 pending + 水位线（delivered/read 两线，seen=max）；投递 = turn/end（或空闲定时）从 pending 拉取 seen 之后的行；read/裸读推进 readAbs；状态同步/规则动作不推进，规则动作吞行留摘要——**替代上轮"互斥暂停投递"**（互斥挡不住裸读重复，水位线结构性解决）。
 2. **turn/end 驱动投递**：宿主事件已确认，订阅 session:event（turn 模式抑制、turn/end 冲刷）；空闲模式静默定时语义不变。
@@ -311,5 +326,9 @@ interface ToolContext { sessionId: string; runtime: SessionRuntime; admitted: bo
 6. **mud_state 不受闸门/连接约束**（只过归属）。
 7. **deny 判定先于闸门/连接**（安全优先）。
 8. **MudLine.abs 确认已有**，不额外暴露给 agent（工具输出为纯文本，abs 是内部水位线坐标）。
+9. **投递失败语义（pull 隐藏坑）**：delivered 只推进到成功投出的批次；失败批次停留 pending，下次自然重试——不丢行。
+10. **冷启动补投**：agent/created → flushOnce（从 seen 拉取，触发首回合）。
+11. **未接入零积累**：投递器不再持缓冲，未接入零拉取、零丢弃日志（现状「未接入刷丢弃」在二期验收中消失）。
+12. **行粒度**：分发逐行回调、同块不拆批；投递批次 = 静默窗口聚合，与 TCP 块无关。
 
 > AI生成

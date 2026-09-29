@@ -47,6 +47,15 @@ export class SessionRuntime {
   onLine: ((line: MudLine) => void) | null = null
   /** 断线回调（装配层接此标记断开）。 */
   onDisconnect: (() => void) | null = null
+  /** 连接状态迁移回调（值变化才触发；C5.1 服务层接此广播状态帧）。 */
+  onStateChange: ((state: ConnState) => void) | null = null
+
+  /** 状态迁移（统一入口）：值变化才赋值并上抛，杜绝重复帧。 */
+  private setState(next: ConnState): void {
+    if (this.state === next) return
+    this.state = next
+    this.onStateChange?.(next)
+  }
   /** 网络层日志回调（telnet 协商/断线/协议异常）；装配层接此写入会话日志。 */
   onLog: ((level: 'info' | 'error', text: string) => void) | null = null
 
@@ -74,7 +83,7 @@ export class SessionRuntime {
     this.mud.onSend = cmd => { this.screen.echo(cmd) }
     this.mud.onDisconnect = () => {
       if (this.state === 'connecting') this.connectAborted = true
-      this.state = 'disconnected'
+      this.setState('disconnected')
       this.pendingLines = []
       this.screen.setState('disconnected')
       this.onDisconnect?.()
@@ -128,27 +137,28 @@ export class SessionRuntime {
     if (this.connected) return // 幂等
     if (this.state === 'connecting') throw new Error(`runtime ${this.sessionId} 正在连接`)
 
-    this.state = 'connecting'
+    this.setState('connecting')
     this.connectAborted = false
     this.screen.setState('connecting')
     const started = Date.now()
     this.mud.connect(params.host, params.port)
 
     // 等待连接建立；socket 在等待期终结（拒绝/对端关闭）时 state 会被置回 disconnected。
+    // 读经 getter（connState）：直读 this.state 会被 TS 控制流收窄误判（setState 是方法调用）。
     const deadline = Date.now() + loginTimeoutMs
-    while (!this.mud.connected && this.state === 'connecting' && Date.now() < deadline) {
+    while (!this.mud.connected && this.connState === 'connecting' && Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 50))
     }
     if (!this.mud.connected) {
       const aborted = this.connectAborted
-      this.state = 'disconnected'
+      this.setState('disconnected')
       this.mud.disconnect()
       throw new Error(aborted
         ? `连接 ${params.host}:${params.port} 失败（对端拒绝或关闭）`
         : `连接 ${params.host}:${params.port} 超时`)
     }
 
-    this.state = 'connected'
+    this.setState('connected')
     this.screen.setState('connected')
     this.onLog?.('info', `TCP 已建立（${Date.now() - started}ms），发送账号名`)
 
@@ -157,13 +167,13 @@ export class SessionRuntime {
     // 服务器提示符形态各异（"您的英文名字：" / "请输入密码：" 等），
     // 实测后可改为等待特定提示再发；先直发保证最小可用。
     if (!this.mud.sendCredential(params.credentials.name)) {
-      this.state = 'disconnected'
+      this.setState('disconnected')
       this.mud.disconnect()
       throw new Error(`连接 ${params.host}:${params.port} 在 login 前关闭`)
     }
     await new Promise(r => setTimeout(r, 200))
     if (!this.mud.sendCredential(params.credentials.pass)) {
-      this.state = 'disconnected'
+      this.setState('disconnected')
       this.mud.disconnect()
       throw new Error(`连接 ${params.host}:${params.port} 在 login 中关闭`)
     }
@@ -171,7 +181,7 @@ export class SessionRuntime {
     // 模式解锁），不补这行则行流停在欢迎屏，房间之后的闲聊/进出全部不来。
     await new Promise(r => setTimeout(r, 200))
     if (!this.mud.sendCredential('')) {
-      this.state = 'disconnected'
+      this.setState('disconnected')
       this.mud.disconnect()
       throw new Error(`连接 ${params.host}:${params.port} 在 login 收尾时关闭`)
     }
@@ -181,7 +191,7 @@ export class SessionRuntime {
   /** 断连（幂等）。 */
   disconnect(): void {
     this.mud.disconnect()
-    this.state = 'disconnected'
+    this.setState('disconnected')
   }
 
   /** 销毁（session/disposed 调用）：断连 + 标记已销毁。 */

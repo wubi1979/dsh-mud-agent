@@ -51,6 +51,8 @@ export interface MudClientInjected {
   /** 停止接入：MUD 信息不再进入 agent。 */
   stopAdmit: (sessionId: string) => Promise<void>
   refreshStatus: (sessionId?: string) => Promise<void>
+  /** 订阅服务端 watchStatus 状态流（C5.1：首帧快照 + 变化推帧）；返回停止函数。 */
+  startStatusWatch: () => () => void
   openUserSession: (serverId: string, userId: string) => void
   /** 打开账号的只读游戏画面 tab（右侧栏；关闭不影响后台连接）。 */
   openGameView: (sessionId: string) => void
@@ -104,7 +106,7 @@ function admitBadge(sessionStatus: Readonly<Record<string, SessionStatusRow>>, s
 export function MudSidebar({
   collapsed, useServers,
   addServer, removeServer, addUser, removeUser,
-  connectUser, disconnect, admit, stopAdmit, refreshStatus,
+  connectUser, disconnect, admit, stopAdmit, refreshStatus, startStatusWatch,
   openUserSession, openGameView, toggleSidebar,
 }: MudSidebarProps) {
   const { servers, conn, sessionStatus, credentialStatus } = useServers(s => s)
@@ -115,9 +117,9 @@ export function MudSidebar({
 
   useEffect(() => {
     void refreshStatus()
-    const timer = window.setInterval(() => { void refreshStatus() }, 2500)
-    return () => { window.clearInterval(timer) }
-  }, [refreshStatus])
+    // C5.1：状态经 watchStatus 流推送（首帧快照 + 变化推帧），轮询定时器移除。
+    return startStatusWatch()
+  }, [refreshStatus, startStatusWatch])
 
   return (
     <div className={clsx(css.root, collapsed && css.collapsed)}>

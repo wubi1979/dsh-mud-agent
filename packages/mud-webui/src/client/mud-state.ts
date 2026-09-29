@@ -361,18 +361,52 @@ export class MudStateController {
     await this.refreshCredentials()
     try {
       const body = await this.remote.status(focusSessionId)
-      const sessionStatus: Record<string, SessionStatusRow> = {}
-      for (const row of body.sessions) {
-        if (row.sessionId === '') continue
-        sessionStatus[row.sessionId] = { sessionId: row.sessionId, state: row.state, admitted: row.admitted }
-      }
-      const focus = focusSessionId ?? this.state.conn.sessionId ?? undefined
-      const focusRow = focus !== undefined ? sessionStatus[focus] : undefined
-      const state: MudConnState = focusRow?.state === 'connected' ? 'connected'
-        : focusRow?.state === 'connecting' ? 'connecting' : 'idle'
-      this.set({ sessionStatus, conn: { ...this.state.conn, state, error: null } })
+      this.applyStatusRows(body.sessions, focusSessionId)
     } catch { /* keep previous snapshot */ }
   }
+
+  /** 状态行落账（watchStatus 推帧与 status() 回填共用；focus 缺省用当前会话）。 */
+  private applyStatusRows(
+    rows: readonly { sessionId: string; state: string; admitted: boolean }[],
+    focusSessionId?: string,
+  ): void {
+    const sessionStatus: Record<string, SessionStatusRow> = {}
+    for (const row of rows) {
+      if (row.sessionId === '') continue
+      sessionStatus[row.sessionId] = { sessionId: row.sessionId, state: row.state, admitted: row.admitted }
+    }
+    const focus = focusSessionId ?? this.state.conn.sessionId ?? undefined
+    const focusRow = focus !== undefined ? sessionStatus[focus] : undefined
+    const state: MudConnState = focusRow?.state === 'connected' ? 'connected'
+      : focusRow?.state === 'connecting' ? 'connecting' : 'idle'
+    this.set({ sessionStatus, conn: { ...this.state.conn, state, error: null } })
+  }
+
+  /**
+   * 状态流消费（C5.1）：订阅服务端 watchStatus —— 首帧全量快照，随后状态变化
+   * 毫秒级推帧，轮询定时器移除。幂等（重复调用返回同一停止函数）；
+   * 断流（宿主重启/网络）静默保持既有快照，操作型 refreshStatus 仍兜底。
+   * @returns 停止函数（abort 并清服务端订阅）。
+   */
+  startStatusWatch(): () => void {
+    if (this.statusWatchStop !== null) return this.statusWatchStop
+    const controller = new AbortController()
+    const stop = (): void => {
+      this.statusWatchStop = null
+      controller.abort()
+    }
+    this.statusWatchStop = stop
+    void (async () => {
+      try {
+        for await (const frame of this.remote.watchStatus(controller.signal)) {
+          this.applyStatusRows(frame.sessions)
+        }
+      } catch { /* 断流：保持既有快照（首个状态操作会经 refreshStatus 重同步） */ }
+    })()
+    return stop
+  }
+
+  private statusWatchStop: (() => void) | null = null
 
   private labelOf(serverId: string, userId: string): string | null {
     const server = this.state.servers.find(s => s.id === serverId)

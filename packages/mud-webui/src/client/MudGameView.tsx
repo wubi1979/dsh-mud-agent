@@ -17,6 +17,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { IconRefreshOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { GameFrame } from 'mud-core3/types'
 import type { MudRemoteController } from './mud-remote.ts'
 import { formatCopy, zh } from './locales.ts'
@@ -61,6 +62,8 @@ export function MudGameView({ useTabInfo, sessionId, params, remote }: MudGameVi
   const target = params(tab.id)?.sessionId ?? sessionId
   const [serverState, setServerState] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // 「刷新画面」：递增即重触发 follow effect（旧流 abort 清理，新流以 snapshot 回放恢复）。
+  const [reloadKey, setReloadKey] = useState(0)
   const host = useRef<HTMLDivElement>(null)
   const screen = useRef<{ term: Terminal; fit: FitAddon } | null>(null)
   const cols = useRef(80)
@@ -139,7 +142,7 @@ export function MudGameView({ useTabInfo, sessionId, params, remote }: MudGameVi
       const key = gameFollowKey(sessionId, tab.id)
       if (gameFollows.get(key)?.done === done) gameFollows.delete(key)
     }
-  }, [remote, sessionId, tab.id, target])
+  }, [remote, sessionId, tab.id, target, reloadKey])
 
   const stateText = (state: string): string => {
     if (state === 'connected' || state === 'connecting' || state === 'disconnected') return zh[state]
@@ -150,8 +153,15 @@ export function MudGameView({ useTabInfo, sessionId, params, remote }: MudGameVi
     : serverState === null ? zh.loading : stateText(serverState)
   return (
     <section className={css.gameRoot} data-mud-game>
+      {/* 分割线 + 状态 + 按钮：对齐原生文件窗口（ui-sidebar-files FilesBody header）。 */}
       <div className={css.toolbar}>
         <span className={css.toolbarStatus} role="status">{status}</span>
+        <Tooltip label={zh.reload} side="bottom" delayMs={500}>
+          <button type="button" className={css.tool} aria-label={zh.reload}
+            onClick={() => { setReloadKey(k => k + 1) }}>
+            <IconRefreshOutlineRegular />
+          </button>
+        </Tooltip>
       </div>
       <div className={css.xtermHost} ref={host} />
     </section>

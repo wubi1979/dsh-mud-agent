@@ -1,7 +1,7 @@
 /**
- * Game window layout (client half): a fixed top toolbar (connect/disconnect
- * button + status) above a flex-1 xterm surface. The toolbar never overlays
- * the terminal; the xterm host fills the remaining space and clips overflow.
+ * Game window layout (client half): a fixed top bar (status + reload button,
+ * mirroring the native files pane header) above a flex-1 xterm surface. The
+ * bar never overlays the terminal; the xterm host fills the remaining space and clips overflow.
  * The terminal element is pinned to 100% so a failed/late fit cannot inflate
  * it past the container.
  */
@@ -16,31 +16,47 @@
   background: var(--dsw-alias-bg-base);
 }
 
-/* Top toolbar: one row, never overlapping the terminal below. */
+/* Top bar: one row mirroring the native files pane header
+ * (ui-sidebar-files FilesBody `.header`): 38px, status at the left, tool
+ * button at the end, hairline rule below. Never overlapping the terminal. */
 .toolbar {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--dsw-alias-interactive-bg-hover);
+  gap: 4px;
+  box-sizing: border-box;
+  height: 38px;
+  padding: 0 6px 0 16px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
   background: var(--dsw-alias-bg-base);
 }
 
-.toolbarButton {
-  padding: 5px 16px;
-  border: none;
-  border-radius: 6px;
-  background: var(--dsw-alias-state-business-primary);
-  color: #fff;
-  cursor: pointer;
-  font-size: 12.5px;
+/* Same icon button as the native files header: a 28px circle around a 15px
+ * glyph (FilesBody `.tool`). */
+.tool {
+  display: inline-flex;
   flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 6px;
+  color: var(--dsw-alias-label-secondary);
+  line-height: 1;
+  background: transparent;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  cursor: pointer;
 }
 
-.toolbarButton:disabled {
-  opacity: 0.5;
-  cursor: default;
+.tool svg {
+  width: 15px;
+  height: 15px;
+}
+
+.tool:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .toolbarStatus {

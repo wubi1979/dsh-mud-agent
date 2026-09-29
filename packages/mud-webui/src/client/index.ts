@@ -178,6 +178,7 @@ export function apply(ctx: ClientContext): void {
     admit: (sessionId) => mud.admit(sessionId),
     stopAdmit: (sessionId) => mud.stopAdmit(sessionId),
     refreshStatus: (sessionId) => mud.refreshStatus(sessionId),
+    startStatusWatch: () => mud.startStatusWatch(),
     openUserSession,
     openGameView: (id) => {
       ctx.sidebarRight.openTabIn(

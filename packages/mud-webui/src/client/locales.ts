@@ -16,6 +16,7 @@ export const zh = {
   connecting: '连接中…',
   disconnected: '已断开',
   failed: '画面中断：{message}',
+  reload: '刷新画面',
 } as const
 
 /** English copy（词典位先占；本包未接 locale 服务，EN 暂不启用）。 */
@@ -26,6 +27,7 @@ export const en = {
   connecting: 'Connecting…',
   disconnected: 'Disconnected',
   failed: 'View interrupted: {message}',
+  reload: 'Reload view',
 } as const
 
 /** 按 {name} 占位符填充文案。 */

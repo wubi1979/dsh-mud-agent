@@ -372,6 +372,105 @@ describe('MudService 接入闸门错误面', () => {
   })
 })
 
+describe('MudService watchStatus 状态流', () => {
+  /** 已装配投递器的服务（admit/stop 可用）。 */
+  function seededService(): MudService {
+    const accounts = new Map<string, AccountRecord>([
+      ['a1', { id: 'a1', name: 'u1', passRef: 'c1', serverId: 'w1', preset: 'mud-player', admitted: false }],
+    ])
+    return new MudService({
+      ...makeDeps(new Map(), accounts, new Map()),
+      deliver: () => true,
+      delivererConfig: { quietMs: 10 },
+    })
+  }
+
+  it('首帧快照；登记/admit/stop/dispose 各推一帧；abort 后流结束', async () => {
+    const service = seededService()
+    const controller = new AbortController()
+    const iter = service.watchStatusStream(controller.signal)[Symbol.asyncIterator]()
+
+    // 首帧：订阅即得全量快照（此刻尚无会话 → 空面）
+    const first = await iter.next()
+    expect(first.done).toBeFalsy()
+    expect(first.value.sessions).toEqual([])
+
+    service.register('a1')
+    const registered = await iter.next()
+    expect(registered.value.sessions.map(s => s.sessionId)).toEqual(['a1'])
+    expect(registered.value.sessions[0]!.state).toBe('disconnected')
+
+    service.admit('a1')
+    const admitted = await iter.next()
+    expect(admitted.value.sessions[0]!.admitted).toBe(true)
+
+    service.stop('a1')
+    const stopped = await iter.next()
+    expect(stopped.value.sessions[0]!.admitted).toBe(false)
+
+    service.dispose('a1')
+    const disposed = await iter.next()
+    expect(disposed.value.sessions).toEqual([])
+
+    controller.abort()
+    const after = await iter.next()
+    expect(after.done).toBe(true)
+  })
+
+  it('connect/disconnect 经 runtime 状态迁移推帧', async () => {
+    const server = await startMockServer()
+    const servers = new Map<string, ServerRecord>([
+      ['w1', { workspaceId: 'w1', name: 'S1', host: '127.0.0.1', port: server.port }],
+    ])
+    const accounts = new Map<string, AccountRecord>([
+      ['a1', { id: 'a1', name: 'u1', passRef: 'c1', serverId: 'w1', preset: 'mud-player', admitted: false }],
+    ])
+    const creds = new Map<string, ResolvedCredentials>([['c1', { name: 'u1', pass: 'p1' }]])
+    const service = new MudService(makeDeps(servers, accounts, creds))
+    service.register('a1')
+
+    const controller = new AbortController()
+    const iter = service.watchStatusStream(controller.signal)[Symbol.asyncIterator]()
+    await iter.next() // 首帧快照（a1 disconnected）
+
+    await service.connect('a1')
+    // 消费 connecting 帧，直到看到 connected
+    for (;;) {
+      const f = await iter.next()
+      if (f.done) throw new Error('流意外结束')
+      const row = f.value.sessions.find(s => s.sessionId === 'a1')
+      if (row?.state === 'connected') break
+    }
+
+    service.disconnect('a1')
+    const f2 = await iter.next()
+    const row2 = f2.value?.sessions.find(s => s.sessionId === 'a1')
+    expect(row2?.state).toBe('disconnected')
+
+    controller.abort()
+    await server.close()
+  })
+
+  it('多订阅者互不影响：注销一个，另一个继续收帧', () => {
+    const service = seededService()
+    const framesA: number[] = []
+    const framesB: number[] = []
+    const unsubscribeA = service.subscribeStatus(() => { framesA.push(1) })
+    service.subscribeStatus(() => { framesB.push(1) })
+
+    service.register('a1')
+    expect(framesA.length).toBeGreaterThan(0)
+    expect(framesB.length).toBe(framesA.length)
+
+    unsubscribeA()
+    service.admit('a1')
+    expect(framesA.length).toBe(framesB.length - 1) // A 已注销不再收
+    expect(framesB.length).toBeGreaterThan(0)
+
+    service.disposeAll()
+  })
+})
+
 describe('MudService 连接失败可诊断', () => {
   const account = (over: Partial<AccountRecord> = {}): AccountRecord => ({
     id: 'a1', name: 'u1', passRef: 'MUD_REF', serverId: 'ws-1', preset: 'mud-player', admitted: false, ...over,
