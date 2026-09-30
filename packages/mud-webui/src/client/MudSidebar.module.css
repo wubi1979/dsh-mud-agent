@@ -33,6 +33,17 @@
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
+/* 展开态 logo：静态标识（非按钮，无交互）——收缩由右侧 panel 图标钮承担。 */
+.brandStatic {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  padding: 2px 4px;
+  color: inherit;
+}
+
 .brandMark {
   display: flex;
   align-items: center;
@@ -81,18 +92,25 @@
   color: var(--dsw-alias-label-primary);
 }
 
+/* 添加服务器：对齐原生新会话按钮（SidebarRoot .newSession）—— 38px 高、
+ * 14px/500 字重、0.5px 描边、elevated 底、md 圆角；hover 浮层底。 */
 .addServer {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 4px 10px 6px;
-  padding: 7px 10px;
-  border: none;
-  border-radius: 6px;
+  justify-content: center;
+  gap: 6px;
+  margin: 4px 10px 8px;
+  padding: 8px 12px;
+  height: 38px;
+  box-sizing: border-box;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-button-elevated-fill);
   color: var(--dsw-alias-label-primary);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
 }
 
 .addServer:hover {
@@ -114,9 +132,10 @@
 
 .sectionLabel {
   display: block;
-  padding: 6px 8px 4px;
-  font-size: 12px;
+  padding: 8px 8px 4px;
+  font-size: 14px;
   font-weight: 600;
+  line-height: 22px;
   color: var(--dsw-alias-label-secondary);
 }
 
@@ -132,23 +151,63 @@
   margin-bottom: 4px;
 }
 
+/* 服务器行（原生文件树 FilesBody .row 形态）：单行名字、点击整行切换展开。 */
 .serverRow {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 6px;
-  border-radius: 6px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 5px 10px;
+  border-radius: var(--dsw-radius-md);
+  cursor: pointer;
 }
 
 .serverRow:hover {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
+.serverRow:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -2px;
+}
+
+/* 图标位（DisclosureRow previewChevron 同款）：常态 globe，行 hover 换展开/收起 chevron。 */
 .serverIcon {
-  display: flex;
+  position: relative;
+  display: inline-flex;
   align-items: center;
+  justify-content: center;
   flex: none;
-  color: var(--dsw-alias-label-secondary);
+  width: 16px;
+  height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.iconIdle {
+  display: inline-flex;
+  opacity: 1;
+  transition: opacity 100ms ease;
+}
+
+.iconHoverChevron {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.serverRow:hover .iconIdle {
+  opacity: 0;
+}
+
+.serverRow:hover .iconHoverChevron {
+  opacity: 1;
 }
 
 .serverBody {
@@ -160,26 +219,25 @@
 
 .serverName {
   font-size: 13px;
-  font-weight: 600;
-  line-height: 1.35;
+  line-height: 1.5;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.serverMeta {
-  font-size: 11px;
-  color: var(--dsw-alias-label-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
+/* 动作钮（+ / …）：默认隐形，行 hover 或钮自身聚焦时出现（原生列表 hover 态同款）。 */
 .rowActions {
   display: flex;
   align-items: center;
   gap: 2px;
   flex: none;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.serverRow:hover .rowActions,
+.serverRow:focus-within .rowActions {
+  opacity: 1;
 }
 
 .smallIcon {
@@ -311,30 +369,56 @@
   height: 36px;
 }
 
-/* 收缩 rail 的品牌切换钮：常驻 globe 标记，hover 换 panel 展开图标
-   （原生 SidebarRoot rail 同款互换；rest 无 hover 圆底）。 */
+/* 收缩 rail 的品牌切换钮：固定 36×36（原生 rail 钮规格，与 .railToggle 一致），
+   图标绝对叠放 + opacity 切换 —— 图标高度差不传导进布局，hover 不挤下方内容。 */
 .railBrand {
   flex: none;
-  padding: 4px;
+  position: relative;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  justify-content: center;
+  align-items: center;
+}
+
+/* 收缩态不继承 .brand 的 flex:1 拉伸：36×36 靠 logoRow 居中（原生 rail 同款）。 */
+.collapsed .railBrand {
+  flex: none;
 }
 
 .railBrand:hover {
   background: transparent;
 }
 
+/* 两枚图标都绝对铺满按钮盒 + flex 两轴居中（inset:0 对无尺寸元素是拉伸而非
+   margin-auto 居中，必须用 flex 居中；否则 MudLogo 水平靠左偏离 rail 中线）。 */
+.railBrand .brandMark {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 1;
+  transition: opacity 100ms ease;
+}
+
 .railHoverIcon {
-  display: none;
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   color: var(--dsw-alias-label-primary);
+  opacity: 0;
+  transition: opacity 100ms ease;
 }
 
 .railBrand:hover .railHoverIcon {
-  display: flex;
+  opacity: 1;
 }
 
 .railBrand:hover .brandMark {
-  display: none;
+  opacity: 0;
 }
 
 .collapsed .logoRow {
