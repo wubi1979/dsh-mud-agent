@@ -296,10 +296,10 @@ describe('SessionRuntime 行流积累', () => {
     expect(rt).not.toBeNull()
     expect(rt!.pendingLineCount).toBeGreaterThan(0)
 
-    const lines = rt!.consumePendingLines()
+    const lines = rt!.takeLinesAfter(-1)
     expect(lines.length).toBeGreaterThan(0)
     expect(lines.some(l => l.text.includes('欢迎'))).toBe(true)
-    expect(rt!.pendingLineCount).toBe(0) // 消费后清空
+    expect(rt!.pendingLineCount).toBe(lines.length) // take 不消费：录制缓冲保留（pull 模型）
 
     await service.disposeAll()
     await server.close()
@@ -364,11 +364,56 @@ describe('MudService 接入闸门错误面', () => {
     expect(service.status('a1').admitted).toBe(false)
   })
 
-  it('flushPending：未登记会话是空操作，已登记会话不抛错', () => {
+  it('flushOnce：未登记会话是空操作，已登记会话不抛错', () => {
     const service = serviceWithDeliverer()
-    expect(() => service.flushPending('nope')).not.toThrow()
+    expect(() => service.flushOnce('nope')).not.toThrow()
     service.register('a1')
-    expect(() => service.flushPending('a1')).not.toThrow()
+    expect(() => service.flushOnce('a1')).not.toThrow()
+  })
+})
+
+describe('MudService toolContextFor 工具归属聚合', () => {
+  it('流转：登记前 null → admit 反映闸门 → 连接/断连反映 connState → 销毁后 null', async () => {
+    const server = await startMockServer()
+    const servers = new Map<string, ServerRecord>([
+      ['w1', { workspaceId: 'w1', name: 'S1', host: '127.0.0.1', port: server.port }],
+    ])
+    const accounts = new Map<string, AccountRecord>([
+      ['a1', { id: 'a1', name: 'u1', passRef: 'c1', serverId: 'w1', preset: 'mud-player', admitted: false }],
+    ])
+    const creds = new Map<string, ResolvedCredentials>([['c1', { name: 'u1', pass: 'p1' }]])
+    const service = new MudService({
+      ...makeDeps(servers, accounts, creds),
+      deliver: () => true,
+      delivererConfig: { quietMs: 10 },
+    })
+
+    // 未登记 → null（工具层可读拒绝「本会话未绑定 MUD 账号」）
+    expect(service.toolContextFor('a1')).toBeNull()
+
+    service.register('a1')
+    const before = service.toolContextFor('a1')
+    expect(before).not.toBeNull()
+    expect(before!.admitted).toBe(false)
+    expect(before!.connState).toBe('disconnected')
+    expect(before!.runtime).toBe(service.get('a1'))
+
+    // admit → 闸门状态进上下文
+    service.admit('a1')
+    expect(service.toolContextFor('a1')!.admitted).toBe(true)
+
+    // 连接/断连 → connState 跟随
+    await service.connect('a1')
+    expect(service.toolContextFor('a1')!.connState).toBe('connected')
+    service.disconnect('a1')
+    expect(service.toolContextFor('a1')!.connState).toBe('disconnected')
+
+    // 销毁 → null
+    service.dispose('a1')
+    expect(service.toolContextFor('a1')).toBeNull()
+
+    await service.disposeAll()
+    await server.close()
   })
 })
 
@@ -397,7 +442,7 @@ describe('MudService watchStatus 状态流', () => {
 
     service.register('a1')
     const registered = await iter.next()
-    expect(registered.value.sessions.map(s => s.sessionId)).toEqual(['a1'])
+    expect(registered.value.sessions.map((s: { sessionId: string }) => s.sessionId)).toEqual(['a1'])
     expect(registered.value.sessions[0]!.state).toBe('disconnected')
 
     service.admit('a1')
@@ -444,7 +489,7 @@ describe('MudService watchStatus 状态流', () => {
 
     service.disconnect('a1')
     const f2 = await iter.next()
-    const row2 = f2.value?.sessions.find(s => s.sessionId === 'a1')
+    const row2 = f2.value?.sessions.find((s: { sessionId: string }) => s.sessionId === 'a1')
     expect(row2?.state).toBe('disconnected')
 
     controller.abort()

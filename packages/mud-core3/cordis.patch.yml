@@ -35,6 +35,7 @@
               suffix: Your working directory is {{cwd}}.
               prefix: |
                 You are a MUD player. MUD game messages arrive as user messages — read them and respond directly, as if a human told you what happened. You are playing a text-based online game (北大侠客行). Respond in Chinese.
+                你可以用 mud_send 向游戏发命令（cmd）或裸读近期行流（不带 cmd）；用 mud_state 查看连接与接入状态。连接与接入由用户手工控制，你不能自行建连。删档命令 suicide 被禁止。若工具返回「未接入/未连接」，如实告知用户。
           - id: agent-instructions
             name: '@deepseek-ai/dsh-agent-instructions'
             config:
@@ -156,8 +157,11 @@
           - id: tool-plugin-manager
             name: '@deepseek-ai/dsh-plugin-manager/tools'
             disabled: true
-          # mud-core3 preset 行：第一期无工具面，preset 作用域不加载 core3 引擎。
-          # 工具面落地后（第二期）在此行注册 mud_send/mud_state 工具。
+          # mud-core3 工具行（第二期）：mud_send / mud_state 注册在 preset 作用域
+          # （mud-player 能力面；standard 账号无 mud 工具）。注册期不依赖引擎，
+          # 执行期 ctx.get('mudCore3') 解析引擎窄面；改工具面后须重建本包。
+          - id: mud-tools
+            name: 'file:///D:/Code/dsh-mud-agent/packages/mud-core3/lib/preset.js'
 
     # 引擎行：全局作用域加载 mud-core3（agent/created 监听、session/disposed 监听、remote 服务、投递、会话日志）
     # 日志落盘目录固定到本仓 logs/（缺省是启动目录下的 mud-logs）；logFile: false 可只留内存环。

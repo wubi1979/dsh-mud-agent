@@ -41,8 +41,8 @@ export class Mud {
   onBoundary: ((kind: 'ga' | 'eor') => void) | null = null
   /** 断线钩子：装配层接此复位世界状态 / 标记断开。 */
   onDisconnect: (() => void) | null = null
-  /** 直发观测钩子：send 成功后以命令原文回调。凭据走 sendCredential 不触发。 */
-  onSend: ((cmd: string) => void) | null = null
+  /** 直发观测钩子：send 成功后以命令原文+来源回调。凭据走 sendCredential 不触发。 */
+  onSend: ((cmd: string, source: 'agent' | 'user') => void) | null = null
 
   get connected(): boolean {
     return this.conn?.connected ?? false
@@ -95,10 +95,10 @@ export class Mud {
     this.onClose()
   }
 
-  /** 直发：不占行流、不做任何判据。未连接返回 false。成功才触发 onSend。 */
-  send(cmd: string): boolean {
+  /** 直发：不占行流、不做任何判据。未连接返回 false。成功才触发 onSend（source 区分回显样式）。 */
+  send(cmd: string, source: 'agent' | 'user' = 'agent'): boolean {
     const ok = this.conn?.send(cmd) ?? false
-    if (ok) this.onSend?.(cmd)
+    if (ok) this.onSend?.(cmd, source)
     return ok
   }
 

@@ -121,4 +121,18 @@
 - **文档同步（一期收口）**：`architecture/00-core.md` §3.5 对齐实现（单开守卫/guide 入口/工具栏接线/cols 120）、§4 验收表与 §4.1 切片表补 C5/C5.1 行、§5 后置清单补画面后置项与 C5.2 暂缓指针；`PLAN.md` 一期标记完成并清空已落地的 C5/C5.1 起草节（事实源已在 §3.5）；`ARCHITECTURE.md` 进度注更新
 - **一期验收基线**：core3 测试 132 项全绿；§4 验收表全过（端到端：接入 → MUD 消息进会话 → agent 回答实机跑通）；待办仅剩 C5.2（已定稿暂缓，见 `doc/plans/c5.2-line-tagging-split-screen.md`）
 
+## [v0.0.12]二期工具面落地 (2026-09-30)
+> 总结：mud_send/mud_state 注册进 mud-player preset + 投递 pull 化（水位线 + turn/end 驱动）；agent 可向 MUD 发命令、查状态；132 → 172 项全绿
+
+- **`src/read.ts`（新）**：`ReadMachine` 独立类（自 core2 竞速机移植）挂 SessionRuntime——判定序 `failOn > until > gaCount > maxLines` 写死；收束源 quiet/timeout/signal/disconnected/danger（`abortWait` 保留 API 供后置意识层）；swallow 吞行钩子空实现；`ReadResult.rest` 砍掉（逐行回调模型下自然并回）
+- **投递 pull 化（水位线模型）**：`deliver.ts` 去自持缓冲，改注入 `LineSource`（seen/take/commit）；`runtime.ts` 双水位线 `deliveredAbs`/`readAbs`（seen = max，初始/断线复位 -1）+ `takeLinesAfter`/`commitDelivered` + `read()`（裸读 = 尾部 maxLines 快照；readAbs 推进）；失败批次不推进 delivered（下次从失败点重试不丢行）；`onBoundary` 直挂 readMachine（GA 判据）
+- **投递时机 turn/end 驱动**：订阅宿主 `session/event`（global）——`turn/start` 抑制（不武装定时器）、`turn/end` 冲刷一次；空闲模式静默定时语义不变；冷启动补投 `flushPending` → `flushOnce`
+- **`src/tools.ts`（新，纯层零宿主 import）**：`mud_send`（拒绝序：引擎缺席 → 归属 → 禁词 → 闸门 → 连接 → 执行，全部可读拒绝 `{ok:false,error}` 不 throw）/ `mud_state`（只过归属，不受闸门/连接）；禁词表最小集 `{ suicide }` 全段扫描（`[\s;]+` 切 token，堵 "look;suicide" 绕过）；compileListen 全空 = `{}`、缺省判据按模式注入（有 cmd `gaCount:1`、裸读 `quietMs:300`）；`timeoutMs` 钳制 ≤ 60000；注册完整性自检 fail-loud
+- **`src/preset.ts`（新）**：preset 作用域注册入口（`lib/preset.js`），注册期不依赖引擎、执行期 `ctx.get('mudCore3')` 解析窄面；`cordis.patch.yml` preset 行追加 `mud-tools` 插件行；mud-player persona 追加工具说明
+- **接线**：`ctx.provide('mudCore3')` 扩展 `toolContextFor`（roster 归属 + `{sessionId, runtime, admitted, connState}` 聚合）+ `defaults`；Config 新增 `sendTimeoutMs`(15000)/`sendMaxLines`(50)、**移除 `deliverMaxPendingLines`**（自持缓冲废弃，上限由 `recordLines` 承担）；peerDependencies 增 `@deepseek-ai/dsh-tools`
+- **send 回显格式（实机验证后调整）**：命令回显带账号名@来源前缀——agent 发送 = `账号名@agent>` 灰（90m），user 发送 = `账号名@user>` 青（36m，为输入回传预留的既有样式）；`Mud.send`/`SessionRuntime.send` 加 `source` 参数，账号名由 `register` 从 roster 注入；凭据路径（sendCredential）不回显不变
+- **画面工具栏按钮原生化（实机调整）**：连接/断开按钮从自绘样式改用宿主原生 `Button`（ghost/sm，随宿主亮/暗主题），删除自绘 `.toolText`/`.toolPrimary`
+- **测试 132 → 174 项全绿**：新增 `test/read.spec.ts` 24 条（判定序/收束源/裸读/吞行钩子含钩子内同步 abortWait/并发 fail-loud）、runtime TCP 7 条（send+read/积压不进 acc/裸读/断线中断/水位线不重投/turn/end 冲刷/失败重试）、`test/tools.spec.ts` 8 条（注册自检/拒绝序/deny 全段扫描/闸门/连接/state 不受闸门/listen 编译/timeout 钳制）、screen 补 dispose 后 follower 断流 1 条、deliver pull 化重写 + service 增 toolContextFor 流转；build + typecheck 通过
+- **文档同步**：`architecture/00-core.md` §3.3 工具面改现役（二工具/拒绝序/禁词表/ReadMachine/listen 编译）、§3.4 投递改水位线 pull 模型 + turn/end 驱动、§1/§3.1/§4/§5 对齐（验收表补工具面与水位线行、切片表补 C6、后置清单移除已落地的工具面项）
+
 > AI生成

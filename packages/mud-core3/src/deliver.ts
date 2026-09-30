@@ -1,25 +1,50 @@
 /**
- * mud-core3 deliver — 聚合投递器：MUD 行流 → 用户消息投递进会话。
+ * mud-core3 deliver — 聚合投递器（pull 模型）：MUD 行流 → 用户消息投递进会话。
  *
- * 每个已注册的 SessionRuntime 挂一个 Deliverer 实例：
- *   - 行流到达 → 累积到缓冲（有上限，超出丢最旧）
- *   - 静默窗口（行流静默 N ms）或**最长等待**（连续行流永不静默）到期 → 打包投递
- *   - 一批超过单条上限时**拆成多条**依次投递，不丢弃行
+ * 二期改造（doc/PLAN.md「二期详细设计 §4/§12」）：**单一真相源 = runtime.pendingLines**
+ * （录制环形缓冲），投递器**不再自持缓冲**——投递 = 从水位线之后拉取（take）。
+ * 两条水位线（行号空间 = MudLine.abs，单调递增）：
+ *   deliveredAbs —— 投递推进：已投递给 agent 的最远行号（只推进到成功投出的批次）
+ *   readAbs      —— 工具读推进：最近一次 read 返回结果的最大行号
+ *   已见线 seen = max(deliveredAbs, readAbs) ← agent 已经见过的行边界
+ *
+ * 投递时机：
+ *   A. turn 期间（turn/start → turn/end）：抑制模式——不武装定时器，行只进
+ *      pending 积累，turn/end 统一冲刷；
+ *   B. turn/end：flush 一次——从 pending 取 abs > seen 的行，按 maxLines/maxChars
+ *      拆条投出 → delivered 只推进到成功投出的批次（失败批次不推进、行仍在
+ *      pending，下次从失败点自然重试——不丢行）；
+ *   C. 空闲模式（agent 不在 turn）：quiet/maxWait 定时器到期即 flush。
  *
  * 接入闸门：
- *   - admit() → 开始投递；水位 = 当前时刻（积压不回放）
- *   - stop() → 停止投递；在途缓冲不投，后续行照常积累（录制）
+ *   - admit() → 开始投递；水位 = 接入时刻（delivered 推进到 pending 末端，积压不回放）
+ *   - stop() → 停止投递；pending 照常积累（录制），不投
+ *   - 未接入：不 take、不武装定时器、零积累零丢弃（闸门在源头）
  *
- * 冷会话：deliver 回调返回 false 表示 agent 不在线，此时未投出的批次**保留在缓冲**里
- * （受 maxPendingLines 约束），等 agent 唤醒时由 flushNow() 投出。
+ * 冷启动补投：agent/created → flushOnce（从 seen 拉取一次，触发首个回合）。
  *
- * 纯 TS，零宿主依赖。deliver 回调由装配层注入（agent.followup + createUserMessage）。
+ * 纯 TS，零宿主依赖。deliver 回调与水位线源由装配层注入。
  */
 
 import type { MudLine } from './link/line.ts'
 
-/** 投递回调（装配层注入）；返回 false = 本次未投出（agent 离线），批次保留。 */
+/** 投递回调（装配层注入）；返回 false = 本次未投出（agent 离线），批次保留重试。 */
 export type DeliverFn = (sessionId: string, text: string) => boolean | void
+
+/**
+ * 水位线源（runtime 侧实现）：pending 是单一真相，投递从已见线之后拉取。
+ * delivered/readAbs 的真相都在 runtime，投递器只经此窄面读写。
+ */
+export interface LineSource {
+  /** 当前已见线 = max(deliveredAbs, readAbs)。 */
+  seen(): number
+  /** pending 末端行号（admit 水位 = 接入时刻用；空 pending = -1）。 */
+  end(): number
+  /** 取 abs > seen 的行（不推进水位——delivered 只推进到成功投出的批次）。 */
+  take(seen: number): MudLine[]
+  /** 投出成功后推进 deliveredAbs（单调 max）。 */
+  commit(abs: number): void
+}
 
 /** 投递器配置。 */
 export interface DelivererConfig {
@@ -31,11 +56,9 @@ export interface DelivererConfig {
   maxLines?: number
   /** 单条投递最大字符数（超出拆成多条）。缺省 8000 字符。 */
   maxChars?: number
-  /** 未投出缓冲上限行数（超出丢最旧；防挂机模式无界增长）。缺省 500 行。 */
-  maxPendingLines?: number
-  /** 缓冲溢出丢弃回调（观测用；累计值用于限流上报）。 */
-  onDrop?: (sessionId: string, droppedNow: number, droppedTotal: number) => void
-  /** 每批投递结果回调（观测用；delivered=false 表示批次保留待补投）。 */
+  /** 水位线源（pull 模型必填）：从 runtime.pendingLines 按水位线拉取。 */
+  source: LineSource
+  /** 每批投递结果回调（观测用；delivered=false 表示批次保留待重试）。 */
   onBatch?: (sessionId: string, lineCount: number, delivered: boolean) => void
 }
 
@@ -43,14 +66,13 @@ const DEFAULT_QUIET_MS = 500
 const DEFAULT_MAX_WAIT_MS = 3000
 const DEFAULT_MAX_LINES = 50
 const DEFAULT_MAX_CHARS = 8000
-const DEFAULT_MAX_PENDING_LINES = 500
 /** 单行本身就超过 maxChars 时的截断标记。 */
 const TRUNCATED_SUFFIX = '\n...(截断)'
 
 /**
- * 单会话聚合投递器。
+ * 单会话聚合投递器（pull 模型，无自持缓冲）。
  *
- * 生命周期：admit → 投递 → stop。未 admit 时行流只积累（受上限约束）。
+ * 生命周期：admit → 投递 → stop。未 admit 时零拉取（录制由 runtime 负责）。
  * dispose 时清除定时器（session/disposed 用）。
  */
 export class Deliverer {
@@ -60,26 +82,24 @@ export class Deliverer {
   private readonly maxWaitMs: number
   private readonly maxLines: number
   private readonly maxChars: number
-  private readonly maxPendingLines: number
-  private readonly onDrop: ((sessionId: string, droppedNow: number, droppedTotal: number) => void) | undefined
+  private readonly source: LineSource
   private readonly onBatch: ((sessionId: string, lineCount: number, delivered: boolean) => void) | undefined
 
   private admitted = false
-  private buffer: MudLine[] = []
+  /** turn 抑制模式（turn/start → turn/end）：行只进 pending，不武装定时器。 */
+  private suppressed = false
   private quietTimer: ReturnType<typeof setTimeout> | null = null
   private waitTimer: ReturnType<typeof setTimeout> | null = null
-  private dropped = 0
   private disposed = false
 
-  constructor(sessionId: string, deliver: DeliverFn, config: DelivererConfig = {}) {
+  constructor(sessionId: string, deliver: DeliverFn, config: DelivererConfig) {
     this.sessionId = sessionId
     this.deliver = deliver
     this.quietMs = config.quietMs ?? DEFAULT_QUIET_MS
     this.maxWaitMs = config.maxWaitMs ?? DEFAULT_MAX_WAIT_MS
     this.maxLines = config.maxLines ?? DEFAULT_MAX_LINES
     this.maxChars = config.maxChars ?? DEFAULT_MAX_CHARS
-    this.maxPendingLines = config.maxPendingLines ?? DEFAULT_MAX_PENDING_LINES
-    this.onDrop = config.onDrop
+    this.source = config.source
     this.onBatch = config.onBatch
   }
 
@@ -88,40 +108,55 @@ export class Deliverer {
     return this.admitted
   }
 
+  /** 是否处于 turn 抑制模式。 */
+  get isSuppressed(): boolean {
+    return this.suppressed
+  }
+
   /**
-   * 接入：开始投递。水位 = 当前缓冲（积压不回放——接入前的行不投）。
-   * 实现方式：接入时清空缓冲（已有的积压行不投，后续新行才积累+投递）。
+   * 接入：开始投递。水位 = 接入时刻：delivered 推进到 pending 末端（积压不回放）。
    */
   admit(): void {
     if (this.disposed || this.admitted) return
     this.admitted = true
-    // 水位 = 接入时刻：清空积压，后续新行才开始积累。
-    this.buffer = []
+    this.source.commit(this.source.end())
   }
 
-  /** 停止接入：投递停。在途缓冲如有内容不投（直接丢弃待投缓冲）。 */
+  /** 停止接入：投递停。pending 照常积累（录制），不投。 */
   stop(): void {
     if (this.disposed) return
     this.admitted = false
     this.clearTimers()
-    this.buffer = []
   }
 
   /**
-   * 行到达（runtime.onLine 接此）。
-   * 未接入时只积累（录制），已接入时积累 + 武装静默/最长等待定时器。
+   * 行到达（runtime.onLine 接此）：pull 模型下行已由 runtime 录制进 pending，
+   * 这里只在「已接入 + 空闲模式」武装静默/最长等待定时器（turn 模式抑制）。
    */
-  onLine(line: MudLine): void {
+  onLine(_line: MudLine): void {
+    if (this.disposed || !this.admitted || this.suppressed) return
+    this.armTimers()
+  }
+
+  /** turn 开始（宿主 session/event 接线）：抑制模式——清定时器，行只积累。 */
+  onTurnStart(): void {
     if (this.disposed) return
-    this.push(line)
-    if (this.admitted) this.armTimers()
+    this.suppressed = true
+    this.clearTimers()
+  }
+
+  /** turn 结束（宿主 session/event 接线）：冲刷一次——回合内积累的行统一投出。 */
+  onTurnEnd(): void {
+    if (this.disposed) return
+    this.suppressed = false
+    this.flush()
   }
 
   /**
-   * 立即尝试投出当前缓冲（agent 唤醒时由装配层调用）。
-   * 未接入或缓冲为空时不动；投不出的批次保留在缓冲里。
+   * 立即从已见线之后拉取投出一次（agent/created 冷启动补投）。
+   * 未接入或无未见行时为空操作；投不出的批次留在 pending（下次重试）。
    */
-  flushNow(): void {
+  flushOnce(): void {
     this.flush()
   }
 
@@ -130,34 +165,13 @@ export class Deliverer {
     if (this.disposed) return
     this.disposed = true
     this.clearTimers()
-    this.buffer = []
   }
 
   get isDisposed(): boolean {
     return this.disposed
   }
 
-  /** 当前待投递缓冲行数（测试/观测用）。 */
-  get pendingCount(): number {
-    return this.buffer.length
-  }
-
-  /** 因超出缓冲上限被丢弃的累计行数（观测用）。 */
-  get droppedLineCount(): number {
-    return this.dropped
-  }
-
   // ---------------------------------------------------------------------
-
-  /** 入缓冲并施加上限：超出丢最旧（挂机模式内存有界）。 */
-  private push(line: MudLine): void {
-    this.buffer.push(line)
-    const over = this.buffer.length - this.maxPendingLines
-    if (over <= 0) return
-    this.buffer.splice(0, over)
-    this.dropped += over
-    this.onDrop?.(this.sessionId, over, this.dropped)
-  }
 
   /** 静默窗口按行重置；最长等待只在批次首行武装（不随之重置）。 */
   private armTimers(): void {
@@ -174,25 +188,25 @@ export class Deliverer {
     }
   }
 
-  /** 投出当前缓冲：按上限拆成多条；本次投不出（返回 false）的批次保留待唤醒。 */
+  /** 从水位线之后拉取并投出：按上限拆成多条；失败批次不推进 delivered（重试）。 */
   private flush(): void {
     this.clearTimers()
-    if (this.disposed || !this.admitted || this.buffer.length === 0) return
-
-    const lines = this.buffer
-    let consumed = 0
+    if (this.disposed || !this.admitted) return
+    const lines = this.source.take(this.source.seen())
+    if (lines.length === 0) return
     for (const chunk of this.batches(lines)) {
       const text = this.render(chunk)
+      const lastAbs = chunk[chunk.length - 1]?.abs ?? -1
       if (text.trim().length === 0) {
-        consumed += chunk.length
+        // 空白批：无需投递，但要推进水位（否则空白行会楔住后续投递）。
+        this.source.commit(lastAbs)
         continue
       }
       const delivered = this.deliver(this.sessionId, text) !== false
       this.onBatch?.(this.sessionId, chunk.length, delivered)
       if (!delivered) break
-      consumed += chunk.length
+      this.source.commit(lastAbs)
     }
-    this.buffer = consumed >= lines.length ? [] : lines.slice(consumed)
   }
 
   /**

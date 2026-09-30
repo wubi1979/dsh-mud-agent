@@ -9,6 +9,7 @@
 
 import { Mud } from './link/mud.ts'
 import type { MudLine } from './link/line.ts'
+import { ReadMachine, type ReadOpts, type ReadResult } from './read.ts'
 import { GameScreen, type GameViewOptions } from './view/screen.ts'
 import type { ConnState, ResolvedCredentials } from './roster.ts'
 
@@ -18,6 +19,9 @@ export interface ConnectParams {
   readonly port: number
   readonly credentials: ResolvedCredentials
 }
+
+/** 工具面 read 参数（mud_send）：listen 判据 + 总超时（工具层注入缺省）。 */
+export type MudReadOpts = ReadOpts & { cmd?: string }
 
 /**
  * 单会话运行时。持有一条 MUD 连接，互不可见于其他会话。
@@ -34,7 +38,10 @@ export class SessionRuntime {
   private state: ConnState = 'disconnected'
   /** 画面通道（C5）：无头屏 + follower 扇出；行/回显/状态在此汇合。 */
   private readonly screen: GameScreen
-  /** 行流缓冲（未接入=录制 / 后续工具裸读用；环形上限，超出丢最旧）。 */
+  /**
+   * 行流缓冲（单一真相源）：所有行到达即入（录制），投递/裸读都从水位线之后
+   * 拉取；环形上限，超出丢最旧。
+   */
   private pendingLines: MudLine[] = []
   /** 录制上限（行）：挂机模式长期不收时，内存不随行数无界增长。 */
   private readonly recordLimit: number
@@ -42,8 +49,18 @@ export class SessionRuntime {
   private disposed = false
   /** 等待建连期间 socket 已终结（拒绝/对端关闭）——用于区分"失败"与"超时"。 */
   private connectAborted = false
+  /**
+   * read 竞速机（二期工具面）：行流的又一个消费者——行到达先过吞行判定，
+   * 在途 read 时累积 + 判定收束。
+   */
+  private readonly readMachine = new ReadMachine()
+  // 双水位线（行号空间 = MudLine.abs，单调递增；断线一并复位 = -1）：
+  /** deliveredAbs —— 投递推进：已投递给 agent 的最远行号。 */
+  private deliveredAbs = -1
+  /** readAbs —— 工具读推进：最近一次 read 返回结果的最大行号。 */
+  private readAbs = -1
 
-  /** 行流回调（C3 聚合投递接此；C2 可选，测试用）。 */
+  /** 行流回调（投递器武装定时器 / 日志接此；pull 模型下行内容不经此传递）。 */
   onLine: ((line: MudLine) => void) | null = null
   /** 断线回调（装配层接此标记断开）。 */
   onDisconnect: (() => void) | null = null
@@ -59,6 +76,9 @@ export class SessionRuntime {
   /** 网络层日志回调（telnet 协商/断线/协议异常）；装配层接此写入会话日志。 */
   onLog: ((level: 'info' | 'error', text: string) => void) | null = null
 
+  /** 账号名（roster accounts.name，register 注入）：send 回显前缀 `<账号名>@agent|user>` 用。 */
+  accountName = ''
+
   /**
    * @param sessionId - 会话 id（= 账号 id）。
    * @param recordLimit - 录制缓冲上限行数（缺省 2000；超出丢最旧）。
@@ -69,7 +89,11 @@ export class SessionRuntime {
     this.recordLimit = recordLimit < 1 ? 1 : recordLimit
     this.screen = new GameScreen(sessionId, view)
     this.mud.onLog = (level, text) => { this.onLog?.(level, text) }
+    this.readMachine.onLog = (level, text) => { this.onLog?.(level, text) }
     this.mud.onLine = line => {
+      // 吞行判定永续（每行都过；本期钩子空缺）——'swallow' 行不进任何模型面
+      // （pending/画面/投递/acc）。
+      if (this.readMachine.onLine(line) === 'swallow') return
       this.pendingLines.push(line)
       const over = this.pendingLines.length - this.recordLimit
       if (over > 0) {
@@ -79,12 +103,21 @@ export class SessionRuntime {
       this.screen.write(line.raw + '\r\n')
       this.onLine?.(line)
     }
+    // GA/EOR 边界（全仓唯一消费者）：read 竞速机的 gaCount 关窗判定。
+    this.mud.onBoundary = () => { this.readMachine.onBoundary() }
     // 直发命令回显进画面（凭据走 sendCredential 不触发 onSend —— 永不进画面）。
-    this.mud.onSend = cmd => { this.screen.echo(cmd) }
+    // 回显前缀 = 账号名@来源（agent 灰 / user 青），账号名由 register 注入。
+    this.mud.onSend = (cmd, source) => { this.screen.echo(cmd, source, this.accountName) }
     this.mud.onDisconnect = () => {
       if (this.state === 'connecting') this.connectAborted = true
+      // 断流处尾行已先行分发（mud.onClose 先 flush 再上抛断线），在途 read 带尾行收束。
+      this.readMachine.onDisconnected()
       this.setState('disconnected')
+      // 断线 = 水位与未投批次一并复位（pull 模型推论，与一期「断线复位」一致）：
+      // 未投出的残留行随录制清空丢失；abs 空间不归零，重连后新行照常推进。
       this.pendingLines = []
+      this.deliveredAbs = -1
+      this.readAbs = -1
       this.screen.setState('disconnected')
       this.onDisconnect?.()
     }
@@ -113,11 +146,60 @@ export class SessionRuntime {
     return this.dropped
   }
 
-  /** 消费并清空待处理行（C3 投递后调用）。 */
-  consumePendingLines(): MudLine[] {
-    const lines = this.pendingLines
-    this.pendingLines = []
-    return lines
+  // ── 水位线（pull 模型；doc/PLAN.md「二期详细设计 §4」）────────────
+
+  /** 已见线 = max(deliveredAbs, readAbs)：agent 已经见过的行边界。 */
+  get seenAbs(): number {
+    return Math.max(this.deliveredAbs, this.readAbs)
+  }
+
+  /** pending 末端行号（admit 水位 = 接入时刻用；空 pending = -1）。 */
+  get pendingEndAbs(): number {
+    const last = this.pendingLines[this.pendingLines.length - 1]
+    return last?.abs ?? -1
+  }
+
+  /** 取 abs > seen 的行（不推进水位——delivered 只推进到成功投出的批次）。 */
+  takeLinesAfter(seen: number): MudLine[] {
+    return this.pendingLines.filter(l => l.abs > seen)
+  }
+
+  /** 投出成功后推进 deliveredAbs（单调 max）。 */
+  commitDelivered(abs: number): void {
+    if (abs > this.deliveredAbs) this.deliveredAbs = abs
+  }
+
+  /**
+   * 工具面 read（mud_send）：
+   *   - 有 cmd：send 后等新行（acc 只收 send 后新行；应答行标记已见）；
+   *   - 无 cmd（裸读）：pending 尾部 maxLines 行快照为 initial（含 admit 前录制行），
+   *     不物理消费；返回时推进 readAbs = 结果末行号——裸读读过的行不再投递。
+   * 未连接早退（reason: 'disconnected'）；send 失败同早退。
+   */
+  async read(opts: MudReadOpts): Promise<ReadResult> {
+    if (this.disposed) throw new Error(`runtime ${this.sessionId} 已销毁，不能 read`)
+    if (!this.connected) return { lines: [], reason: 'disconnected' }
+    const initial = opts.cmd === undefined
+      ? this.pendingLines.slice(Math.max(0, this.pendingLines.length - (opts.maxLines ?? 50)))
+      : []
+    if (opts.cmd !== undefined && !this.send(opts.cmd)) {
+      return { lines: [], reason: 'disconnected' } // send 失败 = 已断开
+    }
+    // exactOptionalPropertyTypes：可选字段不收显式 undefined，条件展开组装。
+    const readOpts: ReadOpts = {
+      timeoutMs: opts.timeoutMs,
+      ...(opts.until !== undefined ? { until: opts.until } : {}),
+      ...(opts.failOn !== undefined ? { failOn: opts.failOn } : {}),
+      ...(opts.gaCount !== undefined ? { gaCount: opts.gaCount } : {}),
+      ...(opts.quietMs !== undefined ? { quietMs: opts.quietMs } : {}),
+      ...(opts.maxLines !== undefined ? { maxLines: opts.maxLines } : {}),
+      ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
+    }
+    const result = await this.readMachine.start(readOpts, initial)
+    // 水位推进：read/裸读消费的行标记已见（turn/end 不再重复投）。
+    const last = result.lines[result.lines.length - 1]
+    if (last !== undefined && last.abs > this.readAbs) this.readAbs = last.abs
+    return result
   }
 
   /**
@@ -207,8 +289,8 @@ export class SessionRuntime {
     return this.disposed
   }
 
-  /** 直发命令（C2 不暴露给模型；C3+ 工具面用）。 */
-  send(cmd: string): boolean {
-    return this.mud.send(cmd)
+  /** 直发命令（工具面 mud_send = 'agent'；未来输入回传 = 'user'，回显样式随之区分）。 */
+  send(cmd: string, source: 'agent' | 'user' = 'agent'): boolean {
+    return this.mud.send(cmd, source)
   }
 }

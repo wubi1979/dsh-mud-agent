@@ -16,7 +16,7 @@
  *   - disconnect(sessionId)：runtime.disconnect
  *   - admit(sessionId)：接入闸门开（投递通道开）
  *   - stop(sessionId)：停止接入（投递停）
- *   - flushPending(sessionId)：agent 唤醒时投出保留下来的批次
+ *   - flushOnce(sessionId)：agent/created 冷启动补投（从已见线之后拉取一次）
  *   - status(sessionId)：连接状态 + 接入状态
  *   - logs(sessionId)：会话日志（内存 + 当日文件）
  *   - dispose(sessionId)：断连 + 拆 runtime + 拆 deliverer + 拆日志
@@ -24,9 +24,10 @@
  */
 
 import { SessionRuntime, type ConnectParams } from './runtime.ts'
-import { Deliverer, type DeliverFn, type DelivererConfig } from './deliver.ts'
+import { Deliverer, type DeliverFn, type DelivererConfig, type LineSource } from './deliver.ts'
 import { SessionLog, type LogEntry, type SessionLogOptions } from './log/log-service.ts'
 import type { GameScreen, GameViewOptions } from './view/screen.ts'
+import type { ToolContext } from './tools.ts'
 import type {
   AccountLookup,
   AccountRecord,
@@ -43,8 +44,8 @@ export interface MudServiceDeps {
   readonly resolveCreds: CredentialResolver
   /** 投递回调：MUD 行流聚合后以用户消息投递进会话（agent.followup）。 */
   readonly deliver?: DeliverFn
-  /** 投递器配置（静默窗口等）。 */
-  readonly delivererConfig?: DelivererConfig
+  /** 投递器配置（静默窗口等；水位线源由服务侧按 runtime 装配）。 */
+  readonly delivererConfig?: Omit<DelivererConfig, 'source'>
   /** 每会话录制缓冲上限行数（缺省 2000）。 */
   readonly recordLines?: number
   /** 画面通道参数（C5：scrollback/cols/maxBufferedBytes；缺省取内置缺省）。 */
@@ -115,11 +116,15 @@ export class MudService {
     this.deps = deps
   }
 
-  /** 登记会话（agent/created 调用；幂等）。创建 Deliverer/SessionLog 并接线到 runtime。 */
-  register(sessionId: string): SessionRuntime {
+  /**
+   * 登记会话（agent/created 调用；幂等）。创建 Deliverer/SessionLog 并接线到 runtime。
+   * accountName（账号名，roster accounts.name）注入 send 回显前缀；幂等重入时同名不变。
+   */
+  register(sessionId: string, accountName?: string): SessionRuntime {
     let rt = this.runtimes.get(sessionId)
     if (rt !== undefined) return rt
     rt = new SessionRuntime(sessionId, this.deps.recordLines, this.deps.view)
+    if (accountName !== undefined) rt.accountName = accountName
     this.runtimes.set(sessionId, rt)
 
     const log = new SessionLog(sessionId, this.deps.log)
@@ -132,17 +137,20 @@ export class MudService {
     // 网络层日志（telnet 协商/断线/协议异常）→ 会话日志
     rt.onLog = (level, text) => { log.append({ level, channel: 'network', text }) }
 
-    // 投递器：投递结果与缓冲溢出写会话日志（并转发装配层的 onDrop 上报）
+    // 投递器（pull 模型）：水位线源接 runtime（pending 单一真相），投递结果写会话日志。
+    const source: LineSource = {
+      seen: () => rt.seenAbs,
+      end: () => rt.pendingEndAbs,
+      take: after => rt.takeLinesAfter(after),
+      commit: abs => rt.commitDelivered(abs),
+    }
     const delivererConfig: DelivererConfig = {
       ...this.deps.delivererConfig,
-      onDrop: (id, droppedNow, droppedTotal) => {
-        log.warn('deliver', `投递缓冲溢出，丢弃 ${droppedNow} 行（累计 ${droppedTotal}）`)
-        this.deps.delivererConfig?.onDrop?.(id, droppedNow, droppedTotal)
-      },
+      source,
       onBatch: (id, lineCount, delivered) => {
         log.info('deliver', delivered
           ? `投递 ${lineCount} 行（agent 已收）`
-          : `agent 离线：保留 ${lineCount} 行待补投`)
+          : `agent 离线：${lineCount} 行留在录制缓冲，下次补投`)
         this.deps.delivererConfig?.onBatch?.(id, lineCount, delivered)
       },
     }
@@ -174,6 +182,21 @@ export class MudService {
   /** 取投递器（测试/观测用）。 */
   getDeliverer(sessionId: string): Deliverer | null {
     return this.deliverers.get(sessionId) ?? null
+  }
+
+  /**
+   * 工具执行上下文（tools.ts ToolContext；index.ts provide 面 roster 过滤后委托到此）：
+   * 归属（已登记会话）+ 闸门/连接状态聚合。未登记返回 null（工具层可读拒绝）。
+   */
+  toolContextFor(sessionId: string): ToolContext | null {
+    const rt = this.runtimes.get(sessionId)
+    if (rt === undefined) return null
+    return {
+      sessionId,
+      runtime: rt,
+      admitted: this.deliverers.get(sessionId)?.isAdmitted ?? false,
+      connState: rt.connState,
+    }
   }
 
   /**
@@ -259,14 +282,14 @@ export class MudService {
   }
 
   /**
-   * 投出保留下来的批次（agent 唤醒时调用；未接入或无缓冲时为空操作）。
-   * deliver 回调返回 false 时批次继续保留，等下一次唤醒。
+   * 冷启动补投（agent/created 调用）：从已见线之后拉取投出一次，触发首个回合。
+   * 未接入或无未见行时空操作；deliver 返回 false 时批次留在录制缓冲，等下次补投。
    */
-  flushPending(sessionId: string): void {
+  flushOnce(sessionId: string): void {
     const deliverer = this.deliverers.get(sessionId)
-    if (deliverer === undefined || deliverer.pendingCount === 0) return
-    this.logs.get(sessionId)?.info('deliver', `agent 上线，补投保留批次（${deliverer.pendingCount} 行）`)
-    deliverer.flushNow()
+    if (deliverer === undefined) return
+    this.logs.get(sessionId)?.info('deliver', 'agent 上线，从水位线补投未见行')
+    deliverer.flushOnce()
   }
 
   /** 连接状态 + 接入状态。 */

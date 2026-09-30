@@ -29,6 +29,7 @@ import { MudService, sessionNotRegistered } from './service.ts'
 import type { SessionRuntime } from './runtime.ts'
 import type { SessionLogOptions } from './log/log-service.ts'
 import { resolveLogDir, purgeSessionLogs } from './log/log-service.ts'
+import type { MudCore3Handle } from './tools.ts'
 // Remote 边界类型从非根子路径取（typert 要求，见 src/types.ts）。
 import type { AccountRecord, GameFrame, LogEntry, ServerRecord, StatusFrame } from './types.ts'
 import type { DelivererConfig } from './deliver.ts'
@@ -63,10 +64,12 @@ export interface MudCore3Config {
   deliverMaxLines?: number
   /** 单条投递最大字符数（超出拆成多条）。缺省 8000。 */
   deliverMaxChars?: number
-  /** 未投出缓冲上限行数（超出丢最旧）。缺省 500。 */
-  deliverMaxPendingLines?: number
   /** 每会话录制缓冲上限行数（未接入期间保留的最近行数）。缺省 2000。 */
   recordLines?: number
+  /** mud_send 缺省总超时毫秒（工具参数钳制上限 60000）。缺省 15000。 */
+  sendTimeoutMs?: number
+  /** mud_send 裸读尾部/兜底行数。缺省 50。 */
+  sendMaxLines?: number
   /** 画面通道 scrollback 行数（snapshot 回放深度）。缺省 2000（对齐录制缓冲）。 */
   viewScrollback?: number
   /** 画面通道列数（固定，不做 resize 回传）。缺省 80。 */
@@ -154,8 +157,8 @@ function requireId(id: string | undefined, field: string): string {
   return id
 }
 
-/** `ctx.provide('mudCore3', ...)` 的服务面（后期工具面的拒绝点即在此解析归属）。 */
-export interface MudCore3Service {
+/** `ctx.provide('mudCore3', ...)` 的服务面（工具引擎窄面 + 归属解析，§8）。 */
+export interface MudCore3Service extends MudCore3Handle {
   /** 由 agent 解析其会话 runtime；不属于本插件返回 null。 */
   runtimeFor(agent: { id: unknown }): SessionRuntime | null
 }
@@ -453,26 +456,15 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
   // agent 句柄表（投递用：sessionId → live agent）
   const agentMap = new Map<string, { followup: (msg: ReturnType<typeof createUserMessage>) => void }>()
 
-  // 缓冲溢出上报限流（每会话首次 + 每累计 100 行）
-  const dropLogged = new Map<string, number>()
-
-  const delivererConfig: DelivererConfig = {
+  const delivererConfig: Omit<DelivererConfig, 'source'> = {
     ...(config.deliverQuietMs !== undefined ? { quietMs: config.deliverQuietMs } : {}),
     ...(config.deliverMaxWaitMs !== undefined ? { maxWaitMs: config.deliverMaxWaitMs } : {}),
     ...(config.deliverMaxLines !== undefined ? { maxLines: config.deliverMaxLines } : {}),
     ...(config.deliverMaxChars !== undefined ? { maxChars: config.deliverMaxChars } : {}),
-    ...(config.deliverMaxPendingLines !== undefined
-      ? { maxPendingLines: config.deliverMaxPendingLines } : {}),
-    onDrop: (sessionId, droppedNow, droppedTotal) => {
-      const logged = dropLogged.get(sessionId) ?? 0
-      if (logged !== 0 && droppedTotal - logged < 100) return
-      dropLogged.set(sessionId, droppedTotal)
-      ctx.logger.warn(`mud-core3: 会话 ${sessionId} 投递缓冲溢出，丢弃 ${droppedNow} 行（累计 ${droppedTotal}）`)
-    },
   }
 
   // 投递回调：MUD 行流聚合后以用户消息投递进会话（等同人工提问）。
-  // 返回 false = 本次未投出（agent 离线或 followup 抛错），批次保留在缓冲里等唤醒补投。
+  // 返回 false = 本次未投出（agent 离线或 followup 抛错），批次留在录制缓冲等补投。
   const deliver = (sessionId: string, text: string): boolean => {
     const agent = agentMap.get(sessionId)
     if (agent === undefined) return false // 冷会话：批次保留，等 agent/created 时补投
@@ -539,13 +531,26 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
   // 归属 = sessionId ∈ accounts（名册判定，不按 preset 排除）。
   ctx.on('agent/created', ({ agent }) => {
     const sessionId = String(agent.id)
-    if (store.account(sessionId) === undefined) return // 不在名册 = 不是我们的会话
-    service.register(sessionId)
+    const account = store.account(sessionId)
+    if (account === undefined) return // 不在名册 = 不是我们的会话
+    service.register(sessionId, account.name)
     // 记录 agent 句柄（投递用；agent 有 followup 方法）
     agentMap.set(sessionId, { followup: msg => agent.followup(msg) })
-    // agent 上线：把冷会话期间保留下来的批次投出。
-    service.flushPending(sessionId)
+    // agent 上线：从已见线之后补投一次（触发首个回合）。
+    service.flushOnce(sessionId)
   })
+
+  // ── turn 事件 → 投递时机（doc/PLAN.md「二期详细设计 §4」用户裁决）──
+  // turn 期间抑制（行只进 pending 积累），turn/end 统一冲刷；空闲模式静默定时语义不变。
+  // 订阅方式 = session/event + global（tool-todo invariant 同款）；按名册归属过滤。
+  ctx.on('session/event', (session, event) => {
+    const sessionId = String(session.id)
+    if (store.account(sessionId) === undefined) return
+    const deliverer = service.getDeliverer(sessionId)
+    if (deliverer === null) return
+    if (event.type === 'turn/start') deliverer.onTurnStart()
+    else if (event.type === 'turn/end') deliverer.onTurnEnd()
+  }, { global: true })
 
   // ── agent/disposed → 移除 agent 句柄（runtime/deliverer 保留）──
   ctx.on('agent/disposed', ({ agent }) => {
@@ -558,12 +563,22 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     if (store.account(sessionId) === undefined) return
     service.dispose(sessionId)
     agentMap.delete(sessionId)
-    dropLogged.delete(sessionId)
   })
 
-  // ── 归属解析服务（§3.1：后期工具面在此拒绝非本插件会话）────────
+  // ── 归属解析服务（§3.1/§8：工具面的归属判定 + 引擎窄面）────────
   ctx.provide('mudCore3', {
     runtimeFor: (agent: { id: unknown }) => service.get(String(agent.id)),
+    // 工具归属（§8）：先查 roster（名册真相），再聚合会话状态面。
+    // 不在名册 = 不属于本插件 = toolContext 为 null（工具层可读拒绝）。
+    toolContextFor: (agent: { id: unknown }) => {
+      const sessionId = String(agent.id)
+      if (store.account(sessionId) === undefined) return null
+      return service.toolContextFor(sessionId)
+    },
+    defaults: {
+      sendTimeoutMs: config.sendTimeoutMs ?? 15000,
+      sendMaxLines: config.sendMaxLines ?? 50,
+    },
   } satisfies MudCore3Service)
 
   // ── Remote 服务注册 ────────────────────────────────────────

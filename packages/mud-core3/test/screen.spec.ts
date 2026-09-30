@@ -56,7 +56,7 @@ describe('GameScreen', () => {
     expect(snapshot.screen).toContain('你挥出一剑。')
     // ANSI 颜色经无头屏序列化后仍在（形态可能变换，但转义必存）
     expect(snapshot.screen).not.toBe(snapshot.screen.replace(/\x1b\[/g, ''))
-    expect(snapshot.info).toEqual({ sessionId: 's1', state: 'disconnected', cols: 80 })
+    expect(snapshot.info).toEqual({ sessionId: 's1', state: 'disconnected', cols: 120 })
     screen.dispose()
   })
 
@@ -71,21 +71,25 @@ describe('GameScreen', () => {
 
     try {
       const rt = new SessionRuntime('s2', 100)
+      rt.accountName = 'hero'
       await rt.connect({
         host: '127.0.0.1', port, credentials: { name: 'hero', pass: 'SECRET-PASS' },
       }, 2000)
       rt.send('look')
+      rt.send('say hi', 'user') // user 来源（青色前缀；输入回传落地后的既有样式）
       await ticks()
       rt.disconnect()
 
       const [snapshot] = await take(rt.view.attach(SIGNAL), 1)
       expect(snapshot?.type).toBe('snapshot')
       if (snapshot?.type !== 'snapshot') return
-      // 直发命令有回显（区分色前缀）
-      expect(snapshot.screen).toContain('> look')
+      // 直发命令回显带账号名@来源前缀（agent 灰 90m / user 青 36m）
+      expect(snapshot.screen).toContain('hero@agent> look')
+      expect(snapshot.screen).toContain('hero@user> say hi')
       // 凭据走 sendCredential：不触发 onSend，永不进画面
       expect(snapshot.screen).not.toContain('SECRET-PASS')
-      expect(snapshot.screen).not.toContain('> hero')
+      expect(snapshot.screen).not.toContain('@agent> hero')
+      expect(snapshot.screen).not.toContain('@user> hero')
       rt.dispose()
     } finally {
       await new Promise<void>(resolve => { server.close(() => resolve()) })

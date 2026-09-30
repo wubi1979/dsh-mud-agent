@@ -128,6 +128,9 @@ importers:
       '@deepseek-ai/dsh-llm':
         specifier: ^0.1.7-rc.2
         version: 0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)
+      '@deepseek-ai/dsh-tools':
+        specifier: ^0.1.7-rc.2
+        version: 0.1.7-rc.2(aa42b687aedaaa76be9b2f6cfd683d42)
       '@deepseek-ai/dsh-typert-generator':
         specifier: 0.1.6-alpha.2
         version: 0.1.6-alpha.2(@deepseek-ai/cordis@4.0.4)

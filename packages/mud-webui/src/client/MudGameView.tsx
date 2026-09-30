@@ -17,7 +17,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import { IconRefreshOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconRefreshOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { GameFrame } from 'mud-core3/types'
 import type { MudRemoteController } from './mud-remote.ts'
 import { formatCopy, zh } from './locales.ts'
@@ -165,13 +165,13 @@ export function MudGameView({ useTabInfo, sessionId, params, remote, connect, di
       <div className={css.toolbar}>
         <span className={css.toolbarStatus} role="status">{status}</span>
         {/* 连接/断开：连接动作收进画面窗口（跟随本 tab 会话），侧栏菜单不再承担。
-            未连接为蓝色主按钮引导点击，连接后回落白色描边。 */}
-        <button type="button"
-          className={serverState === 'connected' ? css.toolText : `${css.toolText} ${css.toolPrimary}`}
+            未连接用 primary（原生主按钮，引导点击），已连接回落 ghost（弱化）。 */}
+        <Button size="sm"
+          variant={serverState === 'connected' ? 'ghost' : 'primary'}
           disabled={serverState === 'connecting'}
           onClick={() => { void (serverState === 'connected' ? disconnect(target) : connect(target)) }}>
           {serverState === 'connected' ? zh.disconnect : zh.connect}
-        </button>
+        </Button>
         <Tooltip label={zh.reload} side="bottom" delayMs={500}>
           <button type="button" className={css.tool} aria-label={zh.reload}
             onClick={() => { setReloadKey(k => k + 1) }}>
