@@ -176,7 +176,7 @@ MUD 行流 → 聚合（静默窗口，Config）→ 一条用户消息投递进�
 - **会话头 tab「MUD 日志」**（`conversation.view` 条目 `mud-log`）：渲染该会话的 `remote.mud.logs` 环条目（按级别/通道着色）与落盘目录，作为连接/投递/闸门的诊断面。tab 只在会话体渲染时出现（宿主 blank 会话不渲染会话体——连接后第一批 MUD 行开启回合即脱离 blank），视图选择按会话持久化（宿主持有，插件不代选）；
 - 后端换接：**服务器/账号经 `remote.mud.addServer/addAccount` 登记到宿主名册**（页面 localStorage 只作呈现缓存），**建账号在宿主侧一个动作完成**（写名册 + 建会话，sessionId = 账号 id、绑定 preset）；页面不再自己 `sessions.create`/`agentPresets.select`。删账号/删服务器同样先过宿主再改本地；
 **凭据接线**：`connect` 时账号名取自 roster（`accounts.name`），密文经宿主 `ctx.get('credentials').resolve(passRef)` 实时解析；引用不存在/不可读 = 连接失败，错误与日志都带引用名；明文只进登录发送，不进 roster、日志、上下文。
-- **右侧栏只读游戏画面 tab（C5）**：`sidebar-right` tab 类型 `mud-game`（可多开，params 随布局持久化——刷新/重开自动恢复）；数据面 = 宿主每 runtime 一个 `@xterm/headless` 无头屏 + `@xterm/addon-serialize`，游戏行与 send 回显（凭据走 sendCredential 不触发 onSend，天然不泄露）同屏写入，屏幕跨重连保留；`remote.mud.follow(sessionId)` 流动词推送：首帧整屏 snapshot 回放 → 增量帧（同 tick 合批，防刷屏小帧）；follower 注册与 snapshot 生成共用一条写操作链（attach 瞬间不丢帧不乱序不重复）；follower 有界队列背压（超限显式断流，客户端重新 follow 以新 snapshot 恢复，互为闭环）；纯扇出无输入，tab 关闭 = follower 清理，连接/投递不受影响；**不受 admit 闸门约束**（画面是 MUD→人的显示面，非 MUD→agent 通路；未接入 = 录制/挂机模式照样可看，agent 零进入语义不变）；
+- **右侧栏只读游戏画面 tab（C5）**：`sidebar-right` tab 类型 `mud-game`（**单开**：guide 入口卡片无 params 打开、回退跟随当前会话；openTabs 订阅守卫保证同会话仅一实例——开出第二个即关掉较新，保留最旧实例的 follow 流与工具栏状态；params 随布局持久化——刷新/重开自动恢复）；数据面 = 宿主每 runtime 一个 `@xterm/headless` 无头屏 + `@xterm/addon-serialize`（cols 缺省 120，`viewCols` 可覆盖；scrollback/背压参数成组），游戏行与 send 回显（凭据走 sendCredential 不触发 onSend，天然不泄露）同屏写入，屏幕跨重连保留；`remote.mud.follow(sessionId)` 流动词推送：首帧整屏 snapshot 回放 → 增量帧（同 tick 合批，防刷屏小帧）；follower 注册与 snapshot 生成共用一条写操作链（attach 瞬间不丢帧不乱序不重复）；follower 有界队列背压（超限显式断流，客户端重新 follow 以新 snapshot 恢复，互为闭环）；画面通道纯扇出无输入（tab 工具栏的「连接/断开」按钮调既有手工动词 `connect/disconnect`，不属于画面通道），tab 关闭 = follower 清理，连接/投递不受影响；**不受 admit 闸门约束**（画面是 MUD→人的显示面，非 MUD→agent 通路；未接入 = 录制/挂机模式照样可看，agent 零进入语义不变）；
 - **状态推送 watchStatus（C5.1）**：状态面由轮询 `status()` 改为服务端推送——runtime `onStateChange` 钩子（setState 统一入口，值变化才触发）+ service 状态广播器（register/admit/stop/dispose 与连接迁移各点广播，多订阅者互不影响）；`remote.mud.watchStatus()` 流动词首帧推全量快照（statuses() 语义，覆盖全部已登记会话）、之后仅变化推帧；客户端 abort（tab 关闭/页面刷新）→ generator finally 清服务端订阅；`status()` 单次动词保留做初始回填/兜底。
 
 ---
@@ -193,6 +193,8 @@ MUD 行流 → 聚合（静默窗口，Config）→ 一条用户消息投递进�
 | **接入闸门** | 未接入（缺省）与停止接入后：**MUD 信息不再进入**（新投递为零）、行流照常积累；接入**水位 = 接入时刻**（积压不回放）；人工提问不受影响 |
 | preset 选择 | 建账号可选 `standard`/`mud-player`；任意 preset 的账号都有 MUD 源（归属 = roster 判定，不按 preset 排除） |
 | 凭据链路 | 密码不落 roster/上下文；resolve 失败 = 连接失败可读报错 |
+| 游戏画面视图 | 开 tab 见 snapshot 回放 + 实时行流（颜色正确）；关/开 tab、刷新页面连接不断（未接入也可看）；send 回显可见且凭据永不出现；背压超限断流后重 follow 以新 snapshot 恢复；画面不受 admit 闸门约束 |
+| 状态推送 | `watchStatus` 首帧全量快照、之后仅变化推帧（无变化零流量）；客户端 abort 清服务端订阅 |
 | 零工具面 | 第一期不注册任何 MUD 工具（preset 工具集断言：无 mud_send/mud_state） |
 
 ### 4.1 切片
@@ -203,6 +205,7 @@ MUD 行流 → 聚合（静默窗口，Config）→ 一条用户消息投递进�
 | **C2 多会话** | roster storage + 会话装配（roster 判定 → registry）+ 手工 connect/disconnect + 生命周期（disposed 断连拆 runtime） | 两会话隔离；手工动词生效；disposed 断连拆 runtime |
 | **C3 投递与接入** | 建账号链路（自动会话 + preset 选择）+ mud-player preset 行（最小 persona）+ 聚合投递（followup/steer 用户消息）+ admit/stop + 水位 | **端到端**：接入 → MUD 消息进会话 → agent 回答；停止后零投递；水位断言；零工具断言；preset 任选均有 MUD 源 |
 | **C4 管理面** | `packages/mud-webui` 接线替换（呈现不改）：preset 选择、接入开关、手工 connect/disconnect、状态 | 全流程 UI 可操作 |
+| **C5 画面视图 + C5.1 状态推送** | 服务端无头屏（`@xterm/headless` + addon-serialize）+ `follow`/`watchStatus` 流动词 + webui 只读画面 tab（单开、工具栏连接/断开）与状态推送替换轮询 | 开 tab 见回放 + 实时流，关闭不影响连接；状态变化毫秒级可见、无变化零流量 |
 
 ### 4.2 完成定义
 
@@ -215,6 +218,8 @@ MUD 行流 → 聚合（静默窗口，Config）→ 一条用户消息投递进�
 | 项 | 触发例证 |
 |---|---|
 | **MUD 工具面**（`mud_send`/`mud_state`/禁发表；agent 回答回流 MUD） | 第一期目标达成后——agent 只接消息给回答，需发送命令时上工具；落地时受接入闸门约束（§3.3 现在定死的约束） |
+| **画面后置项（C5 遗留）**：输入回传（随二期工具面评估）、NAWS/resize 回传、send 回显与 MUD 自回显去重开关、画面历史持久化（headless 屏随 runtime 存活，插件重启即清） | 对应需求实证出现 |
+| **行打标与画面分屏（C5.2，已定稿暂缓）** | 用户裁定暂缓；恢复执行按 [doc/plans/c5.2-line-tagging-split-screen.md](../plans/c5.2-line-tagging-split-screen.md)「实施顺序」开工（第一步 = 语料校准），定稿结论无需重议 |
 | **流程 flows**（`mud_flow`/fullme/验证码链路） | 工具面之后 |
 | **自动重连**（热状态自动、冷启动不自动） | 前置 = 先实现**真实心跳**（MUD 侧健康探测）——无心跳不区分真断线/半开；此前一律手工 connect |
 | 投递策略化（字段化摘要、按需投递、水位窗口细化） | 投递内容膨胀实证（token 账目恶化） |

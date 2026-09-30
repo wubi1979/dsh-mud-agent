@@ -111,4 +111,14 @@
 - **webui 启动对齐 + 统一错误面**：`mud-state.ts` 加 `hydrate()`——remote 挂载成功即拉 servers()/accounts() 用宿主真值覆盖 localStorage 呈现缓存（刷新/宿主重启后的假服务器/死会话在启动时清掉）；service.ts 统一「会话未登记」错误提示（可能宿主重启过或页面残留旧会话，请刷新页面后重连或重建账号）
 - 测试 121 → **132 项全绿**：新增 `test/screen.spec.ts` 8 条（行写入含 ANSI 入 snapshot、send 回显入屏且凭据缺席、背压超限断流、断流后 re-follow 恢复、两会话屏幕隔离、headless 跨重连续写、follower 注册原子性、合批）+ watchStatus 3 条（首帧快照与变化推帧、连接生命周期推帧、多订阅者互不影响）；core3 构建 + `gen:typert`（follow/watchStatus stream descriptor）+ webui 构建全通过
 
+## [v0.0.11]一期收尾：画面 tab 单开化与工具栏接线 + 文档同步 (2026-09-30)
+> 总结：第一期（C1–C5/C5.1）全部落地并验收；画面 tab 单开守卫 + guide 入口 + 工具栏连接/断开按钮；设计文档对齐实现，一期收口
+
+- **画面 tab 单开化**：`mud-game` 从 `multiple: true` 改为单开——右侧栏 guide 入口卡片（无 params 打开，回退跟随当前会话）；单开守卫订阅 `openTabs`，同会话开出第二个画面 tab 即关掉较新、保留最旧实例（其 follow 流与工具栏状态不中断；失效回调入微任务避让发布回路，幂等）
+- **画面工具栏连接/断开按钮**：连接/断开入口从侧栏 ⋯ 菜单移到画面 tab 工具栏（调既有 `remote.mud.connect/disconnect` 手工动词，非画面通道输入）；`MudGameView` 适配只读模式的连接态展示，侧栏去重
+- **cols 缺省修正**：headless 屏 cols 代码缺省 80 → **120**（`viewCols` 仍可覆盖；文档同步为 120）
+- 样式微调：终端面板四周 margin/内边距、竖向滚动条收窄至 8px
+- **文档同步（一期收口）**：`architecture/00-core.md` §3.5 对齐实现（单开守卫/guide 入口/工具栏接线/cols 120）、§4 验收表与 §4.1 切片表补 C5/C5.1 行、§5 后置清单补画面后置项与 C5.2 暂缓指针；`PLAN.md` 一期标记完成并清空已落地的 C5/C5.1 起草节（事实源已在 §3.5）；`ARCHITECTURE.md` 进度注更新
+- **一期验收基线**：core3 测试 132 项全绿；§4 验收表全过（端到端：接入 → MUD 消息进会话 → agent 回答实机跑通）；待办仅剩 C5.2（已定稿暂缓，见 `doc/plans/c5.2-line-tagging-split-screen.md`）
+
 > AI生成
