@@ -1,0 +1,35 @@
+{
+  "name": "mud-workflow",
+  "description": "MUD 声明式流程子包（纯架构）：流程本体 = JSON 声明式步骤表（schema + 注册表 + 解释器 + 五工具），进程内解释器执行（1 次工具调用、0 次模型调用），agent 经流程管理工具改进流程（进化闭环）。不含流程实体——数据归 core3（builtinFlows 启动期挂载）。",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "pnpm exec vitest run test",
+    "typecheck": "tsc -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/dsh-tools": "^0.1.7-rc.2",
+    "mud-core3": "workspace:^"
+  }
+}

@@ -9,14 +9,18 @@
 
 import { Mud } from './link/mud.ts'
 import type { MudLine } from './link/line.ts'
+import { ReadMachine, type ReadOpts, type ReadResult } from './read.ts'
 import { GameScreen, type GameViewOptions } from './view/screen.ts'
-import type { ConnState, ResolvedCredentials } from './roster.ts'
+import { World, type LoggedInState, type WorldSnapshot } from './world.ts'
+import type { ConnState } from './roster.ts'
 
-/** 连接参数。 */
+// 类型面 re-export（跨包消费者按 read/recentLines 签名桥接用，如 mud-workflow E2E）。
+export type { MudLine, ReadOpts, ReadResult }
+
+/** 连接参数（三期裁定：connect 只建连，登录由脚本要点执行——盲发退役）。 */
 export interface ConnectParams {
   readonly host: string
   readonly port: number
-  readonly credentials: ResolvedCredentials
 }
 
 /**
@@ -32,9 +36,13 @@ export class SessionRuntime {
   readonly sessionId: string
   private readonly mud = new Mud()
   private state: ConnState = 'disconnected'
+  /** 登录轴（三期两轴状态）：GMCP 是权威登录信号，断线复位为 unknown。 */
+  private loggedInState: LoggedInState = 'unknown'
+  /** 世界状态（三期）：GMCP 事件写入，断线整体复位（重连后由 GMCP 重新建立）。 */
+  private readonly worldState = new World()
   /** 画面通道（C5）：无头屏 + follower 扇出；行/回显/状态在此汇合。 */
   private readonly screen: GameScreen
-  /** 行流缓冲（未接入=录制 / 后续工具裸读用；环形上限，超出丢最旧）。 */
+  /** 行流缓冲（单一真相：录制 + 工具裸读源 + 投递拉取源；环形上限，超出丢最旧）。 */
   private pendingLines: MudLine[] = []
   /** 录制上限（行）：挂机模式长期不收时，内存不随行数无界增长。 */
   private readonly recordLimit: number
@@ -42,13 +50,29 @@ export class SessionRuntime {
   private disposed = false
   /** 等待建连期间 socket 已终结（拒绝/对端关闭）——用于区分"失败"与"超时"。 */
   private connectAborted = false
+  // 水位线（§3.3，行号空间 = MudLine.abs）：已见线 seen = max(delivered, read)。
+  // 初始/断线重置 = -1。abs 跨重连不归零，pending 清空后新行照常被拉取。
+  /** 投递水位：已成功投递给 agent 的最远行号。 */
+  private deliveredAbs = -1
+  /** 工具读水位：最近一次 read 返回结果的最远行号（裸读/应答行不再投递）。 */
+  private readAbs = -1
+  /** 末端行号（最后一行行号；尚无行 = -1）—— admit 水位 = 接入时刻用。 */
+  private lastLineAbs = -1
+  /** read 竞速机（工具面等待引擎；行路径挂为第二消费者）。 */
+  private readonly readMachine = new ReadMachine()
+  /** 会话级发送持有者（PLAN 三期「行流持有者」）：同一时刻只允许一个执行体在 send+read。 */
+  private sendHolder: string | null = null
 
   /** 行流回调（C3 聚合投递接此；C2 可选，测试用）。 */
   onLine: ((line: MudLine) => void) | null = null
+  /** 行到达钩子（T4a 静默唤醒 re-arm 接此；每行一次，与投递无关）。 */
+  onActivity: (() => void) | null = null
   /** 断线回调（装配层接此标记断开）。 */
   onDisconnect: (() => void) | null = null
   /** 连接状态迁移回调（值变化才触发；C5.1 服务层接此广播状态帧）。 */
   onStateChange: ((state: ConnState) => void) | null = null
+  /** 登录轴/世界状态变化回调（GMCP 到达等；服务层接此广播状态帧）。 */
+  onWorldChange: (() => void) | null = null
 
   /** 状态迁移（统一入口）：值变化才赋值并上抛，杜绝重复帧。 */
   private setState(next: ConnState): void {
@@ -69,6 +93,9 @@ export class SessionRuntime {
     this.recordLimit = recordLimit < 1 ? 1 : recordLimit
     this.screen = new GameScreen(sessionId, view)
     this.mud.onLog = (level, text) => { this.onLog?.(level, text) }
+    this.readMachine.onLog = (level, text) => { this.onLog?.(level, text) }
+    // 行路径（单一真相，多消费者按序）：①pending 录制（永远）→ ②read 在途累积判定
+    // → ③投递（onLine 回调 → Deliverer 水位拉取）。
     this.mud.onLine = line => {
       this.pendingLines.push(line)
       const over = this.pendingLines.length - this.recordLimit
@@ -76,15 +103,36 @@ export class SessionRuntime {
         this.pendingLines.splice(0, over)
         this.dropped += over
       }
+      this.lastLineAbs = line.abs
       this.screen.write(line.raw + '\r\n')
+      this.readMachine.onLine(line)
+      this.onActivity?.()
       this.onLine?.(line)
     }
+    // GA/EOR 边界 → read 在途时推进 gaCount 判定（工具面"一段完整文字"关窗）。
+    this.mud.onBoundary = () => { this.readMachine.onBoundary() }
     // 直发命令回显进画面（凭据走 sendCredential 不触发 onSend —— 永不进画面）。
     this.mud.onSend = cmd => { this.screen.echo(cmd) }
+    // GMCP → 登录轴 + 世界状态（三期）：
+    // GMCP 是权威登录信号（不依赖行文匹配）——服务器进入游戏后才发 GMCP 包，
+    // 到达即置 in-game 并写入 world（zone='gmcp'，key=包名，后到覆盖）。
+    this.mud.onGmcp = msg => {
+      this.loggedInState = 'in-game'
+      this.worldState.set('gmcp', msg.package, msg.payload, 'measured', { kind: 'gmcp', time: Date.now() })
+      this.onWorldChange?.()
+    }
     this.mud.onDisconnect = () => {
       if (this.state === 'connecting') this.connectAborted = true
       this.setState('disconnected')
+      // 断线同时反转两轴 + 世界状态复位（重连后由 GMCP 重新置位/写入）。
+      this.loggedInState = 'unknown'
+      this.worldState.clear()
+      this.onWorldChange?.()
       this.pendingLines = []
+      // 水位线复位（§3.3：初始/断线 = -1）+ 在途 read 以 disconnected 收束。
+      this.deliveredAbs = -1
+      this.readAbs = -1
+      this.readMachine.onDisconnected()
       this.screen.setState('disconnected')
       this.onDisconnect?.()
     }
@@ -98,12 +146,22 @@ export class SessionRuntime {
     return this.state
   }
 
+  /** 登录轴（GMCP 权威信号；断线复位 unknown）。 */
+  get loggedIn(): LoggedInState {
+    return this.loggedInState
+  }
+
+  /** 世界状态快照（分区/置信度/来源；只读拷贝）。 */
+  get world(): WorldSnapshot {
+    return this.worldState.snapshot()
+  }
+
   /** 画面通道（remote.mud.follow 经 service.screenOf 取用）。 */
   get view(): GameScreen {
     return this.screen
   }
 
-  /** 自上次消费以来的待处理行（C3 投递水位用；C2 不消费）。 */
+  /** 自上次消费以来的待处理行数（观测用）。 */
   get pendingLineCount(): number {
     return this.pendingLines.length
   }
@@ -113,26 +171,62 @@ export class SessionRuntime {
     return this.dropped
   }
 
-  /** 消费并清空待处理行（C3 投递后调用）。 */
-  consumePendingLines(): MudLine[] {
-    const lines = this.pendingLines
-    this.pendingLines = []
-    return lines
+  /** 行流持有者是否在途（read/send 持有中；静默唤醒守卫用）。 */
+  get holderBusy(): boolean {
+    return this.sendHolder !== null
+  }
+
+  // ── 水位线面（Deliverer 的 DeliverySource 注入面 + 工具面裸读）────────
+
+  /** 已见线 seen = max(deliveredAbs, readAbs)：agent 已经见过的行边界。 */
+  seenAbs(): number {
+    return Math.max(this.deliveredAbs, this.readAbs)
+  }
+
+  /** 末端行号（最后一行行号；尚无行 = -1）。 */
+  lastAbs(): number {
+    return this.lastLineAbs
+  }
+
+  /** 已见线之后的待投行（快照；行仍留在 pending 环里，不物理消费）。 */
+  linesAfter(seen: number): MudLine[] {
+    return this.pendingLines.filter(l => l.abs > seen)
+  }
+
+  /** 推进投递水位（只到成功投出的批次；Deliverer 成功批次尾行号）。 */
+  markDelivered(abs: number): void {
+    if (abs > this.deliveredAbs) this.deliveredAbs = abs
+  }
+
+  /** pending 尾部 N 行快照（裸读 initial 源；不物理消费）。 */
+  recentLines(n: number): MudLine[] {
+    return n <= 0 ? [] : this.pendingLines.slice(-n)
   }
 
   /**
-   * 建连 + login。
+   * read（工具面等待引擎）：在途 fail-loud；未连接直接以 disconnected 收束
+   * （不启动等待）。返回时推进 readAbs = 结果行与 initial 的最远行号——
+   * 裸读/应答行标记已见，turn/end 不再重复投递（§3.3 水位线语义）。
+   */
+  async read(opts: ReadOpts, initial: readonly MudLine[] = []): Promise<ReadResult> {
+    if (!this.connected) return { lines: [], reason: 'disconnected' }
+    const result = await this.readMachine.start(opts, initial)
+    const tails = [result.lines, initial].map(lines => lines.at(-1)?.abs ?? -1)
+    const maxAbs = Math.max(...tails)
+    if (maxAbs > this.readAbs) this.readAbs = maxAbs
+    return result
+  }
+
+  /**
+   * 建连（幂等；**只建连不登录**——盲发已退役，登录由登录脚本经 sendCredential
+   * 提示符驱动执行）。
    * 1. mud.connect(host, port)
    * 2. 等待连接建立（轮询 connected；连接在等待期终结则立即失败）
-   * 3. 发送账号名（sendCredential）
-   * 4. 等待短暂时间让服务器处理
-   * 5. 发送密码（sendCredential）
-   * 6. 再补发一次回车（pkuxkx 登录末尾等回车，缺它行流停在欢迎屏）
    * 任一步失败都销毁 socket —— 否则半开/残留连接会继续收数据并晚到 close 事件。
-   * @param params 连接参数（host/port/credentials）
-   * @param loginTimeoutMs login 等待超时（缺省 5000ms）
+   * @param params 连接参数（host/port）
+   * @param connectTimeoutMs 建连等待超时（缺省 5000ms）
    */
-  async connect(params: ConnectParams, loginTimeoutMs = 5000): Promise<void> {
+  async connect(params: ConnectParams, connectTimeoutMs = 5000): Promise<void> {
     if (this.disposed) throw new Error(`runtime ${this.sessionId} 已销毁，不能 connect`)
     if (this.connected) return // 幂等
     if (this.state === 'connecting') throw new Error(`runtime ${this.sessionId} 正在连接`)
@@ -145,7 +239,7 @@ export class SessionRuntime {
 
     // 等待连接建立；socket 在等待期终结（拒绝/对端关闭）时 state 会被置回 disconnected。
     // 读经 getter（connState）：直读 this.state 会被 TS 控制流收窄误判（setState 是方法调用）。
-    const deadline = Date.now() + loginTimeoutMs
+    const deadline = Date.now() + connectTimeoutMs
     while (!this.mud.connected && this.connState === 'connecting' && Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 50))
     }
@@ -160,32 +254,7 @@ export class SessionRuntime {
 
     this.setState('connected')
     this.screen.setState('connected')
-    this.onLog?.('info', `TCP 已建立（${Date.now() - started}ms），发送账号名`)
-
-    // login：发账号名 → 短暂等待 → 发密码
-    // 第一期最简 login：不解析提示符、不做流程，直发 name/pass。
-    // 服务器提示符形态各异（"您的英文名字：" / "请输入密码：" 等），
-    // 实测后可改为等待特定提示再发；先直发保证最小可用。
-    if (!this.mud.sendCredential(params.credentials.name)) {
-      this.setState('disconnected')
-      this.mud.disconnect()
-      throw new Error(`连接 ${params.host}:${params.port} 在 login 前关闭`)
-    }
-    await new Promise(r => setTimeout(r, 200))
-    if (!this.mud.sendCredential(params.credentials.pass)) {
-      this.setState('disconnected')
-      this.mud.disconnect()
-      throw new Error(`连接 ${params.host}:${params.port} 在 login 中关闭`)
-    }
-    // 盲发回车（一期最简）：pkuxkx 类 MUD 在登录末尾等一次「回车」（欢迎页/普通
-    // 模式解锁），不补这行则行流停在欢迎屏，房间之后的闲聊/进出全部不来。
-    await new Promise(r => setTimeout(r, 200))
-    if (!this.mud.sendCredential('')) {
-      this.setState('disconnected')
-      this.mud.disconnect()
-      throw new Error(`连接 ${params.host}:${params.port} 在 login 收尾时关闭`)
-    }
-    this.onLog?.('info', '账号名/密码/回车已发送（等待服务器响应）')
+    this.onLog?.('info', `TCP 已建立（${Date.now() - started}ms），等待登录脚本（connect 只建连）`)
   }
 
   /** 断连（幂等）。 */
@@ -210,5 +279,31 @@ export class SessionRuntime {
   /** 直发命令（C2 不暴露给模型；C3+ 工具面用）。 */
   send(cmd: string): boolean {
     return this.mud.send(cmd)
+  }
+
+  /**
+   * 凭据专用直发（登录脚本用）：行为同 send，但不触发 onSend —— 不进画面回显、
+   * 不进会话日志（凭据零泄露的发送侧闸门；明文只经此路径上 socket）。
+   */
+  sendCredential(cmd: string): boolean {
+    return this.mud.sendCredential(cmd)
+  }
+
+  /**
+   * 获取发送权（会话级独占）：根与子 agent 都可能发命令（"争半截应答"），
+   * 冲突即拒绝——同一时刻只允许一个执行体在 send+read（PLAN 三期「行流持有者」）。
+   * 同 holder 重入成功（同执行体串行调用不自我冲突）。
+   * @param holder - 执行体标识（调用方会话 id）。
+   * @returns false = 已被其他执行体持有（调用方给可读拒绝，不劈半应答）。
+   */
+  acquireSend(holder: string): boolean {
+    if (this.sendHolder !== null && this.sendHolder !== holder) return false
+    this.sendHolder = holder
+    return true
+  }
+
+  /** 释放发送权（只解除自己的持有）。 */
+  releaseSend(holder: string): void {
+    if (this.sendHolder === holder) this.sendHolder = null
   }
 }

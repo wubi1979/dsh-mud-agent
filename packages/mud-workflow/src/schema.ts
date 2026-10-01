@@ -1,0 +1,188 @@
+/**
+ * schema — 声明式流程的 JSON 词汇表（zod，持久化边界唯一事实源）。
+ *
+ * 流程本体 = JSON 步骤表（非脚本文本），与 login.md 流程表
+ *（driver/action/settle/classify/next）同构——login.ts 手写解释器的表化。
+ * JSON 无任意代码，schema + 词汇表白名单 = 静态可验证的安全；无沙箱。
+ *
+ * 第一版词汇表（从 login 提炼，够用再长；循环/计算/条件后置）：
+ *   - 读窗 wait：until/failOn（字符串正则源，解释器编译）+ gaCount/quietMs/
+ *     maxLines/timeoutMs（必填——绝不无界等待，read.ts 语义）；
+ *   - 动作 action：send | sendCredential（单动作；凭据占位 {name}/{pass} 由
+ *     引擎注入替换，不经模型）；
+ *   - 分支 branch：until 命中序（index）→ 后继目标；onFailOn：failOn 命中序
+ *     → 分类出口；next：缺省后继；
+ *   - 目标 target：goto（后继步）| exit（终结，stage 分类 + ok）。
+ *
+ * 红线（PLAN「流程面演进」）：sendCredential 动词**只允许 locked 流程使用**
+ * ——agent 可写词汇表不含凭据动词（粗胚时序错误会把凭据发进公屏 = 泄露）。
+ * 注册表 save 侧静态拒绝（usesCredentialVerb）；引擎执行侧再拦一道（仅
+ * locked 流程可执行凭据动作），见 interpreter。
+ */
+
+import { z } from 'zod'
+
+// ── 读窗判据 ────────────────────────────────────────────────────
+
+/** 读窗：进步骤先等（判据满足才动作）；timeoutMs 必填（绝不无界等待）。 */
+export const waitSchema = z.object({
+  /** 完成判据（正则源；在累积文本上测，可跨批命中——read.ts 语义）。 */
+  until: z.array(z.string()).max(8).optional(),
+  /** 负面判据（正则源；命中即 failOn 收束，优先于 until）。 */
+  failOn: z.array(z.string()).max(8).optional(),
+  /** GA/EOR 边界计数关窗。 */
+  gaCount: z.number().int().min(1).max(64).optional(),
+  /** 行间静默毫秒。 */
+  quietMs: z.number().int().min(1).max(60_000).optional(),
+  /** 行数兜底。 */
+  maxLines: z.number().int().min(1).max(500).optional(),
+  /** 总超时毫秒（必填；到点以 timeout 收束）。 */
+  timeoutMs: z.number().int().min(1).max(600_000),
+  /** 正则编译 flags（应用于本窗 until+failOn 全部判据；如 'm' 多行锚——login 的 failOn）。 */
+  flags: z.string().regex(/^[dgimsuvy]*$/).max(4).optional(),
+}).strict()
+
+export type Wait = z.infer<typeof waitSchema>
+
+// ── 动作 ────────────────────────────────────────────────────────
+
+/**
+ * 动作（单动作；sendCredential 仅 locked 流程可用——红线，save/执行双侧拦）。
+ * sendCredential 允许空串：终态空命令（顶开服务端/跳过 MXP 收 GA）走凭据通道
+ * 以免进发送回显（login 终态步同款）；send 空串无意义故拒绝。
+ */
+export const actionSchema = z.union([
+  z.object({ send: z.string().min(1).max(256) }).strict(),
+  z.object({ sendCredential: z.string().max(256) }).strict(),
+])
+
+export type Action = z.infer<typeof actionSchema>
+
+// ── 目标（后继 / 出口）──────────────────────────────────────────
+
+/** 出口：终结（stage 分类 + ok；'success' 约定 ok=true，校验强制）。 */
+export const exitSchema = z.object({
+  exit: z.object({
+    stage: z.string().min(1).max(32),
+    ok: z.boolean(),
+  }).strict(),
+}).strict()
+
+/** 后继：goto 指定步 id。 */
+export const gotoSchema = z.object({
+  goto: z.string().min(1).max(32),
+}).strict()
+
+/** 目标 = 出口 | 后继。 */
+export const targetSchema = z.union([exitSchema, gotoSchema])
+
+export type Exit = z.infer<typeof exitSchema>
+export type Goto = z.infer<typeof gotoSchema>
+export type Target = z.infer<typeof targetSchema>
+
+// ── 步骤 ────────────────────────────────────────────────────────
+
+/** 步骤：读窗 → 动作 → 按命中序分支（branch/onFailOn）/ 缺省后继（next）。 */
+export const stepSchema = z.object({
+  /** 步标识（goto 引用用）。 */
+  id: z.string().regex(/^[a-z][a-z0-9_-]*$/).max(32),
+  /** 读窗（缺省 = 不等待直接动作）。 */
+  wait: waitSchema.optional(),
+  /** 动作（缺省 = 纯等待步）。 */
+  action: actionSchema.optional(),
+  /** failOn 命中序（index → 目标）；缺省 = timeout 出口（ok:false）。 */
+  onFailOn: z.record(z.string().regex(/^\d+$/), targetSchema).optional(),
+  /** until 命中序（index → 目标）；未覆盖的 index 走 next。 */
+  branch: z.array(targetSchema).optional(),
+  /** 缺省后继（until 未覆盖分支 / 无 branch 时走）。 */
+  next: targetSchema.optional(),
+}).strict()
+
+export type Step = z.infer<typeof stepSchema>
+
+// ── 流程 ────────────────────────────────────────────────────────
+
+/** 流程本体：入口步 + 步骤表。 */
+export const flowSchema = z.object({
+  entry: z.string().min(1).max(32),
+  steps: z.array(stepSchema).min(1).max(64),
+}).strict()
+
+export type Flow = z.infer<typeof flowSchema>
+
+// ── 存储记录 ────────────────────────────────────────────────────
+
+/** 流程记录（storage 域表 + 管理工具的读写单元）。 */
+export const workflowRecordSchema = z.object({
+  /** 流程名（工具引用用；locked 预制名 = 受保护名单）。 */
+  name: z.string().regex(/^[a-z][a-z0-9_-]*$/).max(32),
+  /** 展示名（管理工具列表面）。 */
+  title: z.string().min(1).max(64),
+  /** true = 锁死（拒改拒删；唯一凭据流程所在）。 */
+  locked: z.boolean(),
+  /** 修缮版本（save 覆盖时自增）。 */
+  version: z.number().int().min(1),
+  /** 最后修改（ISO 8601）。 */
+  updatedAt: z.string(),
+  flow: flowSchema,
+}).strict()
+
+export type WorkflowRecord = z.infer<typeof workflowRecordSchema>
+
+// ── 结构校验（zod 之外：引用完整性 + 命中序界内 + success 约定）────
+
+/**
+ * 流程结构校验（schema 校验通过后调用；registry.save 与引擎执行共用——
+ * 校验是确定性的，生效门 = 校验即生效）：
+ *   - 步 id 不重复；entry 存在；
+ *   - goto 目标必须存在；
+ *   - onFailOn 的 index 必须 < failOn 长度；branch 长度必须 ≤ until 长度；
+ *   - stage 'success' 必须 ok:true（防粗胚把失败标成 success——成功判定
+ *     是流程作者的责任，但与 ok 矛盾直接拒）。
+ *
+ * @throws 可读错（保存/执行转可读拒绝）。
+ */
+export function checkFlow(flow: Flow): void {
+  const ids = new Set(flow.steps.map(s => s.id))
+  if (ids.size !== flow.steps.length) {
+    throw new Error('流程结构非法：步 id 重复')
+  }
+  if (!ids.has(flow.entry)) {
+    throw new Error(`流程结构非法：入口步不存在：${flow.entry}`)
+  }
+  for (const step of flow.steps) {
+    const checkTarget = (where: string, t: Target): void => {
+      if ('goto' in t && !ids.has(t.goto)) {
+        throw new Error(`流程结构非法：步骤 ${step.id} 的${where}指向不存在的步：${t.goto}`)
+      }
+      if ('exit' in t && t.exit.stage === 'success' && !t.exit.ok) {
+        throw new Error(`流程结构非法：步骤 ${step.id} 的${where}把出口 stage 'success' 标成 ok:false`)
+      }
+    }
+    if (step.next !== undefined) checkTarget('缺省后继 next', step.next)
+    if (step.onFailOn !== undefined) {
+      const failOnLen = step.wait?.failOn?.length ?? 0
+      for (const [k, t] of Object.entries(step.onFailOn)) {
+        if (Number(k) >= failOnLen) {
+          throw new Error(`流程结构非法：步骤 ${step.id} 的 onFailOn[${k}] 越界（failOn 只有 ${failOnLen} 条）`)
+        }
+        checkTarget(`onFailOn[${k}]`, t)
+      }
+    }
+    if (step.branch !== undefined) {
+      const untilLen = step.wait?.until?.length ?? 0
+      if (step.branch.length > untilLen) {
+        throw new Error(`流程结构非法：步骤 ${step.id} 的 branch 长度 ${step.branch.length} 超过 until 数 ${untilLen}`)
+      }
+      step.branch.forEach((t, i) => checkTarget(`branch[${i}]`, t))
+    }
+  }
+}
+
+/**
+ * 流程是否使用凭据动词（红线判定：agent 可写词汇表不含 sendCredential——
+ * registry.save 静态拒绝；引擎执行侧对非 locked 流程再拦一道）。
+ */
+export function usesCredentialVerb(flow: Flow): boolean {
+  return flow.steps.some(s => s.action !== undefined && 'sendCredential' in s.action)
+}

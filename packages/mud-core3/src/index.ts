@@ -27,6 +27,10 @@ import { join } from 'node:path'
 
 import { MudService, sessionNotRegistered } from './service.ts'
 import type { SessionRuntime } from './runtime.ts'
+import type { MudCore3Handle } from './tools.ts'
+// 流程实体（数据归 core3；mud-workflow 是纯架构）。type-only：词汇表类型引用。
+import type { WorkflowRecord } from 'mud-workflow'
+import { login } from './flows/login.ts'
 import type { SessionLogOptions } from './log/log-service.ts'
 import { resolveLogDir, purgeSessionLogs } from './log/log-service.ts'
 // Remote 边界类型从非根子路径取（typert 要求，见 src/types.ts）。
@@ -36,7 +40,7 @@ import type {
   CredentialResolver, ResolvedCredentials, RosterStore,
 } from './roster.ts'
 import { MemoryRosterStore, openDomainRosterStore, type HostStorageDomain } from './store.ts'
-import { bootstrapText } from './bootstrap.ts'
+import { Wake, DEFAULT_TASK_BRIEF, fillTaskBrief } from './wake.ts'
 import {
   addAccount as writeAccount, addServer as writeServer, removeAccount as dropAccount,
   removeServer as dropServer, setAdmitted,
@@ -63,8 +67,6 @@ export interface MudCore3Config {
   deliverMaxLines?: number
   /** 单条投递最大字符数（超出拆成多条）。缺省 8000。 */
   deliverMaxChars?: number
-  /** 未投出缓冲上限行数（超出丢最旧）。缺省 500。 */
-  deliverMaxPendingLines?: number
   /** 每会话录制缓冲上限行数（未接入期间保留的最近行数）。缺省 2000。 */
   recordLines?: number
   /** 画面通道 scrollback 行数（snapshot 回放深度）。缺省 2000（对齐录制缓冲）。 */
@@ -82,10 +84,22 @@ export interface MudCore3Config {
   /** 是否把名册挂到宿主 storage 域（缺省 true；域不可用时自动降级内存并告警）。 */
   rosterStorage?: boolean
   /**
-   * 建账号后是否投递一条开场消息（触发一次真实回合，把 blank 会话翻成活跃会话，
+   * 建账号后是否投递一条任务书（触发一次真实回合，把 blank 会话翻成活跃会话，
    * 会话体与 MUD 日志 tab 才会渲染）。缺省 true；关掉可省一次模型调用。
    */
   bootstrapOnCreate?: boolean
+  /**
+   * 任务书模板（T4a：bootstrap/admit/静默唤醒三触发点共用；状态驱动——根醒来
+   * 读状态自行规划，不写指令序列）。占位符 {{serverName}}/{{endpoint}}/{{account}}/
+   * {{conn}}/{{loggedIn}} 在投递时以实时状态填充；缺省取 DEFAULT_TASK_BRIEF。
+   */
+  taskBrief?: string
+  /** 静默唤醒时长毫秒（正整数；行到达即重置，到期且守卫全过才投任务书）。缺省 120_000。 */
+  silenceMs?: number
+  /** mud_send 缺省总超时毫秒（工具参数缺省，钳制 ≤ 60000）。缺省 15000。 */
+  sendTimeoutMs?: number
+  /** mud_send 裸读尾部/兜底行数。缺省 50。 */
+  sendMaxLines?: number
 }
 
 /** 宿主 credentials 服务的最小结构化面（core3 不依赖 dsh-credentials：只需 resolve）。 */
@@ -145,8 +159,19 @@ declare module '@deepseek-ai/dsh-llm' {
       kind: 'mud'
       plugin: string
     }
+    /**
+     * 唤醒/任务书署名（T4a，core2 同款声明合并自扩）：kickoff 与静默唤醒的
+     * 主动投递与 MUD 行批次（'mud'）署名区分——非用户、来自本插件的唤醒。
+     */
+    'mud-wake': {
+      kind: 'mud-wake'
+      plugin: string
+    }
   }
 }
+
+// ── 任务书面（T4a）─────────────────────────────────────────────
+// 模板常量/填充在纯层 wake.ts（接线层 Config.taskBrief 缺省引用它）。
 
 /** remote 动词的 id 校验（typert wire 类型允许 undefined）。 */
 function requireId(id: string | undefined, field: string): string {
@@ -154,10 +179,15 @@ function requireId(id: string | undefined, field: string): string {
   return id
 }
 
-/** `ctx.provide('mudCore3', ...)` 的服务面（后期工具面的拒绝点即在此解析归属）。 */
-export interface MudCore3Service {
+/**
+ * `ctx.provide('mudCore3', ...)` 的服务面：工具面引擎窄面（MudCore3Handle）
+ * + runtimeFor（预留拒绝点）。
+ */
+export interface MudCore3Service extends MudCore3Handle {
   /** 由 agent 解析其会话 runtime；不属于本插件返回 null。 */
   runtimeFor(agent: { id: unknown }): SessionRuntime | null
+  /** 流程实体（locked login 等；mud-workflow 注册表启动期挂载，fail-loud 校验）。 */
+  readonly builtinFlows: readonly WorkflowRecord[]
 }
 
 // ── Remote 服务 ─────────────────────────────────────────────────
@@ -169,7 +199,8 @@ export class MudRemoteService extends TypertRemoteService {
   private readonly ready: () => Promise<void>
   private readonly writeDeps: () => Parameters<typeof writeAccount>[0]
   private readonly logDir: () => string | undefined
-  private readonly announce: (account: AccountRecord) => void
+  private readonly kickoff: (sessionId: string) => void
+  private readonly announceOnCreate: boolean
 
   /**
    * @param ctx - 插件上下文（typert 注册）。
@@ -178,7 +209,8 @@ export class MudRemoteService extends TypertRemoteService {
    * @param ready - 名册落定（storage 域打开完成）的等待。
    * @param writeDeps - 名册写路径依赖（建会话/分配器）。
    * @param logDir - 会话日志落盘目录（删账号时清理；未落盘返回 undefined）。
-   * @param announce - 建账号后的开场投递（空实现 = 关闭）。
+   * @param kickoff - 任务书投递面（T4a：admit 开闸门即投状态任务书触发规划）。
+   * @param announceOnCreate - 建账号后是否投任务书（bootstrapOnCreate 闸门）。
    */
   constructor(
     ctx: Context,
@@ -187,7 +219,8 @@ export class MudRemoteService extends TypertRemoteService {
     ready: () => Promise<void>,
     writeDeps: () => Parameters<typeof writeAccount>[0],
     logDir: () => string | undefined,
-    announce: (account: AccountRecord) => void,
+    kickoff: (sessionId: string) => void,
+    announceOnCreate: boolean,
   ) {
     super(ctx, 'mudRemote', { namespace: 'mud' })
     this.service = service
@@ -195,7 +228,8 @@ export class MudRemoteService extends TypertRemoteService {
     this.ready = ready
     this.writeDeps = writeDeps
     this.logDir = logDir
-    this.announce = announce
+    this.kickoff = kickoff
+    this.announceOnCreate = announceOnCreate
   }
 
   // ── 名册：服务器 ─────────────────────────────────────────────
@@ -234,9 +268,9 @@ export class MudRemoteService extends TypertRemoteService {
   }
 
   /**
-   * 建账号 = 一个动作：写名册 → 建会话（sessionId = 账号 id，绑定 preset）→ 开场投递。
+   * 建账号 = 一个动作：写名册 → 建会话（sessionId = 账号 id，绑定 preset）→ 任务书投递。
    * 密码由页面经 `credentials.set` 写入宿主凭据域，这里只收引用名。
-   * 开场投递让新会话立刻脱离 blank（宿主 `blank` 只由 `turn/start` 翻），会话体与
+   * 任务书投递让新会话立刻脱离 blank（宿主 `blank` 只由 `turn/start` 翻），会话体与
    * 「MUD 日志」tab 才会渲染；投递失败不影响账号本身。
    */
   @Remote
@@ -246,7 +280,7 @@ export class MudRemoteService extends TypertRemoteService {
     if (input === undefined) throw new Error('account 必填')
     await this.ready()
     const account = await writeAccount(this.writeDeps(), input)
-    this.announce(account)
+    if (this.announceOnCreate) this.kickoff(account.id)
     return { account }
   }
 
@@ -281,7 +315,11 @@ export class MudRemoteService extends TypertRemoteService {
     return { sessionId: id, state: this.service.status(id).state }
   }
 
-  /** 接入：MUD 信息开始进入 agent（名册 admitted 持久化）。 */
+  /**
+   * 接入：MUD 信息开始进入 agent（名册 admitted 持久化）。
+   * 开闸门并投状态任务书走 service 的 onAdmit 回调（T4a：两动作合一——根开
+   * 回合读状态自行规划；保持 admit 的纯闸门语义，投递只是旁路）。
+   */
   @Remote
   async admit(sessionId: string | undefined): Promise<{ sessionId: string; admitted: boolean }> {
     const id = requireId(sessionId, 'sessionId')
@@ -453,26 +491,21 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
   // agent 句柄表（投递用：sessionId → live agent）
   const agentMap = new Map<string, { followup: (msg: ReturnType<typeof createUserMessage>) => void }>()
 
-  // 缓冲溢出上报限流（每会话首次 + 每累计 100 行）
-  const dropLogged = new Map<string, number>()
-
   const delivererConfig: DelivererConfig = {
     ...(config.deliverQuietMs !== undefined ? { quietMs: config.deliverQuietMs } : {}),
     ...(config.deliverMaxWaitMs !== undefined ? { maxWaitMs: config.deliverMaxWaitMs } : {}),
     ...(config.deliverMaxLines !== undefined ? { maxLines: config.deliverMaxLines } : {}),
     ...(config.deliverMaxChars !== undefined ? { maxChars: config.deliverMaxChars } : {}),
-    ...(config.deliverMaxPendingLines !== undefined
-      ? { maxPendingLines: config.deliverMaxPendingLines } : {}),
-    onDrop: (sessionId, droppedNow, droppedTotal) => {
-      const logged = dropLogged.get(sessionId) ?? 0
-      if (logged !== 0 && droppedTotal - logged < 100) return
-      dropLogged.set(sessionId, droppedTotal)
-      ctx.logger.warn(`mud-core3: 会话 ${sessionId} 投递缓冲溢出，丢弃 ${droppedNow} 行（累计 ${droppedTotal}）`)
-    },
+  }
+
+  // 官方 live agent 注册表窄结构（AgentRegistry.get；归属父链上溯用，见 parentLookup）。
+  const agentsLive = ctx.agents as unknown as {
+    get(id: string): { session?: { header?: { parentSession?: string } } } | undefined
   }
 
   // 投递回调：MUD 行流聚合后以用户消息投递进会话（等同人工提问）。
-  // 返回 false = 本次未投出（agent 离线或 followup 抛错），批次保留在缓冲里等唤醒补投。
+  // 返回 false = 本次未投出（agent 离线或 followup 抛错），该批水位不推进（行仍在
+  // pending），等 agent 唤醒时由 flushPending 补投。
   const deliver = (sessionId: string, text: string): boolean => {
     const agent = agentMap.get(sessionId)
     if (agent === undefined) return false // 冷会话：批次保留，等 agent/created 时补投
@@ -500,6 +533,16 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     delivererConfig,
     log: logOptions,
     ...(config.recordLines !== undefined ? { recordLines: config.recordLines } : {}),
+    // 父会话查找 = 官方 live 注册表实时读（2026-10-01 裁定：不自建归属状态）。
+    // durable session lineage（session.header.parentSession，subagent/workflow 派发
+    // 都写入）经 ctx.agents（AgentRegistry，agent id ≡ session id）按 id 查 live
+    // agent 读 header；祖先不 live（已 dispose）→ undefined → 上溯终止，
+    // 与官方 authorizeLineage「要求 parent live」语义一致。
+    //（窄结构代位：AgentRegistry.get 形参为品牌化 SessionId，其定义在传递包
+    // @deepseek-ai/dsh-session 内，pnpm 严格链接下不可直连 import。）
+    parentLookup: sessionId => agentsLive.get(sessionId)?.session?.header?.parentSession,
+    // T4a：admit 开闸门并投状态任务书（kickoff 定义见下；调用发生在 admit 时）。
+    onAdmit: sessionId => kickoff(sessionId),
     view: {
       ...(config.viewScrollback !== undefined ? { scrollback: config.viewScrollback } : {}),
       ...(config.viewCols !== undefined ? { cols: config.viewCols } : {}),
@@ -508,41 +551,66 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     },
   })
 
-  // 建账号后的开场投递：真发一条用户消息 → 一次真实回合 → `turn/start` → 会话脱离 blank。
-  // 不做伪造 turn（会污染日志的回合计数与 replay）；可用 bootstrapOnCreate: false 关闭。
-  const announce = (account: AccountRecord): void => {
-    if (config.bootstrapOnCreate === false) return
-    const agent = agentMap.get(account.id)
+  // ── 任务书投递面（T4a kickoff）────────────────────────────────
+  // bootstrap（建账号）/admit（开闸门）/静默唤醒三触发点共用：正文 = 服务器/
+  // 账号事实 + 两轴实时状态 + 目标（状态驱动，模板 Config.taskBrief ?? 缺省）。
+  // 署名 'mud-wake'（与 MUD 行批次 'mud' 区分）；真发一条用户消息 → 一次真实
+  // 回合 → `turn/start` → 会话脱离 blank。不做伪造 turn（会污染回合计数与 replay）。
+  const kickoff = (sessionId: string): void => {
+    const agent = agentMap.get(sessionId)
     if (agent === undefined) {
-      ctx.logger.warn(`mud-core3: 会话 ${account.id} 的 agent 未就绪，跳过开场消息（会话仍为 blank）`)
+      ctx.logger.warn(`mud-core3: 会话 ${sessionId} 的 agent 未就绪，跳过任务书投递（会话仍为 blank）`)
       return
     }
+    const account = store.account(sessionId)
+    if (account === undefined) return // 不在名册 = 不是我们的会话
     const server = store.server(account.serverId)
-    const facts = {
+    const status = service.status(sessionId)
+    const text = fillTaskBrief(config.taskBrief ?? DEFAULT_TASK_BRIEF, {
       serverName: server?.name ?? account.serverId,
       endpoint: server === undefined ? '未登记' : `${server.host}:${server.port}`,
-      accountName: account.name,
-      preset: account.preset,
-    }
+      account: account.name,
+      conn: status.state,
+      loggedIn: status.loggedIn,
+    })
     try {
       agent.followup(createUserMessage({
-        content: [{ type: 'text', text: bootstrapText(facts) }],
-        source: { kind: 'mud', plugin: 'mud-core3' },
+        content: [{ type: 'text', text }],
+        source: { kind: 'mud-wake', plugin: 'mud-core3' },
       }))
-      ctx.logger.info(`mud-core3: 会话 ${account.id} 已投递开场消息（翻出 blank）`)
+      ctx.logger.info(`mud-core3: 会话 ${sessionId} 已投递任务书（conn=${status.state}，loggedIn=${status.loggedIn}）`)
     } catch (error: unknown) {
-      ctx.logger.warn(`mud-core3: 会话 ${account.id} 开场消息投递失败: ${String(error)}`)
+      ctx.logger.warn(`mud-core3: 会话 ${sessionId} 任务书投递失败: ${String(error)}`)
     }
   }
+
+  // ── 静默唤醒器（T4a，每会话一实例）────────────────────────────
+  // 行到达 re-arm（runtime.onActivity）+ 到期三守卫（已接入 + 非回合中 + 持有者
+  // 空闲，任一不满足只 re-arm）；命中 → kickoff 投状态任务书。不做子 agent/结算
+  // 守卫（V7 纪律：结算唤醒归宿主 watchSettlement）。
+  const wakes = new Map<string, Wake>()
 
   // ── agent/created → 名册判定 → 登记会话 + 记录 agent 句柄 + 补投 ──
   // 归属 = sessionId ∈ accounts（名册判定，不按 preset 排除）。
   ctx.on('agent/created', ({ agent }) => {
     const sessionId = String(agent.id)
     if (store.account(sessionId) === undefined) return // 不在名册 = 不是我们的会话
-    service.register(sessionId)
+    const rt = service.register(sessionId)
     // 记录 agent 句柄（投递用；agent 有 followup 方法）
     agentMap.set(sessionId, { followup: msg => agent.followup(msg) })
+    // 静默唤醒器（每会话一实例）：行到达 re-arm + 到期三守卫，命中投任务书。
+    if (!wakes.has(sessionId)) {
+      const wake = new Wake({
+        guards: {
+          admitted: () => service.getDeliverer(sessionId)?.isAdmitted ?? false,
+          notInTurn: () => !(service.getDeliverer(sessionId)?.isInTurn ?? false),
+          holderIdle: () => !(service.get(sessionId)?.holderBusy ?? false),
+        },
+        fire: () => kickoff(sessionId),
+      }, { silenceMs: config.silenceMs ?? 120_000 })
+      rt.onActivity = () => wake.arm()
+      wakes.set(sessionId, wake)
+    }
     // agent 上线：把冷会话期间保留下来的批次投出。
     service.flushPending(sessionId)
   })
@@ -556,14 +624,49 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
   ctx.on('session/disposed', (session) => {
     const sessionId = String(session.id)
     if (store.account(sessionId) === undefined) return
+    wakes.get(sessionId)?.dispose()
+    wakes.delete(sessionId)
     service.dispose(sessionId)
     agentMap.delete(sessionId)
-    dropLogged.delete(sessionId)
   })
 
-  // ── 归属解析服务（§3.1：后期工具面在此拒绝非本插件会话）────────
+  // ── turn/start、turn/end → 投递抑制/冲刷（pull 模型，§3.3）──
+  // 回合内行只进 pending（录制），turn/end 一次冲刷——防行流打断回合节奏。
+  ctx.on('session/event', (session, event) => {
+    const sessionId = String(session.id)
+    if (store.account(sessionId) === undefined) return
+    if (event.type === 'turn/start') service.turnStart(sessionId)
+    else if (event.type === 'turn/end') service.turnEnd(sessionId)
+  }, { global: true })
+
+  // ── 引擎窄面（工具面，T2b）：归属解析 / 建连 / 状态快照 / 缺省参数 ──
+  const toolDefaults = {
+    sendTimeoutMs: config.sendTimeoutMs ?? 15000,
+    sendMaxLines: config.sendMaxLines ?? 50,
+  }
   ctx.provide('mudCore3', {
     runtimeFor: (agent: { id: unknown }) => service.get(String(agent.id)),
+    toolContextFor: (agent) => service.toolContextFor(String(agent?.id ?? '')),
+    connect: async (sessionId: string) => {
+      const r = await service.connect(sessionId)
+      return { state: r.state }
+    },
+    workflowEnvFor: (sessionId: string, holder: string) => service.workflowEnvFor(sessionId, holder),
+    stateOf: (sessionId: string) => {
+      const status = service.status(sessionId)
+      const rt = service.get(sessionId)
+      return {
+        connState: status.state,
+        loggedIn: status.loggedIn,
+        admitted: status.admitted,
+        world: status.world,
+        recording: rt?.pendingLineCount ?? 0,
+        dropped: rt?.droppedLineCount ?? 0,
+      }
+    },
+    defaults: toolDefaults,
+    // 流程实体（数据归 core3，2026-10-01 裁定）：mud-workflow 注册表启动期挂载。
+    builtinFlows: [login],
   } satisfies MudCore3Service)
 
   // ── Remote 服务注册 ────────────────────────────────────────
@@ -571,7 +674,8 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
   // 不需要再手动 provide——重复 provide 会导致 "service already registered" 错误。
   // 构造即注册（super 里 ctx.provide(serviceKey)）；返回值不再使用。
   new MudRemoteService(
-    ctx, service, () => store, () => ready, writeDeps, () => logOptions.logDir, announce,
+    ctx, service, () => store, () => ready, writeDeps, () => logOptions.logDir,
+    kickoff, config.bootstrapOnCreate !== false,
   )
 
   // typert 工件注册（先 try-import，typert 注册表不可用时跳过）。
@@ -585,6 +689,10 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     })
   }
 
-  // ── 插件卸载：断连全部 ─────────────────────────────────────
-  ctx.effect(() => () => { service.disposeAll() })
+  // ── 插件卸载：断连全部 + 拆唤醒器 ───────────────────────────
+  ctx.effect(() => () => {
+    for (const wake of wakes.values()) wake.dispose()
+    wakes.clear()
+    service.disposeAll()
+  })
 }

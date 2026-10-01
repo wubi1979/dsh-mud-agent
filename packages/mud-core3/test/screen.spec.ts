@@ -56,7 +56,7 @@ describe('GameScreen', () => {
     expect(snapshot.screen).toContain('你挥出一剑。')
     // ANSI 颜色经无头屏序列化后仍在（形态可能变换，但转义必存）
     expect(snapshot.screen).not.toBe(snapshot.screen.replace(/\x1b\[/g, ''))
-    expect(snapshot.info).toEqual({ sessionId: 's1', state: 'disconnected', cols: 80 })
+    expect(snapshot.info).toEqual({ sessionId: 's1', state: 'disconnected', cols: 120 })
     screen.dispose()
   })
 
@@ -72,7 +72,7 @@ describe('GameScreen', () => {
     try {
       const rt = new SessionRuntime('s2', 100)
       await rt.connect({
-        host: '127.0.0.1', port, credentials: { name: 'hero', pass: 'SECRET-PASS' },
+        host: '127.0.0.1', port
       }, 2000)
       rt.send('look')
       await ticks()

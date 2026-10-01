@@ -3,7 +3,7 @@
  *
  * 用本地 mock telnet 服务器验证：
  *   - 两会话各自连接不同的 mock 服务器，互不串线
- *   - connect 建连 + login（发 name/pass）
+ *   - connect 只建连（盲发退役：不发 name/pass/空行；登录归 mud_workflow_run login）
  *   - disconnect 断连
  *   - dispose（session/disposed 模拟）断连 + 拆 runtime
  *   - 未登记会话 connect 抛错
@@ -17,6 +17,7 @@ import { MudService } from '../src/service.ts'
 import type {
   AccountRecord, ServerRecord, ResolvedCredentials,
 } from '../src/roster.ts'
+import { stripIac } from './helpers.ts'
 
 // ── mock telnet 服务器 ────────────────────────────────────────────
 
@@ -32,7 +33,8 @@ async function startMockServer(): Promise<MockServer> {
   let sock: net.Socket | null = null
   const server = net.createServer((s) => {
     sock = s
-    s.on('data', (d: Buffer) => received.push(d.toString('utf8')))
+    // 收到即剥离 IAC（客户端建连的协商字节不算数据，盲发断言才干净）
+    s.on('data', (d: Buffer) => received.push(stripIac(d)))
     // 发送欢迎横幅 + GA（让客户端连上后有行可读）
     s.write('欢迎来到北大侠客行\n')
     s.write(Buffer.from([255, 249])) // IAC GA
@@ -100,18 +102,12 @@ describe('MudService 两会话隔离', () => {
     expect(r2.state).toBe('connected')
     expect(service.size).toBe(2)
 
-    // 等数据到达 mock server（sendCredential 是同步 write，但 server 端 data 事件异步）
+    // 等一段时间确认无数据到达（connect 只建连，盲发已退役）
     await new Promise(r => setTimeout(r, 100))
 
-    // 各自收到自己的 login 凭据
-    expect(server1.received.join('')).toContain('hero')
-    expect(server1.received.join('')).toContain('pass1')
-    expect(server2.received.join('')).toContain('mage')
-    expect(server2.received.join('')).toContain('pass2')
-
-    // 不串线：server1 没收到 mage
-    expect(server1.received.join('')).not.toContain('mage')
-    expect(server2.received.join('')).not.toContain('hero')
+    // 盲发退役：connect 后服务端不收到任何凭据/数据
+    expect(server1.received.join('')).toBe('')
+    expect(server2.received.join('')).toBe('')
 
     await service.disposeAll()
     await server1.close()
@@ -230,7 +226,7 @@ describe('MudService 错误路径', () => {
     await expect(service.connect('a1')).rejects.toThrow('未绑定服务器')
   })
 
-  it('凭据解析失败 connect 抛错', async () => {
+  it('凭据解析失败 workflowEnvFor 抛错（connect 只建连，不再解析凭据）', async () => {
     const server = await startMockServer()
     const servers = new Map<string, ServerRecord>([
       ['ws-1', { workspaceId: 'ws-1', name: 'S1', host: '127.0.0.1', port: server.port }],
@@ -242,7 +238,8 @@ describe('MudService 错误路径', () => {
 
     const service = new MudService(makeDeps(servers, accounts, creds))
     service.register('a1')
-    await expect(service.connect('a1')).rejects.toThrow('凭据')
+    await service.connect('a1') // 只建连，凭据解析已随盲发退役移出 connect
+    await expect(service.workflowEnvFor('a1', 'workflow:login')).rejects.toThrow('凭据')
     await server.close()
   })
 
@@ -296,10 +293,11 @@ describe('SessionRuntime 行流积累', () => {
     expect(rt).not.toBeNull()
     expect(rt!.pendingLineCount).toBeGreaterThan(0)
 
-    const lines = rt!.consumePendingLines()
+    // 录制缓冲尾部快照（拉取源语义：行不物理消费，投递按水位线拉取）
+    const lines = rt!.recentLines(50)
     expect(lines.length).toBeGreaterThan(0)
     expect(lines.some(l => l.text.includes('欢迎'))).toBe(true)
-    expect(rt!.pendingLineCount).toBe(0) // 消费后清空
+    expect(rt!.seenAbs()).toBeGreaterThanOrEqual(lines.at(-1)!.abs - 1)
 
     await service.disposeAll()
     await server.close()
@@ -364,6 +362,26 @@ describe('MudService 接入闸门错误面', () => {
     expect(service.status('a1').admitted).toBe(false)
   })
 
+  it('onAdmit：admit 成功即触发一次（kickoff 任务书接线），stop 不触发', () => {
+    const accounts = new Map<string, AccountRecord>([
+      ['a1', { id: 'a1', name: 'u1', passRef: 'c1', serverId: 'w1', preset: 'mud-player', admitted: false }],
+    ])
+    const kicked: string[] = []
+    const service = new MudService({
+      ...makeDeps(new Map(), accounts, new Map()),
+      deliver: () => true,
+      onAdmit: id => { kicked.push(id) },
+    })
+    service.register('a1')
+    service.admit('a1')
+    expect(kicked).toEqual(['a1'])
+    service.stop('a1')
+    expect(kicked).toEqual(['a1'])
+    // 未登记 admit 抛错时不应触发（fail-loud 先于回调）。
+    expect(() => service.admit('nope')).toThrow('未登记')
+    expect(kicked).toEqual(['a1'])
+  })
+
   it('flushPending：未登记会话是空操作，已登记会话不抛错', () => {
     const service = serviceWithDeliverer()
     expect(() => service.flushPending('nope')).not.toThrow()
@@ -397,7 +415,7 @@ describe('MudService watchStatus 状态流', () => {
 
     service.register('a1')
     const registered = await iter.next()
-    expect(registered.value.sessions.map(s => s.sessionId)).toEqual(['a1'])
+    expect(registered.value.sessions.map((s: { sessionId: string }) => s.sessionId)).toEqual(['a1'])
     expect(registered.value.sessions[0]!.state).toBe('disconnected')
 
     service.admit('a1')
@@ -444,7 +462,7 @@ describe('MudService watchStatus 状态流', () => {
 
     service.disconnect('a1')
     const f2 = await iter.next()
-    const row2 = f2.value?.sessions.find(s => s.sessionId === 'a1')
+    const row2 = f2.value?.sessions.find((s: { sessionId: string }) => s.sessionId === 'a1')
     expect(row2?.state).toBe('disconnected')
 
     controller.abort()
@@ -491,17 +509,20 @@ describe('MudService 连接失败可诊断', () => {
     expect(entries.some(e => e.level === 'error' && e.text.includes('未绑定服务器'))).toBe(true)
   })
 
-  it('凭据解析失败：错误面与日志都带引用名', async () => {
-    const accounts = new Map<string, AccountRecord>([['a1', account({ passRef: 'MUD_MISSING' })]])
+  it('凭据解析失败：错误面与日志都带引用名（workflowEnvFor 路径）', async () => {
+    const server = await startMockServer()
     const servers = new Map<string, ServerRecord>([
-      ['ws-1', { workspaceId: 'ws-1', name: 'S', host: '127.0.0.1', port: 1 }],
+      ['ws-1', { workspaceId: 'ws-1', name: 'S', host: '127.0.0.1', port: server.port }],
     ])
+    const accounts = new Map<string, AccountRecord>([['a1', account({ passRef: 'MUD_MISSING' })]])
     const service = new MudService({ ...makeDeps(servers, accounts, new Map()), log: { bufferMax: 50 } })
     service.register('a1')
+    await service.connect('a1') // 只建连；凭据解析归 workflowEnvFor
 
-    await expect(service.connect('a1')).rejects.toThrow('MUD_MISSING')
+    await expect(service.workflowEnvFor('a1', 'workflow:login')).rejects.toThrow('MUD_MISSING')
     const entries = service.logOf('a1')!.entries
     expect(entries.some(e => e.level === 'error' && e.text.includes('MUD_MISSING'))).toBe(true)
+    await server.close()
   })
 
   it('端口不可达：日志记下 host:port 与失败原因', async () => {
@@ -522,7 +543,7 @@ describe('MudService 连接失败可诊断', () => {
     expect(text).toContain('失败')
   })
 
-  it('成功连接：日志含 host:port、凭据已解析与 login 已发送', async () => {
+  it('成功连接：日志含 host:port 与「connect 只建连」，凭据明文不进日志', async () => {
     const server = await startMockServer()
     const servers = new Map<string, ServerRecord>([
       ['ws-1', { workspaceId: 'ws-1', name: 'S', host: '127.0.0.1', port: server.port }],
@@ -535,9 +556,8 @@ describe('MudService 连接失败可诊断', () => {
     await service.connect('a1')
     const text = service.logOf('a1')!.entries.map(e => e.text).join('\n')
     expect(text).toContain(`127.0.0.1:${server.port}`)
-    expect(text).toContain('凭据已解析')
-    expect(text).toContain('login 已发送')
-    expect(text).not.toContain('secret-pw') // 明文不进日志
+    expect(text).toContain('只建连')
+    expect(text).not.toContain('secret-pw') // 明文不进日志（凭据解析已移出 connect）
 
     await service.disposeAll()
     await server.close()

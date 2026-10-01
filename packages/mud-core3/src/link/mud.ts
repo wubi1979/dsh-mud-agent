@@ -20,7 +20,7 @@
  */
 
 import { AnsiStreamParser, type MudLine } from './line.ts'
-import { TelnetClient } from './telnet.ts'
+import { TelnetClient, type GmcpMessage } from './telnet.ts'
 
 /** 行尾静默刷出延迟：对齐 Mudlet cTelnet::mTimeOut = 300ms 的静默推送。 */
 const FLUSH_IDLE_MS = 300
@@ -41,6 +41,8 @@ export class Mud {
   onBoundary: ((kind: 'ga' | 'eor') => void) | null = null
   /** 断线钩子：装配层接此复位世界状态 / 标记断开。 */
   onDisconnect: (() => void) | null = null
+  /** GMCP 子协商钩子（三期状态地基：世界状态写入源；payload 已按 JSON 尽力解析）。 */
+  onGmcp: ((msg: GmcpMessage) => void) | null = null
   /** 直发观测钩子：send 成功后以命令原文回调。凭据走 sendCredential 不触发。 */
   onSend: ((cmd: string) => void) | null = null
 
@@ -65,6 +67,9 @@ export class Mud {
     conn.on('text', (text: string) => { if (this.epoch === epoch) this.onText(text) })
     conn.on('boundary', (b: { kind: 'ga' | 'eor' }) => {
       if (this.epoch === epoch) this.onBoundaryEvent(b.kind)
+    })
+    conn.on('gmcp', (msg: GmcpMessage) => {
+      if (this.epoch === epoch) this.onGmcp?.(msg)
     })
     conn.on('close', () => {
       if (this.epoch !== epoch) return

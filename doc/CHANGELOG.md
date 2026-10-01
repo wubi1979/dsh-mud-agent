@@ -111,4 +111,20 @@
 - **webui 启动对齐 + 统一错误面**：`mud-state.ts` 加 `hydrate()`——remote 挂载成功即拉 servers()/accounts() 用宿主真值覆盖 localStorage 呈现缓存（刷新/宿主重启后的假服务器/死会话在启动时清掉）；service.ts 统一「会话未登记」错误提示（可能宿主重启过或页面残留旧会话，请刷新页面后重连或重建账号）
 - 测试 121 → **132 项全绿**：新增 `test/screen.spec.ts` 8 条（行写入含 ANSI 入 snapshot、send 回显入屏且凭据缺席、背压超限断流、断流后 re-follow 恢复、两会话屏幕隔离、headless 跨重连续写、follower 注册原子性、合批）+ watchStatus 3 条（首帧快照与变化推帧、连接生命周期推帧、多订阅者互不影响）；core3 构建 + `gen:typert`（follow/watchStatus stream descriptor）+ webui 构建全通过
 
+## [v0.0.11]一、二期文档收敛：PLAN 精简 + 切片记录同步 (2026-10-01)
+> 总结：已交付的一、二期从 PLAN 起草区收敛为总结段；切片/验收记录补入正式章节
+
+- `doc/architecture/00-core.md`：§4 验收表补「画面与状态推送」行；§4.1 切片表补 C5/C5.1 两行；§5 后置清单补画面通道增强项（C5 后置项归档）
+- `doc/pre-plan.md`：状态头更新——二期设计已随三期 T2a/T2b 实施，本文转为二期设计事实源；两项预设约束标注已被三期裁定取代
+- `doc/PLAN.md`：一、二期详细设计原稿（切片表、C5/C5.1 起草）删除，各留一段总结；头部状态行同步（一、二期已交付，三期当前 = T4）
+
+## [v0.0.12]pre-plan.md 并入正式章节并删除 (2026-10-01)
+> 总结：二期工具面设计按现行真值（含三期修订）落 §3.3 转现役，起草文件退役
+
+- `doc/architecture/00-core.md`：§3.3 由「工具面与流程（后置）」改写为「工具面（现役）」——注册与承载、工具清单、拒绝序（含三期修订注记：mud_send 不受接入闸门、连接升格 mud_connect）、行流持有者、ReadMachine、水位线 pull 模型（delivered/read 两线 + 投递时机 A/B/C + 失败不丢行）、read 与水位线、水位线语义总表、禁发表全段扫描、参数与 Config、已知限制；末注流程面归 mud-workflow 包（设计随三期收尾同步）；§3.4 闸门条目补三期修订（mud_send 例外）
+- `doc/ARCHITECTURE.md`：章节地图 §1–§5 行补「工具面（§3.3）」「管理面（§3.5）」
+- `doc/PLAN.md`：二期总结改指 §3.3；T2 裁定与「应答与水位」两处 pre-plan 引用改指 §3.3
+- **删除 `doc/pre-plan.md`**（内容已全部并入 §3.3 或被三期裁定取代）
+- 代码注释 `pre-plan §N` 引用改指 `§3.3`（deliver.ts / index.ts / preset.ts / read.ts / runtime.ts / tools.ts / test ×3）
+
 > AI生成

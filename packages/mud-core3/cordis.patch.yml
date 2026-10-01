@@ -35,6 +35,15 @@
               suffix: Your working directory is {{cwd}}.
               prefix: |
                 You are a MUD player. MUD game messages arrive as user messages — read them and respond directly, as if a human told you what happened. You are playing a text-based online game (北大侠客行). Respond in Chinese.
+
+                你可以用 mud_send 向游戏发命令（cmd）或裸读近期行流（不带 cmd）；用 mud_state 查看连接与状态；用 mud_connect 建连（幂等，已连接时不会重连或踢掉已登录会话）。未连接时 mud_send 会被拒绝，可先用 mud_connect 建连。是否已登录由你根据行流与 mud_state 自行判断。删档命令 suicide 被禁止。若工具返回拒绝信息，如实转告用户。确定性重复操作（如登录）可封装成流程：mud_workflow_list 查看可用流程，mud_workflow_run 一次执行，mud_workflow_get/save/delete 读取与改进流程（locked 流程只读）。
+
+                分工协议（根与子同读本说明，按所处角色行事）：
+                - 根（收到任务书或结算消息的一方）：先用 mud_state 读状态判断现状，把目标拆成要点序列（已完成的步骤剔除；每个要点写成自足指令，子看不到你的会话历史），用 subagent 工具委派一个子 agent 执行（continuable 后台模式），委派后休眠等结算。判断归根：根不亲自执行要点。
+                - 子（被委派的一方）：串行执行拿到的要点序列——成功则继续下一个要点，不逐个回报；任一步失败立即停止，收尾文本写明现场（已完成 / 未完成 / 卡在哪）。执行完必须终结，不要等待新任务。
+                - 一次委派 = 一次结算：子终结后宿主会把结算消息投给你（根），据此消化现场、重写规划再委派。
+                - 要点承载分界：确定性序列（如登录）用 mud_workflow_run 一次执行；需要判断的要点由子直接用 mud_send/mud_state 完成。脚本管点内步骤，子管点间顺序，根管要点的产生与重写，三者不越界；子不重新规划、不擅自重试失败步骤。
+                - 静默唤醒：长时间无消息时你会收到一条状态任务书（正文只含事实与目标）——按根角色重新读状态、继续规划；已完成的步骤不要重做。
           - id: agent-instructions
             name: '@deepseek-ai/dsh-agent-instructions'
             config:
@@ -156,8 +165,12 @@
           - id: tool-plugin-manager
             name: '@deepseek-ai/dsh-plugin-manager/tools'
             disabled: true
-          # mud-core3 preset 行：第一期无工具面，preset 作用域不加载 core3 引擎。
-          # 工具面落地后（第二期）在此行注册 mud_send/mud_state 工具。
+          # mud-core3 preset 行（T2b 工具面）：mud_connect/mud_send/mud_state 三工具。
+          - id: mud-core3-tools
+            name: 'file:///D:/Code/dsh-mud-agent/packages/mud-core3/lib/preset.js'
+          # mud-workflow preset 行（流程面五工具）：mud_workflow_run + list/get/save/delete。
+          - id: mud-workflow-tools
+            name: 'file:///D:/Code/dsh-mud-agent/packages/mud-workflow/lib/preset.js'
 
     # 引擎行：全局作用域加载 mud-core3（agent/created 监听、session/disposed 监听、remote 服务、投递、会话日志）
     # 日志落盘目录固定到本仓 logs/（缺省是启动目录下的 mud-logs）；logFile: false 可只留内存环。
@@ -165,6 +178,11 @@
       name: 'file:///D:/Code/dsh-mud-agent/packages/mud-core3/lib/index.js'
       config:
         logDir: D:/code/dsh-mud-agent/logs
+
+    # 引擎行：全局作用域加载 mud-workflow（流程注册表 + builtins + storage 双态）
+    - id: mud-workflow
+      name: 'file:///D:/Code/dsh-mud-agent/packages/mud-workflow/lib/index.js'
+      config: {}
 
     # WebUI 行：浏览器侧（服务器/账号管理面）
     - id: mud-webui
