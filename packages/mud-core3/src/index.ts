@@ -594,8 +594,9 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
   // 归属 = sessionId ∈ accounts（名册判定，不按 preset 排除）。
   ctx.on('agent/created', ({ agent }) => {
     const sessionId = String(agent.id)
-    if (store.account(sessionId) === undefined) return // 不在名册 = 不是我们的会话
-    const rt = service.register(sessionId)
+    const account = store.account(sessionId)
+    if (account === undefined) return // 不在名册 = 不是我们的会话
+    const rt = service.register(sessionId, account.name)
     // 记录 agent 句柄（投递用；agent 有 followup 方法）
     agentMap.set(sessionId, { followup: msg => agent.followup(msg) })
     // 静默唤醒器（每会话一实例）：行到达 re-arm + 到期三守卫，命中投任务书。

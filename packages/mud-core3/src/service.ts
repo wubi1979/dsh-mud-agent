@@ -170,11 +170,15 @@ export class MudService {
     this.deps = deps
   }
 
-  /** 登记会话（agent/created 调用；幂等）。创建 Deliverer/SessionLog 并接线到 runtime。 */
-  register(sessionId: string): SessionRuntime {
+  /**
+   * 登记会话（agent/created 调用；幂等）。创建 Deliverer/SessionLog 并接线到 runtime。
+   * accountName（账号名，roster accounts.name）注入 send 回显前缀；幂等重入时同名不变。
+   */
+  register(sessionId: string, accountName?: string): SessionRuntime {
     let rt = this.runtimes.get(sessionId)
     if (rt !== undefined) return rt
     rt = new SessionRuntime(sessionId, this.deps.recordLines, this.deps.view)
+    if (accountName !== undefined) rt.accountName = accountName
     this.runtimes.set(sessionId, rt)
 
     const log = new SessionLog(sessionId, this.deps.log)

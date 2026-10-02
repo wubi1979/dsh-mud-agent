@@ -86,6 +86,9 @@ const config: UserConfig = {
   clean: false,
   sourcemap: true,
   deps: {
+    // 全打包是有意的（browser 自包含 bundle），仅平台模块表保持 import——
+    // 显式声明以关闭 tsdown 的 deps.onlyBundle 提示。
+    onlyBundle: false,
     // Only module-table rows stay imports; everything else is bundled.
     neverBundle: (specifier: string): boolean => isPlatformModule(specifier),
     alwaysBundle: (specifier: string): boolean => !isPlatformModule(specifier),

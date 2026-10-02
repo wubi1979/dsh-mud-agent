@@ -63,6 +63,9 @@ export class SessionRuntime {
   /** 会话级发送持有者（PLAN 三期「行流持有者」）：同一时刻只允许一个执行体在 send+read。 */
   private sendHolder: string | null = null
 
+  /** 账号名（roster accounts.name，register 注入）：send 回显前缀 `<账号名>@agent|user>` 用。 */
+  accountName = ''
+
   /** 行流回调（C3 聚合投递接此；C2 可选，测试用）。 */
   onLine: ((line: MudLine) => void) | null = null
   /** 行到达钩子（T4a 静默唤醒 re-arm 接此；每行一次，与投递无关）。 */
@@ -112,7 +115,8 @@ export class SessionRuntime {
     // GA/EOR 边界 → read 在途时推进 gaCount 判定（工具面"一段完整文字"关窗）。
     this.mud.onBoundary = () => { this.readMachine.onBoundary() }
     // 直发命令回显进画面（凭据走 sendCredential 不触发 onSend —— 永不进画面）。
-    this.mud.onSend = cmd => { this.screen.echo(cmd) }
+    // 回显前缀 = 账号名@来源（agent 灰 / user 青），账号名由 register 注入。
+    this.mud.onSend = (cmd, source) => { this.screen.echo(cmd, source, this.accountName) }
     // GMCP → 登录轴 + 世界状态（三期）：
     // GMCP 是权威登录信号（不依赖行文匹配）——服务器进入游戏后才发 GMCP 包，
     // 到达即置 in-game 并写入 world（zone='gmcp'，key=包名，后到覆盖）。
@@ -276,9 +280,9 @@ export class SessionRuntime {
     return this.disposed
   }
 
-  /** 直发命令（C2 不暴露给模型；C3+ 工具面用）。 */
-  send(cmd: string): boolean {
-    return this.mud.send(cmd)
+  /** 直发命令（C2 不暴露给模型；C3+ 工具面用；source 区分回显样式）。 */
+  send(cmd: string, source: 'agent' | 'user' = 'agent'): boolean {
+    return this.mud.send(cmd, source)
   }
 
   /**

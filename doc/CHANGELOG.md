@@ -111,20 +111,52 @@
 - **webui 启动对齐 + 统一错误面**：`mud-state.ts` 加 `hydrate()`——remote 挂载成功即拉 servers()/accounts() 用宿主真值覆盖 localStorage 呈现缓存（刷新/宿主重启后的假服务器/死会话在启动时清掉）；service.ts 统一「会话未登记」错误提示（可能宿主重启过或页面残留旧会话，请刷新页面后重连或重建账号）
 - 测试 121 → **132 项全绿**：新增 `test/screen.spec.ts` 8 条（行写入含 ANSI 入 snapshot、send 回显入屏且凭据缺席、背压超限断流、断流后 re-follow 恢复、两会话屏幕隔离、headless 跨重连续写、follower 注册原子性、合批）+ watchStatus 3 条（首帧快照与变化推帧、连接生命周期推帧、多订阅者互不影响）；core3 构建 + `gen:typert`（follow/watchStatus stream descriptor）+ webui 构建全通过
 
-## [v0.0.11]一、二期文档收敛：PLAN 精简 + 切片记录同步 (2026-10-01)
-> 总结：已交付的一、二期从 PLAN 起草区收敛为总结段；切片/验收记录补入正式章节
+## [v0.0.11]一期收尾：画面 tab 单开化与工具栏接线 + 文档同步 (2026-09-30)
+> 总结：第一期（C1–C5/C5.1）全部落地并验收；画面 tab 单开守卫 + guide 入口 + 工具栏连接/断开按钮；设计文档对齐实现，一期收口
+
+- **画面 tab 单开化**：`mud-game` 从 `multiple: true` 改为单开——右侧栏 guide 入口卡片（无 params 打开，回退跟随当前会话）；单开守卫订阅 `openTabs`，同会话开出第二个画面 tab 即关掉较新、保留最旧实例（其 follow 流与工具栏状态不中断；失效回调入微任务避让发布回路，幂等）
+- **画面工具栏连接/断开按钮**：连接/断开入口从侧栏 ⋯ 菜单移到画面 tab 工具栏（调既有 `remote.mud.connect/disconnect` 手工动词，非画面通道输入）；`MudGameView` 适配只读模式的连接态展示，侧栏去重
+- **cols 缺省修正**：headless 屏 cols 代码缺省 80 → **120**（`viewCols` 仍可覆盖；文档同步为 120）
+- 样式微调：终端面板四周 margin/内边距、竖向滚动条收窄至 8px
+- **文档同步（一期收口）**：`architecture/00-core.md` §3.5 对齐实现（单开守卫/guide 入口/工具栏接线/cols 120）、§4 验收表与 §4.1 切片表补 C5/C5.1 行、§5 后置清单补画面后置项与 C5.2 暂缓指针；`PLAN.md` 一期标记完成并清空已落地的 C5/C5.1 起草节（事实源已在 §3.5）；`ARCHITECTURE.md` 进度注更新
+- **一期验收基线**：core3 测试 132 项全绿；§4 验收表全过（端到端：接入 → MUD 消息进会话 → agent 回答实机跑通）；待办仅剩 C5.2（已定稿暂缓，见 `doc/plans/c5.2-line-tagging-split-screen.md`）
+
+## [v0.0.12]二期工具面落地 (2026-09-30)
+> 总结：mud_send/mud_state 注册进 mud-player preset + 投递 pull 化（水位线 + turn/end 驱动）；agent 可向 MUD 发命令、查状态；132 → 174 项全绿
+
+- **`src/read.ts`（新）**：`ReadMachine` 独立类（自 core2 竞速机移植）挂 SessionRuntime——判定序 `failOn > until > gaCount > maxLines` 写死；收束源 quiet/timeout/signal/disconnected/danger（`abortWait` 保留 API 供后置意识层）；swallow 吞行钩子空实现；`ReadResult.rest` 砍掉（逐行回调模型下自然并回）
+- **投递 pull 化（水位线模型）**：`deliver.ts` 去自持缓冲，改注入 `LineSource`（seen/take/commit）；`runtime.ts` 双水位线 `deliveredAbs`/`readAbs`（seen = max，初始/断线复位 -1）+ `takeLinesAfter`/`commitDelivered` + `read()`（裸读 = 尾部 maxLines 快照；readAbs 推进）；失败批次不推进 delivered（下次从失败点重试不丢行）；`onBoundary` 直挂 readMachine（GA 判据）
+- **投递时机 turn/end 驱动**：订阅宿主 `session/event`（global）——`turn/start` 抑制（不武装定时器）、`turn/end` 冲刷一次；空闲模式静默定时语义不变；冷启动补投 `flushPending` → `flushOnce`
+- **`src/tools.ts`（新，纯层零宿主 import）**：`mud_send`（拒绝序：引擎缺席 → 归属 → 禁词 → 闸门 → 连接 → 执行，全部可读拒绝 `{ok:false,error}` 不 throw）/ `mud_state`（只过归属，不受闸门/连接）；禁词表最小集 `{ suicide }` 全段扫描（`[\s;]+` 切 token，堵 "look;suicide" 绕过）；compileListen 全空 = `{}`、缺省判据按模式注入（有 cmd `gaCount:1`、裸读 `quietMs:300`）；`timeoutMs` 钳制 ≤ 60000；注册完整性自检 fail-loud
+- **`src/preset.ts`（新）**：preset 作用域注册入口（`lib/preset.js`），注册期不依赖引擎、执行期 `ctx.get('mudCore3')` 解析窄面；`cordis.patch.yml` preset 行追加 `mud-tools` 插件行；mud-player persona 追加工具说明
+- **接线**：`ctx.provide('mudCore3')` 扩展 `toolContextFor`（roster 归属 + `{sessionId, runtime, admitted, connState}` 聚合）+ `defaults`；Config 新增 `sendTimeoutMs`(15000)/`sendMaxLines`(50)、**移除 `deliverMaxPendingLines`**（自持缓冲废弃，上限由 `recordLines` 承担）；peerDependencies 增 `@deepseek-ai/dsh-tools`
+- **send 回显格式（实机验证后调整）**：命令回显带账号名@来源前缀——agent 发送 = `账号名@agent>` 灰（90m），user 发送 = `账号名@user>` 青（36m，为输入回传预留的既有样式）；`Mud.send`/`SessionRuntime.send` 加 `source` 参数，账号名由 `register` 从 roster 注入；凭据路径（sendCredential）不回显不变
+- **画面工具栏按钮原生化（实机调整）**：连接/断开按钮从自绘样式改用宿主原生 `Button`（ghost/sm，随宿主亮/暗主题），删除自绘 `.toolText`/`.toolPrimary`
+- **测试 132 → 174 项全绿**：新增 `test/read.spec.ts` 24 条（判定序/收束源/裸读/吞行钩子含钩子内同步 abortWait/并发 fail-loud）、runtime TCP 7 条（send+read/积压不进 acc/裸读/断线中断/水位线不重投/turn/end 冲刷/失败重试）、`test/tools.spec.ts` 8 条（注册自检/拒绝序/deny 全段扫描/闸门/连接/state 不受闸门/listen 编译/timeout 钳制）、screen 补 dispose 后 follower 断流 1 条、deliver pull 化重写 + service 增 toolContextFor 流转；build + typecheck 通过
+- **文档同步**：`architecture/00-core.md` §3.3 工具面改现役（二工具/拒绝序/禁词表/ReadMachine/listen 编译）、§3.4 投递改水位线 pull 模型 + turn/end 驱动、§1/§3.1/§4/§5 对齐（验收表补工具面与水位线行、切片表补 C6、后置清单移除已落地的工具面项）
+
+## [v0.0.13]一、二期文档收敛：PLAN 精简 + 切片记录同步 (2026-10-01)
+> 总结：已交付的一、二期从 PLAN 起草区收敛为总结段；切片/验收记录补入正式章节（原主线编号 v0.0.11，合并时重排——编号让位于日期更早的分支条目）
 
 - `doc/architecture/00-core.md`：§4 验收表补「画面与状态推送」行；§4.1 切片表补 C5/C5.1 两行；§5 后置清单补画面通道增强项（C5 后置项归档）
 - `doc/pre-plan.md`：状态头更新——二期设计已随三期 T2a/T2b 实施，本文转为二期设计事实源；两项预设约束标注已被三期裁定取代
 - `doc/PLAN.md`：一、二期详细设计原稿（切片表、C5/C5.1 起草）删除，各留一段总结；头部状态行同步（一、二期已交付，三期当前 = T4）
 
-## [v0.0.12]pre-plan.md 并入正式章节并删除 (2026-10-01)
-> 总结：二期工具面设计按现行真值（含三期修订）落 §3.3 转现役，起草文件退役
+## [v0.0.14]pre-plan.md 并入正式章节并删除 (2026-10-01)
+> 总结：二期工具面设计按现行真值（含三期修订）落 §3.3 转现役，起草文件退役（原主线编号 v0.0.12，合并时重排）
 
 - `doc/architecture/00-core.md`：§3.3 由「工具面与流程（后置）」改写为「工具面（现役）」——注册与承载、工具清单、拒绝序（含三期修订注记：mud_send 不受接入闸门、连接升格 mud_connect）、行流持有者、ReadMachine、水位线 pull 模型（delivered/read 两线 + 投递时机 A/B/C + 失败不丢行）、read 与水位线、水位线语义总表、禁发表全段扫描、参数与 Config、已知限制；末注流程面归 mud-workflow 包（设计随三期收尾同步）；§3.4 闸门条目补三期修订（mud_send 例外）
 - `doc/ARCHITECTURE.md`：章节地图 §1–§5 行补「工具面（§3.3）」「管理面（§3.5）」
 - `doc/PLAN.md`：二期总结改指 §3.3；T2 裁定与「应答与水位」两处 pre-plan 引用改指 §3.3
 - **删除 `doc/pre-plan.md`**（内容已全部并入 §3.3 或被三期裁定取代）
 - 代码注释 `pre-plan §N` 引用改指 `§3.3`（deliver.ts / index.ts / preset.ts / read.ts / runtime.ts / tools.ts / test ×3）
+
+## [v0.0.15]三期设计同步：归纳进正式章节 + PLAN 收缩 + 文档-源码矛盾修订 (2026-10-02)
+> 总结：三期（状态面/流程面/自主行为）设计事实源落 00-core.md §3.6–§3.8；PLAN 三期收缩为总结；对照源码修订过期描述；消解与 b7b7082 分支的合并冲突（代码以三期主线为准）
+
+- `doc/architecture/00-core.md`：新增 **§3.6 状态面**（两轴 conn/loggedIn + GMCP 权威登录信号 + World 世界状态：分区/置信度/来源追溯，断线整体复位）、**§3.7 流程面**（mud-workflow 独立包与纯度裁定、JSON 声明式步骤表、词汇表、注册表 locked 进化闭环、凭据红线双闸、解释器语义、五工具、workflowEnvFor 缝、login locked 流程与两条实测勘误）、**§3.8 自主行为**（kickoff 任务书面三触发点共用 + Config taskBrief、Wake 静默唤醒器三守卫、分工模型三层）；§2.2 开场消息改任务书语义（'mud-wake' 署名）、§2.3 登录改流程 login + 连接动词补 mud_connect、§2.4 凭据解析时机改登录流程执行时、§3.1 装配面重写（Wake 装配/kickoff 三触发点/parentLookup live 注册表/builtinFlows）、§3.3 拒绝序补归属父链上溯与三期修订（mud_send 只拒未连接）、§3.4 闸门补 mud_send 例外；§4 验收表补三期行（状态面/归属上溯/流程面/静默唤醒/自主行为）并融合画面与水位线行、§4.1 切片表补 T1–T4 行、§5 后置清单更新（删过期「流程 flows」行，补规则层/意识层/流程扩展/子级 deadline interrupt）
+- `doc/PLAN.md`：三期详细设计原稿收缩为总结段（切片交付状态表 + T4b 实机验收清单 7 项 + T5 待办）；一二期总结与状态头同步；C5.2 暂缓指针保留
+- `doc/ARCHITECTURE.md`：状态行补三期进度；章节地图与任务索引补 §3.6–§3.8
+- **合并冲突消解（b7b7082 → 主线）**：mud-core3 引擎与测试代码以三期主线（新代码）为准；分支侧 webui 画面打磨（tab 单开/工具栏/MudLogo）与 C5.2 计划文件已自动并入保留；CHANGELOG 两侧同名版本条目按日期统一编号（本主线 2026-10-01 两条重排为 v0.0.13/v0.0.14）
 
 > AI生成

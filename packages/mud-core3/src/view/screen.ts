@@ -217,11 +217,13 @@ export class GameScreen {
   }
 
   /**
-   * 直发命令回显：区分色前缀写进无头屏（output 帧路径，客户端零特判）。
+   * 直发命令回显：带来源区分色前缀写进无头屏（output 帧路径，客户端零特判）——
+   * agent 发送 = `账号名@agent>` 灰（90m），user 发送 = `账号名@user>` 青（36m）。
    * 凭据永不经过此路径 —— Mud.sendCredential 不触发 onSend。
    */
-  echo(cmd: string): void {
-    this.write(`\x1b[90m> ${cmd}\x1b[0m\r\n`)
+  echo(cmd: string, source: 'agent' | 'user' = 'agent', accountName = ''): void {
+    const color = source === 'agent' ? '90' : '36'
+    this.write(`\x1b[${color}m${accountName}@${source}> ${cmd}\x1b[0m\r\n`)
   }
 
   /** 连接状态变化：广播 state 帧（不写入无头屏 —— 屏内容只属于游戏文本）。 */

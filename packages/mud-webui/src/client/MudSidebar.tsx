@@ -11,10 +11,11 @@
  * @module @deepseek-ai/dsh-mud-webui/client/MudSidebar
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import type { HostObservable, InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import {
+  IconChevronDownOutlineRegular, IconChevronRightOutlineRegular,
   IconEllipsisOutlineRegular, IconGlobeOutlineRegular, IconPanelLeftOutlineRegular, IconPlusOutlineRegular,
   IconRefreshOutlineRegular, IconUserOutlineRegular, Menu, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -26,6 +27,7 @@ import type { MudCredentialInfo } from './mud-credentials.ts'
 import type { MudLogSnapshot } from './mud-log.ts'
 import type { MudRemoteController } from './mud-remote.ts'
 import { ServerDialog, UserDialog } from './MudDialogs.tsx'
+import { MudLogo } from './MudLogo.tsx'
 import css from './MudSidebar.module.css'
 
 /** Business face injected into the sidebar and the MUD log view. */
@@ -109,6 +111,21 @@ export function MudSidebar({
   const [userDialogTarget, setUserDialogTarget] = useState<MudServer | null>(null)
   const [serverMenuFor, setServerMenuFor] = useState<MudServer | null>(null)
   const [userMenuFor, setUserMenuFor] = useState<{ serverId: string; userId: string } | null>(null)
+  // 服务器行展开态（点击行切换；缺省展开首个服务器，冷启动能直接看到账号）。
+  const [expandedServers, setExpandedServers] = useState<ReadonlySet<string>>(() => new Set())
+  const booted = useRef(false)
+  if (!booted.current && servers.length > 0) {
+    booted.current = true
+    setExpandedServers(new Set([servers[0]!.id]))
+  }
+  const toggleServerExpanded = (serverId: string): void => {
+    setExpandedServers(prev => {
+      const next = new Set(prev)
+      if (next.has(serverId)) next.delete(serverId)
+      else next.add(serverId)
+      return next
+    })
+  }
 
   useEffect(() => {
     void refreshStatus()
@@ -120,21 +137,22 @@ export function MudSidebar({
     <div className={clsx(css.root, collapsed && css.collapsed)}>
       <div className={clsx(css.logoRow, !collapsed && css.wideOnly)}>
         {collapsed ? (
-          /* 收缩 rail：原生同款单切换钮 — 常驻 globe 标记，hover 换 panel 展开图标。 */
+          /* 收缩 rail：原生同款单切换钮 — 常驻 MudLogo，hover 换 panel 展开图标。 */
           <Tooltip label="展开侧栏" delayMs={500}>
             <button type="button" className={clsx(css.brand, css.railBrand)} aria-label="展开侧栏" onClick={() => { toggleSidebar() }}>
-              <span className={css.brandMark}><IconGlobeOutlineRegular size={18} /></span>
+              <span className={css.brandMark}><MudLogo size={22} /></span>
               <span className={css.railHoverIcon}><IconPanelLeftOutlineRegular size={18} /></span>
             </button>
           </Tooltip>
         ) : (
-          <button type="button" className={css.brand} aria-label="MUD 玩家控制台" onClick={() => { toggleSidebar() }}>
-            <span className={css.brandMark}><IconGlobeOutlineRegular size={16} /></span>
+          /* 展开态 logo 是静态标识（非按钮）：收缩由右侧 panel 图标钮承担。 */
+          <div className={css.brandStatic}>
+            <span className={css.brandMark}><MudLogo size={24} /></span>
             <span className={css.brandText}>
               <span className={css.brandName}>MUD 玩家</span>
               <span className={css.brandSub}>服务器 / 账号</span>
             </span>
-          </button>
+          </div>
         )}
         {/* 收起侧栏：仅展开态渲染（原生展开态同款 panel 图标）。 */}
         {!collapsed && (
@@ -148,7 +166,7 @@ export function MudSidebar({
 
       {!collapsed && (
         <button type="button" className={css.addServer} onClick={() => { setServerDialogOpen(true) }}>
-          <IconPlusOutlineRegular size={14} />
+          <IconPlusOutlineRegular size={16} />
           <span className={css.addServerLabel}>添加服务器</span>
         </button>
       )}
@@ -161,17 +179,36 @@ export function MudSidebar({
           )}
           {servers.map(server => (
             <div key={server.id} className={css.serverGroup}>
-              <div className={css.serverRow}>
-                <span className={css.serverIcon}><IconGlobeOutlineRegular size={14} /></span>
+              {/* 服务器行（原生文件树 .row 形态）：点击整行切换展开/收起；
+                  图标区 hover 换 chevron（DisclosureRow previewChevron 同款）；
+                  + 与 … 动作钮只在行 hover 时出现。 */}
+              <div
+                className={css.serverRow}
+                role="button"
+                tabIndex={0}
+                aria-expanded={expandedServers.has(server.id)}
+                aria-label={`展开/收起 — ${server.name}`}
+                onClick={() => { toggleServerExpanded(server.id) }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleServerExpanded(server.id) }
+                }}
+              >
+                <span className={css.serverIcon}>
+                  <span className={css.iconIdle}><IconGlobeOutlineRegular size={14} /></span>
+                  <span className={css.iconHoverChevron}>
+                    {expandedServers.has(server.id)
+                      ? <IconChevronDownOutlineRegular size={14} />
+                      : <IconChevronRightOutlineRegular size={14} />}
+                  </span>
+                </span>
                 <span className={css.serverBody}>
                   <span className={css.serverName}>{server.name}</span>
-                  <span className={css.serverMeta}>{server.host}:{server.port}</span>
                 </span>
                 <div className={css.rowActions}>
                   <Tooltip label="添加账号" delayMs={500}>
                     <button type="button" className={clsx(css.iconButton, css.smallIcon)}
                       aria-label={`添加账号 — ${server.name}`}
-                      onClick={() => { setUserDialogTarget(server) }}
+                      onClick={(e) => { e.stopPropagation(); setUserDialogTarget(server) }}
                     >
                       <IconPlusOutlineRegular size={14} />
                     </button>
@@ -182,7 +219,10 @@ export function MudSidebar({
                     anchor={(
                       <button type="button" className={clsx(css.iconButton, css.smallIcon)}
                         aria-label={`服务器选项 — ${server.name}`}
-                        onClick={() => { setServerMenuFor(serverMenuFor?.id === server.id ? null : server) }}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setServerMenuFor(serverMenuFor?.id === server.id ? null : server)
+                        }}
                       >
                         <IconEllipsisOutlineRegular size={14} />
                       </button>
@@ -193,7 +233,7 @@ export function MudSidebar({
                   />
                 </div>
               </div>
-              {server.users.map((user) => {
+              {expandedServers.has(server.id) && server.users.map((user) => {
                 const state = rowState(conn, sessionStatus, user)
                 const badge = credBadge(user.passRef, credentialStatus[user.passRef])
                 const admitted = admitBadge(sessionStatus, user.sessionId)
@@ -250,7 +290,7 @@ export function MudSidebar({
                   </div>
                 )
               })}
-              {server.users.length === 0 && (
+              {expandedServers.has(server.id) && server.users.length === 0 && (
                 <div className={css.userRow}>
                   <span style={{ flex: 1, fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)', paddingLeft: 22 }}>
                     暂无账号 — 点击 ➕ 添加
