@@ -45,6 +45,7 @@ export interface MudClientInjected {
   addServer: (input: { name: string; host: string; port: number; cwd: string }) => void
   removeServer: (serverId: string) => void
   addUser: (serverId: string, input: { name: string; pass: string; preset: string }) => Promise<void>
+  updateUser: (serverId: string, userId: string, input: { name: string; pass: string }) => Promise<void>
   removeUser: (serverId: string, userId: string) => void
   admit: (sessionId: string) => Promise<void>
   /** 停止接入：MUD 信息不再进入 agent。 */
@@ -102,13 +103,14 @@ function admitBadge(sessionStatus: Readonly<Record<string, SessionStatusRow>>, s
 
 export function MudSidebar({
   collapsed, useServers,
-  addServer, removeServer, addUser, removeUser,
+  addServer, removeServer, addUser, updateUser, removeUser,
   admit, stopAdmit, refreshStatus, startStatusWatch,
   openUserSession, toggleSidebar,
 }: MudSidebarProps) {
   const { servers, conn, sessionStatus, credentialStatus } = useServers(s => s)
   const [serverDialogOpen, setServerDialogOpen] = useState(false)
   const [userDialogTarget, setUserDialogTarget] = useState<MudServer | null>(null)
+  const [userEditTarget, setUserEditTarget] = useState<{ serverId: string; userId: string } | null>(null)
   const [serverMenuFor, setServerMenuFor] = useState<MudServer | null>(null)
   const [userMenuFor, setUserMenuFor] = useState<{ serverId: string; userId: string } | null>(null)
   // 服务器行展开态（点击行切换；缺省展开首个服务器，冷启动能直接看到账号）。
@@ -273,6 +275,7 @@ export function MudSidebar({
                         </button>
                       )}
                       items={[
+                        { id: 'edit-user', label: '编辑' },
                         // 接入/停止接入
                         isAdmitted
                           ? { id: 'stop-admit', label: '停止接入' }
@@ -280,6 +283,7 @@ export function MudSidebar({
                         { id: 'delete-user', label: '删除账号' },
                       ]}
                       onSelect={(id) => {
+                        if (id === 'edit-user') setUserEditTarget({ serverId: server.id, userId: user.id })
                         if (id === 'delete-user') removeUser(server.id, user.id)
                         if (id === 'admit' && user.sessionId !== '') void admit(user.sessionId)
                         if (id === 'stop-admit' && user.sessionId !== '') void stopAdmit(user.sessionId)
@@ -338,14 +342,32 @@ export function MudSidebar({
         onAdd={(input) => { addServer(input) }}
       />
       <UserDialog
+        mode="create"
         open={userDialogTarget !== null}
         serverName={userDialogTarget?.name ?? ''}
         onClose={() => { setUserDialogTarget(null) }}
-        onAdd={(input) => {
+        onSubmit={(input) => {
           if (userDialogTarget === null) return Promise.resolve()
           return addUser(userDialogTarget.id, input)
         }}
       />
+      {(() => {
+        const editServer = servers.find(s => s.id === userEditTarget?.serverId)
+        const editUser = editServer?.users.find(u => u.id === userEditTarget?.userId)
+        return (
+          <UserDialog
+            mode="edit"
+            open={userEditTarget !== null}
+            serverName={editServer?.name ?? ''}
+            initial={editUser !== undefined ? { name: editUser.name, preset: editUser.preset } : undefined}
+            onClose={() => { setUserEditTarget(null) }}
+            onSubmit={(input) => {
+              if (userEditTarget === null || editUser === undefined) return Promise.resolve()
+              return updateUser(userEditTarget.serverId, editUser.id, { name: input.name, pass: input.pass })
+            }}
+          />
+        )
+      })()}
     </div>
   )
 }

@@ -23,14 +23,6 @@
       "types": "./lib/types.d.ts",
       "default": "./lib/types.js"
     },
-    "./runtime": {
-      "types": "./lib/runtime.d.ts",
-      "default": "./lib/runtime.js"
-    },
-    "./flows": {
-      "types": "./lib/flows/login.d.ts",
-      "default": "./lib/flows/login.js"
-    },
     "./package.json": "./package.json"
   },
   "files": [

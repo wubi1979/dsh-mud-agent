@@ -14,7 +14,7 @@ import { GameScreen, type GameViewOptions } from './view/screen.ts'
 import { World, type LoggedInState, type WorldSnapshot } from './world.ts'
 import type { ConnState } from './roster.ts'
 
-// 类型面 re-export（跨包消费者按 read/recentLines 签名桥接用，如 mud-workflow E2E）。
+// 类型面 re-export（E2E/流程环境按 read/recentLines 签名桥接用）。
 export type { MudLine, ReadOpts, ReadResult }
 
 /** 连接参数（三期裁定：connect 只建连，登录由脚本要点执行——盲发退役）。 */

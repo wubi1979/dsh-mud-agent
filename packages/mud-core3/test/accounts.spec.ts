@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest'
 import { MemoryRosterStore } from '../src/store.ts'
 import type { AccountRecord, ServerRecord } from '../src/roster.ts'
 import {
-  addAccount, addServer, removeAccount, removeServer, setAdmitted,
+  addAccount, addServer, removeAccount, removeServer, setAdmitted, renameAccount,
   type AccountWriteDeps, type CreateSessionRequest,
 } from '../src/accounts.ts'
 
@@ -99,6 +99,17 @@ describe('服务器写路径', () => {
     await expect(addServer(h.deps, serverRecord({ workspaceId: '', }))).rejects.toThrow('workspaceId 必填')
   })
 
+  it('addServer 端点去重：同 host:port（大小写不敏感）拒绝，不同端口放行', async () => {
+    const h = harness()
+    await addServer(h.deps, serverRecord())
+    await expect(addServer(h.deps, serverRecord({ workspaceId: 'ws-2', name: '同端点' })))
+      .rejects.toThrow('相同端点的服务器已存在')
+    await expect(addServer(h.deps, serverRecord({ workspaceId: 'ws-2', host: 'MUD.Example.ORG' })))
+      .rejects.toThrow('相同端点的服务器已存在')
+    await addServer(h.deps, serverRecord({ workspaceId: 'ws-2', port: 4001 }))
+    expect(h.store.server('ws-2')).toBeDefined()
+  })
+
   it('removeServer：仍有账号时拒绝，清空后允许', async () => {
     const h = harness()
     await addServer(h.deps, serverRecord())
@@ -121,5 +132,28 @@ describe('setAdmitted', () => {
     expect(h.store.account('session-fixed')?.admitted).toBe(true)
     expect((await setAdmitted(h.deps, 'session-fixed', false)).admitted).toBe(false)
     await expect(setAdmitted(h.deps, 'missing', true)).rejects.toThrow('不在名册')
+  })
+})
+
+describe('renameAccount', () => {
+  it('改名落库；其余字段保持', async () => {
+    const h = harness()
+    await h.store.putServer(serverRecord())
+    await addAccount(h.deps, INPUT)
+
+    const next = await renameAccount(h.deps, 'session-fixed', 'hero2')
+    expect(next.name).toBe('hero2')
+    expect(h.store.account('session-fixed')?.name).toBe('hero2')
+    expect(h.store.account('session-fixed')?.passRef).toBe('MUD_HERO')
+    expect(h.store.account('session-fixed')?.preset).toBe('mud-player')
+  })
+
+  it('账号不存在抛错；名字为空拒绝', async () => {
+    const h = harness()
+    await h.store.putServer(serverRecord())
+    await addAccount(h.deps, INPUT)
+
+    await expect(renameAccount(h.deps, 'missing', 'x')).rejects.toThrow('不在名册')
+    await expect(renameAccount(h.deps, 'session-fixed', '  ')).rejects.toThrow('账号名 必填')
   })
 })

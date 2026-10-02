@@ -100,7 +100,7 @@ interface MudCore3Service extends MudCore3Handle {
 | 11 | `logDir` | `<cwd>/mud-logs` | 日志落盘目录 | §13.1 |
 | 12 | `logBufferMax` | 2000 | 日志内存环上限（`logs` 的可读窗口） | §13.1 |
 | 13 | `rosterStorage` | `true` | 是否挂宿主 storage 域（`false` = 强制内存） | §14.3 |
-| 14 | `bootstrapOnCreate` | `true` | 建账号后是否投任务书（翻 blank；关掉省一次模型调用） | §11.2、§7.4 |
+| 14 | ~~`bootstrapOnCreate`~~ | — | **已退役**（2026-10-02）：建账号 = 纯登记不投任务书，接入 = 唯一点火点（§7.4、§7.4.1） | §11.2、§7.4 |
 | 15 | `taskBrief` | `DEFAULT_TASK_BRIEF` | 任务书模板（占位符 `{{serverName}}`/`{{endpoint}}`/`{{account}}`/`{{conn}}`/`{{loggedIn}}`） | §7.4 |
 | 16 | `silenceMs` | 120_000 | 静默唤醒时长（**正整数 fail-loud**） | §7.5 |
 | 17 | `sendTimeoutMs` | 15000 | `mud_send` 缺省总超时（工具侧钳制 ≤ 60000） | §8.7 |

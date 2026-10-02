@@ -27,6 +27,10 @@ export const name = 'mud-workflow'
 // 词汇表类型出口（core3 流程实体按此类型书写；type-only，无运行时依赖）。
 export type { Flow, WorkflowRecord } from './schema.ts'
 
+// 解释器出口（core3 E2E 按 read/recentLines 签名直接跑 locked 流程用）。
+export { runFlow } from './interpreter.ts'
+export type { WorkflowEnv } from './env.ts'
+
 /** 必需服务：无（storage 域为可选依赖，就绪前内存先行）。 */
 export const inject: string[] = []
 

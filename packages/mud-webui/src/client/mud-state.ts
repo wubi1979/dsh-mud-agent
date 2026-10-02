@@ -254,6 +254,16 @@ export class MudStateController {
     return user
   }
 
+  /** 就地更新账号呈现（编辑改名）。 */
+  updateUser(serverId: string, userId: string, patch: { name?: string }): void {
+    this.set({
+      servers: this.state.servers.map(s =>
+        s.id === serverId
+          ? { ...s, users: s.users.map(u => u.id === userId ? { ...u, ...patch } : u) }
+          : s),
+    })
+  }
+
   setUserSession(serverId: string, userId: string, sessionId: string): void {
     this.set({
       servers: this.state.servers.map(s =>

@@ -1,8 +1,11 @@
 /**
- * login 流程 E2E（真实 TCP + core3 SessionRuntime，自 core3 T3 workflow.spec 迁移）：
+ * login 流程 E2E（真实 TCP + SessionRuntime；自 mud-workflow 迁回 core3）：
  *   - 成功 / 密码错 / need-new / replace（默认答 y）/ timeout 五路径；
  *   - 判据取自 doc/flows/login.md 与 doc/appendices/A-capture-facts.md 实测定稿（「欢迎来到」勘误含）；
  *   - 凭据零泄露：结果 JSON、画面 view（snapshot 帧）均无 pass 明文。
+ *
+ * 迁移缘由：login 实体归 core3（纯架构裁定），本规格是唯一使用 core3 devDep 的
+ * mud-workflow 测试——迁回后 workflow 可删 `mud-core3` 依赖边，workspace 环消解。
  *
  * 短超时：流程数据超时可克隆替换（失败路径不等满 30s）。
  */
@@ -11,13 +14,12 @@ import { describe, expect, it } from 'vitest'
 import net from 'node:net'
 import type { AddressInfo } from 'node:net'
 
-import { SessionRuntime, type MudLine } from 'mud-core3/runtime'
-// 流程实体归 core3（纯架构裁定）：被测数据从 core3 lib/flows 读取。
-import { login } from 'mud-core3/flows'
+import { SessionRuntime, type MudLine } from '../src/runtime.ts'
+import { login } from '../src/flows/login.ts'
 
-import { runFlow } from '../src/interpreter.ts'
-import type { WorkflowRecord } from '../src/schema.ts'
-import type { WorkflowEnv } from '../src/env.ts'
+import { runFlow } from 'mud-workflow'
+import type { WorkflowRecord, WorkflowEnv } from 'mud-workflow'
+import { stripIac } from './helpers.ts'
 
 const NAME = 'hero'
 const PASS = 'SECRET-PW'
@@ -41,28 +43,7 @@ function shortTimeouts(stepMs: number, successMs: number): WorkflowRecord {
 /** 短超时 login（1.5s 步预算 / 0.8s 终态）。 */
 const loginShort = shortTimeouts(1_500, 800)
 
-// ── mock 登录服务器（IAC 剥离 + 行分发；core3 test/helpers 同款）──────
-
-/** 剥离 IAC 序列（协商 WILL/DO 3 字节、SB…SE 子协商整段、简单命令 2 字节）。 */
-function stripIac(buf: Buffer): string {
-  const out: number[] = []
-  let i = 0
-  while (i < buf.length) {
-    const b = buf[i]!
-    if (b !== 255) { out.push(b); i += 1; continue }
-    const cmd = buf[i + 1]
-    if (cmd === undefined) break
-    if (cmd === 255) { out.push(255); i += 2; continue }
-    if (cmd === 250) {
-      let j = i + 2
-      while (j + 1 < buf.length && !(buf[j] === 255 && buf[j + 1] === 240)) j += 1
-      i = j + 2
-      continue
-    }
-    i += cmd >= 251 && cmd <= 254 ? 3 : 2
-  }
-  return Buffer.from(out).toString('utf8')
-}
+// ── mock 登录服务器（IAC 剥离 + 行分发）──────────────────────────────
 
 /** GA 字节（IAC GA）：终态步「空命令收 GA」的服务端侧。 */
 const GA = Buffer.from([255, 249])

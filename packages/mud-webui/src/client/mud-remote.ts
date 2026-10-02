@@ -176,6 +176,11 @@ export class MudRemoteController {
     return this.call(mud => mud.addAccount(input))
   }
 
+  /** 改账号（当前只支持改名；密码经 credentials 按原引用覆盖，不动名册）。 */
+  updateAccount(sessionId: string, input: { name: string }): Promise<{ account: MudAccountRecord }> {
+    return this.call(mud => mud.updateAccount(sessionId, input))
+  }
+
   /** 删账号：清宿主名册 + 清该账号日志（会话销毁由宿主侧负责）。 */
   removeAccount(sessionId: string): Promise<{ sessionId: string; removed: boolean }> {
     return this.call(mud => mud.removeAccount(sessionId))

@@ -7,7 +7,7 @@
  * @module @deepseek-ai/dsh-mud-webui/client/MudDialogs
  */
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 
 const FIELD_STYLE: React.CSSProperties = {
@@ -102,35 +102,61 @@ const PRESET_OPTIONS = [
   { value: 'standard', label: '标准（standard）' },
 ]
 
-/** Add-user dialog: account name + password + preset selection. */
-export function UserDialog({ open, serverName, onClose, onAdd }: {
+/** 用户对话框提交值（edit 模式 pass = '' 表示不改密码）。 */
+export interface UserDialogSubmit {
+  name: string
+  pass: string
+  preset: string
+}
+
+/**
+ * 用户对话框（create 添加 / edit 编辑双模式）。
+ * - create：用户名 + 密码 + preset。
+ * - edit：改名 + 可选改密码（留空不改，新密码按原凭据引用覆盖写入，下次
+ *   连接/登录流程即生效）；preset 建会话时已绑定装配，只读。
+ */
+export function UserDialog({ open, mode, serverName, initial, onClose, onSubmit }: {
   open: boolean
+  mode: 'create' | 'edit'
   serverName: string
+  /** edit 模式初始值（name/preset；pass 恒留空 = 不修改）。 */
+  initial?: { name: string; preset: string } | undefined
   onClose: () => void
-  onAdd: (input: { name: string; pass: string; preset: string }) => Promise<void>
+  onSubmit: (input: UserDialogSubmit) => Promise<void>
 }) {
   const [name, setName] = useState('')
   const [pass, setPass] = useState('')
   const [preset, setPreset] = useState('mud-player')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const editing = mode === 'edit'
 
-  const close = (): void => { setName(''); setPass(''); setPreset('mud-player'); setError(null); setBusy(false); onClose() }
+  // 打开时按模式重置（edit 预填账号属性；pass 恒空 = 不修改密码）。
+  useEffect(() => {
+    if (!open) return
+    setName(initial?.name ?? '')
+    setPass('')
+    setPreset(initial?.preset ?? 'mud-player')
+    setError(null)
+    setBusy(false)
+  }, [open, initial?.name, initial?.preset])
+
+  const close = (): void => { setError(null); setBusy(false); onClose() }
   const submit = (): void => {
     if (busy) return
     if (name.trim() === '') { setError('请输入用户名'); return }
-    if (pass === '') { setError('请输入密码'); return }
+    if (!editing && pass === '') { setError('请输入密码'); return }
     setBusy(true)
     setError(null)
-    void onAdd({ name, pass, preset })
+    void onSubmit({ name, pass, preset })
       .then(() => { close() })
       .catch((err: unknown) => { setError(err instanceof Error ? err.message : String(err)); setBusy(false) })
   }
   const enter = useEnterSubmit(submit)
 
   return (
-    <Modal open={open} onClose={close} title={`添加用户 — ${serverName}`} closeLabel="关闭"
-      footer={<><Button variant="outline" onClick={close}>取消</Button><Button variant="primary" onClick={submit}>{busy ? '保存中…' : '添加'}</Button></>}
+    <Modal open={open} onClose={close} title={`${editing ? '编辑' : '添加'}用户 — ${serverName}`} closeLabel="关闭"
+      footer={<><Button variant="outline" onClick={close}>取消</Button><Button variant="primary" onClick={submit}>{busy ? (editing ? '保存中…' : '添加中…') : (editing ? '保存' : '添加')}</Button></>}
     >
       <label style={LABEL_STYLE}>用户名</label>
       <input style={FIELD_STYLE} value={name} autoFocus placeholder="游戏账号"
@@ -142,18 +168,23 @@ export function UserDialog({ open, serverName, onClose, onAdd }: {
       />
       <label style={LABEL_STYLE}>密码</label>
       <input style={FIELD_STYLE} type="password" value={pass}
-        placeholder="登录密码 (写入 host 凭据存储, 不进浏览器名单)"
+        placeholder={editing ? '留空 = 不修改密码（覆盖写入原凭据引用）' : '登录密码 (写入 host 凭据存储, 不进浏览器名单)'}
         onChange={(e) => { setPass(e.target.value); setError(null) }}
         onKeyDown={enter.onKeyDown}
       />
       <label style={LABEL_STYLE}>Preset（Agent 装配）</label>
-      <select style={FIELD_STYLE} value={preset}
+      <select style={FIELD_STYLE} value={preset} disabled={editing}
         onChange={(e) => { setPreset(e.target.value) }}
       >
         {PRESET_OPTIONS.map(opt => (
           <option key={opt.value} value={opt.value}>{opt.label}</option>
         ))}
       </select>
+      {editing && (
+        <div style={{ fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)', marginTop: 4 }}>
+          preset 在建会话时已绑定装配，修改需删除账号后重建
+        </div>
+      )}
       {error !== null && <div style={ERROR_STYLE} role="alert">{error}</div>}
     </Modal>
   )

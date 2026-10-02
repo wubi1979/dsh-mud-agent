@@ -102,6 +102,13 @@ export async function addServer(deps: AccountWriteDeps, record: ServerRecord): P
   if (!Number.isInteger(record.port) || record.port < 1 || record.port > 65535) {
     throw new Error(`端口非法：${String(record.port)}（应为 1–65535）`)
   }
+  // 端点去重：同一 host:port 只允许一个服务器条目（工作区身份可以不同，端点唯一）。
+  const dup = deps.store.servers().find(
+    s => s.host.toLowerCase() === record.host.toLowerCase() && s.port === record.port,
+  )
+  if (dup !== undefined) {
+    throw new Error(`相同端点的服务器已存在：${dup.name}（${dup.host}:${dup.port}）`)
+  }
   await deps.store.putServer(record)
   return record
 }
@@ -118,6 +125,27 @@ export async function removeServer(deps: AccountWriteDeps, workspaceId: string):
     throw new Error(`服务器 ${workspaceId} 下仍有 ${remaining.length} 个账号，先删账号再删服务器`)
   }
   await deps.store.deleteServer(workspaceId)
+}
+
+/**
+ * 改账号：当前只支持改名（preset 在建会话时绑定装配不可改；密码经页面
+ * `credentials.set` 按原引用名覆盖，不动名册）。
+ * @param deps - 名册依赖。
+ * @param sessionId - 账号 id（= 会话 id）。
+ * @param name - 新账号名（空串/空白拒绝）。
+ * @returns 更新后的账号记录。
+ * @throws 账号不在名册、名字为空时抛错。
+ */
+export async function renameAccount(
+  deps: AccountWriteDeps,
+  sessionId: string,
+  name: string,
+): Promise<AccountRecord> {
+  const current = deps.store.account(sessionId)
+  if (current === undefined) throw new Error(`账号 ${sessionId} 不在名册`)
+  const next: AccountRecord = { ...current, name: required(name, '账号名') }
+  await deps.store.putAccount(next)
+  return next
 }
 
 /**

@@ -184,3 +184,69 @@
 - **未改**：`inject` 保持 `['typert']`（`agents` 按可选依赖处理）；`ctx.logger`/`ctx.on`/`ctx.provide`/`ctx.inject` 等与 inject 无关的用法不动
 
 > AI生成
+
+## [v0.0.18]webui 账号编辑 + §16.4 实机勾验 1–4 (2026-10-02)
+> 总结：T4b 实机验收 1–4 通过；侧栏账号行补「编辑」能力（改名 + 改密码）
+
+- **§16.4 实机勾验 1–4**（真机 + 凭据）：建账号任务书回合 / admit 状态任务书 / 根委派→子 login→结算→根收尾 / 错密码中途失败（正常报错，自主重试一次后向人类提问）逐项通过，清单行已勾
+- **webui 账号编辑**：账号行 ⋯ 菜单增「编辑」项 → UserDialog 双模式（create/edit）：改名经 `remote.mud.updateAccount` 落名册并同步 runtime 回显前缀（`accountName`）；改密经 `credentials.set` 按原引用名覆盖写入（不动名册），下次连接/登录流程生效；preset 建会话时已绑定装配，编辑态只读（提示删号重建）
+- **host**：`accounts.ts` 新增 `renameAccount`（不在名册/空名拒）；`MudRemoteService` 新增 `updateAccount` 动词（typert 工件已重生成）；用例账目 208 → **210 例 / 17 文件**全绿
+- **未做（用户裁定暂缓）**：建账号时「是否立即接入」逐账号选择（自动接入语义澄清：名册 admitted 建账即 false、无自动 admit 路径，观察到的「自动接入」实为 `bootstrapOnCreate` kickoff——建账号即投任务书触发 agent 回合）；「先连接后接入」路径待后续单独立项
+
+> AI生成
+
+## [v0.0.19]接入语义重定：建账号纯登记 + LLM 调用面闸门 (2026-10-02)
+> 总结：建账号触发点退役，接入 = 唯一任务书点火点；新增 `llm/stream` 瀑布终审（未接入拦成空 stop）
+
+- **接入语义规格（2026-10-02 裁定，四层面）**：闸面（Deliverer admitted + 水位）+ 持久面（名册）+ 点火面（onAdmit → kickoff）+ 保险面（LLM 调用面闸门）——admit 同步先置位再点火，钩子时序上必放行；接入永远是冷启动点火（未接入 ⇒ 无驱动源 ⇒ 无回合）
+- **建账号 = 纯登记**：`bootstrapOnCreate` 配置退役（MudCore3Config 字段删除、§15 表 14 行注销），addAccount 不再投任务书，会话保持 blank、agent 零行动；blank 由第一次接入的 kickoff 真实回合翻（不伪造 turn）
+- **LLM 调用面闸门（§7.4.1）**：宿主 `LlmRuntime.stream()` 走 cordis 瀑布 `llm/stream`（不调 `next()` 即否决，官方契约），`GenerateOptions.sessionId` 由 loop 盖会话身份戳 → 按 session 精确作用域。纯层 `src/llm-gate.ts`（`shouldVeto` + `vetoStopStream`，fail-closed：非本插件会话放行、投递器缺席 = 未接入）；index.ts 注册监听器（插件 fiber，卸载自拆），未接入账号会话的模型调用拦成单条 `finish: stop` 终块（0 token、无内容块、回合自然收束）
+- **停止接入的新语义**：进行中回合在下一步 LLM 调用处空步收束——在飞工具正常完成、无 cancelled 残迹，不 cancel 不打断；未接入时人工提问同样被拦（agent 完全惰性）
+- **触发点收缩**：kickoff 三触发点 → 两触发点（admit/静默唤醒）；MudRemoteService 构造参数撤 `announceOnCreate`
+- **文档**：§7.4 重写（两触发点）+ 新增 §7.4.1；§11.2 建账号流程第④步改纯登记 + blank 语义；§15 表 14 行注销；§16.3 静默唤醒行更新；§16.4 清单 1–2 重定（1'/2' 待复验，3–4 勾验保留）
+- **用例账目**：210 → **216 例 / 18 文件**全绿（新增 `test/llm-gate.spec.ts` 6 例：无戳放行/非本插件放行/未接入拦/已接入放行/fail-closed/合成流单终块）
+
+> AI生成
+
+## [v0.0.20]重启恢复 = 冷启动纪律（语义澄清，无行为变更）(2026-10-02)
+> 总结：宿主重启后历史会话一律回到未接入，人工点接入再点火；名册 `admitted` 语义定为「最近状态记录，恢复不回读」
+
+- **裁定**（用户）：恢复不回读接入态、不自动点火——冷启动不自动（同 T5 自动重连纪律）；重启后两轴全 unknown，自动点火 = agent 醒来即自主连游戏
+- **代码事实澄清**：Deliverer 恒 fresh 未接入（原实现已如此），名册 `admitted` 为只写不读的最近状态记录；admit/stop 注释写明恢复不回读
+- **文档**：§11.2 新增「重启恢复 = 冷启动」条目；§16.4 2' 复验项补重启场景
+- 无代码行为变更、无用例账目变化（216/216 维持）
+
+> AI生成
+
+## [v0.0.21]实机验收勾验 + 两项 webui 修复（画面自动打开 / 服务器端点去重）(2026-10-02)
+> 总结：§16.4 清单 1'/2'/5/6 勾验（5 为用户裁定通过）；接入成功后右侧栏画面 tab 自动打开；服务器按 host:port 端点去重
+
+- **实机验收（用户反馈）**：1' 建账号纯登记（随 2' 同轮观察）、2' 接入唯一点火（含人工提问被拦）、6 admit 前手动连接不触发规划——实机通过；5 静默唤醒实机窗口难构造，用户裁定先算通过；剩余仅 7（webui 三 tab 实机巡检）
+- **画面 tab 自动打开**（§9.4）：admit 成功 ⇒ 切到该账号会话 + `openTabIn(sessionId, 'mud-game')`（宿主 openTab 同步展开右栏）；重复打开由单开守卫收编；跨包 SessionId 品牌不互通，用 `Parameters<>` 窄结构代位 cast
+- **服务器端点去重**（§9.2）：同一 `host:port`（大小写不敏感）只允许一个服务器条目——客户端 addServer 前置查重（避免先建孤儿工作区），宿主 `addServer` 同规则拒绝（权威闸，可读报错）
+- **监听器契约合规**：index.ts 四个 block-body 事件回调补显式 `return undefined`（官方声明 `undefined | Promise<undefined>`；TS 6.0.3 放宽该赋值而编辑器旧 TS 报错，显式合规双版本皆绿）
+- **文档**：§9.2 端点去重、§9.4 自动打开、§16.4 勾验更新
+- **用例账目**：216 → **217 例 / 18 文件**全绿（accounts.spec 增端点去重 1 例：同端点/大小写变体拒绝、异端口放行）
+
+> AI生成
+
+## [v0.0.22]workspace 循环依赖消解（login E2E 平移回 core3）(2026-10-02)
+> 总结：mud-workflow 删 `mud-core3` devDep，core3↔mud-workflow 环消解（pnpm 构建警告清除）；login 流程 E2E 五路径随实体归属平移
+
+- **环边事实**：core3 devDep mud-workflow（流程实体 type-only）+ mud-workflow devDep mud-core3（仅 `test/login.spec.ts` 的 E2E 桥接）——后者是唯一环边
+- **平移**：`login.spec.ts`（五路径，随 [flows/login.ts](packages/mud-core3/src/flows/login.ts) 归属）→ `packages/mud-core3/test/`；stripIac 复用 core3 test helpers
+- **出口面**：mud-workflow index 增 `runFlow` + `WorkflowEnv` 出口（E2E 消费）；core3 `./runtime`/`./flows` 桥接出口退役（跨包 E2E 已无，唯一用途消失）
+- **文档**：§16.2 用例账目更新；归档 README 的 login.spec 路径指针不回改（归档纪律，追溯用途）
+- **用例账目**：core3 **222 例 / 19 文件**（+login 5）· mud-workflow **31 例 / 3 文件**（−login 5），总量不变、全绿；`pnpm install` 无 cyclic 警告
+
+> AI生成
+
+## [v0.0.23]T4b 实机验收关闭（T4 自主行为正式完成）(2026-10-02)
+> 总结：§16.4 七项清单全项通过（用户确认第 7 项三 tab 巡检通过），T4b 验收关闭、PLAN 待办池清空 T1
+
+- **验收结论**：建账号纯登记 → 接入唯一点火 → 根规划/子执行/宿主结算 → 静默唤醒兜底，链路完整（§16.4 增验收结论行）；第 5 项静默唤醒为用户裁定通过（实机窗口难构造，待日常观察）
+- **文档**：§16.4 第 7 项勾验 + 验收结论；§16.5 T4 行、§17.1 三期行改「实机验收通过」；§17.2 待办池删 T4b 项并重排（剩 4 项：T5 收尾 / §16.6 清理 / 会话删除面 / 装载冒烟）
+- **PLAN**：待办池 T1 条目删除（落地纪律），留一行结论指针
+- 无代码变更；用例账目维持 core3 222 / workflow 31 全绿
+
+> AI生成

@@ -19,8 +19,8 @@ note: L7 呈现层：mud-webui（浏览器侧壳）
 
 | 能力 | 说明 |
 |---|---|
-| 服务器 CRUD | 建（选/建工作区 + `host`/`port`）/ 删（该服务器仍有账号时**宿主侧拒绝**） |
-| 账号 CRUD | 建（账号名 + 密码 → 写入宿主凭据域；**只交引用名**）/ 删（先过宿主，再改本地） |
+| 服务器 CRUD | 建（选/建工作区 + `host`/`port`）/ 删（该服务器仍有账号时**宿主侧拒绝**）；**端点去重**——同一 `host:port`（大小写不敏感）只允许一个服务器条目，客户端**前置查重**（避免先建孤儿工作区），宿主 `addServer` **同规则拒绝**（权威闸） |
+| 账号 CRUD | 建（账号名 + 密码 → 写入宿主凭据域；**只交引用名**）/ **编辑**（账号行 ⋯ 菜单 → 编辑弹窗：改名经 `remote.mud.updateAccount` 落名册并同步 runtime 回显前缀；改密经 `credentials.set` 按**原引用名**覆盖写入，下次连接/登录流程即生效；preset 建会话时已绑定装配，编辑态只读）/ 删（先过宿主，再改本地） |
 | **preset 选择** | 账号表单新增 preset 下拉（`standard` / `mud-player`）；**建会话时显式传入**，不覆盖 registry 默认 |
 | **接入开关** | 账号行「接入 / 停止接入」→ `remote.mud.admit/stop`；接入状态徽标 |
 | 连接操作 | 手工 `connect`/`disconnect`；连接状态查看（侧栏行 + 画面 tab 工具栏） |
@@ -39,6 +39,7 @@ note: L7 呈现层：mud-webui（浏览器侧壳）
 | 项 | 设计 |
 |---|---|
 | 挂载点 | `sidebar-right` tab 类型 `mud-game` |
+| **自动打开** | **接入成功后自动打开**（v0.0.21）：`admit` 成功 ⇒ 切到该账号会话 + `openTabIn(sessionId, 'mud-game')`（宿主 openTab 同步展开右栏）；重复打开由下方单开守卫收编 |
 | **单开** | guide 入口卡片（无 params 打开、回退跟随当前会话）；`openTabs` 订阅守卫保证**同会话仅一实例**——开出第二个即关掉较新、保留最旧实例（其 follow 流与工具栏状态不中断）；`params` 随布局持久化（刷新/重开自动恢复） |
 | 数据面 | 每 runtime 一个 `@xterm/headless` + `addon-serialize` 无头屏（§5.3） |
 | 消费 | `for await` + `AbortController` 消费 `remote.mud.follow(sessionId)`；s1 主 xterm 只读（不挂 `onData`）+ `addon-fit` |

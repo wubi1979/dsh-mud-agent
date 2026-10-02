@@ -235,9 +235,6 @@ importers:
       '@deepseek-ai/dsh-tools':
         specifier: ^0.1.7-rc.2
         version: 0.1.7-rc.2(66d7d74ab64f2e9861f384200af4a5f2)
-      mud-core3:
-        specifier: workspace:^
-        version: link:../mud-core3
 
   packages/typert-protocol:
     devDependencies:

@@ -10,6 +10,7 @@
  *   - agent/created → 名册判定 → service.register + 记录 agent 句柄 + 补投保留批次
  *   - agent/disposed → 移除 agent 句柄
  *   - session/disposed → service.dispose（断连 + 拆 runtime + 拆 deliverer + 拆日志）
+ *   - llm/stream 瀑布终审：未接入账号会话的模型调用拦成空 stop 流（llm-gate.ts）
  *   - 投递回调：deliver(sessionId, text) → agent.followup(createUserMessage(...))
  *   - ctx.provide('mudCore3', { runtimeFor })；插件卸载 → service.disposeAll
  *
@@ -21,8 +22,9 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
-// 宿主事件类型增强（agent/created、session/disposed 等）。
+// 宿主事件类型增强（agent/created、session/disposed、llm/stream 等）。
 import type {} from '@deepseek-ai/dsh-agent'
+import type {} from '@deepseek-ai/dsh-llm'
 import { join } from 'node:path'
 
 import { MudService, sessionNotRegistered } from './service.ts'
@@ -41,9 +43,10 @@ import type {
 } from './roster.ts'
 import { MemoryRosterStore, openDomainRosterStore, type HostStorageDomain } from './store.ts'
 import { Wake, DEFAULT_TASK_BRIEF, fillTaskBrief } from './wake.ts'
+import { shouldVeto, vetoStopStream } from './llm-gate.ts'
 import {
   addAccount as writeAccount, addServer as writeServer, removeAccount as dropAccount,
-  removeServer as dropServer, setAdmitted,
+  removeServer as dropServer, setAdmitted, renameAccount,
 } from './accounts.ts'
 
 /** 插件名。 */
@@ -84,12 +87,7 @@ export interface MudCore3Config {
   /** 是否把名册挂到宿主 storage 域（缺省 true；域不可用时自动降级内存并告警）。 */
   rosterStorage?: boolean
   /**
-   * 建账号后是否投递一条任务书（触发一次真实回合，把 blank 会话翻成活跃会话，
-   * 会话体与 MUD 日志 tab 才会渲染）。缺省 true；关掉可省一次模型调用。
-   */
-  bootstrapOnCreate?: boolean
-  /**
-   * 任务书模板（T4a：bootstrap/admit/静默唤醒三触发点共用；状态驱动——根醒来
+   * 任务书模板（admit/静默唤醒两触发点共用；状态驱动——根醒来
    * 读状态自行规划，不写指令序列）。占位符 {{serverName}}/{{endpoint}}/{{account}}/
    * {{conn}}/{{loggedIn}} 在投递时以实时状态填充；缺省取 DEFAULT_TASK_BRIEF。
    */
@@ -208,8 +206,6 @@ export class MudRemoteService extends TypertRemoteService {
   private readonly ready: () => Promise<void>
   private readonly writeDeps: () => Parameters<typeof writeAccount>[0]
   private readonly logDir: () => string | undefined
-  private readonly kickoff: (sessionId: string) => void
-  private readonly announceOnCreate: boolean
 
   /**
    * @param ctx - 插件上下文（typert 注册）。
@@ -218,8 +214,6 @@ export class MudRemoteService extends TypertRemoteService {
    * @param ready - 名册落定（storage 域打开完成）的等待。
    * @param writeDeps - 名册写路径依赖（建会话/分配器）。
    * @param logDir - 会话日志落盘目录（删账号时清理；未落盘返回 undefined）。
-   * @param kickoff - 任务书投递面（T4a：admit 开闸门即投状态任务书触发规划）。
-   * @param announceOnCreate - 建账号后是否投任务书（bootstrapOnCreate 闸门）。
    */
   constructor(
     ctx: Context,
@@ -228,8 +222,6 @@ export class MudRemoteService extends TypertRemoteService {
     ready: () => Promise<void>,
     writeDeps: () => Parameters<typeof writeAccount>[0],
     logDir: () => string | undefined,
-    kickoff: (sessionId: string) => void,
-    announceOnCreate: boolean,
   ) {
     super(ctx, 'mudRemote', { namespace: 'mud' })
     this.service = service
@@ -237,8 +229,6 @@ export class MudRemoteService extends TypertRemoteService {
     this.ready = ready
     this.writeDeps = writeDeps
     this.logDir = logDir
-    this.kickoff = kickoff
-    this.announceOnCreate = announceOnCreate
   }
 
   // ── 名册：服务器 ─────────────────────────────────────────────
@@ -277,10 +267,10 @@ export class MudRemoteService extends TypertRemoteService {
   }
 
   /**
-   * 建账号 = 一个动作：写名册 → 建会话（sessionId = 账号 id，绑定 preset）→ 任务书投递。
+   * 建账号 = 纯登记（2026-10-02 裁定）：写名册 → 建会话（sessionId = 账号 id，
+   * 绑定 preset），**不投任务书**——会话保持 blank、agent 零行动（LLM 调用面闸门
+   * fail-closed 兜底）。任务书唯一点火点 = 接入（onAdmit → kickoff）。
    * 密码由页面经 `credentials.set` 写入宿主凭据域，这里只收引用名。
-   * 任务书投递让新会话立刻脱离 blank（宿主 `blank` 只由 `turn/start` 翻），会话体与
-   * 「MUD 日志」tab 才会渲染；投递失败不影响账号本身。
    */
   @Remote
   async addAccount(input: {
@@ -289,7 +279,24 @@ export class MudRemoteService extends TypertRemoteService {
     if (input === undefined) throw new Error('account 必填')
     await this.ready()
     const account = await writeAccount(this.writeDeps(), input)
-    if (this.announceOnCreate) this.kickoff(account.id)
+    return { account }
+  }
+
+  /**
+   * 改账号：当前只支持改名（preset 建会话时绑定装配，不可改；密码由页面
+   * `credentials.set` 按原引用名覆盖，不动名册）。改名同步 runtime 回显前缀。
+   */
+  @Remote
+  async updateAccount(
+    sessionId: string | undefined,
+    input: { name: string } | undefined,
+  ): Promise<{ account: AccountRecord }> {
+    const id = requireId(sessionId, 'sessionId')
+    if (input === undefined || input.name === undefined) throw new Error('name 必填')
+    await this.ready()
+    const account = await renameAccount(this.writeDeps(), id, input.name)
+    const rt = this.service.get(id)
+    if (rt !== null) rt.accountName = account.name
     return { account }
   }
 
@@ -326,8 +333,11 @@ export class MudRemoteService extends TypertRemoteService {
 
   /**
    * 接入：MUD 信息开始进入 agent（名册 admitted 持久化）。
-   * 开闸门并投状态任务书走 service 的 onAdmit 回调（T4a：两动作合一——根开
+   * 开闸门并投状态任务书走 service 的 onAdmit 回调（两动作合一——根开
    * 回合读状态自行规划；保持 admit 的纯闸门语义，投递只是旁路）。
+   * 名册 admitted 仅作**最近状态记录**：宿主重启恢复**不回读**（Deliverer
+   * 恒 fresh 未接入）——重启后历史会话一律冷启动，人工点接入再点火
+   * （2026-10-02 裁定：冷启动不自动，同 T5 自动重连纪律）。
    */
   @Remote
   async admit(sessionId: string | undefined): Promise<{ sessionId: string; admitted: boolean }> {
@@ -337,7 +347,7 @@ export class MudRemoteService extends TypertRemoteService {
     return { sessionId: id, admitted: this.service.status(id).admitted }
   }
 
-  /** 停止接入：MUD 信息不再进入 agent（名册 admitted 持久化）。 */
+  /** 停止接入：MUD 信息不再进入 agent（名册 admitted 持久化，同上：恢复不回读）。 */
   @Remote
   async stop(sessionId: string | undefined): Promise<{ sessionId: string; admitted: boolean }> {
     const id = requireId(sessionId, 'sessionId')
@@ -570,11 +580,12 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     },
   })
 
-  // ── 任务书投递面（T4a kickoff）────────────────────────────────
-  // bootstrap（建账号）/admit（开闸门）/静默唤醒三触发点共用：正文 = 服务器/
-  // 账号事实 + 两轴实时状态 + 目标（状态驱动，模板 Config.taskBrief ?? 缺省）。
-  // 署名 'mud-wake'（与 MUD 行批次 'mud' 区分）；真发一条用户消息 → 一次真实
-  // 回合 → `turn/start` → 会话脱离 blank。不做伪造 turn（会污染回合计数与 replay）。
+  // ── 任务书投递面（kickoff）────────────────────────────────────
+  // admit（开闸门点火）/静默唤醒两触发点共用：正文 = 服务器/账号事实 + 两轴
+  // 实时状态 + 目标（状态驱动，模板 Config.taskBrief ?? 缺省）。署名 'mud-wake'
+  // （与 MUD 行批次 'mud' 区分）；真发一条用户消息 → 一次真实回合 → `turn/start`
+  // → 会话脱离 blank。建账号不再触发（2026-10-02 裁定：纯登记，blank 保持）；
+  // 未接入时本调用触发的模型步被 llm/stream 闸门拦成空回合（agent 零行动）。
   const kickoff = (sessionId: string): void => {
     const agent = agentMap.get(sessionId)
     if (agent === undefined) {
@@ -633,11 +644,13 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     }
     // agent 上线：把冷会话期间保留下来的批次投出。
     service.flushPending(sessionId)
+    return undefined // 官方监听器契约：undefined | Promise<undefined>
   })
 
   // ── agent/disposed → 移除 agent 句柄（runtime/deliverer 保留）──
   ctx.on('agent/disposed', ({ agent }) => {
     agentMap.delete(String(agent.id))
+    return undefined
   })
 
   // ── session/disposed → 断连 + 拆 runtime + 拆 deliverer + 拆日志 ──
@@ -648,6 +661,7 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     wakes.delete(sessionId)
     service.dispose(sessionId)
     agentMap.delete(sessionId)
+    return undefined
   })
 
   // ── turn/start、turn/end → 投递抑制/冲刷（pull 模型，§4.3）──
@@ -657,7 +671,24 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     if (store.account(sessionId) === undefined) return
     if (event.type === 'turn/start') service.turnStart(sessionId)
     else if (event.type === 'turn/end') service.turnEnd(sessionId)
+    return undefined
   }, { global: true })
+
+  // ── LLM 调用面闸门（llm/stream 瀑布终审，2026-10-02）──────────
+  // 接入语义规格的保险面：未接入账号会话的任何模型调用一律拦成空 stop 流
+  // （0 token、回合自然收束，判定见纯层 llm-gate.ts）。建账号纯登记后首次
+  // kickoff 因此成为空回合（agent 零行动）；停止接入后进行中回合在下一步
+  // 调用处空步收束（不打断在飞工具）。与投递面闸门 + 静默唤醒三守卫构成
+  // 三重防线；非本插件会话直接 next() 放行。注册在本插件 fiber，卸载自拆。
+  ctx.on('llm/stream', (options, next) => {
+    const veto = shouldVeto(options, {
+      isManaged: id => store.account(id) !== undefined,
+      isAdmitted: id => service.getDeliverer(id)?.isAdmitted ?? false,
+    })
+    if (!veto) return next()
+    ctx.logger.info(`mud-core3: 未接入会话 ${String(options.sessionId)} 的模型调用被闸门拦截（空 stop 收束）`)
+    return vetoStopStream()
+  })
 
   // ── 引擎窄面（工具面，T2b）：归属解析 / 建连 / 状态快照 / 缺省参数 ──
   const toolDefaults = {
@@ -695,7 +726,6 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
   // 构造即注册（super 里 ctx.provide(serviceKey)）；返回值不再使用。
   new MudRemoteService(
     ctx, service, () => store, () => ready, writeDeps, () => logOptions.logDir,
-    kickoff, config.bootstrapOnCreate !== false,
   )
 
   // typert 工件注册（先 try-import，typert 注册表不可用时跳过）。

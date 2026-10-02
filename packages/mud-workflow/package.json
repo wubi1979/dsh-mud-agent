@@ -29,7 +29,6 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",
-    "@deepseek-ai/dsh-tools": "^0.1.7-rc.2",
-    "mud-core3": "workspace:^"
+    "@deepseek-ai/dsh-tools": "^0.1.7-rc.2"
   }
 }

@@ -122,10 +122,19 @@ export function apply(ctx: ClientContext): void {
     const server = mud.getSnapshot().servers.find(s => s.id === serverId)
     const user = server?.users.find(u => u.id === userId)
     if (server === undefined || user === undefined) return
-    mud.setActive(serverId, userId)
     if (user.sessionId === '') return
     const uiWorkspace = ctx.get('uiWorkspace') as UiWorkspace | undefined
     uiWorkspace?.openSession(user.sessionId as SessionId)
+  }
+
+  /** 接入成功后：切到该账号会话并在右侧栏自动打开游戏画面（openTab 同步展开栏）。 */
+  const openGameAfterAdmit = (sessionId: string): void => {
+    const server = mud.getSnapshot().servers.find(s => s.users.some(u => u.sessionId === sessionId))
+    const user = server?.users.find(u => u.sessionId === sessionId)
+    if (server !== undefined && user !== undefined) openUserSession(server.id, user.id)
+    // 窄结构代位 cast：宿主两份 dsh-session 副本品牌不互通（与 gameParams 同款惯例）
+    const sid = sessionId as unknown as Parameters<typeof ctx.sidebarRight.openTabIn>[0]
+    ctx.sidebarRight.openTabIn(sid, 'mud-game')
   }
 
   /** 把失败写进侧栏状态行（连接/名册错误都要看得见）。 */
@@ -152,12 +161,21 @@ export function apply(ctx: ClientContext): void {
     refreshLog: mudLog.refreshLog,
     addServer: (input) => {
       const cwd = input.cwd.trim()
+      const host = input.host.trim()
+      // 前置端点查重（服务端 addServer 同规则）：避免先建孤儿工作区再被名册拒。
+      const dup = mud.getSnapshot().servers.find(
+        s => s.host.toLowerCase() === host.toLowerCase() && s.port === input.port,
+      )
+      if (dup !== undefined) {
+        reportError(null, null, new Error(`相同端点的服务器已存在：${dup.name}（${dup.host}:${dup.port}）`))
+        return
+      }
       const workspaces = ctx.get('workspaces') as IWorkspaces | undefined
       // 服务器 = 工作区 + 字段：先建（或复用）工作区，再以它的 id 作名册键。
       const register = (workspaceId: string): void => {
         const record = {
           workspaceId, name: input.name.trim() || `${input.host}:${input.port}`,
-          host: input.host.trim(), port: input.port,
+          host, port: input.port,
         }
         mud.addServer({ id: workspaceId, name: record.name, host: record.host, port: record.port, cwd })
         void mudRemote.addServer(record).catch((error: unknown) => { reportError(null, null, error) })
@@ -197,6 +215,17 @@ export function apply(ctx: ClientContext): void {
         throw error
       }
     },
+    updateUser: async (serverId, userId, input) => {
+      const server = mud.getSnapshot().servers.find(s => s.id === serverId)
+      const user = server?.users.find(u => u.id === userId)
+      if (server === undefined || user === undefined) throw new Error('账号已不存在')
+      if (input.pass !== '') await credentials.set(user.passRef, input.pass)
+      if (input.name !== user.name) {
+        await mudRemote.updateAccount(user.sessionId, { name: input.name })
+        mud.updateUser(serverId, userId, { name: input.name })
+      }
+      void mud.refreshCredentials()
+    },
     removeUser: (serverId, userId) => {
       const server = mud.getSnapshot().servers.find(s => s.id === serverId)
       const user = server?.users.find(u => u.id === userId)
@@ -210,7 +239,7 @@ export function apply(ctx: ClientContext): void {
       }
       void mud.refreshCredentials()
     },
-    admit: (sessionId) => mud.admit(sessionId),
+    admit: (sessionId) => mud.admit(sessionId).then(() => { openGameAfterAdmit(sessionId) }),
     stopAdmit: (sessionId) => mud.stopAdmit(sessionId),
     refreshStatus: (sessionId) => mud.refreshStatus(sessionId),
     startStatusWatch: () => mud.startStatusWatch(),
