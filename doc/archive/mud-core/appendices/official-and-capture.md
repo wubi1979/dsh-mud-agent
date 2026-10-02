@@ -1,7 +1,7 @@
 ---
 sections: ["附录A", "附录B"]
-status: active
-note: 引用性材料（官方机制锚点、抓包事实）
+status: archived
+note: 【部分已提升，仅留追溯】附录 B（抓包事实）已提升为现役 doc/appendices/A-capture-facts.md；附录 A（官方机制锚点）的宿主行号属 v1 期、已随宿主换代失效，现役锚点见 doc/architecture/01-02-overview-host.md §2.1。原文：引用性材料（官方机制锚点、抓包事实）
 ---
 
 ## 附录 A：官方机制引用（文件锚点）

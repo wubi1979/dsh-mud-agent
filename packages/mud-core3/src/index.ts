@@ -34,7 +34,7 @@ import { login } from './flows/login.ts'
 import type { SessionLogOptions } from './log/log-service.ts'
 import { resolveLogDir, purgeSessionLogs } from './log/log-service.ts'
 // Remote 边界类型从非根子路径取（typert 要求，见 src/types.ts）。
-import type { AccountRecord, GameFrame, LogEntry, ServerRecord, StatusFrame } from './types.ts'
+import type { AccountRecord, GameFrame, LogEntry, ServerRecord } from './types.ts'
 import type { DelivererConfig } from './deliver.ts'
 import type {
   CredentialResolver, ResolvedCredentials, RosterStore,
@@ -71,7 +71,7 @@ export interface MudCore3Config {
   recordLines?: number
   /** 画面通道 scrollback 行数（snapshot 回放深度）。缺省 2000（对齐录制缓冲）。 */
   viewScrollback?: number
-  /** 画面通道列数（固定，不做 resize 回传）。缺省 80。 */
+  /** 画面通道列数（固定，不做 resize 回传）。缺省 120（§5.3）。 */
   viewCols?: number
   /** 画面通道单 follower 缓冲上限字节（超限显式断流，重连恢复）。缺省 2MB。 */
   viewMaxBufferedBytes?: number
@@ -150,6 +150,15 @@ function hostStorageDomain(ctx: Context): HostStorageDomain | undefined {
   const open = (candidate as { open?: unknown }).open
   if (typeof open !== 'function') return undefined
   return candidate as HostStorageDomain
+}
+
+/**
+ * 宿主 live agent 注册表的最小结构面（`ctx.get('agents')`）。
+ * `AgentRegistry.get` 的形参是品牌化 `SessionId`，其定义在传递包 `@deepseek-ai/dsh-session`
+ * 内（pnpm 严格链接下不可直连 import）⇒ 只保留本条读法（§15.2）。
+ */
+interface AgentsLive {
+  get(id: string): { session?: { header?: { parentSession?: string } } } | undefined
 }
 
 /** 唤醒署名：MUD 消息以用户消息到达，署名 'mud' 以区分人工提问。 */
@@ -392,8 +401,18 @@ export class MudRemoteService extends TypertRemoteService {
    * abort（tab 关闭/页面刷新）即清服务端订阅；status() 单次动词保留做初始回填。
    */
   @Remote({ mode: 'stream' })
-  async *watchStatus(signal: AbortSignal): AsyncIterable<StatusFrame> {
-    yield* this.service.watchStatusStream(signal)
+  async *watchStatus(signal: AbortSignal): AsyncIterable<{
+    sessions: readonly { sessionId: string; state: string; admitted: boolean }[]
+  }> {
+    // 边界收窄（与 status() 同型）：SessionStatus 的 loggedIn/world（WorldEntry.value
+    // 为 unknown）不过 Remote 边界；webui 只消费三字段，扩面随 T5 状态呈现一起做。
+    for await (const frame of this.service.watchStatusStream(signal)) {
+      yield {
+        sessions: frame.sessions.map(s => ({
+          sessionId: s.sessionId, state: s.state, admitted: s.admitted,
+        })),
+      }
+    }
   }
 }
 
@@ -499,9 +518,11 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
   }
 
   // 官方 live agent 注册表窄结构（AgentRegistry.get；归属父链上溯用，见 parentLookup）。
-  const agentsLive = ctx.agents as unknown as {
-    get(id: string): { session?: { header?: { parentSession?: string } } } | undefined
-  }
+  // 取用走 ctx.get（**可选服务，不写进 inject**）：apply 期提供方 fiber 未必已 ACTIVE
+  // （与 storageDomain 同一课，§14.3）⇒ 延到调用期解析；缺席/未就绪 ⇒ 上溯终止（§2.3）。
+  // 反面教训：写成 ctx.agents 会因未声明 inject 直接抛 "cannot get property ... without inject"，
+  // 整个 apply 失败 ⇒ remote.mud 全动词 404。
+  const agentsLive = (): AgentsLive | undefined => ctx.get('agents') as unknown as AgentsLive | undefined
 
   // 投递回调：MUD 行流聚合后以用户消息投递进会话（等同人工提问）。
   // 返回 false = 本次未投出（agent 离线或 followup 抛错），该批水位不推进（行仍在
@@ -535,12 +556,10 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     ...(config.recordLines !== undefined ? { recordLines: config.recordLines } : {}),
     // 父会话查找 = 官方 live 注册表实时读（2026-10-01 裁定：不自建归属状态）。
     // durable session lineage（session.header.parentSession，subagent/workflow 派发
-    // 都写入）经 ctx.agents（AgentRegistry，agent id ≡ session id）按 id 查 live
-    // agent 读 header；祖先不 live（已 dispose）→ undefined → 上溯终止，
-    // 与官方 authorizeLineage「要求 parent live」语义一致。
-    //（窄结构代位：AgentRegistry.get 形参为品牌化 SessionId，其定义在传递包
-    // @deepseek-ai/dsh-session 内，pnpm 严格链接下不可直连 import。）
-    parentLookup: sessionId => agentsLive.get(sessionId)?.session?.header?.parentSession,
+    // 都写入）经 ctx.get('agents')（AgentRegistry，agent id ≡ session id）按 id 查
+    // live agent 读 header；祖先不 live（已 dispose）或注册表缺席 → undefined →
+    // 上溯终止，与官方 authorizeLineage「要求 parent live」语义一致（窄结构见 AgentsLive）。
+    parentLookup: sessionId => agentsLive()?.get(sessionId)?.session?.header?.parentSession,
     // T4a：admit 开闸门并投状态任务书（kickoff 定义见下；调用发生在 admit 时）。
     onAdmit: sessionId => kickoff(sessionId),
     view: {
@@ -631,7 +650,7 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     agentMap.delete(sessionId)
   })
 
-  // ── turn/start、turn/end → 投递抑制/冲刷（pull 模型，§3.3）──
+  // ── turn/start、turn/end → 投递抑制/冲刷（pull 模型，§4.3）──
   // 回合内行只进 pending（录制），turn/end 一次冲刷——防行流打断回合节奏。
   ctx.on('session/event', (session, event) => {
     const sessionId = String(session.id)

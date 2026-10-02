@@ -159,4 +159,28 @@
 - `doc/ARCHITECTURE.md`：状态行补三期进度；章节地图与任务索引补 §3.6–§3.8
 - **合并冲突消解（b7b7082 → 主线）**：mud-core3 引擎与测试代码以三期主线（新代码）为准；分支侧 webui 画面打磨（tab 单开/工具栏/MudLogo）与 C5.2 计划文件已自动并入保留；CHANGELOG 两侧同名版本条目按日期统一编号（本主线 2026-10-01 两条重排为 v0.0.13/v0.0.14）
 
+## [v0.0.16]文档分层重排：按系统架构重列 §0–§17 + v1/v2 归档归位 (2026-10)
+> 总结：doc/ 从"单文件五章"改为"按数据流分层的 §0–§17 多文件"；mud-core(v1)/mud-core2(v2) 整体移入 doc/archive/ 并建索引；三份仍属现役的材料提升为正式文件；过期门面与代码注释引用同步修正
+
+- **归档归位**：`doc/mud-core/` → `doc/archive/mud-core/`（16 文件 / 1832 行）、`doc/mud-core2/` → `doc/archive/mud-core2/`（12 文件）；新建 `doc/archive/README.md`（整树作废声明 + 两套完整章节大纲 + v1 26 项/v2 20 项参考资产的 file+§ 坐标 + 已提升清单 + 编号沿革）
+- **提升为现役**：① v1 `flows/login.md` → `doc/flows/login.md`（**v1 全集中唯一被现役代码当设计依据引用**的文档；按 core3 词汇表重写为 7 步 + `success` 出口，含两条实测勘误，并如实记录"名字与密码同走 `sendCredential`"）；② v1 附录 B 抓包事实 → `doc/appendices/A-capture-facts.md`；③ v2 `appendices/audit-checklist.md` → `doc/appendices/B-audit-checklist.md`（适配 core3/mud-workflow 与现役 §N 引用纪律）
+- **重排**：退役 `doc/architecture/00-core.md`（旧 §1–§5 共 363 行单文件，§3 一章承载 8 个子系统）；拆为 9 个正文文件承载 §1–§17——`01-02-overview-host`（总览与总体架构 + L0 宿主平台）· `03-05-runtime`（接入层/行流层/消费层）· `06-07-channels-agent`（通路层 + agent 层）· `08-execution`（**L6 执行层单章，工具面与流程面不拆**）· `09-webui`（呈现层）· `10-11-state-lifecycle`（状态面 + 生命周期与状态机）· `12-14-security-observability-resilience`（安全/观测/错误降级）· `15-contracts-config`（契约索引 + Config 总表）· `16-17-acceptance-roadmap`（测试验收 + 演进路线）；入口 `ARCHITECTURE.md` 重写为 §0（规则 / 章节地图 / 任务索引 / **旧→新编号映射表** / 归档纪律）
+- **新增章节**：§1 总体架构（**分层模型 L1–L7 + L0**、包与模块地图、**状态载体与单一真相表**、端到端数据流三条、**现役不变量 P1–P10**、术语表）；§2 宿主平台与集成（12 条已核实事实 + 依赖面 + 能力缺口 + 整批复核）；§4.3 水位线语义总表（层契约）；§5 消费层四消费者与水位契约；§6.6 通道正交性表；§8 执行层共享执行契约；**§15.5 Config 总表**（18 项逐条 + 硬编码项及理由）；§14 错误处理与降级；**§16.6 文档—实现一致性清单**
+- **引用修正**：§8.15 对 login 判据的指向改为 `doc/flows/login.md`（含步表更正为实现的 7 步 + `success` 出口）；`doc/likely/c5.2-*.md` 的落点改为 §6.3（投递剔除）与 §9.4（画面通道双屏）；代码注释按 §0.6 映射表改指（`§1.1→§1.4`、`§2.1→§11.1`、`§2.2→§11.2`、`§3.1→§15.1`、`§3.3→§8`、`§3.4→§6`、`§3.5→§9`），并清掉两处 v1 归档残留编号（`wake.ts` 的 `§19` → §7.5、`link/corpus.ts` 的 `§16` → §13.4）与 `viewCols` 陈旧注释（80 → 120）
+- **门面改写**：根 `README.md`（原称 `packages/mud-core2` 为"当前唯一生产路径"并提供 `pnpm dev:core2`，与退役裁定矛盾 → 改为 mud-core3/mud-workflow/mud-webui 现状与真实启动链）；`AGENTS.md` 检索规则重写（原指向不存在的"§1 不变量 / §2 术语"、`doc/flows/`、`doc/history/`、`§19.3`）
+- **`PLAN.md` 重写**为计划起草区 + 待办池（T1–T9：T4b 实机验收、T5 收尾、一致性清理、C5.2、第四期自动重连、第五期进阶机制、归档资产再评估、宿主换代复核、会话删除面跟踪）；已落地的三期设计原稿按纪律清空（事实源在 §1–§17）
+- **不回改历史行**：本文件既有条目中的 `doc/mud-core2/`、`doc/plans/` 等旧路径按"只追加"纪律保持原样；迁移映射由上表的 §0.6 映射表与 `doc/archive/README.md` 承担
+
+## [v0.0.17]装配期缺陷修复：`ctx.agents` 未声明 inject 导致 `apply` 失败、remote.mud 全动词 404 (2026-10-02)
+> 总结：实机建账号报 `mud/addAccount ... HTTP 404` 的根因不在路由/前端——`mud-core3` 条目启动期 "1 entry did not activate"，`apply` 抛 `cannot get property "agents" without inject`，remote 面整体未注册
+
+- **根因**：`src/index.ts` 装配期读 `ctx.agents`，而插件 `inject = ['typert']` 未声明 `agents`；cordis 的属性代理对未声明服务抛 `cannot get property "agents" without inject`（`vendor/cordis/src/reflect.ts:144`）⇒ `apply` 整体失败 ⇒ `remote.mud` 全部动词（含名册 CRUD）在网关 `claimsEndpoint` 判定为未注册 ⇒ 一律 404
+- **表现误导性**：建服务器那步的 `addServer` 失败被页面状态行吞掉（`src/client/index.ts` 的 `.catch(reportError)`），页面本地名册照常渲染 ⇒ 只有建账号在向导里把 404 抛给用户
+- **修复**：改 `ctx.get('agents')`（**可选服务，不写进 inject**）+ **调用期解析**（`const agentsLive = () => …`，apply 期提供方 fiber 未必 ACTIVE，与 `storageDomain` 同一课 §14.3）；新增窄结构面 `AgentsLive`；缺席/未就绪 ⇒ 父链上溯终止（§2.3 既有口径不变）
+- **文档同步**：§2.3 依赖面 `agents` 行取用改 `ctx.get('agents').get(id)`（调用期解析）+ 缺面行为明确"服务缺席或提供方未 ACTIVE"；§15.2 补"取用走 `ctx.get`（不写进 `inject`）"与反面教训；§8.5 归属上溯同一处改指
+- **流程补强（§16.1）**：新增纪律行「**装配层必过宿主组合加载冒烟**」——纯层用例不加载插件，`index.ts` 改动后必须真加载一次并确认条目已激活（无 `1 entry did not activate`）；本缺陷正是纯层 207 例全绿而装配期即死
+- **回归护栏**：新增 `test/plugin-load.e2e.ts`（**工件面** e2e：加载 `lib/index.js` 的插件 → 只提供 `typert`，`agents`/`credentials`/`sessionController`/`storageDomain` 全缺席 → 断言引擎窄面 `mudCore3` 与 remote 服务 `mudRemote`（namespace `mud`）在册）；`vitest.config.ts` 的 `include` 增 `test/**/*.e2e.ts`（缺产物自动跳过）。**已验红后绿**：把装配期读回退成 eager `ctx.agents` 时该用例报出与宿主同一条 `cannot get property "agents" without inject`，修复后转绿。用例账目 207 例 / 16 文件 → **208 例 / 17 文件**（§16.2）
+- **记录到的工具链约束**：插件源含标准装饰器（`@Remote`），vitest 的 esbuild 转译不支持（`Invalid or unexpected token`）⇒ 装配层冒烟**只能走 `lib/` 产物**，与宿主实际加载面一致（§16.1）
+- **未改**：`inject` 保持 `['typert']`（`agents` 按可选依赖处理）；`ctx.logger`/`ctx.on`/`ctx.provide`/`ctx.inject` 等与 inject 无关的用法不动
+
 > AI生成

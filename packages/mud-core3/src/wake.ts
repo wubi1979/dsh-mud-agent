@@ -4,13 +4,13 @@
  * 单 timer、到期驱动：行到达即 re-arm（runtime.onActivity 喂 `arm()`），
  * 静默满 silenceMs 到期时检查守卫——三条件全满足才投递任务书，任一不满足
  * 只重新武装不唤醒：
- *   1. 已接入（§3.4 闸门前置：未接入不唤醒）；
+ *   1. 已接入（§6.3 闸门前置：未接入不唤醒）；
  *   2. 非回合中（回合中开新回合会打断节奏，只 re-arm；turn/end 后的持续
  *      静默会再次到期）；
  *   3. 行流持有者空闲（无在途 read/send；在途 read 有自己的 quiet/timeout
  *      收束，收束后的持续静默会再次到期唤醒）。
  *
- * 守卫纪律（承 core2 §7.2 V7）：**不做**"无子 agent 在途"与"结算已消化"
+ * 守卫纪律（承 v2 §7.2 V7）：**不做**"无子 agent 在途"与"结算已消化"
  * 守卫——结算唤醒归宿主（watchSettlement），插件不查子级；冗余唤醒无害
  * （根的决策输入是唤醒正文，不是唤醒次数）。
  *
@@ -36,7 +36,7 @@ export interface WakeDeps {
 
 /** 唤醒器选项。 */
 export interface WakeOptions {
-  /** 静默时长毫秒（Config `silenceMs`；缺省 120_000 对齐 §19）。 */
+  /** 静默时长毫秒（Config `silenceMs`；缺省 120_000，§7.5）。 */
   silenceMs: number
 }
 

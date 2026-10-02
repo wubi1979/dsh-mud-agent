@@ -1,7 +1,7 @@
 /**
  * login 流程 E2E（真实 TCP + core3 SessionRuntime，自 core3 T3 workflow.spec 迁移）：
  *   - 成功 / 密码错 / need-new / replace（默认答 y）/ timeout 五路径；
- *   - 判据取自 doc/mud-core/flows/login.md 四步定稿（「欢迎来到」勘误含）；
+ *   - 判据取自 doc/flows/login.md 与 doc/appendices/A-capture-facts.md 实测定稿（「欢迎来到」勘误含）；
  *   - 凭据零泄露：结果 JSON、画面 view（snapshot 帧）均无 pass 明文。
  *
  * 短超时：流程数据超时可克隆替换（失败路径不等满 30s）。

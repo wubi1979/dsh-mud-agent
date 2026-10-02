@@ -1,9 +1,9 @@
 ---
 sections: [11]
-status: active
+status: archived
 deps: ["§19", "§1", "§7", "§8"]
 impl: packages/mud-core/src/agent/flow/flows/login.ts
-note: login 流程声明的设计事实源；实现跟随 agent/flow/flows/login.ts 的 LOGIN_FLOW，机制见 §19
+note: 【已提升，仅留追溯】已提升为现役 doc/flows/login.md（按 core3 词汇表重写为 7 步 + success 出口，两条实测勘误已采纳）；本副本为 v1 原貌，不得作为实现依据。原注：login 流程声明的设计事实源；实现跟随 agent/flow/flows/login.ts 的 LOGIN_FLOW，机制见 §19
 ---
 
 # login 流程（声明）

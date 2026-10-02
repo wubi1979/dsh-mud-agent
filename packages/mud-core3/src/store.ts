@@ -1,7 +1,7 @@
 /**
  * mud-core3 store — 名册存储：宿主 storage 域（持久）与内存（降级）两种实现。
  *
- * 名册 = 服务器（键 = workspaceId）+ 账号（键 = accountId = sessionId），设计 §1.1/§3.1。
+ * 名册 = 服务器（键 = workspaceId）+ 账号（键 = accountId = sessionId），设计 §1.4/§15.1。
  * 记录 schema 是持久化边界的唯一事实源（zod），域 spec 交给宿主 `ctx.storageDomain.open`；
  * 宿主不可用时回落内存实现（开发/无 storage 档位下仍可跑，重启丢账号）。
  *

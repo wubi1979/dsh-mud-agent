@@ -100,7 +100,7 @@ export interface MudToolDeps {
   core: () => MudCore3Handle | null
 }
 
-// ── 禁发表（最小集 + 全段扫描，§3.3）──────────────────────────
+// ── 禁发表（最小集 + 全段扫描，§12.3）──────────────────────────
 
 /** 禁发表词（不可逆命令；写死常量——实证发现新危险命令按 I5 逐行加回）。 */
 const DENY_HEADS: ReadonlySet<string> = new Set([
@@ -303,7 +303,7 @@ export function registerMudTools(
       // 只对「未连接」设限（三期裁定：不受接入闸门、不要求已登录）。
       if (tc.runtime.connState !== 'connected') return reject(NOT_CONNECTED_ERROR)
 
-      // timeoutMs 钳制（§3.3）：缺省注入，上限 MAX_TIMEOUT_MS。
+      // timeoutMs 钳制（§8.7）：缺省注入，上限 MAX_TIMEOUT_MS。
       let timeoutMs: number
       if (args.timeoutMs !== undefined) {
         if (!Number.isInteger(args.timeoutMs) || args.timeoutMs <= 0) {
@@ -333,7 +333,7 @@ export function registerMudTools(
         // initial：有 cmd = 空（acc 只收 send 后新行）；裸读 = pending 尾部快照
         //（不物理消费，范围含接入前的录制行）。
         const initial = bare ? tc.runtime.recentLines(c.defaults.sendMaxLines) : []
-        // 缺省判据（§3.3）：有 cmd = gaCount:1 + maxLines 兜底；
+        // 缺省判据（§8.7）：有 cmd = gaCount:1 + maxLines 兜底；
         // 裸读 = maxLines + 短静默窗口。模型显式给 listen 时整体覆盖缺省。
         const opts: ReadOpts = bare
           ? {

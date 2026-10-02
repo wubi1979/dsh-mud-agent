@@ -1,7 +1,7 @@
 /**
  * read 测试 — ReadMachine 判定序/异步收束/失配记错/swallow + runtime 集成（水位线）。
  *
- * 单测（§3.3 设计）：
+ * 单测（§5.2 设计）：
  *   1. 判定序（写死）：failOn > until > gaCount > maxLines；
  *   2. 异步收束源各一例：quiet / timeout / signal / disconnected / danger；
  *   3. until 失配（quiet/timeout/maxLines 收场）记 error；gaCount 关窗不算失配；

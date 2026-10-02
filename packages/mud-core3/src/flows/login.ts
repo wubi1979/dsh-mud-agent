@@ -8,7 +8,8 @@
  *
  * 本体 = JSON 声明式步骤表（TS 字面量承载——编译期类型检查 + lib/ 产物天然
  * 携带；语义与 .json 等价，agent 侧看到的 get/save 面是纯 JSON）。判据取自
- * [doc/mud-core/flows/login.md](../../doc/mud-core/flows/login.md) 四步定稿，
+ * [doc/flows/login.md](../../doc/flows/login.md)（7 步 + success 出口）与
+ * [doc/appendices/A-capture-facts.md](../../doc/appendices/A-capture-facts.md) 实测定稿，
  * 与 T3 手写脚本（已退役）一字不差，含两条实测勘误：
  *   - 「欢迎来到」成功句**不可用**（与建连横幅「欢迎来到北大侠客行」撞车，
  *     登录前即到达会把横幅误判成成功）——成功句以「目前权限：(player)」

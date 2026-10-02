@@ -1,5 +1,5 @@
 /**
- * preset 行插件 — 工具面承载（§3.3，T2b）。
+ * preset 行插件 — 工具面承载（§8.2，T2b）。
  *
  * 由 cordis.patch.yml 的 `preset-mud-player` 行 plugins 末行装载（产物
  * lib/preset.js，plain Node ESM）。与宿主 `@deepseek-ai/dsh-persona` 同层：

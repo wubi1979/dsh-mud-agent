@@ -12,7 +12,7 @@ import TYPERT_REMOTE from 'mud-core3/remote'
 // Type-only: pulls the TypertRemoteNamespaceMap augmentation (mud namespace) into the program.
 import type {} from 'mud-core3/remote'
 // Type-only: Remote 边界类型（日志条目、名册记录、画面帧、状态帧）由非根子路径导出。
-import type { AccountRecord, GameFrame, LogEntry, ServerRecord, StatusFrame } from 'mud-core3/types'
+import type { AccountRecord, GameFrame, LogEntry, ServerRecord } from 'mud-core3/types'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { RemoteResult, TypertClientRemote } from '@deepseek-ai/dsh-typert-protocol'
 
@@ -28,8 +28,14 @@ export type MudServerRecord = ServerRecord
 /** 宿主名册里的账号记录（键 = accountId = sessionId）。 */
 export type MudAccountRecord = AccountRecord
 
-/** 状态流帧（watchStatus）：全量会话状态快照。 */
-export type MudStatusFrame = StatusFrame
+/**
+ * 状态流帧（watchStatus）：全量会话状态快照。边界收窄版——服务端 SessionStatus
+ * 的 loggedIn/world（WorldEntry.value 为 unknown）不过 Remote 边界（typert 拒绝
+ * unknown），此处与 status() 同型只收三字段；扩面随 T5 webui 状态呈现一起做。
+ */
+export interface MudStatusFrame {
+  readonly sessions: readonly { sessionId: string; state: string; admitted: boolean }[]
+}
 
 /** 会话日志返回面（内存环 + 落盘目录）。 */
 export interface MudSessionLog {

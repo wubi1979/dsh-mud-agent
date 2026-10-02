@@ -1,5 +1,5 @@
 /**
- * mud-core3 accounts — 服务器/账号的写路径编排（建账号 = 一个动作，设计 §2.1/§2.2）。
+ * mud-core3 accounts — 服务器/账号的写路径编排（建账号 = 一个动作，设计 §11.1/§11.2）。
  *
  * 与宿主解耦：会话创建、id 分配、名册存储都经依赖注入，宿主接线在 index.ts，
  * 测试注入内存实现。**先落名册再建会话** —— `agent/created` 的归属判定
@@ -107,7 +107,7 @@ export async function addServer(deps: AccountWriteDeps, record: ServerRecord): P
 }
 
 /**
- * 删服务器：无账号时才允许（设计 §2.1）。
+ * 删服务器：无账号时才允许（设计 §11.1）。
  * @param deps - 名册依赖。
  * @param workspaceId - 服务器键。
  * @throws 该服务器下仍有账号时抛错（提示先删账号）。
@@ -121,7 +121,7 @@ export async function removeServer(deps: AccountWriteDeps, workspaceId: string):
 }
 
 /**
- * 写回接入状态（admit/stop 持久化；设计 §3.4「roster accounts.admitted 持久」）。
+ * 写回接入状态（admit/stop 持久化；设计 §6.3「roster accounts.admitted 持久」）。
  * @param deps - 名册依赖。
  * @param sessionId - 账号 id。
  * @param admitted - 目标接入状态。

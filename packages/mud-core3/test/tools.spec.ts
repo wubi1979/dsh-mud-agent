@@ -28,7 +28,7 @@ import type { MudLine } from '../src/link/line.ts'
 
 // ── 纯单元：禁发表 / listen 编译 ─────────────────────────────────────
 
-describe('denyMatch 全段扫描（§3.3 最小集）', () => {
+describe('denyMatch 全段扫描（§12.3 最小集）', () => {
   it('suicide 命中（大小写不敏感）', () => {
     expect(denyMatch('suicide')).toBe('suicide')
     expect(denyMatch('SUICIDE')).toBe('suicide')

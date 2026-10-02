@@ -5,18 +5,18 @@
  * 返回累积行原文。挂载点 = SessionRuntime（行流多消费者模型里的又一个消费者）：
  * 行到达 → ①pending 录制（永远）→ ②read 在途则 machine.onLine → ③投递（水位线拉取）。
  *
- * 判定序（写死，承 core2 §5）：同步关窗序 **failOn > until > gaCount > maxLines**
+ * 判定序（写死，承 v2 §5）：同步关窗序 **failOn > until > gaCount > maxLines**
  * （maxLines 与 gaCount 同属同步关窗、排末位）；quietMs/timeoutMs 是**异步**收束源
  * （计时器到点），与同步判据竞速。danger 不在本层测 —— 调用方（后置意识层）在
  * onLine 钩子里同步判，命中即 abortWait('danger')。
  *
- * until 失配按**关窗者**判（承 core2）：quiet/timeout 收场、或被 **maxLines** 剪断
+ * until 失配按**关窗者**判（承 v2）：quiet/timeout 收场、或被 **maxLines** 剪断
  * （done 且命中来源为 maxLines）而 until 未命中 —— 都记 error（判据失配要吵，语料
  * 可见）；**GA/EOR 边界关窗（gaCount 命中）不算失配**（缺省 gaCount=1，完成句未到
  * 而边界先到是正常收束）；danger/signal/disconnected/failOn 是外部中断或负面命中，
  * 不吵。
  *
- * 与 core2 的差异（§3.3 裁决表）：
+ * 与 v2 的差异（现行语义与判定序见 §5.2）：
  *   - Holder / root-child：砍（持有者归工具层会话级实现，T2b）；
  *   - abortWait + danger：保留 API（本期无调用者，管道就绪）；
  *   - swallow 吞行钩子：保留（空实现，本期无规则层）；

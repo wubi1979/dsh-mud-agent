@@ -1,5 +1,5 @@
 /**
- * mud-core3 deliver — 聚合投递器（pull 模型，§3.3）。
+ * mud-core3 deliver — 聚合投递器（pull 模型，§5.4）。
  *
  * **单一真相 = runtime.pendingLines**（环形录制缓冲）：投递器不再自持缓冲，
  * 投递 = 从源按水位线拉取 —— `takeAfter(seen)` 取已见线之后的行，拆条投出，
@@ -7,7 +7,7 @@
  * 下次 flush 从失败点自然重试 —— 不丢行。readAbs（工具读水位）由 runtime
  * 的 read() 推进；已见线 seen = max(deliveredAbs, readAbs)，结构消除重复投递。
  *
- * 投递时机（§3.3）：
+ * 投递时机（§4.3）：
  *   A. turn 期间（turn/start → turn/end）：抑制模式——不武装定时器，行只进 pending；
  *   B. turn/end：flush 一次（onTurnEnd）；
  *   C. 空闲模式（agent 不在 turn）：quiet/maxWait 定时器到期即 flush。

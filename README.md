@@ -1,113 +1,81 @@
 # dsh-mud-agent
 
-> **v1 已退役（2026-09-27）**：`packages/mud-core`（+ `mud-webui`）已整体退役，代码留存不删、停止维护；本文其余章节描述 v1，仅作历史参考。**当前唯一生产路径是 [`packages/mud-core2/`](packages/mud-core2/)**——设计见 [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md)，装配见 [`packages/mud-core2/cordis.patch.yml`](packages/mud-core2/cordis.patch.yml)，开发入口见下文「当前开发入口」。
+[deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) 的**仓库外 MUD 插件 workspace**（目标 MUD：pkuxkx，`mud.pkuxkx.net`）。独立构建、独立从 npm registry 安装依赖，不参与 harness 根 workspace 构建链。
 
-[deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) 的 **仓库外 MUD 插件 workspace**（pkuxkx，`mud.pkuxkx.net`），独立构建、独立从 npm registry 安装依赖，不参与 harness 的根 workspace 构建链。
+> **设计事实源：[`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md)**（§0 入口：章节地图 / 任务索引；正文 §1–§17 按系统分层架构拆分）。
+> 阅读与检索纪律见 [`AGENTS.md`](AGENTS.md)；历史设计（v1/v2）见 [`doc/archive/`](doc/archive/README.md)（**只读，不作依据**）。
 
-两个兄弟子包：
+## 一句话定位
 
-| 包 | 目录 | 角色 |
-| --- | --- | --- |
-| `@deepseek-ai/dsh-mud-core` | `packages/mud-core/` | MUD 核心服务（telnet/GMCP 客户端、感知/规则管线、agent 桥、触发器 LLM），发布为 `ctx.mud` |
-| `@deepseek-ai/dsh-mud-webui` | `packages/mud-webui/` | WebUI 壳（xterm + 决策日志），消费 `ctx.mud` |
+把 MUD 行流以"**等同人工提问**"的方式送进 agent 的会话，把 agent 的回答以**工具调用**的方式送回 MUD；并让这件事在多账号、可接入/停止、可诊断、凭据不泄露的前提下成立。
 
-两包独立以 tsc/tsdown 产出 `dist/`，插件的 `cordis.patch.yml` 把 `name` 指向 `dist/index.js` 的绝对路径（`file:///` 形式），按标准 npm 包发布。
+## 在役与退役
 
-> mud-core 是统一 host 引擎，mud-webui 是目前唯一壳。一次启动挂 **core + 壳**；终端壳（mud-tui）已在 M0 移除，如需换壳只需换 patch。
+| 包 | 目录 | 角色 | 状态 |
+|---|---|---|---|
+| `mud-core3` | `packages/mud-core3/` | **宿主引擎插件**：`remote.mud.*` 动词、名册、连接与行流、投递与工具面、状态面、唤醒 | ✅ 在役 |
+| `mud-workflow` | `packages/mud-workflow/` | **纯流程架构包**：声明式流程 schema / 注册表 / 解释器 / 五工具（零宿主 import） | ✅ 在役 |
+| `mud-webui` | `packages/mud-webui/` | **Web 壳**：名册管理、MUD 日志 tab、只读画面 tab、状态订阅 | ✅ 在役 |
+| `typert-protocol` | `packages/typert-protocol/` | remote 工件（`gen:typert`）协议镜像，与宿主检出对齐 | ✅ 在役 |
+| `mud-core`（v1） | `packages/mud-core/` | 初版引擎 | ⛔ 2026-09-27 退役（代码留存不删、不再演进） |
+| `mud-core2`（v2） | `packages/mud-core2/` | 自主玩家 / 五层心智版 | ⛔ 2026-09-28 整体作废（原位保留、不再演进） |
 
-## 架构
+两套退役设计的文档已整体移入 [`doc/archive/`](doc/archive/README.md)；**唯一从归档中提升为现役**的是 `login` 流程声明（→ [`doc/flows/login.md`](doc/flows/login.md)）。
 
-> 设计事实源：**[`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md)**（版本 v0.1：不变量、术语、L1–L4 分层、权限档位、preset 化、交付切片）。本节只是速览，冲突以文档为准。
+## 架构速览
 
-- **用户即会话**：一个 MUD 账号 = 一个 DSH 会话 = 一个 `MudSessionRuntime`（连接绑定、感知折叠、观察窗、命令-应答桥、命令队列、WorldModel、recall 缓冲、登录看门狗都在该运行时内）。跨会话没有共享可变状态。
-- **官方路径分工**：
-  - 创建用户 = 创建会话：页面调官方 `ctx.sessions.create()`（id 由 host 分配并返回，页面不自铸身份）；切换用户 = 官方 `ctx.sessions.open(id)`。
-  - 回复用户 = 回复会话：host 用 `ctx.agents.get(sessionId)` **只读**解析该会话的 live agent，再 `agent.followup(mud-owned 消息)` 投递（与官方 webhook 入口同一模式）。本插件**不创建、不 dispose** agent；会话无 live agent 时行进该会话观察窗滞留，待官方 `agent/created` 冲刷。
-  - 网络连接只接入消息：`MudConnectionManager`（`runtime/connection.ts`）只认 host/port；绑定方向唯一 —— 会话 → 连接（`runtime.connectionId`），传输层不持有会话。
-- **T1 / T2（lane）**：投递前判类（event 规则命中 → `lane=t1`，其余 → `t2`）写入消息 `source`（`kind='mud-owned'`）；`agent/request` 瀑布注册在**该 agent 自己的 ctx** 上并 `prepend`（防官方 per-session 模型选择覆盖），只在 `lane=t1` 时把 provider 换成 `mud-t1`，其余**不介入**（T2 基线 = 会话自身模型选择）。
-  - T1：本地模拟模型 `mud-t1`（官方 `ctx.llm.registerAdapter`），按投递消息的 `turnRef` 取**感知引擎的命中队列**渲染确定性工具调用（不耗真实 LLM，不做文本反查）。
-  - T2：真实 LLM（会话当前模型选择），收到按预算裁剪的**批次**。
-- **感知与投递（V10）**：`perception/engine.ts`（L1，每会话一实例、多行状态跨文本块持久）+ `perception/split.ts`（L2 单流切分：消费边界前投 T1、其后留作遗留段）。在途命令应答的行只进桥与感知引擎（供命中），不作为投递消息重复出现。
-- **工具集（agent 视角）**：`mud_send`/`mud_recall`/`mud_status`/`mud_move`/`mud_look`/`world_patch`/`mud_flow_*`。工具注册在**该会话 agent 的 ctx** 上（`agent.ctx.tools.register`），闭包绑定本会话运行时，随 agent 释放（V10 计划改由官方 `mud-player` preset 挂载，见文档 §9）。
-- **HTTP/WS 入口**（全部按 `sessionId` 键控）：`POST /mud/bind`（声明"该官方会话是 MUD 会话"）、`/mud/connect`、`/mud/disconnect`、`/mud/command`、`/mud/captcha/refresh`、`/mud/logs`、`POST /mud/purge`（注销：删用户/删服务器时释放运行时与连接、删该会话全部日志文件）、`GET/POST /mud/capability`（权限档位读写）、`GET /mud/status`、`GET /mud/diag`；推送走 `/mud/ws`，条目自带 `sessionId`，前端按会话过滤。
-- **连接入口**：左栏用户行的 ⋯ 菜单（会话体在 blank 期间不渲染）；**不发送占位 prompt** —— `blank` 由首个 `turn/start` 翻转，连接后第一批发出的游戏输出自然开回合翻页。
-- **agent 装配（v1 方案，已退役）**：v1 用 `packages/mud-core/presets/mud-player/` 目录 + `agentPreset` 选择。**已废弃**：现行装配走官方 preset 通道（`agent-preset-registry` + 行内联 preset），见 `packages/mud-core2/cordis.patch.yml` 与 doc §3.3/§10.4。
-- **部署（v1 方案，已退役）**：v1 的 `agent-presets` roots 覆盖与 `agentPreset` 写在 `packages/mud-core/cordis.patch.yml`。**已废弃**：该 `agent-presets` 行在现行宿主不存在（会得到 `patch: entry not found`）；现行部署 = `packages/mud-core2/cordis.patch.yml` 单份 patch（registry 覆盖 + preset 行 + 引擎行）。
-- **权限档位（V10 §10）**：每会话三档 `observe`（只读：`mud_state`/`mud_recall`，登录流程除外）/`operate`（读写）/`full`（+外围能力）。可见性层按档注册工具（切换即重挂），强制层是官方 `tools/pre-execute` 上的闸门（T1 反射与 T2 推理同权受约束）；危险命令走数据驱动策略表（`deny`：suicide/passwd；`ask`：abandon/steal/kill/drop/quit，`Config.dangerousCommands` 可整体覆盖）。档位是会话日志里的 `mud/capability` 事件 + `mudCapabilities` 投影，读写走 `GET/POST /mud/capability`（`/mud/status` 每行带 `tier`），页面入口在用户行 ⋯ 菜单，右栏状态区显示当前档。**preset 模式下**档位只剩强制层 + 提示说明（共享组装无法按会话切换工具集）。
-- **删除用户 / 删除服务器**：配套的官方会话走**归档**（`IWorkspaces.archiveSession` —— 官方没有删除会话，归档即从分组/搜索界面隐藏，会话文件与 workspace 记账保留）；插件侧则调 `POST /mud/purge` 释放运行时与连接、删除该会话全部日志文件、清本页与 host 缓冲。日志是我们自己的资产，按现有按会话落盘的命名直接删除。
-- **已移除**：`/mud/prepare` 与自建 agent 的 `createMudAgent`/`prepareAgent`（旧实现与官方 `ApiSessionAgentController` 争夺同一会话的 agent 生命周期，是 T1 不通的根因）。
-
----
-
-## 当前开发入口（mud-core2）
-
-前置：`pnpm`、harness 克隆于 `D:/Code/deepseek-harness`、Node `^22.19 || >=24`。
-
-```bash
-pnpm install            # 首次：按 pnpm-workspace.yaml 装全部依赖
-
-pnpm dev:core2          # 构建并启动 harness web profile（mud-core2 唯一生产入口）
-pnpm build              # 构建 mud-core2 → lib/（改码后必须重建：patch 指向 lib/ 产物）
-pnpm test               # mud-core2 vitest
+```
+人（浏览器）── L7 呈现层 mud-webui ── remote.mud.* ── 宿主 deepseek-harness（L0 底座）
+                                                        │ 回合 / 工具调用 / 存储 / 凭据
+   mud-core3 引擎：L1 接入 → L2 行流 → L3 消费 → L4 通路（闸门）→ L5 agent → L6 执行层
+   MUD 服务器（pkuxkx）◀── telnet ── L1
 ```
 
-等价的手工命令（`pnpm dsh` 才是部署真相；`pnpm exec dsh` 会命中全局旧版 dsh，禁用）：
+| 层 | 内容 | 章节 |
+|---|---|---|
+| L0 | 宿主平台与集成（事实、依赖面、能力缺口） | §2 |
+| L1 | 接入层：连接管理 / telnet / GMCP / 行化 / 语料 | §3 |
+| L2 | 行流层：`SessionRuntime`、环形录制、**双水位线 `seen`** | §4 |
+| L3 | 消费层：`ReadMachine` / `GameScreen` / `Deliverer` / `World` | §5 |
+| L4 | 通路层：投递通道（**接入闸门**）/ 显示通道 / 发送通道 | §6 |
+| L5 | agent 层：preset 与 persona、回合节拍、任务书、静默唤醒、分工模型 | §7 |
+| L6 | 执行层（单章）：工具面 + 流程面 | §8 |
+| L7 | 呈现层：`mud-webui` | §9 |
+| 横切 | 状态面 / 生命周期 / 安全 / 观测 / 降级 / 契约与 Config | §10–§15 |
+| — | 测试验收与演进路线 | §16–§17 |
+
+分层模型、模块地图、状态载体与单一真相表、端到端数据流：见 **§1**。
+
+## 开发入口
+
+前置：`pnpm`、harness 克隆（默认 `D:/Code/deepseek-harness`）、Node `^22.19 || >=24`。
 
 ```bash
-pnpm --filter mud-core2 build
-pnpm --dir D:/Code/deepseek-harness dsh web \
-  --patch D:/Code/dsh-mud-agent/packages/mud-core2/cordis.patch.yml
+pnpm install        # 首次：装全部依赖
+
+pnpm gen:typert     # 生成 remote 工件（改 remote 面后必跑）
+pnpm build          # pnpm -r build：构建全部在役包 → lib/
+pnpm test           # mud-core3 vitest
+pnpm dev            # gen:typert + build(core3, webui) + 启动 harness web profile（--port 3082）
 ```
 
-要点：
+**要点**
 
-- 部署值（凭据等）写在 `packages/mud-core2/cordis.patch.yml` 的 `creds`（留空即启动 fail-loud 拒装）。
-- patch `name` 用 `file:///D:/Code/dsh-mud-agent/packages/mud-core2/lib/*.js` **绝对路径**；相对名按 patch 文件所在目录解析。
-- 新会话默认装配 `mud-player` preset（registry 覆盖 `default: mud-player`）；每次启动 token 不同，WebUI 需用新 URL 打开。
-- 对宿主 `standard.patch.yml` 的逐条副本一致性由 `packages/mud-core2/test/patch.spec.ts` 漂移守卫保证；harness 换代后整批复核宿主引用（doc §0 规则 7）。
+- patch 的 `name` 指向**构建产物**（绝对路径）；**改码后必须重建**，否则跑的是旧 `lib/`。
+- 播放器 preset 行分别加载 `mud-core3` 与 `mud-workflow` 的产物：**首次或改动流程包后先跑 `pnpm build`**（`pnpm dev` 只构建 core3 与 webui）。
+- 插件包在宿主 profile 之外时，活动 profile 的 `node_modules` 里必须有指向本包的链接（junction/symlink），`peerDependencies` 的 dsh 包才会解析到运行中的安装；`dsh plugin add` 会建该链接，`--patch` 直挂**不建**，需手工建。**链接在启动时一次性读取，改动后需重启**（§2.2）。
+- `pnpm dev` 的 harness 路径与端口写在根 `package.json`，环境不同请改脚本。
+- 登录凭据由页面写入宿主凭据域（只存引用名），**不落在本仓**（§11.6、§12.2）。
 
----
+## 文档地图
 
-## v1 开发模式（已退役，仅历史参考）
-
-v1 以 `pnpm dev:web`（core + webui）启动，该入口已下线；以下命令不再可用：
-
-```bash
-pnpm dev:web          # [退役] core + webui：构建并启动 harness web profile（浏览器壳）
-pnpm restart:web      # [退役] 等价 pnpm run dev:web
-```
-
-要点：
-
-- `dsh web` 等价 `dsh --profile web`；harness 内置 `web` 模板，无 profile 时自动创建，无需手动写 `~/.dsh/profiles/web`。
-- patch `name` 用 `file:///D:/Code/dsh-mud-agent/packages/<pkg>/dist/index.js` 绝对路径，指向 `dist` 产物。
-- harness 的 `web` profile 自带 `@deepseek-ai/dsh-web-app` bundle，开发模式下会一并加载（绑定 Web 端口、打开浏览器 dashboard）。**已知取舍**：如只需纯净底座，走下文「正式安装 + 启动」。
-- 部署值（服务器地址、账号等）写在 `~/.dsh/profiles/web/cordis.patch.yml`，不进本仓库。
-
----
-
-## 正式安装 + 启动
-
-> **状态占位**：以下流程要在 mud 包发布到 npm 之后才能完整执行。
->
-> 当前 `mud-core` / `mud-webui` 均为 `0.1.1-rc.2`，**未发布**；且 `mud-webui` 对 `mud-core` 依赖仍是 `workspace:^` 本地链接——发布顺序须为 **core → webui**。到时先 `pnpm publish` core，再发布壳。
-
-正式安装走 harness 的 **profile + bundle 装配**（dsh-TUI 的 standalone 模式）：把 mud 包装进一个自定义 profile，用 `dsh --profile` 启动。做法（一次性建立 `mud` profile）：
-
-```bash
-# 装核心 + 壳（在 harness 目录下执行）
-pnpm --dir D:/Code/deepseek-harness dsh plugin --profile mud add @deepseek-ai/dsh-mud-core
-pnpm --dir D:/Code/deepseek-harness dsh plugin --profile mud add @deepseek-ai/dsh-mud-webui
-
-# 启动
-pnpm --dir D:/Code/deepseek-harness dsh --profile mud
-```
-
-要点：
-
-- `dsh plugin --profile mud add <pkg>` 创建 `~/.dsh/profiles/mud`，把包写进 `dsh.profile.bundles` 清单，并建立 module-fallback 链接。
-- `dsh --profile mud` 按 `bundles` 顺序加载 mud-core 与所选壳的 patch（一个 profile 只挂 **core + 壳**）。
-- 部署值（服务器、账号）写 `~/.dsh/profiles/mud/cordis.patch.yml`。
-- 后续 `pnpm publish` 新版后，在 profile 内 `pnpm update` 即可。
-
-> 发布前的开发期若不绑 web-app，可在 `~/.dsh/profiles/mud/package.json` 的 `dsh.profile.bundles` 只留 `@deepseek-ai/dsh-base`，让 `mud` profile 仅含底座 + 两个 mud 包。
+| 文件 | 内容 |
+|---|---|
+| [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md) | **入口**：§0 文档规则 / 章节地图 / 任务索引 / 旧→新编号映射 |
+| [`doc/architecture/`](doc/architecture/) | §1–§17 设计正文（9 个文件） |
+| [`doc/flows/login.md`](doc/flows/login.md) | `login` 流程实体声明（locked） |
+| [`doc/appendices/`](doc/appendices/) | A 抓包与语料事实 · B 代码审计规约 |
+| [`doc/likely/`](doc/likely/) | 已定稿但**未立项**的候选设计（当前：C5.2 行打标与画面分屏） |
+| [`doc/PLAN.md`](doc/PLAN.md) | 计划起草区 + 待办池（T1–T9） |
+| [`doc/CHANGELOG.md`](doc/CHANGELOG.md) | 变更记录（只追加） |
+| [`doc/archive/`](doc/archive/README.md) | v1/v2 归档索引（**只读**） |

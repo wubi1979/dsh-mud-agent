@@ -50,7 +50,7 @@ export class SessionRuntime {
   private disposed = false
   /** 等待建连期间 socket 已终结（拒绝/对端关闭）——用于区分"失败"与"超时"。 */
   private connectAborted = false
-  // 水位线（§3.3，行号空间 = MudLine.abs）：已见线 seen = max(delivered, read)。
+  // 水位线（§4.3，行号空间 = MudLine.abs）：已见线 seen = max(delivered, read)。
   // 初始/断线重置 = -1。abs 跨重连不归零，pending 清空后新行照常被拉取。
   /** 投递水位：已成功投递给 agent 的最远行号。 */
   private deliveredAbs = -1
@@ -133,7 +133,7 @@ export class SessionRuntime {
       this.worldState.clear()
       this.onWorldChange?.()
       this.pendingLines = []
-      // 水位线复位（§3.3：初始/断线 = -1）+ 在途 read 以 disconnected 收束。
+      // 水位线复位（§4.3/§4.5：初始/断线 = -1）+ 在途 read 以 disconnected 收束。
       this.deliveredAbs = -1
       this.readAbs = -1
       this.readMachine.onDisconnected()
@@ -210,7 +210,7 @@ export class SessionRuntime {
   /**
    * read（工具面等待引擎）：在途 fail-loud；未连接直接以 disconnected 收束
    * （不启动等待）。返回时推进 readAbs = 结果行与 initial 的最远行号——
-   * 裸读/应答行标记已见，turn/end 不再重复投递（§3.3 水位线语义）。
+   * 裸读/应答行标记已见，turn/end 不再重复投递（§4.3 水位线语义）。
    */
   async read(opts: ReadOpts, initial: readonly MudLine[] = []): Promise<ReadResult> {
     if (!this.connected) return { lines: [], reason: 'disconnected' }

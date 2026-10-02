@@ -1,5 +1,5 @@
 /**
- * link/corpus — 行流 JSONL 落盘与读取（§16）。
+ * link/corpus — 行流 JSONL 落盘与读取（§13.4）。
  */
 
 import { describe, expect, it } from 'vitest'

@@ -1,5 +1,5 @@
 /**
- * mud-core2 link/corpus — 行流语料 JSONL + log-only 事件（§16）。
+ * mud-core2 link/corpus — 行流语料 JSONL + log-only 事件（自 v2 移植；语料面见 §13.4）。
  *
  * - **行流语料**：JSONL 全量落盘（时间戳 + 原文）——自有通道；**不进 Session**
  *   （session.append 是同步通知、高频行会拖账；行级频率只落 JSONL）；

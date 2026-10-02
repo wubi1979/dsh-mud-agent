@@ -1,7 +1,7 @@
 /**
  * dsh-mud-webui — WebUI client half (core3)。
  *
- * 接线（设计 §3.5：呈现不变、接线替换）：
+ * 接线（设计 §9.1：呈现不变、接线替换）：
  * - sidebar：服务器/账号向导（遮蔽 SidebarRoot）
  * - conversation.view：`mud-log` 会话头 tab（连接/投递/闸门诊断面）
  * - **名册落宿主**：服务器/账号经 `remote.mud.addServer/addAccount` 登记（宿主 storage 域持久），
