@@ -39,9 +39,9 @@
                 你可以用 mud_send 向游戏发命令（cmd）或裸读近期行流（不带 cmd）；用 mud_state 查看连接与状态；用 mud_connect 建连（幂等，已连接时不会重连或踢掉已登录会话）。未连接时 mud_send 会被拒绝，可先用 mud_connect 建连。是否已登录由你根据行流与 mud_state 自行判断。删档命令 suicide 被禁止。若工具返回拒绝信息，如实转告用户。确定性重复操作（如登录）可封装成流程：mud_workflow_list 查看可用流程，mud_workflow_run 一次执行，mud_workflow_get/save/delete 读取与改进流程（locked 流程只读）。
 
                 分工协议（根与子同读本说明，按所处角色行事）：
-                - 根（收到任务书或结算消息的一方）：先用 mud_state 读状态判断现状，把目标拆成要点序列（已完成的步骤剔除；每个要点写成自足指令，子看不到你的会话历史），用 subagent 工具委派一个子 agent 执行（continuable 后台模式），委派后休眠等结算。判断归根：根不亲自执行要点。
-                - 子（被委派的一方）：串行执行拿到的要点序列——成功则继续下一个要点，不逐个回报；任一步失败立即停止，收尾文本写明现场（已完成 / 未完成 / 卡在哪）。执行完必须终结，不要等待新任务。
-                - 一次委派 = 一次结算：子终结后宿主会把结算消息投给你（根），据此消化现场、重写规划再委派。
+                - 根（收到任务书或唤醒消息的一方）：先用 mud_state 读状态判断现状，把目标拆成要点序列（已完成的步骤剔除；每个要点写成自足指令，子看不到你的会话历史），用 subagent 工具委派一个子 agent 执行（一次性前台：这次调用会等到子跑完，并把它的收尾文本直接返回给你）。判断归根：根不亲自执行要点。
+                - 子（被委派的一方）：串行执行拿到的要点序列——成功则继续下一个要点，不逐个回报；任一步失败立即停止，收尾文本写明现场（已完成 / 未完成 / 卡在哪）。执行完即收尾（子是一次性任务，不会有后续消息）。
+                - 一次委派 = 一次工具结果：subagent 调用返回的正文就是子的收尾文本，据此消化现场、重写规划再委派；有新工作就重新委派一个新的子（每次委派都是全新上下文，旧的子不可续用）。
                 - 要点承载分界：确定性序列（如登录）用 mud_workflow_run 一次执行；需要判断的要点由子直接用 mud_send/mud_state 完成。脚本管点内步骤，子管点间顺序，根管要点的产生与重写，三者不越界；子不重新规划、不擅自重试失败步骤。
                 - 静默唤醒：长时间无消息时你会收到一条状态任务书（正文只含事实与目标）——按根角色重新读状态、继续规划；已完成的步骤不要重做。
           - id: agent-instructions
@@ -104,23 +104,20 @@
             isolate:
               workflowEngine: true
             config:
-              - id: tool-subagent-control
-                name: '@deepseek-ai/dsh-tool-subagent-control'
-              - id: tool-subagent-list-agents
-                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+              # 一次性前台委派（2026-10-03 裁定，§7.6）：本插件每次派发都是新 spawn、
+              # 旧子无续用价值，故不挂可继续专用控制工具（send_message /
+              # interrupt_agent / list_agents 只对可继续子有效），并关掉后台参数——
+              # 调用等到子收尾，收尾文本作为工具结果直接返回根。
+              # fork 行不注册：fork 子会把父级整段已完成轮次前缀做种子，
+              # 与"子看不到父历史"的隔离收益直接冲突。
               - id: tool-subagent
                 name: '@deepseek-ai/dsh-tool-subagent'
                 config:
                   provider: spawn
                   toolName: subagent
                   modelSelectionSettings: true
-                  backgroundMode: continuable
-              - id: tool-subagent-fork
-                name: '@deepseek-ai/dsh-tool-subagent'
-                config:
-                  provider: fork
-                  toolName: subagent_fork
-                  backgroundMode: continuable
+                  backgroundMode: one-shot
+                  enableRunInBackground: false
               - id: tool-subagent-codex
                 name: '@deepseek-ai/dsh-tool-subagent'
                 disabled: true

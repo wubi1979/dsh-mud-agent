@@ -10,10 +10,11 @@
  * @module @deepseek-ai/dsh-mud-webui/client/MudLogView
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 // Type-only: pulls the conversation.view SlotMap augmentation into the program.
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { MudHudTable } from './MudHudTable.tsx'
 import type { MudClientInjected } from './MudSidebar.tsx'
 
@@ -26,11 +27,17 @@ const SHELL_STYLE: React.CSSProperties = {
   fontFamily: 'Consolas, "Cascadia Mono", monospace',
 }
 
+/**
+ * 标题行底色：直接取右侧栏 dockkit 面板同一变量（bg-layer-2），不自定色值。
+ */
+const BAR_BACKGROUND = 'var(--dsw-specific-sidebar-fill)'
+
 const BAR_STYLE: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 8,
   padding: '6px 12px',
+  background: BAR_BACKGROUND,
   borderBottom: '1px solid var(--dsw-alias-border-l2, #2a2a2a)',
   flex: '0 0 auto',
 }
@@ -45,7 +52,33 @@ const LIST_STYLE: React.CSSProperties = {
 
 const ROW_STYLE: React.CSSProperties = { whiteSpace: 'pre-wrap', wordBreak: 'break-all' }
 const MUTED_STYLE: React.CSSProperties = { color: '#8a8a8a' }
-/** HUD 区（T11）：视图上部 20% 常驻世界状态表；条目超出自身滚动，日志不受挤压。 */
+/** 图标按钮（刷新）：透明底小方钮，悬浮亮起。 */
+const ICON_BUTTON_STYLE: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 24,
+  height: 24,
+  padding: 4,
+  color: '#8a8a8a',
+  background: 'transparent',
+  border: 'none',
+  borderRadius: 4,
+  cursor: 'pointer',
+}
+/**
+ * HUD 标题行：不进任何滚动容器，贯通视图全宽压在最顶部。
+ */
+const HUD_BAR_STYLE: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  padding: '6px 12px',
+  background: BAR_BACKGROUND,
+  borderBottom: '1px solid var(--dsw-alias-border-l2, #2a2a2a)',
+  flex: '0 0 auto',
+}
+/** HUD 区（T11）：标题行之下的表格滚动区，展开时占视图上部 20%；日志不受挤压。 */
 const HUD_STYLE: React.CSSProperties = {
   flex: '0 0 20%',
   minHeight: 0,
@@ -83,12 +116,14 @@ export type MudLogViewProps =
  * @param props - Conversation-view kit (sessionId) and the injected MUD face.
  * @returns the log panel, or an empty-state line when the session has no log yet.
  */
-export function MudLogView({ sessionId, useServers, useMudLog, watchLog, refreshLog }: MudLogViewProps) {
+export function MudLogView({ sessionId, useServers, useMudLog, watchLog, refreshLog, refreshStatus }: MudLogViewProps) {
   const sid = sessionId === undefined ? '' : String(sessionId)
   const log = useMudLog(snapshot => snapshot)
   // T11 状态呈现：本会话状态窄面行（watchStatus 推帧驱动）→ 上部 20% HUD 表
   const statusRow = useServers(s => s.sessionStatus[sid])
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  // HUD 折叠态（仅本视图局部，不持久化）。
+  const [hudCollapsed, setHudCollapsed] = useState(false)
   // 只有当前跟随的会话的快照才属于本视图（切换目标时旧快照立即丢弃）。
   const entries = log.sessionId === sid ? log.entries : []
 
@@ -104,16 +139,42 @@ export function MudLogView({ sessionId, useServers, useMudLog, watchLog, refresh
 
   return (
     <div style={SHELL_STYLE}>
-      <div style={HUD_STYLE}>
-        <MudHudTable row={statusRow} emptyText="暂无状态：连接并登录后显示世界快照。" />
+      <div style={HUD_BAR_STYLE}>
+        <span style={MUTED_STYLE}>世界状态</span>
+        <span style={{ flex: '1 1 auto' }} />
+        <button
+          type="button"
+          style={ICON_BUTTON_STYLE}
+          aria-label="刷新状态"
+          title="刷新状态"
+          onClick={() => { void refreshStatus(sid === '' ? undefined : sid) }}
+        >
+          <IconRefreshOutlineRegular size={14} />
+        </button>
+        <button type="button" onClick={() => { setHudCollapsed(c => !c) }}>
+          {hudCollapsed ? '展开' : '折叠'}
+        </button>
       </div>
+      {!hudCollapsed && (
+        <div style={HUD_STYLE}>
+          <MudHudTable row={statusRow} emptyText="暂无状态：连接并登录后显示世界快照。" />
+        </div>
+      )}
       <div style={BAR_STYLE}>
         <span style={MUTED_STYLE}>
           MUD 日志（{entries.length} 条；原始行流只落盘）
         </span>
         <span style={{ flex: '1 1 auto' }} />
         <span style={MUTED_STYLE}>{log.fileTarget ?? '未配置落盘'}</span>
-        <button type="button" onClick={() => { refreshLog() }}>刷新</button>
+        <button
+          type="button"
+          style={ICON_BUTTON_STYLE}
+          aria-label="刷新日志"
+          title="刷新日志"
+          onClick={() => { refreshLog() }}
+        >
+          <IconRefreshOutlineRegular size={14} />
+        </button>
       </div>
       {log.sessionId === sid && log.error !== null && (
         <div style={ERROR_STYLE} role="alert">日志拉取失败：{log.error}</div>

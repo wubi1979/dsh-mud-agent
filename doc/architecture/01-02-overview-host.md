@@ -14,7 +14,7 @@ note: 全局视图 + 宿主底座；任何任务必读本文（§1 分层模型�
 | 角色 | 说明 |
 |---|---|
 | **人** | 浏览器里的使用者。全程只面对「**服务器 → 账号**」两级实体，不感知会话/连接/流程 |
-| **宿主**（deepseek-harness） | 提供工作区、会话与 agent 回合、preset、凭据、存储域、工具、模型、remote RPC、子 agent 与结算（§2） |
+| **宿主**（deepseek-harness） | 提供工作区、会话与 agent 回合、preset、凭据、存储域、工具、模型、remote RPC、子 agent（一次性委派）（§2） |
 | **插件**（本仓） | `mud-core3` 引擎 + `mud-workflow` 流程包 + `mud-webui` 壳；把一条 MUD 连接接进 agent 的回合与工具面 |
 | **MUD 服务器** | 提供游戏世界：telnet 行流、GA/EOR 边界、GMCP 状态包 |
 
@@ -95,7 +95,7 @@ note: 全局视图 + 宿主底座；任何任务必读本文（§1 分层模型�
  ═════════════════════╪══════════════════════════════╪════════════════════════════
   L0 宿主平台 deepseek-harness（底座，§2）
   Workspace · Session/Agent loop · preset registry · credentials · storage domain
-  tools · llm · typert RPC · subagent / watchSettlement
+  tools · llm · typert RPC · subagent（一次性 run）
  ═══════════╤═══════════════════════════════════════╤════════════════════════════
             │ 插件装配（apply / provide / on）       │ 回合 · 工具调用
    ┌────────┴───────────────────────────────────────▼──────────────────────────┐
@@ -107,7 +107,7 @@ note: 全局视图 + 宿主底座；任何任务必读本文（§1 分层模型�
    │                                        ↓                                  │
    │  L4 通路层：投递通道（受接入闸门）/ 显示通道（不受闸门）/ 发送通道          │
    │                                        ↓                                  │
-   │  L5 agent 层：preset 装配 · 回合节拍 · 自主行为（根 / 子 / 宿主结算）      │
+   │  L5 agent 层：preset 装配 · 回合节拍 · 自主行为（根 / 子 / 委派结果）      │
    │  L6 执行层：工具面（mud_send / mud_state / mud_connect）                   │
    │             流程面（mud-workflow：声明表 / 注册表 / 解释器 / 五工具）      │
    └───────────────────────────────────────────────────────────────────────────┘
@@ -202,11 +202,12 @@ agent 工具调用 mud_send{cmd, listen}
 **1.8.3 一次登录的完整链路**（详见 §7.6、§8.8、§8.14）
 
 ```
-建账号（写名册 → 建会话 → 投任务书）→ 任务书回合（根读状态自行规划）
-   → 根委派子 agent（宿主原生 subagent）→ 子调 mud_workflow_run{name:'login'}
+建账号（纯登记：写名册 + 建会话，会话保持 blank）→ 接入（投状态任务书，唯一点火）
+   → 任务书回合（根读状态自行规划）
+   → 根委派子 agent（宿主原生 subagent，一次性前台）→ 子调 mud_workflow_run{name:'login'}
    → 归属解析 → workflowEnvFor（凭据 resolve → acquireSend → env 原语）
    → 解释器逐步：wait 读窗 → failOn 出口 → action 发送 → 路由
-   → 出口过 pass 掩码 → 子写现场并终结 → 宿主结算唤醒根 → 根消化后收尾
+   → 出口过 pass 掩码 → 子写现场并收尾 → 收尾文本作为工具结果回到根 → 根消化后收尾
 ```
 
 ## 1.9 术语表
@@ -230,8 +231,8 @@ agent 工具调用 mud_send{cmd, listen}
 | **脚本** | 分工模型里"点内步骤"的执行者 = 流程（§7.6） |
 | **任务书 / kickoff** | 由插件投递的**状态驱动**开场消息（署名 `mud-wake`）：只给事实与目标，不写指令序列（§7.4） |
 | **静默唤醒 / Wake** | 每会话一个静默计时器：行到达 re-arm，静默满 `silenceMs` 且三守卫全过 → 投任务书（§7.5） |
-| **分工模型** | 根规划要点 / 子串行执行 / 宿主结算唤醒 / 脚本做点内序列的四层分工（§7.6） |
-| **结算** | 子 agent 终结（`whenIdle` 且 inbox 无 pending）后由**宿主** `watchSettlement` 投递的唤醒；一次委派 = 一次结算（§7.6） |
+| **分工模型** | 根规划要点 / 子串行执行并一次性收尾 / 脚本做点内序列的三层分工（§7.6） |
+| **委派结果** | 子 agent 收尾后由 `subagent` 工具返回值带回根的**收尾文本**；一次委派 = 一次工具结果，子不被续用（§7.6） |
 | **凭据引用 / `passRef`** | 账号里只存**引用名**；明文只在宿主凭据域，登录流程执行时实时 `resolve`（§11.6、§12.2） |
 | **归属上溯** | 从调用方会话沿 `session.header.parentSession` 上溯至账号会话，取其 runtime（§8.5） |
 | **持有者 / holder** | 会话级唯一"在 send+read"的执行体标记；冲突可读拒绝，应答不劈半（§8.6） |
@@ -258,6 +259,7 @@ agent 工具调用 mud_send{cmd, listen}
 | 10 | 宿主**不给 `ask_user_question` 超时**（定义未声明 `timeoutMs`，超时策略只在声明了预算时武装）⇒ 无人应答**永久挂起** | `interaction/tool-ask-user/src/index.ts:19-99`；`guard/timeout-policy/src/index.ts:57-59` |
 | 11 | 会话列表投影中 `blank` **只由 `turn/start` 翻转**，blank 会话不渲染会话头/会话体（含自建 view） | `api/session-controller/src/list.ts` |
 | 12 | 会话记录可指定 preset 且**中途不可切换**（已开过回合 → `agent-preset/locked`）；角色跨冷启持久 | `agent-preset-registry/src/index.ts:317-333` |
+| 13 | **subagent 有两条创建路径**：一次性 run（`start()`，产出经 `SubagentRun.result` 由调用方收集）与可继续子会话（`startContinuable()`，结算通知投递给父会话）；工具行 `backgroundMode` 选路（缺省 `one-shot`），父会话 `subagentCatalog` 记录**两种模式**的目录条目 | `subagent/tool-subagent/src/index.ts:111,303,322,526-567`；`subagent/subagent/README.md` |
 
 ## 2.2 加载与模块解析
 
@@ -286,6 +288,7 @@ agent 工具调用 mud_send{cmd, listen}
 | 缺口 | 后果 | 本仓处置 |
 |---|---|---|
 | **插件拿不到会话删除面**：`AgentHandle.dispose` 是创建者能力，`ctx.sessionController` 无 delete 动词 | 删账号后**会话本身仍在宿主内** | 删账号只清名册 + 清该账号日志，并**在本表记为宿主侧待补面**（跟踪项见 §17.2） |
+| **宿主无子会话清退/归档面**：`ctx.subagents` 只发布驻留 Activation 的释放（`drainContinuableChildren` / `drainContinuableDescendants`）与列举（`listChildren` / `listDescendants`），没有删除会话或归档目录条目的动词 | 每次派发留下的子会话记录与父会话目录条目**永久**保留（只读、不可续用）；目录读取 O(累计派发数)，磁盘随子会话日志线性增长 | 记为宿主侧待补面（§17.2）；本版委派为一次性前台，**运行时不占容量**（§7.6） |
 | **`blank` 只由 `turn/start` 翻** | 新建会话不渲染会话头/会话体 ⇒ 自建 view（含 MUD 日志 tab）不可见 | 建账号后投一条**真实**任务书用户消息触发回合；**不伪造 `turn/start`**（会污染回合计数与 replay）（§7.4、§11.2） |
 | **`ask_user_question` 无超时** | 无人应答永久挂起 | 后置项（`askTimeoutMs`，§17.3）；本版不注册需要人工应答的机制 |
 | **preset 一棵树共享** | 工具定义共享、能力面无法按会话切换 | 数据一律**调用期按会话解析**（窄面 `toolContextFor`）（§8.1、§8.5） |
@@ -295,7 +298,7 @@ agent 工具调用 mud_send{cmd, listen}
 ## 2.5 宿主引用整批复核
 
 1. 本章 §2.1 的锚点是**一个宿主检出版本**的快照；宿主换代后按 §0.7 **整批**重新核对，不逐处信任旧行号。
-2. 复核范围：会话/preset 机制与 API 形态、`credentials`/`storage`/`agents` 服务名与签名、`agent/created` 等事件名与载荷、工具注册与权限闸门、`blank` 与 `turn/*` 语义、子 agent 与 `watchSettlement` 语义。
+2. 复核范围：会话/preset 机制与 API 形态、`credentials`/`storage`/`agents` 服务名与签名、`agent/created` 等事件名与载荷、工具注册与权限闸门、`blank` 与 `turn/*` 语义、子 agent 委派语义（一次性 run 与可继续子会话两条路径，§2.1 事实 13）。
 3. 复核输出写回 §2.1 与相关章节；不一致项记入 §17.2 待办。
 
 > AI生成

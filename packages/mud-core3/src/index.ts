@@ -615,8 +615,8 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
 
   // ── 静默唤醒器（T4a，每会话一实例）────────────────────────────
   // 行到达 re-arm（runtime.onActivity）+ 到期三守卫（已接入 + 非回合中 + 持有者
-  // 空闲，任一不满足只 re-arm）；命中 → kickoff 投状态任务书。不做子 agent/结算
-  // 守卫（V7 纪律：结算唤醒归宿主 watchSettlement）。
+  // 空闲，任一不满足只 re-arm）；命中 → kickoff 投状态任务书。不做子 agent
+  // 守卫（V7 纪律：委派结果走 subagent 工具返回值，插件不查子级）。
   const wakes = new Map<string, Wake>()
 
   // ── agent/created → 名册判定 → 登记会话 + 记录 agent 句柄 + 补投 ──
