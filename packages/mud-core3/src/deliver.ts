@@ -59,6 +59,12 @@ export interface DelivererConfig {
   maxLines?: number
   /** 单条投递最大字符数（超出拆成多条）。缺省 8000 字符。 */
   maxChars?: number
+  /**
+   * 投递白名单（C5.2 剔除策略的放行面）：缺省有标行（line.kind ≠ null）一律
+   * 不投（聊天/他人动作不进 agent——安全前提）；白名单列出的 kind 放行。
+   * 有标行视为**已见**（水位越过），只是不进投递文本。
+   */
+  allowKinds?: string[]
   /** 每批投递结果回调（观测用；delivered=false 表示该批未投出、水位不推进，reason = 失败原因）。 */
   onBatch?: (sessionId: string, lineCount: number, delivered: boolean, reason?: string) => void
 }
@@ -84,6 +90,8 @@ export class Deliverer {
   private readonly maxWaitMs: number
   private readonly maxLines: number
   private readonly maxChars: number
+  /** 投递白名单（kind 集合；缺省空 = 有标行一律不投）。 */
+  private readonly allowSet: ReadonlySet<string>
   private readonly onBatch:
     | ((sessionId: string, lineCount: number, delivered: boolean, reason?: string) => void)
     | undefined
@@ -110,6 +118,7 @@ export class Deliverer {
     this.maxWaitMs = config.maxWaitMs ?? DEFAULT_MAX_WAIT_MS
     this.maxLines = config.maxLines ?? DEFAULT_MAX_LINES
     this.maxChars = config.maxChars ?? DEFAULT_MAX_CHARS
+    this.allowSet = new Set(config.allowKinds ?? [])
     this.onBatch = config.onBatch
   }
 
@@ -212,9 +221,18 @@ export class Deliverer {
     const lines = this.source.linesAfter(seen)
     if (lines.length === 0) return
 
+    // C5.2 剔除策略：有标行（白名单外）不进投递文本，但视为已见——水位随成功
+    // 批次越过它们。全段无可投行时水位直接越过本段（剔除恒定，避免永挂重扫）。
+    const deliverable = lines.filter(l => l.kind === null || this.allowSet.has(l.kind))
+    if (deliverable.length === 0) {
+      const tail = lines.at(-1)
+      if (tail !== undefined) this.source.markDelivered(tail.abs)
+      return
+    }
+
     let consumed = 0
     let maxAbs = seen
-    for (const chunk of this.batches(lines)) {
+    for (const chunk of this.batches(deliverable)) {
       const text = this.render(chunk)
       const chunkTail = chunk[chunk.length - 1]
       const chunkAbs = chunkTail === undefined ? seen : chunkTail.abs

@@ -53,9 +53,9 @@ describe('GameScreen', () => {
     expect(snapshot).toBeDefined()
     expect(snapshot?.type).toBe('snapshot')
     if (snapshot?.type !== 'snapshot') return
-    expect(snapshot.screen).toContain('你挥出一剑。')
+    expect(snapshot.screenMain).toContain('你挥出一剑。')
     // ANSI 颜色经无头屏序列化后仍在（形态可能变换，但转义必存）
-    expect(snapshot.screen).not.toBe(snapshot.screen.replace(/\x1b\[/g, ''))
+    expect(snapshot.screenMain).not.toBe(snapshot.screenMain.replace(/\x1b\[/g, ''))
     expect(snapshot.info).toEqual({ sessionId: 's1', state: 'disconnected', cols: 120 })
     screen.dispose()
   })
@@ -84,12 +84,12 @@ describe('GameScreen', () => {
       expect(snapshot?.type).toBe('snapshot')
       if (snapshot?.type !== 'snapshot') return
       // 直发命令回显带账号名@来源前缀（agent 灰 90m / user 青 36m）
-      expect(snapshot.screen).toContain('hero@agent> look')
-      expect(snapshot.screen).toContain('hero@user> say hi')
+      expect(snapshot.screenMain).toContain('hero@agent> look')
+      expect(snapshot.screenMain).toContain('hero@user> say hi')
       // 凭据走 sendCredential：不触发 onSend，永不进画面
-      expect(snapshot.screen).not.toContain('SECRET-PASS')
-      expect(snapshot.screen).not.toContain('@agent> hero')
-      expect(snapshot.screen).not.toContain('@user> hero')
+      expect(snapshot.screenMain).not.toContain('SECRET-PASS')
+      expect(snapshot.screenMain).not.toContain('@agent> hero')
+      expect(snapshot.screenMain).not.toContain('@user> hero')
       rt.dispose()
     } finally {
       await new Promise<void>(resolve => { server.close(() => resolve()) })
@@ -131,7 +131,7 @@ describe('GameScreen', () => {
     // 重新 attach：snapshot 包含断流前的全部历史（无头屏仍在）
     const [snapshot] = await take(screen.attach(SIGNAL), 1)
     if (snapshot?.type !== 'snapshot') return expect(snapshot?.type).toBe('snapshot')
-    expect(snapshot.screen).toContain('第 1 行。')
+    expect(snapshot.screenMain).toContain('第 1 行。')
     screen.dispose()
   })
 
@@ -144,8 +144,8 @@ describe('GameScreen', () => {
     const [snapA] = await take(a.attach(SIGNAL), 1)
     const [snapB] = await take(b.attach(SIGNAL), 1)
     if (snapA?.type !== 'snapshot' || snapB?.type !== 'snapshot') return
-    expect(snapA.screen).toContain('甲的行。')
-    expect(snapB.screen).not.toContain('甲的行。')
+    expect(snapA.screenMain).toContain('甲的行。')
+    expect(snapB.screenMain).not.toContain('甲的行。')
     expect(snapA.info.sessionId).toBe('ws-a')
     expect(snapB.info.sessionId).toBe('ws-b')
     a.dispose()
@@ -163,7 +163,7 @@ describe('GameScreen', () => {
     const first = await iterator.next()
     expect(first.value.type).toBe('snapshot')
     if (first.value.type !== 'snapshot') return
-    expect(first.value.screen).toContain('重连前。')
+    expect(first.value.screenMain).toContain('重连前。')
 
     // 模拟断连/重连：状态切换不清屏，继续写入
     screen.setState('disconnected') // 幂等：已是 disconnected，不产生帧
@@ -176,13 +176,13 @@ describe('GameScreen', () => {
     expect(second.value.type).toBe('state') // 重连状态帧
     if (second.value.type === 'state') expect(second.value.info.state).toBe('connected')
     expect(third.value.type).toBe('output')
-    if (third.value.type === 'output') expect(third.value.data).toContain('重连后。')
+    if (third.value.type === 'output') expect(third.value.main).toContain('重连后。')
 
     // 重开流：snapshot 同时含重连前后内容（屏未清）
     const [snapshot] = await take(screen.attach(SIGNAL), 1)
     if (snapshot?.type !== 'snapshot') return
-    expect(snapshot.screen).toContain('重连前。')
-    expect(snapshot.screen).toContain('重连后。')
+    expect(snapshot.screenMain).toContain('重连前。')
+    expect(snapshot.screenMain).toContain('重连后。')
     iterator.return?.(undefined as never).catch(() => {})
     screen.dispose()
   })
@@ -205,12 +205,12 @@ describe('GameScreen', () => {
     const snapshot = frames[0]
     expect(snapshot?.type).toBe('snapshot')
     if (snapshot?.type !== 'snapshot') return
-    expect(snapshot.screen).toContain('行 A。')
-    expect(snapshot.screen).not.toContain('行 B。')
+    expect(snapshot.screenMain).toContain('行 A。')
+    expect(snapshot.screenMain).not.toContain('行 B。')
 
     const output = frames[1]
     expect(output?.type).toBe('output')
-    if (output?.type === 'output') expect(output.data).toContain('行 B。')
+    if (output?.type === 'output') expect(output.main).toContain('行 B。')
 
     // sequence 单调
     const [snap, out] = frames as [Extract<GameFrame, { type: 'snapshot' }>, Extract<GameFrame, { type: 'output' }>]
@@ -228,5 +228,114 @@ describe('GameScreen', () => {
 
     const late = screen.attach(SIGNAL)[Symbol.asyncIterator]()
     await expect(late.next()).rejects.toThrow(/画面已销毁/)
+  })
+})
+
+describe('GameScreen 双屏（C5.2）', () => {
+  it('8. 写入按 kind 路由：无标行进主屏、有标行进行环（互斥完备）', async () => {
+    const screen = new GameScreen('c1')
+    screen.write('无标行甲。\r\n')
+    screen.write('【闲聊】路人(Npc): 你好\r\n', 'chat')
+    screen.write('无标行乙。\r\n')
+    await ticks()
+
+    const [snapshot] = await take(screen.attach(SIGNAL), 1)
+    if (snapshot?.type !== 'snapshot') return expect(snapshot?.type).toBe('snapshot')
+    // 快照双屏：screenMain 只含无标行；screenSub = 行环 join（有标行历史，含 ANSI 原文）。
+    expect(snapshot.screenMain).toContain('无标行甲。')
+    expect(snapshot.screenMain).toContain('无标行乙。')
+    expect(snapshot.screenMain).not.toContain('【闲聊】')
+    expect(snapshot.screenSub).toContain('【闲聊】路人(Npc): 你好')
+    expect(snapshot.screenSub).not.toContain('无标行甲。')
+    screen.dispose()
+  })
+
+  it('9. output 一帧双字段：main/sub 互斥完备、各自 join、并集还原原行序', async () => {
+    const screen = new GameScreen('c2')
+    const iterator = screen.attach(SIGNAL)[Symbol.asyncIterator]()
+    await iterator.next() // snapshot
+
+    // 同 tick 混合写入：主/副按原行序交错
+    screen.write('甲1\r\n')
+    screen.write('【聊天】副1\r\n', 'chat')
+    screen.write('甲2\r\n')
+    screen.write('【聊天】副2\r\n', 'chat')
+    await ticks()
+
+    const next = await iterator.next()
+    expect(next.value.type).toBe('output')
+    if (next.value.type !== 'output') return
+    // 互斥：有标行只进 sub、无标行只进 main
+    expect(next.value.main).toBe('甲1\r\n甲2\r\n')
+    expect(next.value.sub).toBe('【聊天】副1\r\n【聊天】副2\r\n')
+    expect(next.value.main).not.toContain('【聊天】')
+    expect(next.value.sub).not.toContain('甲1')
+    // sequence 单调（同一帧计数器）
+    iterator.return?.(undefined as never).catch(() => {})
+    screen.dispose()
+  })
+
+  it('10. 纯有标行 tick 也出帧（main 空串、sub 承载），主屏不被写入', async () => {
+    const screen = new GameScreen('c3')
+    const iterator = screen.attach(SIGNAL)[Symbol.asyncIterator]()
+    await iterator.next() // snapshot
+
+    screen.write('【聊天】只有聊天\r\n', 'chat')
+    await ticks()
+    const next = await iterator.next()
+    expect(next.value.type).toBe('output')
+    if (next.value.type !== 'output') return
+    expect(next.value.main).toBe('')
+    expect(next.value.sub).toBe('【聊天】只有聊天\r\n')
+
+    // 重开流：主屏 serialize 不含聊天行，副屏行环含（join 即回放）。
+    const [snapshot] = await take(screen.attach(SIGNAL), 1)
+    if (snapshot?.type !== 'snapshot') return
+    expect(snapshot.screenMain).not.toContain('只有聊天')
+    expect(snapshot.screenSub).toContain('只有聊天')
+    screen.dispose()
+  })
+
+  it('11. 行环 cap：按有标行条数计，超限丢最旧（无标行不计）', async () => {
+    const screen = new GameScreen('c4', { subCap: 3 })
+    screen.write('无标行不计入 cap\r\n')
+    for (let i = 0; i < 5; i += 1) screen.write(`【聊天】副${i}\r\n`, 'chat')
+    await ticks()
+
+    const [snapshot] = await take(screen.attach(SIGNAL), 1)
+    if (snapshot?.type !== 'snapshot') return
+    expect(snapshot.screenSub).not.toContain('副0')
+    expect(snapshot.screenSub).not.toContain('副1')
+    expect(snapshot.screenSub).toContain('副2')
+    expect(snapshot.screenSub).toContain('副4')
+    screen.dispose()
+  })
+
+  it('12. attach 原子性：双屏快照与写入同链串行（有标行不进主屏快照）', async () => {
+    const screen = new GameScreen('c5')
+    screen.write('历史主行。\r\n')
+    screen.write('【聊天】历史聊天\r\n', 'chat')
+    await ticks()
+
+    // 同一事件循环内：先排 attach，再写两屏各一行 —— 操作链保证
+    // snapshot（双屏历史）先于 output，不丢不重不乱序。
+    const iterable = screen.attach(SIGNAL)
+    screen.write('新主行。\r\n')
+    screen.write('【聊天】新聊天\r\n', 'chat')
+    await ticks()
+
+    const frames = await take(iterable, 2)
+    expect(frames.length).toBe(2)
+    const snapshot = frames[0]
+    if (snapshot?.type !== 'snapshot') return expect(snapshot?.type).toBe('snapshot')
+    expect(snapshot.screenMain).toContain('历史主行。')
+    expect(snapshot.screenMain).not.toContain('新主行。')
+    expect(snapshot.screenSub).toContain('历史聊天')
+    expect(snapshot.screenSub).not.toContain('新聊天')
+    const output = frames[1]
+    if (output?.type !== 'output') return
+    expect(output.main).toContain('新主行。')
+    expect(output.sub).toContain('新聊天')
+    screen.dispose()
   })
 })

@@ -9,6 +9,13 @@
  *   - follower 有界队列：超限**显式失败**断流（TerminalFollower 同型），
  *     客户端重新 attach 以新 snapshot 恢复 —— 与 snapshot 模式互为闭环。
  *
+ * C5.2 双屏：一帧双字段（不是两条流/两个 follower 集——队列/背压/断流重连
+ * 语义零改动，attach 原子性由同一操作链天然保持）：
+ *   - 主屏 = 无头屏（无标行 + send 回显，机制零重构）；
+ *   - 副屏 = 有界行环（有标行 MudLine 追加，cap 按有标行条数，超限丢最旧；
+ *     实测语料全服输出纯行式 + SGR 零光标寻址 ⇒ 行环 join 即回放，无需 VT 栅格，
+ *     且不限 cols——客户端窄栏自由 wrap）。
+ *
  * 与录制缓冲的分工：pendingLines 服务工具面裸读（断线清空）；本屏服务视图
  * （跨重连连续，随 runtime 存活）。两者独立、各自有界。
  *
@@ -39,6 +46,8 @@ export interface GameViewOptions {
   cols?: number
   /** 单 follower 缓冲上限（字节）。超限该 follower 显式失败断流。缺省 2MB。 */
   maxBufferedBytes?: number
+  /** 副屏行环上限（按**有标行条数**计，超限丢最旧）。缺省 1000。 */
+  subCap?: number
 }
 
 /** 画面帧公共 info（state 用 string，避免边界类型耦合 ConnState）。 */
@@ -48,19 +57,25 @@ export interface GameViewInfo {
   cols: number
 }
 
-/** 首帧：整屏快照（serialize 含视口 + 全部 scrollback）。 */
+/** 首帧：整屏快照（一帧双屏——主屏 serialize 含视口 + 全部 scrollback；副屏行环 join）。 */
 export interface GameSnapshotFrame {
   type: 'snapshot'
   sequence: number
-  screen: string
+  /** 主屏历史（termMain serialize，只含无标行 + 回显）。 */
+  screenMain: string
+  /** 副屏历史（行环 join，有标行原文含 ANSI；客户端窄栏原色渲染）。 */
+  screenSub: string
   info: GameViewInfo
 }
 
-/** 增量帧：游戏行与 send 回显同帧（服务端已写入无头屏的数据原文）。 */
+/** 增量帧：本批行按标拆双字段（无标行 join / 有标行 join，均含行尾）。 */
 export interface GameOutputFrame {
   type: 'output'
   sequence: number
-  data: string
+  /** 本批无标行 + send 回显 join（主屏增量原文）。 */
+  main: string
+  /** 本批有标行 join（副屏增量原文，含 ANSI）。 */
+  sub: string
 }
 
 /** 状态帧：连接状态变化（客户端渲染状态行；不写入无头屏）。 */
@@ -81,8 +96,12 @@ const STATE_FRAME_BYTES = 64
 const encoder = new TextEncoder()
 
 function frameBytes(frame: GameFrame): number {
-  if (frame.type === 'snapshot') return encoder.encode(frame.screen).length
-  if (frame.type === 'output') return encoder.encode(frame.data).length
+  if (frame.type === 'snapshot') {
+    return encoder.encode(frame.screenMain).length + encoder.encode(frame.screenSub).length
+  }
+  if (frame.type === 'output') {
+    return encoder.encode(frame.main).length + encoder.encode(frame.sub).length
+  }
   return STATE_FRAME_BYTES
 }
 
@@ -155,15 +174,21 @@ export class GameScreen {
   private readonly serializer: SerializeAddon
   private readonly followers = new Set<ScreenFollower>()
   private readonly maxBufferedBytes: number
+  /** 副屏行环上限（有标行条数）。 */
+  private readonly subCap: number
+  /** 副屏行环（有标行原文，含行尾；超限丢最旧）。join 即回放。 */
+  private readonly subRing: string[] = []
   /** 当前连接状态（进 snapshot info）。 */
   private stateValue = 'disconnected'
   /** 帧序号（单调递增；观测/排序断言用，客户端不做去重）。 */
   private sequence = 0
   /** 写操作链：写入 / attach 注册+快照 / 状态广播全部经此串行（时序不变量）。 */
   private ops: Promise<unknown> = Promise.resolve()
-  /** 合批缓冲：同 tick 的行合并为一次 term.write + 一帧 output。 */
+  /** 主屏合批缓冲：同 tick 的无标行合并为一次 term.write + output.main。 */
   private pending: string[] = []
   private pendingBytes = 0
+  /** 副屏合批缓冲：同 tick 的有标行合并为 output.sub（行环已同步追加）。 */
+  private subPending: string[] = []
   private flushScheduled = false
   private disposedFlag = false
 
@@ -172,6 +197,7 @@ export class GameScreen {
     options: GameViewOptions = {},
   ) {
     this.maxBufferedBytes = options.maxBufferedBytes ?? 2 * 1024 * 1024
+    this.subCap = options.subCap === undefined || options.subCap < 1 ? 1000 : options.subCap
     this.term = new HeadlessTerminal({
       cols: options.cols ?? 120,
       rows: 24,
@@ -196,14 +222,22 @@ export class GameScreen {
   }
 
   /**
-   * 写入游戏文本（行原文 + 行尾）。同 tick 合批；超直吐上限立即落链。
-   * 慢路径：setImmediate 合帧 —— 一次事件循环 tick 内到达的行合并为
-   * 一次无头屏写入 + 一帧 output（防刷屏小帧）。
+   * 写入游戏文本（行原文 + 行尾；C5.2 按 kind 路由双屏）。
+   * 无标行（kind === null）走主屏无头屏；有标行追加副屏行环（不进无头屏）。
+   * 同 tick 合批；超直吐上限立即落链。慢路径：setImmediate 合帧 —— 一次事件
+   * 循环 tick 内到达的行合并为一次写入 + 一帧 output（双字段）。
    */
-  write(text: string): void {
+  write(text: string, kind: string | null = null): void {
     if (this.disposedFlag || text === '') return
-    this.pending.push(text)
-    this.pendingBytes += text.length
+    if (kind !== null) {
+      // 副屏路径：增量文本攒批；**行环追加在写操作链内**（flushNow 同操作）——
+      // 快照与广播严格同序，attach 瞬间不重不漏（与主屏 drain 同一不变量）。
+      this.subPending.push(text)
+    } else {
+      // 主屏路径（无头屏，机制零改动）。
+      this.pending.push(text)
+      this.pendingBytes += text.length
+    }
     if (this.pendingBytes >= DIRECT_FLUSH_BYTES) {
       this.flushNow()
       return
@@ -247,10 +281,12 @@ export class GameScreen {
     const setup = this.enqueue(() => {
       if (this.disposedFlag) throw new Error(`会话 ${this.sessionId} 画面已销毁`)
       const follower = new ScreenFollower(this.maxBufferedBytes)
+      // 同一操作链内同步取双屏：主屏 serialize + 副屏行环 join（attach 原子性）。
       const snapshot: GameSnapshotFrame = {
         type: 'snapshot',
         sequence: ++this.sequence,
-        screen: this.serializer.serialize(),
+        screenMain: this.serializer.serialize(),
+        screenSub: this.subRing.join(''),
         info: this.info(),
       }
       this.followers.add(follower)
@@ -273,7 +309,7 @@ export class GameScreen {
     return iterate()
   }
 
-  /** 销毁（runtime dispose）：所有 follower 显式失败 + 释放无头屏。 */
+  /** 销毁（runtime dispose）：所有 follower 显式失败 + 释放无头屏 + 清行环。 */
   dispose(): void {
     if (this.disposedFlag) return
     this.disposedFlag = true
@@ -282,6 +318,8 @@ export class GameScreen {
     this.followers.clear()
     this.pending = []
     this.pendingBytes = 0
+    this.subPending = []
+    this.subRing.length = 0
     this.term.dispose()
   }
 
@@ -301,16 +339,27 @@ export class GameScreen {
   }
 
   private flushNow(): void {
-    if (this.pending.length === 0) return
-    const data = this.pending.join('')
+    if (this.pending.length === 0 && this.subPending.length === 0) return
+    const mainData = this.pending.join('')
+    const subTexts = this.subPending
+    const subData = subTexts.join('')
     this.pending = []
     this.pendingBytes = 0
+    this.subPending = []
     void this.enqueue(() => {
       if (this.disposedFlag) return
-      this.broadcast({ type: 'output', sequence: ++this.sequence, data })
+      // 副屏行环追加（写操作链内，与快照同链同序——attach 原子性不变量；
+      // 按写入文本逐条入环，cap 按有标行条数计，超限丢最旧）。
+      for (const text of subTexts) this.subRing.push(text)
+      const over = this.subRing.length - this.subCap
+      if (over > 0) this.subRing.splice(0, over)
+      // 一帧双字段：main/sub 同帧广播（不是两条流——队列/背压语义零改动）。
+      this.broadcast({ type: 'output', sequence: ++this.sequence, main: mainData, sub: subData })
       // xterm 的 write 是异步解析：等 drain 完成才算本操作完成 ——
       // 否则后续 attach 的 serialize 会读到未落屏的空缓冲。
-      return new Promise<void>(resolve => { this.term.write(data, resolve) })
+      if (mainData !== '') {
+        return new Promise<void>(resolve => { this.term.write(mainData, resolve) })
+      }
     })
   }
 

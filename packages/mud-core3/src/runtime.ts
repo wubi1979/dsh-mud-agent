@@ -12,6 +12,7 @@ import type { MudLine } from './link/line.ts'
 import { ReadMachine, type ReadOpts, type ReadResult } from './read.ts'
 import { GameScreen, type GameViewOptions } from './view/screen.ts'
 import { World, type LoggedInState, type WorldSnapshot } from './world.ts'
+import { Classifier } from './classify.ts'
 import type { ConnState } from './roster.ts'
 
 // 类型面 re-export（E2E/流程环境按 read/recentLines 签名桥接用）。
@@ -49,6 +50,8 @@ export class SessionRuntime {
   private readonly worldState = new World()
   /** 画面通道（C5）：无头屏 + follower 扇出；行/回显/状态在此汇合。 */
   private readonly screen: GameScreen
+  /** 行分类器（C5.2）：行路径单点打标（mark 就地写 line.kind）。 */
+  private readonly classifier: Classifier
   /** 行流缓冲（单一真相：录制 + 工具裸读源 + 投递拉取源；环形上限，超出丢最旧）。 */
   private pendingLines: MudLine[] = []
   /** 录制上限（行）：挂机模式长期不收时，内存不随行数无界增长。 */
@@ -97,16 +100,20 @@ export class SessionRuntime {
    * @param sessionId - 会话 id（= 账号 id）。
    * @param recordLimit - 录制缓冲上限行数（缺省 2000；超出丢最旧）。
    * @param view - 画面通道参数（scrollback/cols/maxBufferedBytes；缺省取内置缺省）。
+   * @param classifier - 行分类器（C5.2 单点打标用；缺省内置缺省规则表）。
    */
-  constructor(sessionId: string, recordLimit = 2000, view?: GameViewOptions) {
+  constructor(sessionId: string, recordLimit = 2000, view?: GameViewOptions, classifier?: Classifier) {
     this.sessionId = sessionId
     this.recordLimit = recordLimit < 1 ? 1 : recordLimit
     this.screen = new GameScreen(sessionId, view)
+    this.classifier = classifier ?? new Classifier()
     this.mud.onLog = (level, text) => { this.onLog?.(level, text) }
     this.readMachine.onLog = (level, text) => { this.onLog?.(level, text) }
-    // 行路径（单一真相，多消费者按序）：①pending 录制（永远）→ ②read 在途累积判定
-    // → ③投递（onLine 回调 → Deliverer 水位拉取）。
+    // 行路径（单一真相，多消费者按序）：⓪分类单点打标 → ①pending 录制（永远）
+    // → ②read 在途累积判定 → ③投递（onLine 回调 → Deliverer 水位拉取）。
     this.mud.onLine = line => {
+      // C5.2：全系统唯一一次分类——先于录制/画面路由/投递，保证所有消费者看到 kind。
+      this.classifier.mark(line)
       this.pendingLines.push(line)
       const over = this.pendingLines.length - this.recordLimit
       if (over > 0) {
@@ -114,7 +121,8 @@ export class SessionRuntime {
         this.dropped += over
       }
       this.lastLineAbs = line.abs
-      this.screen.write(line.raw + '\r\n')
+      // 画面路由（C5.2）：无标行走主屏无头屏（零改动），有标行追加副屏行环。
+      this.screen.write(line.raw + '\r\n', line.kind)
       // 登录轴低置信度先行：声明判据命中（已连接且未确认）→ inferred，
       // 后续 GMCP 到达加固为 in-game（判据见 WELCOME_RE 注释与 login.ts 勘误）。
       if (this.state === 'connected' && this.loggedInState === 'unknown' && WELCOME_RE.test(line.text)) {

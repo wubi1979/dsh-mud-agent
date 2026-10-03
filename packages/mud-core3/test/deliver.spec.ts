@@ -20,8 +20,8 @@ import type { MudLine } from '../src/link/line.ts'
 
 // ── 工具 ──────────────────────────────────────────────────────
 
-function line(text: string, abs: number): MudLine {
-  return { text, raw: text, style: [], abs, time: Date.now(), isPrompt: false }
+function line(text: string, abs: number, kind: string | null = null): MudLine {
+  return { text, raw: text, style: [], abs, time: Date.now(), isPrompt: false, kind }
 }
 
 /** FakeSource：runtime 水位线面的内存代位（pending 数组 + delivered/read 两线）。 */
@@ -369,5 +369,65 @@ describe('Deliverer 两会话隔离', () => {
     expect(delivered2).toEqual(['会话2行'])
     d1.dispose()
     d2.dispose()
+  })
+})
+
+describe('Deliverer 投递剔除（C5.2）', () => {
+  it('缺省策略：有标行不进投递文本，水位随成功批次越过（不丢已见记账）', () => {
+    const { d, source, delivered } = setup()
+    d.admit()
+    source.push(line('无标1', 0))
+    source.push(line('【闲聊】聊天行', 1, 'chat'))
+    source.push(line('无标2', 2))
+    d.flushNow()
+    // 互斥剔除：聊天行不在投递文本里；无标行按原序 join。
+    expect(delivered).toEqual(['无标1\n无标2'])
+    expect(d.pendingCount).toBe(0) // 水位越过聊天行（已见不重扫）
+    d.dispose()
+  })
+
+  it('全段有标：水位直接越过本段（剔除恒定，避免永挂重扫）', () => {
+    const { d, source, delivered } = setup()
+    d.admit()
+    source.push(line('【闲聊】甲', 0, 'chat'))
+    source.push(line('【闲聊】乙', 1, 'chat'))
+    d.flushNow()
+    expect(delivered).toEqual([])
+    expect(d.pendingCount).toBe(0) // 水位 = 末端行号
+    d.dispose()
+  })
+
+  it('白名单放行：allowKinds 列出的 kind 进投递', () => {
+    const { d, source, delivered } = setup({ allowKinds: ['chat'] })
+    d.admit()
+    source.push(line('【闲聊】放行行', 0, 'chat'))
+    source.push(line('【动作】仍剔除', 1, 'action'))
+    source.push(line('无标行', 2))
+    d.flushNow()
+    expect(delivered).toEqual(['【闲聊】放行行\n无标行'])
+    d.dispose()
+  })
+
+  it('剔除与失败语义正交：成功批之后的失败批不推进水位（剔除行不背锅）', () => {
+    let fail = false
+    const source = new FakeSource()
+    const delivered: string[] = []
+    const d = new Deliverer('s1', (_id, text) => {
+      if (fail) return false
+      delivered.push(text)
+      return true
+    }, source, { quietMs: 50 })
+    d.admit()
+    source.push(line('无标1', 0))
+    source.push(line('【闲聊】聊天', 1, 'chat'))
+    source.push(line('无标2', 2))
+    fail = true
+    d.flushNow()
+    expect(delivered).toEqual([]) // 全批失败（含混批）→ 水位不动，下次重试
+    fail = false
+    d.flushNow()
+    expect(delivered).toEqual(['无标1\n无标2'])
+    expect(d.pendingCount).toBe(0)
+    d.dispose()
   })
 })

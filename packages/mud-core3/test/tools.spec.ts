@@ -221,8 +221,8 @@ describe('mud_send 判据与 initial（stub）', () => {
   it('裸读：不 send，initial = recentLines(sendMaxLines)，缺省判据 maxLines + quietMs:300', async () => {
     const sent: string[] = []
     const snapshot: MudLine[] = [
-      { text: '旧行1', raw: '旧行1', style: [], abs: 1, time: 0, isPrompt: false },
-      { text: '旧行2', raw: '旧行2', style: [], abs: 2, time: 0, isPrompt: false },
+      { text: '旧行1', raw: '旧行1', style: [], abs: 1, time: 0, isPrompt: false, kind: null },
+      { text: '旧行2', raw: '旧行2', style: [], abs: 2, time: 0, isPrompt: false, kind: null },
     ]
     const { call, readCapture } = setup({}, {
       send: (cmd: string) => { sent.push(cmd); return true },
@@ -250,7 +250,7 @@ describe('mud_send 判据与 initial（stub）', () => {
       releaseSend: () => { released = true },
       read: async () => ({
         lines: [
-          { text: '应答行', raw: '', style: [], abs: 9, time: 0, isPrompt: false },
+          { text: '应答行', raw: '', style: [], abs: 9, time: 0, isPrompt: false, kind: null },
         ],
         reason: 'done',
       }),

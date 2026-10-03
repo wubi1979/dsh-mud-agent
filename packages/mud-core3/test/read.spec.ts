@@ -28,7 +28,7 @@ import type { MudLine } from '../src/link/line.ts'
 // ── 工具 ──────────────────────────────────────────────────────
 
 function line(text: string, abs = 0): MudLine {
-  return { text, raw: text, style: [], abs, time: Date.now(), isPrompt: false }
+  return { text, raw: text, style: [], abs, time: Date.now(), isPrompt: false, kind: null }
 }
 
 /** 起 TCP server：连接后写 welcome 横幅，onData 可编程回写。 */

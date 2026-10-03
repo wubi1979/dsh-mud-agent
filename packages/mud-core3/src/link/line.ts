@@ -61,6 +61,13 @@ export interface MudLine {
   time: number
   /** 是否为提示符行（启发式，无换行的行尾在 flush 时按此标记）。 */
   isPrompt: boolean
+  /**
+   * 行分类标（C5.2）：null = 无标（普通游戏行）；'chat' = 聊天频道行；
+   * 'action' = 他人动作行。**全系统唯一一次分类**在 runtime 行路径单点写入
+   * （classify 模块，规则 = Config 正则清单）；link 层保持纯净——commitLine
+   * 缺省置 null，本层不做任何分类。
+   */
+  kind: string | null
 }
 
 /** CSI/OSC/单字符转义序列剥离（供一次性整串场景，GMCP 载荷等）。 */
@@ -486,6 +493,7 @@ export class AnsiStreamParser {
       abs: this.absSeq,
       time: Date.now(),
       isPrompt: isPromptText(text),
+      kind: null,
     }
     this.absSeq += 1
     this.raw = []

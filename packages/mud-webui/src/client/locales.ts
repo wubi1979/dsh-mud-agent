@@ -20,6 +20,8 @@ export const zh = {
   reload: '刷新画面',
   connect: '连接',
   disconnect: '断开',
+  collapseChat: '收起聊天',
+  showChat: '聊天栏',
 } as const
 
 /** English copy（词典位先占；本包未接 locale 服务，EN 暂不启用）。 */
@@ -34,6 +36,8 @@ export const en = {
   reload: 'Reload view',
   connect: 'Connect',
   disconnect: 'Disconnect',
+  collapseChat: 'Hide chat',
+  showChat: 'Chat pane',
 } as const
 
 /** 按 {name} 占位符填充文案。 */

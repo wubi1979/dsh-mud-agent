@@ -43,7 +43,7 @@ note: 入口文件：只承载文档规则与导航，不承载设计事实
 | §16–§17 | [architecture/16-17-acceptance-roadmap.md](architecture/16-17-acceptance-roadmap.md) | **测试与验收**（测试策略与纪律、用例账目、验收断言表、实机验收清单、切片表与完成定义）· **演进路线与后置**（已交付索引、当前待办、后置清单、已定稿未立项、生长纪律） |
 | 从属 | [flows/login.md](flows/login.md) | login 流程实体声明（locked；§8.14 的从属文件） |
 | 附录 | [appendices/A-capture-facts.md](appendices/A-capture-facts.md)·[appendices/B-audit-checklist.md](appendices/B-audit-checklist.md) | A 抓包与语料事实（MUD 侧实录）· B 代码审计规约（可执行检查表） |
-| 候选 | [likely/](likely/) | 设计已定稿但**是否执行未定**的候选区（当前 = C5.2 行打标与画面分屏） |
+| 候选 | [likely/](likely/) | 设计已定稿但**是否执行未定**的候选区（C5.2 已于 2026-10-03 立项执行完毕，见 §17.4；当前暂无在案候选） |
 | 归档 | [archive/README.md](archive/README.md) | v1（mud-core）/ v2（mud-core2）归档索引；**只读、不作依据** |
 | — | [CHANGELOG.md](CHANGELOG.md) | 变更记录（只追加） |
 | — | [PLAN.md](PLAN.md) | 计划起草区 + 待办池（起草成型→实施→同步正式章节→清空；不承载已落地事实） |

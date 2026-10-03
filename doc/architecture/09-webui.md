@@ -42,12 +42,12 @@ note: L7 呈现层：mud-webui（浏览器侧壳）
 | 挂载点 | `sidebar-right` tab 类型 `mud-game` |
 | **自动打开** | **接入成功后自动打开**（v0.0.21）：`admit` 成功 ⇒ 切到该账号会话 + `openTabIn(sessionId, 'mud-game')`（宿主 openTab 同步展开右栏）；重复打开由下方单开守卫收编 |
 | **单开** | guide 入口卡片（无 params 打开、回退跟随当前会话）；`openTabs` 订阅守卫保证**同会话仅一实例**——开出第二个即关掉较新、保留最旧实例（其 follow 流与工具栏状态不中断）；`params` 随布局持久化（刷新/重开自动恢复） |
-| 数据面 | 每 runtime 一个 `@xterm/headless` + `addon-serialize` 无头屏（§5.3） |
-| 消费 | `for await` + `AbortController` 消费 `remote.mud.follow(sessionId)`；s1 主 xterm 只读（不挂 `onData`）+ `addon-fit` |
-| 帧处理 | 首帧 `snapshot` 整屏回放 → 增量 `output`（同 tick 合批）→ `state` 帧直通工具栏 |
+| 数据面 | 每 runtime 一个 `@xterm/headless` + `addon-serialize` 无头屏（主屏，§5.3）+ 副屏**有界行环**（有标行 `MudLine` 追加，cap 缺省 1000 行，超限丢最旧——C5.2，2026-10-03） |
+| 消费 | `for await` + `AbortController` 消费 `remote.mud.follow(sessionId)`；s1 主 xterm 只读（不挂 `onData`）+ `addon-fit`；s2 无关文本栏 = 同 view 内第二个只读 xterm（画面**下方占 30% 高、上下 3/7 分屏**，可折叠——行环不限 cols，按栏宽自由 wrap；折叠 = 高度 0，终端保持挂载继续吃帧） |
+| 帧处理 | 首帧 `snapshot` 双字段回放（`screenMain` 整屏 → s1，`screenSub` 行环 join → s2，刷新后聊天历史回放）→ 增量 `output` 双字段（`main`/`sub`，同 tick 合批）→ `state` 帧直通工具栏；前端零 kind 逻辑（分类与路由全在服务端） |
 | 背压 | 服务端 follower 超限**显式断流**；客户端重新 follow 以新 snapshot 恢复（互为闭环） |
 | 关闭语义 | tab 关闭 = `abort` = **follower 清理**；**连接与投递不受影响** |
-| 工具栏 | 「连接/断开」按钮 = 调既有手工动词 `connect`/`disconnect`（**不属于画面通道**，画面通道纯扇出无输入）；按钮用宿主原生 `Button`（随亮/暗主题）。画面 tab **无状态表**（v0.0.26 单表裁定：状态表只在聊天区日志视图，§9.3） |
+| 工具栏 | 「连接/断开」按钮 = 调既有手工动词 `connect`/`disconnect`（**不属于画面通道**，画面通道纯扇出无输入）；「聊天栏」折叠/展开按钮（s2 开关）；按钮用宿主原生 `Button`（随亮/暗主题）。画面 tab **无状态表**（v0.0.26 单表裁定：状态表只在聊天区日志视图，§9.3） |
 | 闸门 | **不受 admit 闸门约束**（显示面，§6.4）；未接入 = 录制/挂机模式照样可看 |
 | i18n | `locales.ts` 补 zh/en |
 

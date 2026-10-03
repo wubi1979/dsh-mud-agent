@@ -16,6 +16,51 @@
   background: var(--dsw-alias-bg-base);
 }
 
+/* C5.2 分屏容器：上下分屏 3/7——s1 主屏占上 70%（flex:1）+ s2 无关文本栏
+ * 占下 30%（可折叠）。 */
+.panes {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* s2 无关文本栏（底部）：占 30% 高，与 s1 同型背景/裁剪；
+ * 折叠 = 高度 0（终端保持挂载继续吃帧）。 */
+.subHost {
+  flex: none;
+  height: 30%;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  margin: 0 8px 8px 8px;
+  border-top: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+.subCollapsed {
+  height: 0;
+  margin: 0;
+  border-top: none;
+}
+
+.subHost :global(.xterm) {
+  height: 100%;
+  width: 100%;
+  padding: 8px 0 0 8px;
+  box-sizing: border-box;
+  background: #0a0a0a;
+}
+
+.subHost :global(.xterm .xterm-scrollable-element) {
+  background-color: transparent !important;
+}
+
+.subHost :global(.xterm .xterm-screen) {
+  max-width: 100%;
+  max-height: 100%;
+}
+
 /* Top bar: one row mirroring the native files pane header
  * (ui-sidebar-files FilesBody `.header`): 38px, status at the left, tool
  * button at the end, hairline rule below. Never overlapping the terminal. */
@@ -85,7 +130,8 @@
   min-height: 0;
   position: relative;
   overflow: hidden;
-  margin: 8px 8px 8px 8px;
+  /* 底部 4px：分屏分割线的视觉宽度（下邻 s2 栏），比四侧留白收一半。 */
+  margin: 8px 8px 4px 8px;
   /* 背景交由终端自身 (theme) 承载: 这里不设深色, 避免 fit 间隙漏出
      #0a0a0a 形成"黑边"。 */
 }

@@ -352,4 +352,24 @@
 - 运行时不占容量：一次性 run 结算即释放，`maxActiveSubagents`（缺省 8）只数**存活** Activation
 - 持久增长 = 每次派发一份子会话日志 + 父会话一条 `subagent/catalog` 事实；目录读取与列表成本随累计派发数线性增长，宿主当前无清退面
 
+## [v0.0.33]C5.2 行打标与画面分屏落地 (2026-10-03)
+> 总结：`doc/likely/` 定稿文档立项执行完毕——聊天/他人动作提取到副屏窗口（人观察 + agent 去噪），安全前提「聊天不进 agent」在投递侧落地
+
+**core3 侧**
+- [line.ts](packages/mud-core3/src/link/line.ts)：`MudLine` 加 `kind: string | null`（commitLine 缺省 null，link 层保持纯净）
+- [classify.ts](packages/mud-core3/src/classify.ts)（新模块）：分类规则 = 正则清单声明序取首个命中；缺省只预置 `chat`（`^\s*【[^】]{1,6}】`，logs/ 实录 6/6 命中零误报），`action` 零例证规则留空（Config 扩展位保留）；非法正则 fail-loud 拒装
+- [classify.ts] 缺省规则扩为三族（2026-10-03 实机房间语料补例证）：`action`（他人动作/进出，锚行尾 + `^(?!你)` 主语排除——自身活动一律「你」开头；`冲了过来` 战斗接近不收，留给 danger 判据）、`vitals` 新 kind（他人状态刷屏如真气循环，同主语排除；**自身状态/警告保留主屏**，用户裁定）；**房间说话暂不打标**（等漏出量实证再按「非你主语」补，用户裁定）——core3 247/247 全绿
+- [runtime.ts](packages/mud-core3/src/runtime.ts)：`mud.onLine` 处理器最顶部单点打标（全系统唯一一次分类，先于录制/画面路由/投递），classifier 可注入
+- [screen.ts](packages/mud-core3/src/view/screen.ts)：`write(text, kind)` 路由——无标行走主屏无头屏（零改动），有标行进副屏**有界行环**（cap 缺省 1000 行）；帧双串 `GameSnapshotFrame{screenMain,screenSub}` / `GameOutputFrame{main,sub}`（不是两条流，队列/背压/断流重连语义零改动）；行环追加入 flushNow 操作链（与快照同链同序保 attach 原子性）
+- [deliver.ts](packages/mud-core3/src/deliver.ts)：有标行不进投递（白名单 `allowKinds` 可放行），有标行视为已见（水位越过）；闸门/水位/聚合语义不动
+- service/index：Config 加 `viewSubCap` / `classifyRules` / `deliverAllowKinds` 三扩展位
+
+**webui 侧**
+- [MudGameView.tsx](packages/mud-webui/src/client/MudGameView.tsx)：s2 无关文本栏（第二只读 xterm，画面下方占 30% 高、上下 3/7 分屏，可折叠，折叠保持挂载继续吃帧）；快照/增量双屏分发（前端零 kind 逻辑）；工具栏加折叠按钮；**follow 冷启动自愈**——tab 随布局恢复/自动打开早于 runtime 登记时开流即抛「未登记」，流死掉后接入内容收不到（须手动刷新），改为异常/自然结束 1.5s 退避重挂直到成功或 tab 关闭
+- [MudGameView.module.css](packages/mud-webui/src/client/MudGameView.module.css)：`.panes` 分栏 + `.subHost`/`.subCollapsed`；[locales.ts](packages/mud-webui/src/client/locales.ts) 补 `collapseChat`/`showChat` zh/en
+
+**测试与文档**
+- classify.spec.ts（新，8 例：语料回放打标 / runtime 单点 / action 注入 / 声明序 / 非法正则 fail-loud）；screen.spec.ts 字段改名 + 5 条 C5.2 用例（路由互斥完备 / 双字段出帧 / 纯有标行 / 行环 cap / attach 原子性）；deliver.spec.ts + 4 条剔除用例——core3 246/246（20 文件）全绿，workflow 31/31，webui build 绿
+- §6.3 补「有标行剔除」一句；§9.4 数据面/消费/帧处理/工具栏改双屏口径；C5.2 文档状态改「已执行（2026-10-03）」并留执行偏差记录
+
 > AI生成

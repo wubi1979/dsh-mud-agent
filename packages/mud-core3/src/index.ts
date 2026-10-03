@@ -38,6 +38,7 @@ import { resolveLogDir, purgeSessionLogs } from './log/log-service.ts'
 // Remote 边界类型从非根子路径取（typert 要求，见 src/types.ts）。
 import type { AccountRecord, GameFrame, LogEntry, ServerRecord } from './types.ts'
 import type { DelivererConfig } from './deliver.ts'
+import type { ClassifyRuleSpec } from './classify.ts'
 import type {
   CredentialResolver, ResolvedCredentials, RosterStore,
 } from './roster.ts'
@@ -78,6 +79,18 @@ export interface MudCore3Config {
   viewCols?: number
   /** 画面通道单 follower 缓冲上限字节（超限显式断流，重连恢复）。缺省 2MB。 */
   viewMaxBufferedBytes?: number
+  /** 副屏行环上限（按有标行条数计，超限丢最旧；C5.2）。缺省 1000。 */
+  viewSubCap?: number
+  /**
+   * 行分类规则清单（C5.2，声明序取首个命中；缺省内置 chat 频道锚定规则——
+   * 语料校准 2026-10-03）。正则字符串声明，非法正则启动即拒装。
+   */
+  classifyRules?: ClassifyRuleSpec[]
+  /**
+   * 投递白名单（C5.2 剔除策略放行面）：缺省有标行一律不投（聊天/他人动作不进
+   * agent——安全前提）；列出放行的 kind（如 ['chat']）。
+   */
+  deliverAllowKinds?: string[]
   /** 是否把会话日志落盘（JSONL）。缺省 true。 */
   logFile?: boolean
   /** 会话日志落盘目录。缺省 `<cwd>/mud-logs`。 */
@@ -519,6 +532,8 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     ...(config.deliverMaxWaitMs !== undefined ? { maxWaitMs: config.deliverMaxWaitMs } : {}),
     ...(config.deliverMaxLines !== undefined ? { maxLines: config.deliverMaxLines } : {}),
     ...(config.deliverMaxChars !== undefined ? { maxChars: config.deliverMaxChars } : {}),
+    // C5.2 剔除策略放行面：缺省空 = 有标行一律不投（聊天/他人动作不进 agent）。
+    ...(config.deliverAllowKinds !== undefined ? { allowKinds: config.deliverAllowKinds } : {}),
   }
 
   // 官方 live agent 注册表窄结构（AgentRegistry.get；归属父链上溯用，见 parentLookup）。
@@ -576,7 +591,11 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
       ...(config.viewCols !== undefined ? { cols: config.viewCols } : {}),
       ...(config.viewMaxBufferedBytes !== undefined
         ? { maxBufferedBytes: config.viewMaxBufferedBytes } : {}),
+      // C5.2 副屏行环上限（有标行条数）。
+      ...(config.viewSubCap !== undefined ? { subCap: config.viewSubCap } : {}),
     },
+    // C5.2 行分类规则清单（缺省内置 chat 频道锚定规则）。
+    ...(config.classifyRules !== undefined ? { classifyRules: config.classifyRules } : {}),
   })
 
   // ── 任务书投递面（kickoff）────────────────────────────────────

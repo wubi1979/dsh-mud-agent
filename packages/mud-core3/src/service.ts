@@ -27,6 +27,7 @@
 
 import { SessionRuntime, type ConnectParams } from './runtime.ts'
 import { Deliverer, type DeliverFn, type DelivererConfig } from './deliver.ts'
+import { Classifier, type ClassifyRuleSpec } from './classify.ts'
 import type { ReadOpts, ReadResult } from './read.ts'
 import type { MudLine } from './link/line.ts'
 import { SessionLog, type LogEntry, type SessionLogOptions } from './log/log-service.ts'
@@ -59,8 +60,13 @@ export interface MudServiceDeps {
    * 不 live 的祖先按无父处理（上溯终止）。缺省恒无父——工具归属只命中会话自身。
    */
   readonly parentLookup?: (sessionId: string) => string | undefined
-  /** 画面通道参数（C5：scrollback/cols/maxBufferedBytes；缺省取内置缺省）。 */
+  /** 画面通道参数（C5：scrollback/cols/maxBufferedBytes/subCap；缺省取内置缺省）。 */
   readonly view?: GameViewOptions
+  /**
+   * 行分类规则清单（C5.2）：缺省取 classify.DEFAULT_CLASSIFY_RULES（chat 频道锚定，
+   * 语料校准 2026-10-03）。部署可覆盖（Config 正则清单，构造期编译，非法 fail-loud）。
+   */
+  readonly classifyRules?: readonly ClassifyRuleSpec[]
   /** 会话日志选项（落盘目录等；缺省仅内存）。 */
   readonly log?: SessionLogOptions
   /**
@@ -223,7 +229,11 @@ export class MudService {
   register(sessionId: string, accountName?: string): SessionRuntime {
     let rt = this.runtimes.get(sessionId)
     if (rt !== undefined) return rt
-    rt = new SessionRuntime(sessionId, this.deps.recordLines, this.deps.view)
+    // C5.2：分类器单点注入（规则清单 Config 可覆盖；缺省内置 chat 频道锚定规则）。
+    const classifier = this.deps.classifyRules === undefined
+      ? undefined
+      : new Classifier(this.deps.classifyRules)
+    rt = new SessionRuntime(sessionId, this.deps.recordLines, this.deps.view, classifier)
     if (accountName !== undefined) rt.accountName = accountName
     this.runtimes.set(sessionId, rt)
 
