@@ -29,12 +29,31 @@ export type MudServerRecord = ServerRecord
 export type MudAccountRecord = AccountRecord
 
 /**
- * 状态流帧（watchStatus）：全量会话状态快照。边界收窄版——服务端 SessionStatus
- * 的 loggedIn/world（WorldEntry.value 为 unknown）不过 Remote 边界（typert 拒绝
- * unknown），此处与 status() 同型只收三字段；扩面随 T5 webui 状态呈现一起做。
+ * 世界状态窄面条目（T11 扩面）：服务端 statusRowOf 扁平化产物——值已 JSON
+ * 字符串化（WorldEntry.value 的 unknown 不过 Remote 边界），confidence/source 透传。
+ */
+export interface MudWorldEntry {
+  readonly zone: string
+  readonly key: string
+  /** 原值序列化：对象 JSON.stringify，原始值 String()。 */
+  readonly v: string
+  readonly c: 'measured' | 'inferred'
+  readonly sk: string
+  readonly st: number
+}
+
+/**
+ * 状态流帧（watchStatus）：全量会话状态快照（T11 扩面收口）——loggedIn 直传 +
+ * world 扁平窄面（服务端 statusRowOf 映射，typert 边界校验）。
  */
 export interface MudStatusFrame {
-  readonly sessions: readonly { sessionId: string; state: string; admitted: boolean }[]
+  readonly sessions: readonly {
+    sessionId: string
+    state: string
+    admitted: boolean
+    loggedIn: 'unknown' | 'inferred' | 'in-game'
+    world: readonly MudWorldEntry[]
+  }[]
 }
 
 /** 会话日志返回面（内存环 + 落盘目录）。 */
@@ -201,11 +220,11 @@ export class MudRemoteController {
     return this.call(mud => mud.stop(sessionId))
   }
 
-  /** 连接状态 + 接入状态（轮询回填）。 */
+  /** 连接状态 + 接入状态（轮询回填；行面与 watchStatus 同为 StatusRow 窄面）。 */
   status(sessionId?: string): Promise<{
     state: string
     admitted: boolean
-    sessions: readonly { sessionId: string; state: string; admitted: boolean }[]
+    sessions: MudStatusFrame['sessions']
   }> {
     return this.call(mud => mud.status(sessionId))
   }

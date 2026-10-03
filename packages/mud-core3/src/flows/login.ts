@@ -9,16 +9,18 @@
  * 本体 = JSON 声明式步骤表（TS 字面量承载——编译期类型检查 + lib/ 产物天然
  * 携带；语义与 .json 等价，agent 侧看到的 get/save 面是纯 JSON）。判据取自
  * [doc/flows/login.md](../../doc/flows/login.md)（7 步 + success 出口）与
- * [doc/appendices/A-capture-facts.md](../../doc/appendices/A-capture-facts.md) 实测定稿，
- * 与 T3 手写脚本（已退役）一字不差，含两条实测勘误：
+ * [doc/appendices/A-capture-facts.md](../../doc/appendices/A-capture-facts.md) 实测定稿。
+ * 实测勘误（2026-10-03 实机勘误见附录 A.1 硬约束 ③）：
  *   - 「欢迎来到」成功句**不可用**（与建连横幅「欢迎来到北大侠客行」撞车，
  *     登录前即到达会把横幅误判成成功）——成功句以「目前权限：(player)」
  *     「重新连线完毕」为准；
- *   - failOn「密码错误」类需 'm' 多行锚（`^密码错误` 出现在行首而非窗首）。
+ *   - 判据一律 `^` 行首锚（防聊天语句误触发）⇒ 相关步 wait 必须 `flags: 'm'`
+ *     （整窗按行 join 匹配，无 'm' 时 `^` = 窗首，提示行在横幅之后永不命中）；
+ *   - need-new 实机整句内嵌**动态用户名**（`使用\S+创造`），`(yes)` 括号须转义。
  *
  * 步表（动作在路由前执行，条件发送 = 独立步骤）：
  *   prompt-name   等名字提示 → 发 {name}
- *   prompt-pass   等密码提示（failOn 需要创建新人物 → need-new 出口）→ 发 {pass}
+ *   prompt-pass   等密码提示（failOn 用户名不存在/非法整句 → need-new 出口）→ 发 {pass}
  *   confirm       等「替换 | 成功句」（failOn 密码错误类 → bad-pass 出口）；
  *                 replace 命中 → replace 步，否则 → send-empty
  *   replace       发 y（login.md replace 步 action=y，默认应答）
@@ -43,14 +45,14 @@ const SUCCESS_MS = 5_000
 
 // ── 判据（login.md 定稿 + 实测勘误，见文件头）────────────────────────
 
-/** 步 1 driver：英文名字提示（login.md 字面两形态）。 */
-const NAME_SRC = '您的英文名字（要注册新人物请输入new。）：|您的英文名字：'
-/** 步 2 fail：用户名不存在 → 实质失败（need-new；login.md `(估计)` 项）。 */
-const NEED_NEW_SRC = '需要创建新人物'
-/** 步 2 driver：密码提示（login.md 字面两形态）。 */
-const PASS_SRC = '此ID档案已存在，请输入密码：|请输入密码：'
+/** 步 1 driver：英文名字提示（实机单形态；^ 行首锚防聊天误触发，配 flags 'm'）。 */
+const NAME_SRC = '^您的英文名字（要注册新人物请输入new。）：'
+/** 步 2 fail：用户名不存在/非法 → 实质失败（need-new；`\S+` = 实机整句内嵌的动态用户名，2026-10-03 实机勘误）。 */
+const NEED_NEW_SRC = '^同意玩家须知并使用\\S+创造一个新的人物，您确定吗\\(yes\\)？|^对不起，你的英文名字只能用小写英文字母。'
+/** 步 2 driver：密码提示（实机单形态；裸「请输入密码：」不作判据，防误触发）。 */
+const PASS_SRC = '^此ID档案已存在，请输入密码：'
 /** 步 3 fail：密码错误类（login.md 字面三条，'m' 多行锚；实测密码错常表现为服务器直接断连 → 走 timeout/断线路）。 */
-const BAD_PASS_SRC = '^密码错误|^密码不正确|^登录失败'
+const BAD_PASS_SRC = '^密码错误！|^密码不正确|^如果帐号用register命令注册过，并且密码已经忘记，请按照'
 /** 步 3 分支 driver：替换在线人物提示（login.md 字面全句）。 */
 const REPLACE_SRC = '您要将另一个连线中的相同人物赶出去，取而代之吗？\\(y\\/n\\)'
 /** 步 3/5 成功句（两条定稿判据；「欢迎来到」勘误见文件头）。 */
@@ -68,13 +70,13 @@ export const login: WorkflowRecord = {
     steps: [
       {
         id: 'prompt-name',
-        wait: { until: [NAME_SRC], timeoutMs: STEP_MS },
+        wait: { until: [NAME_SRC], flags: 'm', timeoutMs: STEP_MS },
         action: { sendCredential: '{name}' },
         next: { goto: 'prompt-pass' },
       },
       {
         id: 'prompt-pass',
-        wait: { until: [PASS_SRC], failOn: [NEED_NEW_SRC], timeoutMs: STEP_MS },
+        wait: { until: [PASS_SRC], failOn: [NEED_NEW_SRC], flags: 'm', timeoutMs: STEP_MS },
         onFailOn: { '0': { exit: { stage: 'need-new', ok: false } } },
         action: { sendCredential: '{pass}' },
         next: { goto: 'confirm' },

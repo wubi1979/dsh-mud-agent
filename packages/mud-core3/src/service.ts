@@ -31,7 +31,7 @@ import type { ReadOpts, ReadResult } from './read.ts'
 import type { MudLine } from './link/line.ts'
 import { SessionLog, type LogEntry, type SessionLogOptions } from './log/log-service.ts'
 import type { GameScreen, GameViewOptions } from './view/screen.ts'
-import type { LoggedInState, WorldSnapshot } from './world.ts'
+import type { LoggedInState, WorldConfidence, WorldSnapshot } from './world.ts'
 import type {
   AccountLookup,
   AccountRecord,
@@ -75,7 +75,7 @@ export interface SessionStatus {
   readonly sessionId: string
   readonly state: ConnState
   readonly admitted: boolean
-  /** 登录轴（GMCP 权威信号；断线复位 unknown）。 */
+  /** 登录轴三态（inferred = 行文推断先行，in-game = GMCP 权威；断线复位 unknown）。 */
   readonly loggedIn: LoggedInState
   /** 世界状态快照（GMCP 写入，断线复位）。 */
   readonly world: WorldSnapshot
@@ -84,6 +84,52 @@ export interface SessionStatus {
 /** 状态流帧（watchStatus）：全量会话状态快照，变化时整体重推。 */
 export interface StatusFrame {
   readonly sessions: readonly SessionStatus[]
+}
+
+/** 状态窄面行（Remote 边界形态，§9.5）：SessionStatus 的 JSON 安全投影。 */
+export interface StatusRow {
+  readonly sessionId: string
+  readonly state: ConnState
+  readonly admitted: boolean
+  /** 登录轴三态（inferred = 行文推断先行，in-game = GMCP 权威；断线复位 unknown）。 */
+  readonly loggedIn: LoggedInState
+  /** 世界状态扁平窄面：条目值 JSON 字符串化（`unknown` 不过 Remote 边界）。 */
+  readonly world: readonly {
+    zone: string
+    key: string
+    /** 原值序列化：对象 JSON.stringify，原始值 String()。 */
+    v: string
+    c: WorldConfidence
+    /** 来源 kind（gmcp/system）与写入时刻。 */
+    sk: string
+    st: number
+  }[]
+}
+
+/** SessionStatus → StatusRow（status()/watchStatus() 两动词共用；T11 窄面）。 */
+export function statusRowOf(s: SessionStatus): StatusRow {
+  const world: {
+    zone: string
+    key: string
+    v: string
+    c: WorldConfidence
+    sk: string
+    st: number
+  }[] = []
+  for (const [zone, entries] of Object.entries(s.world)) {
+    for (const [key, entry] of Object.entries(entries)) {
+      world.push({
+        zone, key,
+        v: typeof entry.value === 'string' ? entry.value
+          : typeof entry.value === 'number' || typeof entry.value === 'boolean' ? String(entry.value)
+          : JSON.stringify(entry.value) ?? 'null',
+        c: entry.confidence,
+        sk: entry.source.kind,
+        st: entry.source.time,
+      })
+    }
+  }
+  return { sessionId: s.sessionId, state: s.state, admitted: s.admitted, loggedIn: s.loggedIn, world }
 }
 
 /** 工具执行上下文（归属解析结果；工具层按它定位发送目标）。 */
@@ -196,10 +242,10 @@ export class MudService {
     // 投递器（pull 模型）：源 = runtime 水位线面；投递结果写会话日志。
     const delivererConfig: DelivererConfig = {
       ...this.deps.delivererConfig,
-      onBatch: (id, lineCount, delivered) => {
+      onBatch: (id, lineCount, delivered, reason) => {
         log.info('deliver', delivered
           ? `投递 ${lineCount} 行（agent 已收）`
-          : `agent 离线：${lineCount} 行未投出（水位不推进，待补投）`)
+          : `投递未达：${lineCount} 行未投出（水位不推进，待补投）${reason === undefined ? '' : `——${reason}`}`)
         this.deps.delivererConfig?.onBatch?.(id, lineCount, delivered)
       },
     }
@@ -387,11 +433,13 @@ export class MudService {
 
   /** turn 开始（宿主 turn/start 事件）：投递抑制（行只进 pending，回合末冲刷）。 */
   turnStart(sessionId: string): void {
+    this.logs.get(sessionId)?.debug('deliver', '回合开始：行进 pending，投递抑制定时器清零')
     this.deliverers.get(sessionId)?.onTurnStart()
   }
 
   /** turn 结束（宿主 turn/end 事件）：退出抑制并冲刷一次。 */
   turnEnd(sessionId: string): void {
+    this.logs.get(sessionId)?.debug('deliver', '回合结束：冲刷 pending')
     this.deliverers.get(sessionId)?.onTurnEnd()
   }
 

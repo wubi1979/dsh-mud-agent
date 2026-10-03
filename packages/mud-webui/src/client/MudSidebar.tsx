@@ -87,11 +87,13 @@ function connText(conn: MudConnInfo): string {
 }
 
 function credBadge(passRef: string, status: MudCredentialInfo | undefined): { text: string; className: string } | null {
+  // 凭据正常（已配置）不再出徽标（v0.0.25 侧栏瘦身）；只保留异常态提醒：
+  // 无密码 / 未配置 / 只读——正常态在编辑弹窗可见，连接失败也会带引用名报错。
   if (passRef === '') return { text: '无密码', className: css.credMissing ?? '' }
   if (status === undefined) return null
   if (!status.configured) return { text: '凭据未配置', className: css.credMissing ?? '' }
   if (!status.writable) return { text: `只读 (${status.source ?? 'env'})`, className: css.credReadonly ?? '' }
-  return { text: '凭据已配置', className: css.credOk ?? '' }
+  return null
 }
 
 /** 接入状态徽标。 */

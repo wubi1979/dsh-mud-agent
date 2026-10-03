@@ -14,6 +14,7 @@ import { useEffect, useRef } from 'react'
 // Type-only: pulls the conversation.view SlotMap augmentation into the program.
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { MudHudTable } from './MudHudTable.tsx'
 import type { MudClientInjected } from './MudSidebar.tsx'
 
 const SHELL_STYLE: React.CSSProperties = {
@@ -44,6 +45,13 @@ const LIST_STYLE: React.CSSProperties = {
 
 const ROW_STYLE: React.CSSProperties = { whiteSpace: 'pre-wrap', wordBreak: 'break-all' }
 const MUTED_STYLE: React.CSSProperties = { color: '#8a8a8a' }
+/** HUD 区（T11）：视图上部 20% 常驻世界状态表；条目超出自身滚动，日志不受挤压。 */
+const HUD_STYLE: React.CSSProperties = {
+  flex: '0 0 20%',
+  minHeight: 0,
+  overflowY: 'auto',
+  borderBottom: '1px solid var(--dsw-alias-border-l2, #2a2a2a)',
+}
 const ERROR_STYLE: React.CSSProperties = {
   padding: '6px 12px',
   color: '#e5484d',
@@ -75,9 +83,11 @@ export type MudLogViewProps =
  * @param props - Conversation-view kit (sessionId) and the injected MUD face.
  * @returns the log panel, or an empty-state line when the session has no log yet.
  */
-export function MudLogView({ sessionId, useMudLog, watchLog, refreshLog }: MudLogViewProps) {
+export function MudLogView({ sessionId, useServers, useMudLog, watchLog, refreshLog }: MudLogViewProps) {
   const sid = sessionId === undefined ? '' : String(sessionId)
   const log = useMudLog(snapshot => snapshot)
+  // T11 状态呈现：本会话状态窄面行（watchStatus 推帧驱动）→ 上部 20% HUD 表
+  const statusRow = useServers(s => s.sessionStatus[sid])
   const scrollRef = useRef<HTMLDivElement | null>(null)
   // 只有当前跟随的会话的快照才属于本视图（切换目标时旧快照立即丢弃）。
   const entries = log.sessionId === sid ? log.entries : []
@@ -94,6 +104,9 @@ export function MudLogView({ sessionId, useMudLog, watchLog, refreshLog }: MudLo
 
   return (
     <div style={SHELL_STYLE}>
+      <div style={HUD_STYLE}>
+        <MudHudTable row={statusRow} emptyText="暂无状态：连接并登录后显示世界快照。" />
+      </div>
       <div style={BAR_STYLE}>
         <span style={MUTED_STYLE}>
           MUD 日志（{entries.length} 条；原始行流只落盘）

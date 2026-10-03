@@ -151,6 +151,63 @@ describe('MudService 两会话隔离', () => {
   })
 })
 
+/** SessionStatus 测试构造（缺省补零值）。 */
+function makeStatus(over: Partial<{
+  sessionId: string
+  state: 'disconnected' | 'connecting' | 'connected'
+  admitted: boolean
+  loggedIn: 'unknown' | 'in-game'
+  world: Record<string, Record<string, { value: unknown; confidence: 'measured' | 'inferred'; source: { kind: 'gmcp' | 'system'; time: number } }>>
+}> = {}): Parameters<typeof import('../src/service.ts')['statusRowOf']>[0] {
+  return {
+    sessionId: 's-1',
+    state: 'connected',
+    admitted: true,
+    loggedIn: 'unknown',
+    world: {},
+    ...over,
+  }
+}
+
+describe('statusRowOf 窄面（T11：SessionStatus → Remote 边界形态）', () => {
+  it('扁平化：world 分区条目逐条展开，confidence/source 透传', async () => {
+    const { statusRowOf } = await import('../src/service.ts')
+    const s = makeStatus({
+      world: {
+        gmcp: {
+          'room.info': { value: { name: '扬州城', area: 'sh' }, confidence: 'measured', source: { kind: 'gmcp', time: 111 } },
+          'combat.fight': { value: false, confidence: 'measured', source: { kind: 'gmcp', time: 222 } },
+        },
+        session: { note: { value: 'x', confidence: 'inferred', source: { kind: 'system', time: 333 } } },
+      },
+    })
+    const row = statusRowOf(s)
+    expect(row.world).toEqual([
+      { zone: 'gmcp', key: 'room.info', v: '{"name":"扬州城","area":"sh"}', c: 'measured', sk: 'gmcp', st: 111 },
+      { zone: 'gmcp', key: 'combat.fight', v: 'false', c: 'measured', sk: 'gmcp', st: 222 },
+      { zone: 'session', key: 'note', v: 'x', c: 'inferred', sk: 'system', st: 333 },
+    ])
+    // 其余轴透传
+    expect(row).toMatchObject({ sessionId: s.sessionId, state: s.state, admitted: s.admitted, loggedIn: s.loggedIn })
+  })
+
+  it('序列化分型：字符串原样 / 数字布尔 String() / null 值 → "null"；空 world → 空数组', async () => {
+    const { statusRowOf } = await import('../src/service.ts')
+    const s = makeStatus({
+      world: {
+        gmcp: {
+          a: { value: 'raw', confidence: 'measured', source: { kind: 'gmcp', time: 1 } },
+          b: { value: 42, confidence: 'measured', source: { kind: 'gmcp', time: 2 } },
+          c: { value: null, confidence: 'measured', source: { kind: 'gmcp', time: 3 } },
+        },
+      },
+    })
+    const row = statusRowOf(s)
+    expect(row.world.map(e => e.v)).toEqual(['raw', '42', 'null'])
+    expect(statusRowOf(makeStatus({ world: {} })).world).toEqual([])
+  })
+})
+
 describe('MudService 生命周期', () => {
   it('dispose（session/disposed 模拟）：断连 + 拆 runtime', async () => {
     const server = await startMockServer()

@@ -174,7 +174,7 @@ note: 横切面：安全 · 观测 · 错误与降级
 |---|---|---|
 | 超长回合 + 持续刷屏 | `pendingLines` 可累积至环形上限；`turn/end` 一次拉取可能拆多条 followup 排队 | token 账目恶化（§17.3 投递策略化） |
 | **会话删除面缺口** | 删账号后会话仍在宿主内（§2.4） | 宿主补面 |
-| `watchStatus` 边界收窄 | 只出 `{sessionId, state, admitted}`；`loggedIn`/`world` 不过 Remote 边界 | T5 状态呈现（§17.2） |
+| `watchStatus` 边界窄面 | **已收口（T11）**：行面 = `StatusRow`（`statusRowOf` 映射，`loggedIn` 直传 + `world` 扁平数组值字符串化） | §9.5 |
 | `ask_user_question` 无超时 | 无人应答永久挂起 | 确认"无人应答必须超时"的实证（§17.3） |
 | 画面历史不持久化 | headless 屏随 runtime 存活，**插件重启即清** | 需要跨重启回放时 |
 | send 回显与 MUD 自回显 | 可能重复显示 | 实证出现重复时加去重开关（§17.3） |

@@ -230,6 +230,70 @@ describe('Deliverer 失败与补投', () => {
     expect(d.pendingCount).toBe(0)
     d.dispose()
   })
+
+  it('诊断：deliver 返回原因字符串 / 抛错 → onBatch 携带 reason，异常不逃逸 flush', async () => {
+    // 字符串返回 = 未投出 + 原因
+    const reasons: (string | undefined)[] = []
+    const src1 = new FakeSource()
+    const d1 = new Deliverer('s1', () => 'followup 抛错：inbox 投影未激活', src1, {
+      quietMs: 50,
+      onBatch: (_id, _n, delivered, reason) => {
+        if (!delivered) reasons.push(reason)
+      },
+    })
+    d1.admit()
+    src1.push(line('异常行', 0))
+    d1.flushNow()
+    expect(d1.pendingCount).toBe(1) // 水位不推进
+    expect(reasons).toEqual(['followup 抛错：inbox 投影未激活'])
+
+    // deliver 直接抛错 → flush 收编为原因，不逃逸
+    const src2 = new FakeSource()
+    const d2 = new Deliverer('s2', () => {
+      throw new Error('boom')
+    }, src2, {
+      quietMs: 50,
+      onBatch: (_id, _n, delivered, reason) => {
+        if (!delivered) reasons.push(reason)
+      },
+    })
+    d2.admit()
+    src2.push(line('抛错行', 0))
+    expect(() => d2.flushNow()).not.toThrow()
+    expect(d2.pendingCount).toBe(1)
+    expect(reasons).toEqual(['followup 抛错：inbox 投影未激活', 'followup 抛错：boom'])
+    d1.dispose()
+    d2.dispose()
+  })
+
+  it('失败退避重试：瞬时失败（原因字符串）自动重试自愈，句柄缺失（false）不自动重试', async () => {
+    // 原因字符串 = 瞬时失败 → quietMs 后自动重试，无需外部触发
+    const src1 = new FakeSource()
+    let transient = true
+    const d1 = new Deliverer('s1', () => (transient ? 'followup 抛错：append 重入' : true), src1, {
+      quietMs: 50,
+      maxWaitMs: 200,
+    })
+    d1.admit()
+    src1.push(line('竞速行', 0))
+    d1.flushNow()
+    expect(d1.pendingCount).toBe(1)
+
+    transient = false
+    await new Promise(r => setTimeout(r, 120)) // 首次退避 = quietMs(50)，足够触发
+    expect(d1.pendingCount).toBe(0) // 退避重试已自愈
+    d1.dispose()
+
+    // 句柄缺失（false）= 冷会话 → 不自动重试（恢复路径 = agent/created 补投 + 静默唤醒）
+    const src2 = new FakeSource()
+    const d2 = new Deliverer('s2', () => false, src2, { quietMs: 50, maxWaitMs: 200 })
+    d2.admit()
+    src2.push(line('离线行', 0))
+    d2.flushNow()
+    await new Promise(r => setTimeout(r, 120))
+    expect(d2.pendingCount).toBe(1) // 行仍在 pending，无重试风暴
+    d2.dispose()
+  })
 })
 
 describe('Deliverer turn 抑制', () => {

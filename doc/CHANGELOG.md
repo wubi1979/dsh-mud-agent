@@ -250,3 +250,80 @@
 - 无代码变更；用例账目维持 core3 222 / workflow 31 全绿
 
 > AI生成
+
+## [v0.0.24]T5 收尾（T11）：StatusRow 边界窄面 + webui 状态呈现（画面 HUD 条）(2026-10-02)
+> 总结：`loggedIn`/`world` 过 Remote 边界（lessons learned 中 T5 收尾项收口）；呈现形态经讨论定为画面 HUD 条（`<details>` 折叠块方案否决作废）
+
+- **边界窄面**：`StatusRow`（service.ts 新增，`statusRowOf` 映射两动词共用）——`sessionId/state/admitted/loggedIn` 直传 + `world` **扁平数组** `{zone,key,v,c,sk,st}`（值 JSON 字符串化，`unknown` 不过 typert 边界；扁平数组避开 index signature 过生成器）；`status()`/`watchStatus()` 改用；`types.ts` 转出口 + gen:typert 重生成清零
+- **webui 扩面**：`MudStatusFrame`/`SessionStatusRow` 本地窄接口对应扩面（不 import core3 类型）；`status()` RPC 返回面同步
+- **呈现（用户裁定 = HUD 条）**：画面 tab 工具栏下单行横条 chips（`key = 值`，超宽截断悬浮全值 + 来源/置信度 tooltip），`watchStatus` 推帧驱动，inject face 增 `hooks.servers` → `useServers` selector；无条目不占位、断线复位即消失；侧栏账号行「已登录」徽标
+- **文档**：§9.4 HUD 条行、§9.5 边界窄面收口、§16.2 账目、§16.5 T5 收尾行、§16.6 #7 已清、§17.2 删 #1
+- **用例账目**：core3 **224 例 / 19 文件**（+statusRowOf 2 例）· workflow 31 不变，全绿；core3/webui build 绿
+
+> AI生成
+
+## [v0.0.25]T11 状态呈现重设计：HUD 表格式 + 聊天区日志视图拆分 + 侧栏瘦身 (2026-10-02)
+> 总结：实机反馈驱动的呈现迭代（chips 横条 + 侧栏徽标过载 → 用户裁定表格化 + 日志视图拆 20% + 徽标瘦身）
+
+- **MudHudTable 共用组件**（client 新增）：键|值两列，首行固定登录轴（已登录/未登录标签），GMCP 条目逐行（值等宽截断、悬浮全值 + 来源/置信度/时刻）；消费方 = 画面 tab（工具栏下，容器 max-height 30%）+ 聊天区日志视图（**上部 20% 常驻**，`conversation.view` entry body 内部拆分——宿主 slot 查证零新依赖）
+- **侧栏瘦身**：「凭据已配置」「已登录」徽标移除（登录状态在 HUD 表首行；凭据正常态编辑弹窗可见、连接失败带引用名报错），只留「已接入」+ 凭据异常态（无密码/未配置/只读）
+- **文档**：§9.3（日志视图 HUD 区）、§9.4（HUD 表）、§9.2（徽标瘦身）
+- **验证**：webui build 绿（chips 样式清理）；core3 零改动（数据面沿用 StatusRow）
+
+> AI生成
+
+## [v0.0.26]T11 收敛：状态表单表化，画面 tab 撤 HUD (2026-10-02)
+> 总结：用户裁定画面里不放 HUD——状态表唯一表面 = 聊天区日志视图上部 20%
+
+- **MudGameView 撤 HUD**：表格块/`hudBar` 样式/`hooks.servers` 注入面/`hudWorld` 词条全清（回到纯画面 + 工具栏）；`MudHudTable` 组件保留（日志视图专用）
+- **文档**：§9.4 画面 tab 无状态表注记、§9.3 日志视图 = 唯一状态表面
+- **验证**：webui build 绿；core3 零改动
+
+## [v0.0.27]登录轴三态：声明判据先行 inferred，GMCP 权威加固 in-game (2026-10-03)
+> 总结：实机反馈驱动——原 GMCP 单源导致登录行长期停在「未登录」（首个 GMCP 包要等进入世界才来）；按「声明判据 = 100% 置信先行，GMCP 加固」改为三态
+
+- **三态**（`LoggedInState = 'unknown' | 'inferred' | 'in-game'`，world.ts）：`inferred` = 已连接且行文命中声明判据（低置信先行，不等 GMCP）；`in-game` = GMCP 到达加固（覆盖 inferred，不降级）；断线复位 `unknown`
+- **声明判据**（runtime.ts `WELCOME_RE`）：`/目前权限：\(player\)|重新连线完毕/`——与 flows/login.ts 成功判据同源；「欢迎来到」不可用（与建连横幅「欢迎来到北大侠客行」撞车，login.ts 文件头勘误）
+- **接线**：runtime `mud.onLine`（screen.write 后、readMachine 前）判据命中置 inferred + `onWorldChange` 推帧；GMCP 路径注释同步
+- **呈现**：`StatusRow`/`SessionStatusRow`/`MudStatusFrame` loggedIn 联合扩三态（gen:typert 重生成）；`MudHudTable` 登录行三态渲染——inferred 琥珀色「已登录（推断）」、in-game 绿「已登录」、unknown「未登录」
+- **测试**：world.spec.ts 新增「登录轴三态」3 用例（判据→inferred→GMCP→in-game；in-game 不降级 + 断线复位；inferred 断线复位）——core3 227/227（19 文件）全绿
+- **文档**：§10.1 三态、§10.2 改「声明判据先行 + GMCP 权威加固（三态）」、§10.3 置信度说明、§10.4/§11.3/§11.8 转移图补 inferred 中间态
+
+## [v0.0.28]投递失败原因进会话日志 + T3 文档一致性清理关闭 (2026-10-03)
+> 总结：实机投递「中途报离线」文案误导（实为攒批/回合计时），投递链路补诊断；§16.6 清单复核后关闭 T3
+
+**投递诊断**
+- `DeliverFn` 三态返回（deliver.ts）：`true`/`undefined` = 已投出；`false` = 未投出（无原因，按句柄缺失处理）；**字符串 = 未投出 + 失败原因**，经 `onBatch` 第 4 参进会话日志
+- deliverer `tryDeliver` 收编 deliver 回调抛错（不逃逸定时器路径），错误文本转为原因字符串
+- 日志文案区分：失败改「投递未达：N 行未投出（水位不推进，待补投）——<原因>」，不再一律称「agent 离线」
+- `turnStart`/`turnEnd` 各加一条 debug 会话日志（回合开始抑制 / 回合结束冲刷），便于对时序
+- index.ts deliver：句柄缺失 → warn + `false`；followup 抛错 → warn + 原因字符串
+- 测试：deliver.spec.ts 新增诊断用例（原因字符串 / 抛错收编，onBatch 携 reason、水位不推进）——core3 228/228（19 文件）全绿
+
+**T3 文档一致性清理（关闭）**
+- §16.6 #1–#5 复核确认已在文档重写期修毕（viewCols 注释 120、wake.ts §7.5、corpus.ts §13.4、README 在役/退役表、AGENTS.md 检索纪律）
+- src 注释现存 § 引用全面扫描：全部现役编号或正确带版本前缀（`v2 §7.2`/`v2 §5`），无归档编号残留
+- README 文档地图「待办池（T1–T9）」过时行更新；PLAN.md 删 T3 并注记关闭，§16.6 表全部标已清（#6 不回改 / #8 宿主缺口除外）
+
+## [v0.0.29]login 判据实机勘误 ③：单形态 + 行首锚 + 动态用户名 (2026-10-03)
+> 总结：实机观察驱动——判据收窄防聊天语句误触发；三处正则硬伤修正（`(yes)` 捕获组、`\s*` 桥不上动态用户名、`^` 无 'm' 锚窗首永不命中）
+
+- **判据**（login.ts）：`NEED_NEW_SRC` = `^同意玩家须知并使用\S+创造一个新的人物，您确定吗\(yes\)？|^对不起，你的英文名字只能用小写英文字母。`（`\S+` = 内嵌动态用户名；`(yes)` 括号转义）；`NAME_SRC`/`PASS_SRC` 收窄实机单形态（短形态「您的英文名字：」、裸「请输入密码：」弃用）；`BAD_PASS_SRC` 第三条改「忘记密码」提示行前缀
+- **flags 'm'**：`prompt-name`/`prompt-pass` 两步 wait 补 `flags: 'm'`——`^` 行首锚必须配 'm'（整窗按行 join 匹配，无 'm' 时 `^` = 窗首，提示行在横幅后永不命中）
+- **测试**：login.spec.ts 假服务器换实机原文（单形态提示、need-new 整句含动态用户名、`密码错误！`）——core3 228/228（19 文件）全绿
+- **文档**：doc/flows/login.md 步表/判据常量表/设计要点（新增勘误 ③）；附录 A.1 补 need-new/名字非法实录行 + 硬约束 ③
+
+## [v0.0.30]§8.13 增判据书写纪律 + 模式声明扩展否决记录 (2026-10-03)
+> 总结：判据匹配模型讨论沉淀——整窗匹配模型下 `.` 无 `/s` 天然行安全，「判据模式声明」无例证否决留档
+
+- **§8.13 新增「判据书写纪律（整窗匹配模型）」**：① 行首锚必配 `flags: 'm'`（无 'm' 锚窗首）；② 单行意图天然行安全（`.` 无 `/s` 不越行），跨行意图必须显式；③ 量词不越行（`\S+` / `[^\n]*`，跨行显式写 `\n`）
+- **未来扩展方向否决留档**：「判据模式声明」（单行/多行各跑各的）无例证不立项——`.` 已行安全、逐行匹配更慢、混合模式与声明序裁定冲突；出现真实误判例证再评估
+
+## [v0.0.31]投递失败退避重试（实机日志闭环） (2026-10-03)
+> 总结：实机日志拿到「agent 离线」真因 = 宿主 append 发布重入保护（瞬时竞速）；投递器补失败退避自愈，行流安静时不再挂到静默唤醒
+
+- **根因（实锤）**：`turn/end` 冲刷与宿主回合末输出发布竞速，followup 撞 `session append cannot reenter while another append is being published`；此前失败后仅停留 pending 等下次自然触发，行流安静时会挂到 120s 静默唤醒
+- **修法**：[deliver.ts](packages/mud-core3/src/deliver.ts) 失败退避——瞬时失败（原因字符串）按 `quietMs` 起步倍增至 `maxWaitMs` 封顶自动重试，成功复位；句柄缺失（false）不重试（恢复路径 = agent/created 补投 + 静默唤醒不变）
+- **测试**：deliver.spec.ts 新增退避自愈 + false 不重试用例；core3 229/229 全绿
+
+> AI生成

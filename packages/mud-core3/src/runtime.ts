@@ -17,6 +17,13 @@ import type { ConnState } from './roster.ts'
 // 类型面 re-export（E2E/流程环境按 read/recentLines 签名桥接用）。
 export type { MudLine, ReadOpts, ReadResult }
 
+/**
+ * 登录轴声明判据（行文推断用）：与 flows/login.ts 成功判据同源——
+ * 「欢迎来到」与建连横幅「欢迎来到北大侠客行」撞车不可用（见 login.ts 文件头勘误），
+ * 以「目前权限：(player)」「重新连线完毕」为准。
+ */
+const WELCOME_RE = /目前权限：\(player\)|重新连线完毕/
+
 /** 连接参数（三期裁定：connect 只建连，登录由脚本要点执行——盲发退役）。 */
 export interface ConnectParams {
   readonly host: string
@@ -108,6 +115,12 @@ export class SessionRuntime {
       }
       this.lastLineAbs = line.abs
       this.screen.write(line.raw + '\r\n')
+      // 登录轴低置信度先行：声明判据命中（已连接且未确认）→ inferred，
+      // 后续 GMCP 到达加固为 in-game（判据见 WELCOME_RE 注释与 login.ts 勘误）。
+      if (this.state === 'connected' && this.loggedInState === 'unknown' && WELCOME_RE.test(line.text)) {
+        this.loggedInState = 'inferred'
+        this.onWorldChange?.()
+      }
       this.readMachine.onLine(line)
       this.onActivity?.()
       this.onLine?.(line)
@@ -119,7 +132,8 @@ export class SessionRuntime {
     this.mud.onSend = (cmd, source) => { this.screen.echo(cmd, source, this.accountName) }
     // GMCP → 登录轴 + 世界状态（三期）：
     // GMCP 是权威登录信号（不依赖行文匹配）——服务器进入游戏后才发 GMCP 包，
-    // 到达即置 in-game 并写入 world（zone='gmcp'，key=包名，后到覆盖）。
+    // 到达即置 in-game（覆盖行文推断的 inferred，不降级）并写入 world
+    // （zone='gmcp'，key=包名，后到覆盖）。
     this.mud.onGmcp = msg => {
       this.loggedInState = 'in-game'
       this.worldState.set('gmcp', msg.package, msg.payload, 'measured', { kind: 'gmcp', time: Date.now() })

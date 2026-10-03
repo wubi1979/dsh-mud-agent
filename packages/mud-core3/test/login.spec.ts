@@ -105,7 +105,7 @@ function makeEnv(rt: SessionRuntime): WorkflowEnv {
 describe('login 流程 E2E（真实 TCP）', () => {
   it('成功路径：提示符驱动走完，stage=success，凭据零泄露（结果/画面）', async () => {
     const server = await startLoginServer({
-      onConnect: sock => { sock.write('欢迎来到北大侠客行\n您的英文名字：\n') },
+      onConnect: sock => { sock.write('欢迎来到北大侠客行\n您的英文名字（要注册新人物请输入new。）：\n') },
       onLine: (line, sock) => {
         if (line === NAME) sock.write('此ID档案已存在，请输入密码：\n')
         else if (line === PASS) sock.write('重新连线完毕\n')
@@ -137,10 +137,10 @@ describe('login 流程 E2E（真实 TCP）', () => {
 
   it('密码错：failOn 命中 → bad-pass（不重试）', async () => {
     const server = await startLoginServer({
-      onConnect: sock => { sock.write('您的英文名字：\n') },
+      onConnect: sock => { sock.write('您的英文名字（要注册新人物请输入new。）：\n') },
       onLine: (line, sock) => {
-        if (line === NAME) sock.write('请输入密码：\n')
-        else sock.write('密码错误，请重试\n')
+        if (line === NAME) sock.write('此ID档案已存在，请输入密码：\n')
+        else sock.write('密码错误！请重试\n')
       },
     })
     const rt = new SessionRuntime('s1')
@@ -156,10 +156,10 @@ describe('login 流程 E2E（真实 TCP）', () => {
     await server.close()
   })
 
-  it('用户名不存在：failOn 命中 → need-new', async () => {
+  it('用户名不存在：failOn 命中 → need-new（实机整句内嵌动态用户名）', async () => {
     const server = await startLoginServer({
-      onConnect: sock => { sock.write('您的英文名字：\n') },
-      onLine: (_line, sock) => { sock.write('需要创建新人物，请输入 new\n') },
+      onConnect: sock => { sock.write('您的英文名字（要注册新人物请输入new。）：\n') },
+      onLine: (_line, sock) => { sock.write(`同意玩家须知并使用${'newbie'}创造一个新的人物，您确定吗(yes)？\n`) },
     })
     const rt = new SessionRuntime('s1')
     await rt.connect({ host: '127.0.0.1', port: server.port })
@@ -175,9 +175,9 @@ describe('login 流程 E2E（真实 TCP）', () => {
 
   it('replace 提示：默认答 y → 等成功句 → success（login.md replace 步 action=y）', async () => {
     const server = await startLoginServer({
-      onConnect: sock => { sock.write('您的英文名字：\n') },
+      onConnect: sock => { sock.write('您的英文名字（要注册新人物请输入new。）：\n') },
       onLine: (line, sock) => {
-        // 名字应答用 driver 第一形态（「此ID档案已存在，…」），顺带验证严格判据
+        // 密码应答用实机单形态（「此ID档案已存在，…」）
         if (line === NAME) sock.write('此ID档案已存在，请输入密码：\n')
         else if (line === PASS) sock.write('您要将另一个连线中的相同人物赶出去，取而代之吗？(y/n)\n')
         else if (line === 'y') sock.write('重新连线完毕\n')

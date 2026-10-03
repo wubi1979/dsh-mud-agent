@@ -76,6 +76,6 @@ pnpm dev            # gen:typert + build(core3, webui) + 启动 harness web prof
 | [`doc/flows/login.md`](doc/flows/login.md) | `login` 流程实体声明（locked） |
 | [`doc/appendices/`](doc/appendices/) | A 抓包与语料事实 · B 代码审计规约 |
 | [`doc/likely/`](doc/likely/) | 已定稿但**未立项**的候选设计（当前：C5.2 行打标与画面分屏） |
-| [`doc/PLAN.md`](doc/PLAN.md) | 计划起草区 + 待办池（T1–T9） |
+| [`doc/PLAN.md`](doc/PLAN.md) | 计划起草区 + 待办池 |
 | [`doc/CHANGELOG.md`](doc/CHANGELOG.md) | 变更记录（只追加） |
 | [`doc/archive/`](doc/archive/README.md) | v1/v2 归档索引（**只读**） |

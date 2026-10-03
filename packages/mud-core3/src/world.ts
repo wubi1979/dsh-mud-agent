@@ -77,5 +77,10 @@ export class World {
   }
 }
 
-/** 登录轴：unknown = 未知（未登录/断线复位），in-game = GMCP 已确认进入游戏。 */
-export type LoggedInState = 'unknown' | 'in-game'
+/**
+ * 登录轴三态（低置信度先行，权威加固）：
+ * - unknown = 未知（未登录/断线复位）
+ * - inferred = 行文推断（欢迎画面声明判据命中，低置信度先行）
+ * - in-game = GMCP 已确认（权威信号，覆盖推断、不降级）
+ */
+export type LoggedInState = 'unknown' | 'inferred' | 'in-game'

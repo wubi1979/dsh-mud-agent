@@ -10,8 +10,8 @@ note: 横切面：状态模型 + 全系统生命周期与状态机
 ## 10.1 两轴状态
 
 ```
-conn:      disconnected | connecting | connected      ← 传输轴（连接管理写）
-loggedIn:  unknown | in-game                          ← 登录轴（GMCP / 成功句写）
+conn:      disconnected | connecting | connected             ← 传输轴（连接管理写）
+loggedIn:  unknown | inferred | in-game                      ← 登录轴（声明判据先行 / GMCP 加固）
 world:     GMCP 事件与（后置的）行级规则驱动（§10.3）
 ```
 
@@ -19,11 +19,16 @@ world:     GMCP 事件与（后置的）行级规则驱动（§10.3）
 - **断线时两轴一起复位**，且 `loggedIn` 复位为 **`unknown`（不是 `false`）**——"不知道"与"确定未登录"是两种状态（§10.4）。
 - 状态是**会话私有**（每 runtime 一份）；`setState` 是唯一入口，**值变化才触发** `onStateChange`（§9.5）。
 
-## 10.2 GMCP 是权威登录信号
+## 10.2 登录轴：声明判据先行，GMCP 权威加固（三态）
 
 - `link/telnet.ts` 已实现 telnet 协商与子协商（`emit('gmcp', …)`），**接收端零新增**（§3.3）。
-- GMCP 包到达即：`loggedIn = 'in-game'` **并**写入 World（`zone = 'gmcp'`，`key = 包名`，置信度 `measured`，后到覆盖）。
-- **不依赖行文匹配**：登录判定不受提示语措辞/本地化/横幅干扰（对照 §8.15 勘误 2 的教训）。
+- **三态语义**（2026-10-03 裁定，低置信度先行 + 权威加固）：
+  - `unknown`：未知（初始 / 断线复位）。
+  - `inferred`：**声明判据命中先行**——已连接且行文命中 `目前权限：(player)` / `重新连线完毕`，立即置推断态（低置信度），不等 GMCP。
+  - `in-game`：**GMCP 到达加固**（权威信号）——覆盖 `inferred`，**不降级**（判据行文再出现也不回落）。
+- **判据与 flows/login.ts 成功判据同源**；「欢迎来到」不可用作判据——与建连横幅「欢迎来到北大侠客行」撞车（§8.15 勘误 2 的教训），判据先行的是登录成功句而非欢迎画面。
+- GMCP 包到达同时写入 World（`zone = 'gmcp'`，`key = 包名`，置信度 `measured`，后到覆盖）。
+- 断线整体复位 `unknown`（§10.4），三态不跨连接存活。
 
 ## 10.3 World 世界状态
 
@@ -33,7 +38,7 @@ world:     GMCP 事件与（后置的）行级规则驱动（§10.3）
 | 维 | 取值 | 说明 |
 |---|---|---|
 | **分区 `zone`** | `vitals` / `combat` / `location` / `session` / `gmcp` / … | 按用途分区，按需生长 |
-| **置信度** | `measured`（直接测量）/ `inferred`（推断） | 推断来源留给后置的**规则层**（§17.3） |
+| **置信度** | `measured`（直接测量）/ `inferred`（推断） | 登录轴已用 `inferred` 先行（§10.2）；World 条目的推断写入源留给后置的**规则层**（§17.3） |
 | **来源追溯** | `kind` + `time` | 每个条目可回答"什么时候、由谁写的" |
 
 - **同 `zone + key` 后到覆盖旧值**（单一真相，不做多版本）。
@@ -48,7 +53,7 @@ world:     GMCP 事件与（后置的）行级规则驱动（§10.3）
   → world.clear()                    // 世界状态随连接存亡
   → pendingLines 清空、水位重置 -1   // §4.5
   → 在途 read 以 disconnected 收束   // §5.2
-重连成功后由 GMCP 重新置位两轴与 World。
+重连成功后登录轴按 §10.2 重新置位（判据先行 inferred，GMCP 加固 in-game），World 由 GMCP 重建。
 ```
 
 **不自动重连**：重连是手工动作（`connect` / `mud_connect`）或由静默唤醒兜底触发规划（§7.5）；自动重连的前置是**真实心跳**（§17.3）。
@@ -111,7 +116,8 @@ connecting ──失败（拒绝/关闭）──▶ disconnected（立即失败 
    │ 成功
    ▼
 connected（行流开始积累，停在登录提示符；**不自动 login**）
-   │ 登录流程（locked，§8.15）──成功句 / GMCP──▶ loggedIn = in-game
+   │ 登录流程（locked，§8.15）──成功句命中──▶ loggedIn = inferred（判据先行，§10.2）
+   │                            ──GMCP 到达──▶ loggedIn = in-game（权威加固，不降级）
    │ disconnect（硬收尾：立即销毁 socket + 同步 flush 残留行）
    ▼
 disconnected（runtime 保留；两轴复位 + world.clear + pending 清空 + 水位 -1）
@@ -192,7 +198,7 @@ runtime 已登记：conn=disconnected · loggedIn=unknown · 未接入 · 会话
    ├─ 失败 ──▶ disconnected（socket 已销毁）
    ▼
 conn=connected（录制中，停在登录提示符）
-   │ 登录流程（locked）──GMCP / 成功句──▶ loggedIn=in-game
+   │ 登录流程（locked）──成功句命中──▶ loggedIn=inferred ──GMCP──▶ loggedIn=in-game
    │
    ├─ admit（水位 = 接入时刻）──▶ 投递中：turn/start 抑制 · turn/end 冲刷 · 空闲窗口
    │        │ stop ──▶ 投递停（行流照常录制 = 挂机模式）

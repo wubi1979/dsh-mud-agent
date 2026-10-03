@@ -10,22 +10,29 @@
  * 投递时机（§4.3）：
  *   A. turn 期间（turn/start → turn/end）：抑制模式——不武装定时器，行只进 pending；
  *   B. turn/end：flush 一次（onTurnEnd）；
- *   C. 空闲模式（agent 不在 turn）：quiet/maxWait 定时器到期即 flush。
+ *   C. 空闲模式（agent 不在 turn）：quiet/maxWait 定时器到期即 flush；
+ *   D. 失败退避：瞬时失败（原因字符串，如宿主 append 重入保护）按 quietMs 起步
+ *      倍增到 maxWaitMs 封顶自动重试——行流安静时也能自愈，成功即复位；
+ *      句柄缺失（false）不重试（恢复路径 = agent/created 补投 + 静默唤醒）。
  *
  * 接入闸门：
  *   - admit() → 开始投递；delivered 水位 = 当前末端行号（积压不回放）；
  *   - stop() → 停止投递（未接入零拉取、零积累、零丢弃日志——录制归 runtime 环）。
  *
- * 冷会话：deliver 回调返回 false 表示 agent 不在线，该批不推进水位（行仍在
- * pending），等 agent 唤醒时由 flushNow() 补投。
+ * 冷会话：deliver 回调返回 false / 失败原因字符串表示未投出，该批不推进水位（行仍在
+ * pending），等 agent 唤醒时由 flushNow() 补投；失败原因经 onBatch 进会话日志。
  *
  * 纯 TS，零宿主依赖。deliver 回调与 DeliverySource 由装配层注入。
  */
 
 import type { MudLine } from './link/line.ts'
 
-/** 投递回调（装配层注入）；返回 false = 本次未投出（agent 离线），批次不推进水位。 */
-export type DeliverFn = (sessionId: string, text: string) => boolean | void
+/**
+ * 投递回调（装配层注入）。
+ * 返回 true / undefined = 已投出；返回 false = 未投出（无原因，按 agent 不在线处理）；
+ * 返回字符串 = 未投出 + 失败原因（写进会话日志，诊断用）。未投出的批次不推进水位。
+ */
+export type DeliverFn = (sessionId: string, text: string) => boolean | string | void
 
 /**
  * 投递源（runtime 水位线注入面）：Deliverer 经此拉取待投行、推进投递水位。
@@ -52,8 +59,8 @@ export interface DelivererConfig {
   maxLines?: number
   /** 单条投递最大字符数（超出拆成多条）。缺省 8000 字符。 */
   maxChars?: number
-  /** 每批投递结果回调（观测用；delivered=false 表示该批未投出、水位不推进）。 */
-  onBatch?: (sessionId: string, lineCount: number, delivered: boolean) => void
+  /** 每批投递结果回调（观测用；delivered=false 表示该批未投出、水位不推进，reason = 失败原因）。 */
+  onBatch?: (sessionId: string, lineCount: number, delivered: boolean, reason?: string) => void
 }
 
 const DEFAULT_QUIET_MS = 500
@@ -77,13 +84,17 @@ export class Deliverer {
   private readonly maxWaitMs: number
   private readonly maxLines: number
   private readonly maxChars: number
-  private readonly onBatch: ((sessionId: string, lineCount: number, delivered: boolean) => void) | undefined
+  private readonly onBatch:
+    | ((sessionId: string, lineCount: number, delivered: boolean, reason?: string) => void)
+    | undefined
 
   private admitted = false
   /** turn 抑制模式（turn/start → turn/end 之间不武装定时器）。 */
   private turnMode = false
   private quietTimer: ReturnType<typeof setTimeout> | null = null
   private waitTimer: ReturnType<typeof setTimeout> | null = null
+  /** 失败退避当前延迟（0 = 无退避态；失败时 quietMs 起步倍增，成功即复位）。 */
+  private retryDelay = 0
   private disposed = false
 
   constructor(
@@ -213,14 +224,32 @@ export class Deliverer {
         maxAbs = chunkAbs
         continue
       }
-      const delivered = this.deliver(this.sessionId, text) !== false
-      this.onBatch?.(this.sessionId, chunk.length, delivered)
-      if (!delivered) break
+      const result = this.tryDeliver(text)
+      const delivered = result === true || result === undefined
+      this.onBatch?.(this.sessionId, chunk.length, delivered, typeof result === 'string' ? result : result === false ? 'agent 不在线（句柄缺失）' : undefined)
+      if (!delivered) {
+        // 瞬时失败（有原因）→ 退避重试自愈；句柄缺失（false）→ 等既有恢复路径。
+        if (typeof result === 'string') this.armRetry()
+        break
+      }
       consumed += chunk.length
       maxAbs = chunkAbs
     }
     // delivered 只推进到成功投出的批次（失败批停留 pending，下次自然重试）。
-    if (consumed > 0) this.source.markDelivered(maxAbs)
+    if (consumed > 0) {
+      this.retryDelay = 0
+      this.source.markDelivered(maxAbs)
+    }
+  }
+
+  /** 失败退避：quietMs 起步倍增到 maxWaitMs 封顶（复用 quietTimer 槽；flush 入口会清）。 */
+  private armRetry(): void {
+    this.retryDelay = this.retryDelay === 0 ? this.quietMs : Math.min(this.retryDelay * 2, this.maxWaitMs)
+    this.clearTimers()
+    this.quietTimer = setTimeout(() => {
+      this.quietTimer = null
+      this.flush()
+    }, this.retryDelay)
   }
 
   /**
@@ -243,6 +272,19 @@ export class Deliverer {
     }
     if (current.length > 0) out.push(current)
     return out
+  }
+
+  /**
+   * 单批投递（异常收编）：deliver 回调抛错不逃逸 flush（定时器路径无兜底），
+   * 收编为失败原因字符串（进会话日志，诊断用）。
+   */
+  private tryDeliver(text: string): boolean | string | void {
+    try {
+      return this.deliver(this.sessionId, text)
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      return `followup 抛错：${message}`
+    }
   }
 
   /** 一批行渲染为投递文本；仅当单行自身超限时截断（行数拆批已保证其余不超限）。 */

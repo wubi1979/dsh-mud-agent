@@ -27,7 +27,7 @@ import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-llm'
 import { join } from 'node:path'
 
-import { MudService, sessionNotRegistered } from './service.ts'
+import { MudService, sessionNotRegistered, statusRowOf, type StatusRow } from './service.ts'
 import type { SessionRuntime } from './runtime.ts'
 import type { MudCore3Handle } from './tools.ts'
 // 流程实体（数据归 core3；mud-workflow 是纯架构）。type-only：词汇表类型引用。
@@ -359,13 +359,13 @@ export class MudRemoteService extends TypertRemoteService {
   /** 连接状态 + 接入状态。 */
   @Remote
   status(sessionId: string | undefined): {
-    state: string; admitted: boolean; sessions: readonly { sessionId: string; state: string; admitted: boolean }[]
+    state: string; admitted: boolean; sessions: readonly StatusRow[]
   } {
     if (sessionId !== undefined && sessionId !== '') {
       const status = this.service.status(sessionId)
-      return { state: status.state, admitted: status.admitted, sessions: this.service.statuses() }
+      return { state: status.state, admitted: status.admitted, sessions: this.service.statuses().map(statusRowOf) }
     }
-    return { state: 'disconnected', admitted: false, sessions: this.service.statuses() }
+    return { state: 'disconnected', admitted: false, sessions: this.service.statuses().map(statusRowOf) }
   }
 
   /**
@@ -411,17 +411,11 @@ export class MudRemoteService extends TypertRemoteService {
    * abort（tab 关闭/页面刷新）即清服务端订阅；status() 单次动词保留做初始回填。
    */
   @Remote({ mode: 'stream' })
-  async *watchStatus(signal: AbortSignal): AsyncIterable<{
-    sessions: readonly { sessionId: string; state: string; admitted: boolean }[]
-  }> {
-    // 边界收窄（与 status() 同型）：SessionStatus 的 loggedIn/world（WorldEntry.value
-    // 为 unknown）不过 Remote 边界；webui 只消费三字段，扩面随 T5 状态呈现一起做。
+  async *watchStatus(signal: AbortSignal): AsyncIterable<{ sessions: readonly StatusRow[] }> {
+    // 边界窄面（T11 收尾）：loggedIn 直传（字符串字面量），world 经 statusRowOf
+    // 扁平化 + 值字符串化（WorldEntry.value 的 unknown 不过 Remote 边界）。
     for await (const frame of this.service.watchStatusStream(signal)) {
-      yield {
-        sessions: frame.sessions.map(s => ({
-          sessionId: s.sessionId, state: s.state, admitted: s.admitted,
-        })),
-      }
+      yield { sessions: frame.sessions.map(statusRowOf) }
     }
   }
 }
@@ -535,11 +529,16 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
   const agentsLive = (): AgentsLive | undefined => ctx.get('agents') as unknown as AgentsLive | undefined
 
   // 投递回调：MUD 行流聚合后以用户消息投递进会话（等同人工提问）。
-  // 返回 false = 本次未投出（agent 离线或 followup 抛错），该批水位不推进（行仍在
-  // pending），等 agent 唤醒时由 flushPending 补投。
-  const deliver = (sessionId: string, text: string): boolean => {
+  // 返回 true = 已投出（followup 排队语义：回合中调用也合法，等下一回合消费）；
+  // 返回 false / 失败原因字符串 = 未投出，该批水位不推进（行仍在 pending），
+  // 等 agent 唤醒时由 flushPending 补投。失败原因经 deliverer.onBatch 进会话日志。
+  const deliver = (sessionId: string, text: string): boolean | string => {
     const agent = agentMap.get(sessionId)
-    if (agent === undefined) return false // 冷会话：批次保留，等 agent/created 时补投
+    if (agent === undefined) {
+      // 冷会话：批次保留，等 agent/created 时补投。原因字符串区分句柄缺失。
+      ctx.logger.warn(`mud-core3: 会话 ${sessionId} 投递时 agent 句柄缺失，批次保留待补投`)
+      return false
+    }
     try {
       const msg = createUserMessage({
         content: [{ type: 'text', text }],
@@ -549,7 +548,7 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
       return true
     } catch (error: unknown) {
       ctx.logger.warn(`mud-core3: 会话 ${sessionId} 投递失败，批次保留待补投: ${String(error)}`)
-      return false
+      return `followup 抛错：${error instanceof Error ? error.message : String(error)}`
     }
   }
 

@@ -11,7 +11,7 @@
  * @module @deepseek-ai/dsh-mud-webui/client/mud-state
  */
 
-import type { MudRemoteController } from './mud-remote.ts'
+import type { MudRemoteController, MudStatusFrame, MudWorldEntry } from './mud-remote.ts'
 import type { MudCredentialInfo, MudCredentialsController } from './mud-credentials.ts'
 
 /** One MUD game account attached to a server, bound to its own DSH session. */
@@ -47,11 +47,13 @@ export interface MudConnInfo {
   readonly error: string | null
 }
 
-/** Per-session status (连接 + 接入). */
+/** Per-session status (连接 + 接入 + 登录轴 + 世界窄面，T11 扩面). */
 export interface SessionStatusRow {
   readonly sessionId: string
   readonly state: string
   readonly admitted: boolean
+  readonly loggedIn: 'unknown' | 'inferred' | 'in-game'
+  readonly world: readonly MudWorldEntry[]
 }
 
 /** Full client-visible MUD state snapshot. */
@@ -384,13 +386,16 @@ export class MudStateController {
 
   /** 状态行落账（watchStatus 推帧与 status() 回填共用；focus 缺省用当前会话）。 */
   private applyStatusRows(
-    rows: readonly { sessionId: string; state: string; admitted: boolean }[],
+    rows: MudStatusFrame['sessions'],
     focusSessionId?: string,
   ): void {
     const sessionStatus: Record<string, SessionStatusRow> = {}
     for (const row of rows) {
       if (row.sessionId === '') continue
-      sessionStatus[row.sessionId] = { sessionId: row.sessionId, state: row.state, admitted: row.admitted }
+      sessionStatus[row.sessionId] = {
+        sessionId: row.sessionId, state: row.state, admitted: row.admitted,
+        loggedIn: row.loggedIn, world: row.world,
+      }
     }
     const focus = focusSessionId ?? this.state.conn.sessionId ?? undefined
     const focusRow = focus !== undefined ? sessionStatus[focus] : undefined

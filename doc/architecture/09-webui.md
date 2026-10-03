@@ -22,7 +22,7 @@ note: L7 呈现层：mud-webui（浏览器侧壳）
 | 服务器 CRUD | 建（选/建工作区 + `host`/`port`）/ 删（该服务器仍有账号时**宿主侧拒绝**）；**端点去重**——同一 `host:port`（大小写不敏感）只允许一个服务器条目，客户端**前置查重**（避免先建孤儿工作区），宿主 `addServer` **同规则拒绝**（权威闸） |
 | 账号 CRUD | 建（账号名 + 密码 → 写入宿主凭据域；**只交引用名**）/ **编辑**（账号行 ⋯ 菜单 → 编辑弹窗：改名经 `remote.mud.updateAccount` 落名册并同步 runtime 回显前缀；改密经 `credentials.set` 按**原引用名**覆盖写入，下次连接/登录流程即生效；preset 建会话时已绑定装配，编辑态只读）/ 删（先过宿主，再改本地） |
 | **preset 选择** | 账号表单新增 preset 下拉（`standard` / `mud-player`）；**建会话时显式传入**，不覆盖 registry 默认 |
-| **接入开关** | 账号行「接入 / 停止接入」→ `remote.mud.admit/stop`；接入状态徽标 |
+| **接入开关** | 账号行「接入 / 停止接入」→ `remote.mud.admit/stop`；接入状态徽标（账号行徽标瘦身（v0.0.25）：只留「已接入」+ 凭据**异常态**（无密码/未配置/只读），「凭据已配置」「已登录」徽标移除——登录状态在 HUD 表首行） |
 | 连接操作 | 手工 `connect`/`disconnect`；连接状态查看（侧栏行 + 画面 tab 工具栏） |
 | **启动 hydrate** | remote 挂载成功即拉 `servers()`/`accounts()`，用**宿主真值覆盖** localStorage 呈现缓存——刷新/宿主重启后的假服务器、死会话在启动时清掉 |
 | **统一错误面** | 「会话未登记」提示统一措辞（可能宿主重启过或页面残留旧会话：请刷新页面后重连或重建账号） |
@@ -30,6 +30,7 @@ note: L7 呈现层：mud-webui（浏览器侧壳）
 ## 9.3 MUD 日志 tab（诊断视图）
 
 - `conversation.view` 条目 `mud-log`，挂在**会话头 tab**：渲染该会话的 `remote.mud.logs` 环条目（按级别/通道着色）+ 落盘目录，作为连接/投递/闸门的**诊断面**（§13）。
+- **上部 20% HUD 区（T11，v0.0.25 表格式 / v0.0.26 起为唯一状态表面）**：视图顶部常驻 `MudHudTable`（键\|值两列，首行登录轴，GMCP 条目逐行，悬浮全值 + 来源；`conversation.view` entry body 内部拆分，零宿主新依赖）；下部日志条目滚动不受影响。
 - **tab 只在会话体渲染时出现**：宿主 blank 会话不渲染会话体 ⇒ 连接后第一批 MUD 行开启回合即脱离 blank（§2.4、§7.4）。
 - 视图选择**按会话持久化**（宿主持有，插件不代选）。
 - 数据只走 hooks + inject 回调（组件不自订阅）。
@@ -46,7 +47,7 @@ note: L7 呈现层：mud-webui（浏览器侧壳）
 | 帧处理 | 首帧 `snapshot` 整屏回放 → 增量 `output`（同 tick 合批）→ `state` 帧直通工具栏 |
 | 背压 | 服务端 follower 超限**显式断流**；客户端重新 follow 以新 snapshot 恢复（互为闭环） |
 | 关闭语义 | tab 关闭 = `abort` = **follower 清理**；**连接与投递不受影响** |
-| 工具栏 | 「连接/断开」按钮 = 调既有手工动词 `connect`/`disconnect`（**不属于画面通道**，画面通道纯扇出无输入）；按钮用宿主原生 `Button`（随亮/暗主题） |
+| 工具栏 | 「连接/断开」按钮 = 调既有手工动词 `connect`/`disconnect`（**不属于画面通道**，画面通道纯扇出无输入）；按钮用宿主原生 `Button`（随亮/暗主题）。画面 tab **无状态表**（v0.0.26 单表裁定：状态表只在聊天区日志视图，§9.3） |
 | 闸门 | **不受 admit 闸门约束**（显示面，§6.4）；未接入 = 录制/挂机模式照样可看 |
 | i18n | `locales.ts` 补 zh/en |
 
@@ -58,7 +59,7 @@ note: L7 呈现层：mud-webui（浏览器侧壳）
 - `remote.mud.watchStatus()` **流动词**：首帧推**全量快照**（`statuses()` 语义，覆盖全部已登记会话），之后**仅变化推帧**。
 - 客户端 `abort`（tab 关闭 / 页面刷新）⇒ generator `finally` **清服务端订阅**。
 - `status()` 单次动词**保留**做初始回填/兜底。
-- **边界收窄（T5 待做）**：`watchStatus` 目前只出 `{sessionId, state, admitted}`——`loggedIn` / `world` **不过 Remote 边界**（`WorldEntry.value` 为 `unknown`）；webui 状态呈现 `loggedIn`/`world` 列入 T5（§17.2）。
+- **边界窄面（T11 已收口）**：`status()`/`watchStatus()` 行面 = **`StatusRow`**（service.ts `statusRowOf` 映射，两动词共用）——`sessionId/state/admitted/loggedIn` 直传 + `world` **扁平数组**（`{zone,key,v,c,sk,st}`；值已 JSON 字符串化，`WorldEntry.value` 的 `unknown` 不过 Remote 边界）。webui 侧 `MudStatusFrame` 本地窄接口对应扩面。
 
 ## 9.6 凭据接线与客户端缓存
 

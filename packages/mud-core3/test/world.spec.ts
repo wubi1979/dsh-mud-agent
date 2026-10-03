@@ -2,6 +2,7 @@
  * world 测试 — 三期 T1 状态地基：
  *   - World：后到覆盖 / 分区快照 / clear 复位
  *   - 两轴接线：GMCP 到达 → loggedIn='in-game' + world 写入（不依赖行文匹配）
+ *   - 登录轴三态：声明判据命中 → inferred 先行，GMCP 加固 in-game（不降级），断线复位
  *   - 断线：两轴同时反转（conn → disconnected + loggedIn → unknown）+ world 清空
  *   - 两会话 world 隔离
  *   - service.status / watchStatus 携带两轴 + world，GMCP 变化推帧
@@ -150,6 +151,67 @@ describe('两轴接线（runtime，真实 TCP）', () => {
     expect(afterGmcp).toBeGreaterThanOrEqual(1)
     rt.disconnect()
     expect(changes).toBe(afterGmcp + 1)
+    rt.dispose()
+    await server.close()
+  })
+})
+
+describe('登录轴三态（声明判据先行，GMCP 加固）', () => {
+  it('声明判据命中（已连接）→ inferred；GMCP 到达 → 加固 in-game', async () => {
+    const server = await startGmcpServer()
+    const rt = new SessionRuntime('s1')
+    await connectRuntime(rt, server.port)
+    expect(rt.loggedIn).toBe('unknown')
+
+    // 判据行文（与 login.ts 成功判据同源；注意「欢迎来到」与建连横幅撞车不可用）
+    server.sockets[0]!.write('目前权限：(player)\r\n')
+    for (let i = 0; i < 50 && rt.loggedIn !== 'inferred'; i += 1) {
+      await new Promise(r => setTimeout(r, 20))
+    }
+    expect(rt.loggedIn).toBe('inferred')
+
+    // GMCP 到达加固
+    server.sockets[0]!.write(gmcpBytes('Status.Vitals', '{"hp":100}'))
+    for (let i = 0; i < 50 && rt.loggedIn !== 'in-game'; i += 1) {
+      await new Promise(r => setTimeout(r, 20))
+    }
+    expect(rt.loggedIn).toBe('in-game')
+    rt.dispose()
+    await server.close()
+  })
+
+  it('in-game 后判据行文不降级；断线复位 unknown', async () => {
+    const server = await startGmcpServer()
+    const rt = new SessionRuntime('s1')
+    await connectRuntime(rt, server.port)
+    server.sockets[0]!.write(gmcpBytes('Core.Login'))
+    for (let i = 0; i < 50 && rt.loggedIn !== 'in-game'; i += 1) {
+      await new Promise(r => setTimeout(r, 20))
+    }
+    expect(rt.loggedIn).toBe('in-game')
+
+    server.sockets[0]!.write('重新连线完毕\r\n')
+    await new Promise(r => setTimeout(r, 100))
+    expect(rt.loggedIn).toBe('in-game')
+
+    rt.disconnect()
+    expect(rt.loggedIn).toBe('unknown')
+    rt.dispose()
+    await server.close()
+  })
+
+  it('inferred 后断线同样复位 unknown', async () => {
+    const server = await startGmcpServer()
+    const rt = new SessionRuntime('s1')
+    await connectRuntime(rt, server.port)
+    server.sockets[0]!.write('目前权限：(player)\r\n')
+    for (let i = 0; i < 50 && rt.loggedIn !== 'inferred'; i += 1) {
+      await new Promise(r => setTimeout(r, 20))
+    }
+    expect(rt.loggedIn).toBe('inferred')
+
+    rt.disconnect()
+    expect(rt.loggedIn).toBe('unknown')
     rt.dispose()
     await server.close()
   })

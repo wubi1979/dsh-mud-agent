@@ -24,7 +24,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 
 | 包 | 用例 | 文件 |
 |---|---|---|
-| **`mud-core3`** | **222 例 / 19 文件** | `link/`：`line` · `telnet` · `mud` · `corpus`；`src/`：`store` · `accounts` · `runtime` · `deliver` · `read` · `tools` · `service` · `world` · `wake` · `screen` · `workflow` · `log/log-service`；装配层：`plugin-load`（工件面 e2e）· `login`（流程 E2E 五路径） |
+| **`mud-core3`** | **224 例 / 19 文件** | `link/`：`line` · `telnet` · `mud` · `corpus`；`src/`：`store` · `accounts` · `runtime` · `deliver` · `read` · `tools` · `service`（含 `statusRowOf`）· `world` · `wake` · `screen` · `workflow` · `log/log-service`；装配层：`plugin-load`（工件面 e2e）· `login`（流程 E2E 五路径） |
 | **`mud-workflow`** | **31 例 / 3 文件** | `registry` · `interpreter` · `tools` |
 
 **用例↔章节对照（覆盖重点）**
@@ -91,6 +91,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | **T2 工具面（三期）** | `mud_connect` + 归属父链上溯（live 注册表 + 环深护栏）+ 会话级持有者 + `mud_send` 拒绝序修订（删接入闸门） | ✅（T2a/T2b） |
 | **T3 脚本面** | `mud-workflow` 独立包 + core3 `workflowEnvFor` 缝 + `login` locked 流程实体 | ✅ |
 | **T4 自主行为** | kickoff 任务书面（admit/唤醒两触发点 + `taskBrief`）+ Wake（re-arm + 三守卫）+ persona 分工协议五条 + LLM 调用面闸门（建账号纯登记，§7.4.1） | ✅（T4b 实机验收通过，§16.4） |
+| **T5 收尾（T11）** | `StatusRow` 边界窄面（`statusRowOf`，world 扁平数组值字符串化）+ webui 状态呈现（画面 HUD 条 + 侧栏「已登录」徽标）+ 零回归 | ✅（§9.4/§9.5） |
 
 **完成定义（每个切片）**
 
@@ -100,18 +101,20 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 4. `doc/architecture/` 对应章节同步 + `CHANGELOG` 一行；
 5. 涉及行为变更的切片**先有会红的用例**。
 
-## 16.6 文档—实现一致性清单（本次重写发现，待清理）
+## 16.6 文档—实现一致性清单（文档重写期发现）
 
 | # | 矛盾 | 处置 |
 |---|---|---|
-| 1 | `packages/mud-core3/src/index.ts` 中 `viewCols` 注释写"缺省 80"，实际与文档均为 **120** | 改注释（本次随 §引用一并修） |
-| 2 | `src/wake.ts` 注释"缺省 120_000 对齐 **§19**"——`§19` 是 v1 归档编号 | 改指 §7.5（本次） |
-| 3 | `src/link/corpus.ts` 注释标 **§16**——v1 归档编号 | 改指 §13.4（本次） |
-| 4 | 根 `README.md` 仍称 `packages/mud-core2` 是"当前唯一生产路径"并提供 `pnpm dev:core2` | 改写（本次，§17.2） |
-| 5 | `AGENTS.md` 检索规则指向不存在的"§1 不变量 / §2 术语"、`doc/flows/`、`doc/history/` | 改写（本次，§17.2） |
+| 1 | `packages/mud-core3/src/index.ts` 中 `viewCols` 注释写"缺省 80"，实际与文档均为 **120** | 已清（注释现为「缺省 120（§5.3）」） |
+| 2 | `src/wake.ts` 注释"缺省 120_000 对齐 **§19**"——`§19` 是 v1 归档编号 | 已清（改指 §7.5） |
+| 3 | `src/link/corpus.ts` 注释标 **§16**——v1 归档编号 | 已清（改指 §13.4） |
+| 4 | 根 `README.md` 仍称 `packages/mud-core2` 是"当前唯一生产路径"并提供 `pnpm dev:core2` | 已清（改写为在役/退役表，§17.2） |
+| 5 | `AGENTS.md` 检索规则指向不存在的"§1 不变量 / §2 术语"、`doc/flows/`、`doc/history/` | 已清（改写为 §0.3/§0.4 检索纪律，§17.2） |
 | 6 | `doc/CHANGELOG.md` 历史行指向 `doc/plans/c5.2-…`（实际在 `doc/likely/`） | **不回改历史行**；映射登记在新条目 |
-| 7 | `watchStatus` 未出 `loggedIn`/`world`（webui 状态呈现未做） | T5 待办（§17.2） |
+| 7 | ~~`watchStatus` 未出 `loggedIn`/`world`~~ **已完成（T11）**：`StatusRow` 窄面 + HUD 条呈现（§9.4/§9.5） | 已清 |
 | 8 | 删账号后会话不销毁（宿主能力缺口） | 记为宿主侧待补面（§2.4） |
+
+> T3（2026-10-03）复核结论：#1–#5 已在文档重写期修毕；src 注释现存 § 引用全部为现役编号或正确带版本前缀（`v2 §7.2`/`v2 §5`），无归档编号残留。
 
 ---
 
@@ -130,10 +133,9 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 
 | # | 待办 | 依据 |
 |---|---|---|
-| 1 | **T5 收尾**：webui 状态呈现（`loggedIn`/`world` 过 Remote 边界）+ 零回归 | §9.5、§16.6 #7 |
-| 2 | **清理 §16.6 一致性清单**（注释与门面） | §16.6 |
-| 3 | 宿主能力缺口跟踪（会话删除面） | §2.4 |
-| 4 | **装配层加载冒烟可执行化**（当前为手工步骤） | §16.1 |
+| 1 | **清理 §16.6 一致性清单**（注释与门面） | §16.6 |
+| 2 | 宿主能力缺口跟踪（会话删除面） | §2.4 |
+| 3 | **装配层加载冒烟可执行化**（当前为手工步骤） | §16.1 |
 
 ## 17.3 后置清单（按例证生长，本版不做）
 
