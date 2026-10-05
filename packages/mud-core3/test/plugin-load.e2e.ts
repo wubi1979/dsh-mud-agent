@@ -33,7 +33,12 @@ describe.skipIf(built === null)('装配层加载冒烟（lib 产物）', () => {
     await ctx.plugin({ name: built.name, inject: [...built.inject], apply: built.apply })
 
     // 引擎窄面（工具面依赖；缺席 = 工具执行可读拒绝）。
-    expect(ctx.get('mudCore3')).toBeDefined()
+    const core = ctx.get('mudCore3') as { builtinFlows?: { name: string; locked: boolean }[] } | undefined
+    expect(core).toBeDefined()
+    // 装载冒烟（T13 断言⑬）：locked 预制流程入册（registerBuiltins fail-loud 过闸）。
+    const flowNames = (core?.builtinFlows ?? []).map(f => f.name)
+    expect(flowNames).toContain('login')
+    expect(flowNames).toContain('fullme')
     // remote 面：命名空间在册，否则网关判未注册 → 全动词 404。
     const remote = ctx.get('mudRemote') as { typertRemote?: { namespace?: string } } | undefined
     expect(remote?.typertRemote?.namespace).toBe('mud')

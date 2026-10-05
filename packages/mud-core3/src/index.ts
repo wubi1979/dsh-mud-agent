@@ -27,12 +27,18 @@ import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-llm'
 import { join } from 'node:path'
 
-import { MudService, sessionNotRegistered, statusRowOf, type StatusRow } from './service.ts'
+import {
+  MudService, sessionNotRegistered, statusRowOf,
+  DEFAULT_CAPTCHA_TIMEOUT_MS,
+  type CaptchaFrame, type StatusRow,
+} from './service.ts'
 import type { SessionRuntime } from './runtime.ts'
 import type { MudCore3Handle } from './tools.ts'
+import { MAX_TIMEOUT_MS } from './tools.ts'
 // 流程实体（数据归 core3；mud-workflow 是纯架构）。type-only：词汇表类型引用。
 import type { WorkflowRecord } from 'mud-workflow'
 import { login } from './flows/login.ts'
+import { fullme } from './flows/fullme.ts'
 import type { SessionLogOptions } from './log/log-service.ts'
 import { resolveLogDir, purgeSessionLogs } from './log/log-service.ts'
 // Remote 边界类型从非根子路径取（typert 要求，见 src/types.ts）。
@@ -107,10 +113,28 @@ export interface MudCore3Config {
   taskBrief?: string
   /** 静默唤醒时长毫秒（正整数；行到达即重置，到期且守卫全过才投任务书）。缺省 120_000。 */
   silenceMs?: number
+  /**
+   * 半开探活静默首发延迟毫秒（T12 静默伴随自驱，正整数；自最后数据到达起
+   * 计时）。缺省 90_000。
+   */
+  probeStartMs?: number
+  /** 半开探活无应答重发间隔毫秒（T12，正整数；启动期 fail-loud 校验）。缺省 9_000。 */
+  probeRetryMs?: number
+  /** 半开探活总次数上限（T12，正整数；判死刻度 = probeStartMs + 次数 × probeRetryMs）。缺省 3。 */
+  probeMaxAttempts?: number
+  /** 意外断线自动重连尝试次数上限（T5.2，正整数；到限次保持断开等人工）。缺省 5。 */
+  reconnectMaxAttempts?: number
+  /** 自动重连尝试固定间隔毫秒（T5.2，正整数）。缺省 30_000。 */
+  reconnectIntervalMs?: number
   /** mud_send 缺省总超时毫秒（工具参数缺省，钳制 ≤ 60000）。缺省 15000。 */
   sendTimeoutMs?: number
   /** mud_send 裸读尾部/兜底行数。缺省 50。 */
   sendMaxLines?: number
+  /**
+   * 验证码挂起预算毫秒（T13 D4/B4：**独立预算**，不受 MAX_TIMEOUT_MS/silenceMs
+   * 校验约束；fail-loud 正整数）。缺省 180_000 = URL 有效期 3 分钟。
+   */
+  captchaTimeoutMs?: number
 }
 
 /** 宿主 credentials 服务的最小结构化面（core3 不依赖 dsh-credentials：只需 resolve）。 */
@@ -431,12 +455,85 @@ export class MudRemoteService extends TypertRemoteService {
       yield { sessions: frame.sessions.map(statusRowOf) }
     }
   }
+
+  // ── 验证码通道（T13 D7：独立流动词 + 三输入动词）──────────────────
+
+  /**
+   * 验证码流（stream 动词，watchStatus 同型）：首帧全量挂起快照（页面刷新/
+   * 重连/重开恢复弹窗——等待态必须可从流恢复，否则流程白等预算），条目变化
+   * （挂起/刷新换图/收束摘除）时整体重推。全局独立订阅，与画面 tab 开关无关
+   * （D7：不加 follow 帧 kind 的缘由）。
+   */
+  @Remote({ mode: 'stream' })
+  async *watchCaptcha(signal: AbortSignal): AsyncIterable<CaptchaFrame> {
+    yield* this.service.watchCaptchaStream(signal)
+  }
+
+  /** 提交人工码值（resolve 挂起；`fullme {captcha}` 由流程动作统一发送）。 */
+  @Remote
+  async captchaAnswer(sessionId: string | undefined, value: string | undefined): Promise<{ sessionId: string }> {
+    const id = requireId(sessionId, 'sessionId')
+    if (value === undefined || value.trim() === '') throw new Error('value 必填（验证码值）')
+    await this.service.captchaAnswer(id, value)
+    return { sessionId: id }
+  }
+
+  /** 中止（专用 aborted 出口收束——流程结果 agent 可读）。 */
+  @Remote
+  async captchaAbort(sessionId: string | undefined): Promise<{ sessionId: string }> {
+    const id = requireId(sessionId, 'sessionId')
+    await this.service.captchaAbort(id)
+    return { sessionId: id }
+  }
+
+  /** 刷新：重抓同 URL 页出新图（每轮挂起限 1 次；挂起 Promise 不动、计时不重置）。 */
+  @Remote
+  async captchaRefresh(sessionId: string | undefined): Promise<{ sessionId: string; image: string }> {
+    const id = requireId(sessionId, 'sessionId')
+    const image = await this.service.captchaRefresh(id)
+    return { sessionId: id, image: image.image }
+  }
 }
 
 // ── 插件主体 ───────────────────────────────────────────────────
 
 /** 宿主插件装配。 */
 export function apply(ctx: Context, config: MudCore3Config = {}): void {
+  // ── 启动期 fail-loud 校验（T5.3：非法配置拒装，不静默钳制）────────
+  const positiveInt = (value: number | undefined, key: string): void => {
+    if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
+      throw new Error(`mud-core3 配置 ${key} 必须为正整数，got ${String(value)}`)
+    }
+  }
+  const silenceMs = config.silenceMs ?? 120_000
+  positiveInt(config.silenceMs, 'silenceMs')
+  positiveInt(config.probeStartMs, 'probeStartMs')
+  positiveInt(config.probeRetryMs, 'probeRetryMs')
+  positiveInt(config.probeMaxAttempts, 'probeMaxAttempts')
+  positiveInt(config.reconnectMaxAttempts, 'reconnectMaxAttempts')
+  positiveInt(config.reconnectIntervalMs, 'reconnectIntervalMs')
+  // 验证码挂起预算（T13 D4/B4）：独立预算，只查正整数——不并入 MAX_TIMEOUT_MS/
+  // silenceMs 校验（挂起等人工与投递/探活预算分立，两预算先后串行不竞争）。
+  positiveInt(config.captchaTimeoutMs, 'captchaTimeoutMs')
+  // 探测窗口收束纪律（T12 D6）：探测窗口整体落在静默窗口内——判死刻度
+  // probeStartMs + probeMaxAttempts × probeRetryMs ≤ silenceMs（缺省 117 ≤ 120，
+  // 唤醒到期点前留 3s 收束），防静默配小后探测溢出到唤醒点之后。
+  const probeStartMs = config.probeStartMs ?? 90_000
+  const probeRetryMs = config.probeRetryMs ?? 9_000
+  const probeMaxAttempts = config.probeMaxAttempts ?? 3
+  const probeDeadline = probeStartMs + probeMaxAttempts * probeRetryMs
+  if (probeDeadline > silenceMs) {
+    throw new Error(
+      `mud-core3 配置探测窗口（probeStartMs ${probeStartMs} + probeMaxAttempts ${probeMaxAttempts}`
+      + ` × probeRetryMs ${probeRetryMs} = ${probeDeadline}ms）超过静默期（silenceMs ${silenceMs}ms）：`
+      + '判死刻度必须落在唤醒到期点之前',
+    )
+  }
+  // 纪律升级（PLAN T5 第 2 章）：在途超时 ≤ 静默期——工具在途 read 的 timeoutMs
+  // 上限 MAX_TIMEOUT_MS 必须小于静默期，否则在途 read 未收束静默永不到期（探活饿死）。
+  if (MAX_TIMEOUT_MS >= silenceMs) {
+    throw new Error(`mud-core3 配置 silenceMs（${silenceMs}ms）必须大于 MAX_TIMEOUT_MS（${MAX_TIMEOUT_MS}ms）：在途超时不得超过静默期`)
+  }
   // 凭据解析：缺省走宿主 credentials 域（页面 credentials.set 写入，connect 时实时解析）。
   // 明文只进登录发送，不进 roster/日志/上下文。
   const resolveCreds: CredentialResolver = config.resolveCreds ?? (async (account) => {
@@ -577,6 +674,20 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     deliver,
     delivererConfig,
     log: logOptions,
+    // T12 半开探活刻度（静默伴随自驱：90s 首发 / 9s 重发 / 3 次上限 = 117s 判死；
+    // 启动期 fail-loud 校验见 apply 顶部 D6）。
+    keepalive: {
+      startMs: probeStartMs,
+      retryMs: probeRetryMs,
+      maxAttempts: probeMaxAttempts,
+    },
+    // T5.2 自动重连刻度（缺省 5 次 / 30s 间隔；到限次保持断开等人工）。
+    reconnect: {
+      maxAttempts: config.reconnectMaxAttempts ?? 5,
+      intervalMs: config.reconnectIntervalMs ?? 30_000,
+    },
+    // T13 验证码挂起预算（独立预算，缺省 180s = URL 有效期；正整数校验见 apply 顶部）。
+    captchaTimeoutMs: config.captchaTimeoutMs ?? DEFAULT_CAPTCHA_TIMEOUT_MS,
     ...(config.recordLines !== undefined ? { recordLines: config.recordLines } : {}),
     // 父会话查找 = 官方 live 注册表实时读（2026-10-01 裁定：不自建归属状态）。
     // durable session lineage（session.header.parentSession，subagent/workflow 派发
@@ -633,9 +744,11 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
   }
 
   // ── 静默唤醒器（T4a，每会话一实例）────────────────────────────
-  // 行到达 re-arm（runtime.onActivity）+ 到期三守卫（已接入 + 非回合中 + 持有者
-  // 空闲，任一不满足只 re-arm）；命中 → kickoff 投状态任务书。不做子 agent
-  // 守卫（V7 纪律：委派结果走 subagent 工具返回值，插件不查子级）。
+  // 行到达 re-arm（runtime.onActivity）+ 到期守卫（传输面：非回合中 + 持有者
+  // 空闲，任一不满足只 re-arm；闸门面：已接入才 fire）；命中 → kickoff 投状态
+  // 任务书。探活不在此（T12 D5：link 层自驱静默伴随探测，判死经断线→自动
+  // 重连链告知）。不做子 agent 守卫（V7 纪律：委派结果走 subagent 工具
+  // 返回值，插件不查子级）。
   const wakes = new Map<string, Wake>()
 
   // ── agent/created → 名册判定 → 登记会话 + 记录 agent 句柄 + 补投 ──
@@ -647,7 +760,9 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     const rt = service.register(sessionId, account.name)
     // 记录 agent 句柄（投递用；agent 有 followup 方法）
     agentMap.set(sessionId, { followup: msg => agent.followup(msg) })
-    // 静默唤醒器（每会话一实例）：行到达 re-arm + 到期三守卫，命中投任务书。
+    // 静默唤醒器（每会话一实例）：行到达 re-arm + 到期守卫，命中投任务书。
+    // 探活已下沉 link 层自驱静默伴随探测（T12 D5）——到期点零探测依赖，
+    // 三守卫全过直接 fire。
     if (!wakes.has(sessionId)) {
       const wake = new Wake({
         guards: {
@@ -720,7 +835,7 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
       const r = await service.connect(sessionId)
       return { state: r.state }
     },
-    workflowEnvFor: (sessionId: string, holder: string) => service.workflowEnvFor(sessionId, holder),
+    workflowIoFor: (sessionId: string, holder: string) => service.workflowIoFor(sessionId, holder),
     stateOf: (sessionId: string) => {
       const status = service.status(sessionId)
       const rt = service.get(sessionId)
@@ -735,7 +850,8 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     },
     defaults: toolDefaults,
     // 流程实体（数据归 core3，2026-10-01 裁定）：mud-workflow 注册表启动期挂载。
-    builtinFlows: [login],
+    // fullme（T13）：captcha 词汇表 T13.1 已落地，registerBuiltins fail-loud 可过（B6）。
+    builtinFlows: [login, fullme],
   } satisfies MudCore3Service)
 
   // ── Remote 服务注册 ────────────────────────────────────────

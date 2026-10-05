@@ -2,14 +2,15 @@
  * registry — 流程注册表：锁定预制（随代码）+ agent 修缮（storage 域 / 内存降级）。
  *
  * 分层语义（PLAN「流程面演进」）：
- *   - **locked 预制**：`locked: true`（login）固锁——拒改拒删，全系统唯一
- *     凭据流程所在（红线：sendCredential 只允许 locked 流程用）；
+ *   - **locked 预制**：`locked: true`（login）固锁——拒改拒删，locked-only
+ *     动词流程所在（红线：sendCredential/captcha 只允许 locked 流程用）；
  *   - **非 locked 预制**：随包分发的粗胚，agent 可 save 覆盖（version 自增）、
  *     delete 还原为预制——粗胚 → 执行 → 结构化失败现场 → 修缮 → 重试 = 进化闭环；
  *   - **agent 新建**：save 直接入库（storage 域持久化，域不可用降级内存）。
  *
  * 保存门（确定性校验即生效）：schema 校验（zod）+ 结构校验（checkFlow）+
- * 凭据动词拒绝（usesCredentialVerb——agent 可写词汇表不含 sendCredential）。
+ * locked-only 动词拒绝（usesCredentialVerb——agent 可写词汇表不含
+ * sendCredential/captcha）。
  *
  * 存储纪律承 core3 名册同型：storage 域就绪前内存先行，域挂上后把内存记录
  * 迁入（切换不丢数据）；域不可用长期内存运行（重启丢 agent 修缮，warn 点名）。
@@ -71,7 +72,7 @@ export class WorkflowRegistry {
       workflowRecordSchema.parse(record)
       checkFlow(record.flow)
       if (record.locked !== true && usesCredentialVerb(record.flow)) {
-        throw new Error(`预制流程 ${record.name} 违反凭据红线：sendCredential 只允许 locked 流程使用`)
+        throw new Error(`预制流程 ${record.name} 违反凭据红线：sendCredential/captcha 只允许 locked 流程使用`)
       }
       map.set(record.name, record)
     }
@@ -128,7 +129,7 @@ export class WorkflowRegistry {
       throw new Error(`流程 ${input.name} 已锁定，不可修改`)
     }
     if (usesCredentialVerb(input.flow)) {
-      throw new Error('已拒绝：sendCredential 只允许锁定流程使用（凭据时序错误会把密码发进公屏）')
+      throw new Error('已拒绝：sendCredential/captcha 只允许锁定流程使用（凭据红线）')
     }
     const record = workflowRecordSchema.parse({
       name: input.name,

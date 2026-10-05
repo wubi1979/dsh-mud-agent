@@ -157,6 +157,7 @@ function makeStatus(over: Partial<{
   state: 'disconnected' | 'connecting' | 'connected'
   admitted: boolean
   loggedIn: 'unknown' | 'in-game'
+  probeState: 'idle' | 'probing'
   world: Record<string, Record<string, { value: unknown; confidence: 'measured' | 'inferred'; source: { kind: 'gmcp' | 'system'; time: number } }>>
 }> = {}): Parameters<typeof import('../src/service.ts')['statusRowOf']>[0] {
   return {
@@ -164,6 +165,7 @@ function makeStatus(over: Partial<{
     state: 'connected',
     admitted: true,
     loggedIn: 'unknown',
+    probeState: 'idle',
     world: {},
     ...over,
   }
@@ -283,7 +285,7 @@ describe('MudService 错误路径', () => {
     await expect(service.connect('a1')).rejects.toThrow('未绑定服务器')
   })
 
-  it('凭据解析失败 workflowEnvFor 抛错（connect 只建连，不再解析凭据）', async () => {
+  it('凭据解析失败 workflowIoFor 抛错（connect 只建连，不再解析凭据）', async () => {
     const server = await startMockServer()
     const servers = new Map<string, ServerRecord>([
       ['ws-1', { workspaceId: 'ws-1', name: 'S1', host: '127.0.0.1', port: server.port }],
@@ -296,7 +298,7 @@ describe('MudService 错误路径', () => {
     const service = new MudService(makeDeps(servers, accounts, creds))
     service.register('a1')
     await service.connect('a1') // 只建连，凭据解析已随盲发退役移出 connect
-    await expect(service.workflowEnvFor('a1', 'workflow:login')).rejects.toThrow('凭据')
+    await expect(service.workflowIoFor('a1', 'workflow:login')).rejects.toThrow('凭据')
     await server.close()
   })
 
@@ -566,7 +568,7 @@ describe('MudService 连接失败可诊断', () => {
     expect(entries.some(e => e.level === 'error' && e.text.includes('未绑定服务器'))).toBe(true)
   })
 
-  it('凭据解析失败：错误面与日志都带引用名（workflowEnvFor 路径）', async () => {
+  it('凭据解析失败：错误面与日志都带引用名（workflowIoFor 路径）', async () => {
     const server = await startMockServer()
     const servers = new Map<string, ServerRecord>([
       ['ws-1', { workspaceId: 'ws-1', name: 'S', host: '127.0.0.1', port: server.port }],
@@ -574,9 +576,9 @@ describe('MudService 连接失败可诊断', () => {
     const accounts = new Map<string, AccountRecord>([['a1', account({ passRef: 'MUD_MISSING' })]])
     const service = new MudService({ ...makeDeps(servers, accounts, new Map()), log: { bufferMax: 50 } })
     service.register('a1')
-    await service.connect('a1') // 只建连；凭据解析归 workflowEnvFor
+    await service.connect('a1') // 只建连；凭据解析归 workflowIoFor
 
-    await expect(service.workflowEnvFor('a1', 'workflow:login')).rejects.toThrow('MUD_MISSING')
+    await expect(service.workflowIoFor('a1', 'workflow:login')).rejects.toThrow('MUD_MISSING')
     const entries = service.logOf('a1')!.entries
     expect(entries.some(e => e.level === 'error' && e.text.includes('MUD_MISSING'))).toBe(true)
     await server.close()

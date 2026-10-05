@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { WorkflowRegistry, type HostTable } from '../src/registry.ts'
+import { checkFlow } from '../src/schema.ts'
 import type { Flow, WorkflowRecord } from '../src/schema.ts'
 
 /** 最小合法流程（单步，等一行后成功出口）。 */
@@ -140,6 +141,89 @@ describe('WorkflowRegistry 构造门（预制 fail-loud）', () => {
       },
     })
     expect(() => new WorkflowRegistry([bad])).toThrow(/sendCredential/)
+  })
+})
+
+describe('captcha 动作红线与校验门（T13.1）', () => {
+  /** captcha 纯动作步缩样（无 wait——wait 门已废止，结构收束归 judge 窗）。
+   * T14 D9 参数化：url 收槽面（本用例只验红线，值任意）。 */
+  const captchaFlow: Flow = {
+    entry: 'answer',
+    steps: [
+      { id: 'answer', action: { captcha: { url: '{captchaUrl}' } }, next: { exit: { stage: 'success', ok: true } } },
+    ],
+  }
+
+  it('④ save 侧：agent 流程含 captcha 可读拒绝（locked-only 红线，与 sendCredential 同列）', async () => {
+    const registry = new WorkflowRegistry()
+    await expect(registry.save({ name: 'demo', title: '演示', flow: captchaFlow }))
+      .rejects.toThrow(/captcha/)
+  })
+
+  it('⑥ captcha 纯动作步（无 wait）合法通过：checkFlow 不抛 + locked 预制构造通过', () => {
+    expect(() => checkFlow(captchaFlow)).not.toThrow()
+    const registry = new WorkflowRegistry([record({ name: 'fullme', locked: true, flow: captchaFlow })])
+    expect(registry.get('fullme')).toBeDefined()
+  })
+
+  it('构造门：非 locked 预制含 captcha throw（红线）', () => {
+    expect(() => new WorkflowRegistry([record({ flow: captchaFlow })])).toThrow(/captcha/)
+  })
+})
+
+describe('捕获槽保存门（T14.1：captures 声明四校验，2.3/D10）', () => {
+  /** 捕获步缩样（until/failOn/captures 可覆写）。 */
+  function captureFlow(overrides: {
+    until?: string[]
+    captures?: string[]
+  }): Flow {
+    const { until = ['^(\\S+) 线索'], captures = ['who'] } = overrides
+    return {
+      entry: 'a',
+      steps: [{
+        id: 'a',
+        wait: { until, captures, timeoutMs: 1000 },
+        next: { exit: { stage: 'success', ok: true } },
+      }],
+    }
+  }
+
+  it('合法声明通过：until[0] 组数 ≥ captures 数', () => {
+    expect(() => checkFlow(captureFlow({ until: ['^(\\S+)给(\\S+)的东西'], captures: ['from', 'what'] }))).not.toThrow()
+  })
+
+  it('④a 保留名拒存（captcha/name/pass）', () => {
+    for (const name of ['captcha', 'name', 'pass']) {
+      expect(() => checkFlow(captureFlow({ captures: [name] }))).toThrow(/保留名/)
+    }
+  })
+
+  it('④b 组数不足拒存（until[0] 捕获组少于 captures 声明）', () => {
+    const bad = captureFlow({ until: ['^(\\S+) 线索'], captures: ['a', 'b'] })
+    expect(() => checkFlow(bad)).toThrow(/捕获组 1 个，少于 captures 声明的 2 个/)
+  })
+
+  it('④c 非 until[0] 引入捕获组拒存（组号计数与提取会错位）', () => {
+    const bad = captureFlow({ until: ['^(\\S+) 线索', '^(\\S+) 出现'], captures: ['who'] })
+    expect(() => checkFlow(bad)).toThrow(/只允许出现在 until\[0\]/)
+  })
+
+  it('④d 槽名非法拒存（只允许字母/数字/下划线）', () => {
+    expect(() => checkFlow(captureFlow({ captures: ['attacker-name'] }))).toThrow(/槽名非法/)
+  })
+
+  it('④e captures 无 until 拒存', () => {
+    const bad: Flow = {
+      entry: 'a',
+      steps: [{ id: 'a', wait: { gaCount: 1, captures: ['who'], timeoutMs: 1000 }, next: { exit: { stage: 'success', ok: true } } }],
+    }
+    expect(() => checkFlow(bad)).toThrow(/没有 until 判据/)
+  })
+
+  it('④f save 侧联动：captures 非法流程经 registry.save 可读拒绝', async () => {
+    const registry = new WorkflowRegistry()
+    await expect(registry.save({ name: 'demo', title: '演示', flow: captureFlow({ captures: ['pass'] }) }))
+      .rejects.toThrow(/保留名/)
   })
 })
 

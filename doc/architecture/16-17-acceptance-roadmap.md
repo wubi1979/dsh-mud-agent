@@ -24,22 +24,24 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 
 | 包 | 用例 | 文件 |
 |---|---|---|
-| **`mud-core3`** | **224 例 / 19 文件** | `link/`：`line` · `telnet` · `mud` · `corpus`；`src/`：`store` · `accounts` · `runtime` · `deliver` · `read` · `tools` · `service`（含 `statusRowOf`）· `world` · `wake` · `screen` · `workflow` · `log/log-service`；装配层：`plugin-load`（工件面 e2e）· `login`（流程 E2E 五路径） |
-| **`mud-workflow`** | **31 例 / 3 文件** | `registry` · `interpreter` · `tools` |
-
-**用例↔章节对照（覆盖重点）**
+| **`mud-core3`** | **288 例 / 23 文件** | `link/`：`line` · `telnet` · `mud` · `keepalive` · `corpus`；`src/`：`store` · `accounts` · `runtime` · `deliver` · `read` · `tools` · `service`（含 `statusRowOf`）· `world` · `wake` · `screen` · `classify` · `llm-gate` · `reconnect` · `workflow` · `log/log-service`；装配层：`plugin-load`（工件面 e2e）· `login`（流程 E2E 五路径）· `fullme`（流程 E2E 主链/stale 自愈/abort/三退出路径/URL 槽化断言） |
+| **`mud-workflow`** | **56 例 / 3 文件** | `registry`（含捕获槽保存门四校验）· `interpreter`（含捕获槽语义）· `tools` |
+| **`mud-webui`** | **7 例 / 1 文件** | `mud-captcha`（控制器：订阅/帧 diff/提交/中止/刷新配额/防串帧） |
 
 | 用例组 | 覆盖章节 |
 |---|---|
-| `link/{line,telnet,mud,corpus}` | §3.2–§3.5（连接代次、建连失败、并发 connect、行化、语料） |
+| `link/{line,telnet,mud,keepalive,corpus}` | §3.2–§3.5（连接代次、建连失败、并发 connect、探活刻度与 busy 谓词、行化、语料） |
+| `reconnect` · `classify` · `llm-gate` | §3.2/§11.3（自动重连限次与打断）、§6.3（行分类与投递剔除）、§7.4.1（LLM 调用面闸门） |
 | `runtime` · `deliver` · `read` | §4.2–§4.5（录制上限、水位线不重投、turn/end 冲刷、失败重试、裸读、判定序） |
 | `tools` | §8.2–§8.7（注册自检、拒绝序、禁词全段扫描、`mud_state` 不受闸门、listen 编译、超时钳制） |
 | `screen` | §5.3（ANSI 入 snapshot、回显入屏而凭据缺席、背压断流与 re-follow、两会话屏隔离、跨重连续写、attach 原子性、合批） |
 | `store` · `accounts` | §11.1–§11.2、§14.3（内存/域表、记录 schema、降级、先落名册顺序、失败回滚、`admitted` 持久化） |
 | `world` | §10.3–§10.4（分区/来源、断线复位） |
 | `wake` | §7.5（re-arm、三守卫、fire 后不重复） |
-| `workflow`（core3 侧） | §8.8、§8.14（`workflowEnvFor` 缝、login E2E 五路径） |
-| `mud-workflow/{registry,interpreter,tools,login}` | §8.10–§8.15 |
+| `workflow`（core3 侧） | §8.8、§8.14（`workflowIoFor` 缝、login E2E 五路径） |
+| `fullme`（core3 侧） | §8.17（captcha 双闸、`awaitCaptcha(url)` 原语、`{captcha}` 槽与 pass 掩码排除、stale 自愈环、等待注册表三退出路径；T14：URL 经捕获槽传入、答错重入沿缓存图不重抓、URL 行未出现 → 结构化 timeout、`io.recentLines` 水位过滤回归） |
+| `mud-workflow/{registry,interpreter,tools,login}` | §8.10–§8.15、§8.17（`awaitCaptcha` 原语双侧同步：接口声明 + 缝实现；T14：捕获槽语义①–⑧ + 保存门四校验） |
+| `mud-webui/mud-captcha` | §9.7（弹窗呈现：订阅恢复、帧边界 diff、提交/中止/刷新） |
 | `plugin-load`（工件面 e2e） | §16.1（装配层加载冒烟：`apply` 不得失败，引擎窄面与 remote 命名空间在册） |
 
 ## 16.3 验收断言表
@@ -49,7 +51,8 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | **多账号隔离** | N 账号同时在线：各持一条连接、各向自己的会话投递，**互不串线**（两会话隔离用例） | §5.5、§11 |
 | **账号 = 自动会话** | 建账号**一个动作**完成会话自动创建绑定；`sessionId` = 账号 id 持久；**无独立会话操作面** | §11.2 |
 | **服务器 = 工作区 + 字段** | 建服务器即建工作区；roster 按 `workspaceId` 存 `host`/`port`；页面呈现沿用既有实现不改 | §1.4、§11.1 |
-| **手工连接** | `connect` **只建连**（幂等：已连接不重连、不踢已登录会话；登录归 locked 流程）；`disconnect` 硬收尾；断线后**保持断开态**（不自动重连，等手工/静默唤醒兜底规划） | §3.2、§11.3 |
+| **手工连接** | `connect` **只建连**（幂等：已连接不重连、不踢已登录会话；登录归 locked 流程）；`disconnect` 硬收尾；**手工断开不自动重连**（闸门 `hasConnected && !manualDisconnected`，冷启动同样不重连） | §3.2、§11.3 |
+| **探活与自动重连** | 探活 = **link 层自驱静默伴随探测**（T12）：时钟锚 = 最后数据到达时刻（任意行/GA 到达即判活并重开窗口），静默满 `probeStartMs`（缺省 90s）发 AYT（判据 `^\[-Yes-\]`），无应答每 `probeRetryMs`（9s）重发共 `probeMaxAttempts`（3）次，**117s 判死**（落在 `silenceMs` 120s 唤醒点前）；busy 谓词（`holderBusy ∥ isInTurn`）为真的探测 tick 跳过；判活 link 内部消化、判死硬收尾转自动重连；意外断开（socket close/EOF/探活判死）自动重连（限次缺省 5 次 × 30s 后放弃等人工；手工动作打断在飞循环）；重连成功**只连不登** + 显式 arm 静默计时；旧行不重复投递；未接入会话同样探活与重连 | §3.2、§10.4、§11.3 |
 | **MUD→agent 投递** | 接入后：MUD 行流以**用户消息**进入会话并触发回合，agent 产生回答（端到端）；静默窗口聚合生效（一批 = 一条消息，非逐行）；两会话各收各的 | §6.2 |
 | **接入闸门** | 未接入（缺省）与停止接入后：**MUD 信息不再进入**（新投递为零）、行流照常积累；接入**水位 = 接入时刻**（积压不回放）；人工提问不受影响 | §6.3、§6.6 |
 | **preset 选择** | 建账号可选 `standard`/`mud-player`；任意 preset 的账号**都有 MUD 源**（归属 = roster 判定，不按 preset 排除） | §1.4、§7.1 |
@@ -60,6 +63,8 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | **状态面** | 两轴 `conn`/`loggedIn` 语义正确（断线复位两轴 + World 整体复位）；GMCP 包到达即置 `in-game`（**权威信号，不依赖行文匹配**）；World 分区/置信度/来源追溯，后到覆盖 | §10 |
 | **归属上溯** | 子 agent/流程调用沿 `session.header.parentSession` 上溯命中账号会话即可用其 runtime；**祖先不 live → 可读拒**；环深护栏 32 层；**不开 `sessionId` 参数** | §8.5、§12.4 |
 | **流程面** | 五工具（`run` + `list/get/save/delete`）现役；`locked` 拒改拒删；`save` 过三门（zod + `checkFlow` + 凭据红线）；**非 done/failOn 收束一律结构化 timeout**；出口 pass 掩码（凭据不泄露）；`login`（locked）E2E 五路径绿 | §8.10–§8.15 |
+| **人工验证码链路** | `fullme`（locked）E2E：等值 resolve → 槽填充 → `fullme {captcha}` 正确发出；答错 goto answer 重入 + stale 自愈（三连 `fullme 1` → fail 收束无重试）；abort → `aborted` 出口；三退出路径（signal abort/断线/dispose）→ closed 收束 + release；并发冲突拒；`captcha` 非 locked 拒（save + 执行双闸）；`{captcha}` 不进 pass 掩码、未知 `{xxx}` 原样保留；webui 弹窗显示/提交/中止/刷新重取（每轮 1 次配额）/清除帧关窗/刷新页面首帧补推恢复 | §8.17、§9.7 |
+| **流程捕获槽（T14）** | `captures` 声明：until[0] 命中行提取组入 run 级命名槽、本步/跨步 send 正确替换；goto 回跳重经捕获步覆盖旧值、未重经沿用上值（fullme 答错重入同型）；failOn 收束不写槽；保存门四校验拒存（保留名/组数不足/非 until[0] 组/槽名非法/save 侧联动）；未知槽原样保留；组空值/无命中行 → 结构化 timeout 同型收束不落槽；send 侧不碰 `{name}`/`{pass}`；fullme URL 经 `captchaUrl` 槽传入 `awaitCaptcha(url)`（E2E spy），答错重入同 URL 缓存图不重抓（页/图各 1 次），URL 行未出现 → urlwait 结构化 timeout（报错点前移）；已消费行不重入后续读窗 initial 快照（`io.recentLines` 水位回归） | §8.10–§8.13、§8.17 |
 | **静默唤醒** | 行到达 re-arm；静默满 `silenceMs` 到期查**三守卫**（已接入 + 非回合中 + 持有者空闲），任一不满足只 re-arm；命中投状态任务书（`'mud-wake'`）；两触发点（admit/唤醒）**共用同一 kickoff 与模板**；LLM 调用面闸门终审（未接入拦成空 stop，§7.4.1） | §7.4、§7.5 |
 | **自主行为** | 分工协议 persona 五条**根/子同读**；根规划 / 子执行（一次性前台，收尾文本经 `subagent` 工具结果回注）——**实机验收清单见 §16.4** | §7.6 |
 
@@ -67,8 +72,8 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 
 - [x] ~~**1. 建账号** → 收到任务书回合~~（旧语义，2026-10-02 实机；**建账号触发点已退役**）
 - [x] ~~**2. admit** → 收到状态任务书，根开回合读状态并产出规划~~（2026-10-02 实机；接入语义已重定，见 1'–2'）
-- [x] **3. 根委派**（subagent，continuable）→ 子跑 `login` 流程登录成功 → 子终结 → 结算唤醒根 → 根消化后收尾（**一次委派 = 一次结算**）（2026-10-02 实机）〔委派口径 2026-10-03 变更，本项待按新路径复验〕
-- [x] **4. 中途失败**（错密码）→ 子停止并写明现场 → 结算带现场唤醒根 → 根重写规划（**不重做已完成步骤**）（2026-10-02 实机：错密码正常报错，自主重试一次后向人类提问）〔同上，待复验〕
+- [x] **3. 根委派**（一次性前台）→ 子跑 `login` 流程登录成功 → 收尾文本经 `subagent` 工具结果回注 → 根消化后收尾（**2026-10-04 实机，新委派口径成功路径复验通过**；原「结算唤醒根」措辞属已退役路径）
+- [x] **4. 中途失败**（错密码）→ 子停止并写明现场 → 结算带现场唤醒根 → 根重写规划（**不重做已完成步骤**）（2026-10-02 实机：错密码正常报错，自主重试一次后向人类提问）〔**新口径失败路径待复验**——见下方口径变更注〕
 - [x] **1'. 建账号 = 纯登记**：不投任务书、agent 零行动；会话保持 blank（2026-10-02 实机，随 2' 同轮观察）
 - [x] **2'. 接入 = 唯一点火**：建账号后点接入 → 状态任务书真实回合 → 根读状态产出规划；未接入时人工提问被拦（agent 完全惰性）；停止接入空步收束与宿主重启冷启动按设计推演（未单独实测）。（2026-10-02 实机；顺带修复：接入成功后右侧栏画面 tab 自动打开并挂载，§9.4）
 - [x] **5. 静默唤醒兜底**：三守卫 + 状态任务书机制已有单测覆盖；**实机触发窗口难构造，用户裁定先算通过**（待日常使用中观察）
@@ -77,7 +82,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 
 **验收结论（2026-10-02）**：T4b 全项通过，**T4 自主行为正式关闭**——建账号纯登记 → 接入唯一点火 → 根规划/子执行/宿主结算 → 静默唤醒兜底，链路完整。
 
-> **委派口径变更（2026-10-03）**：委派从「continuable 后台 + 结算唤醒」改为「一次性前台 + 工具结果回注」（§7.6，CHANGELOG v0.0.32）。#3/#4 的链路结论（派发 → 子执行 → 回报 → 根消化）仍然成立，但**「结算唤醒根」这一措辞属已退役路径**，且控制工具（`send_message` / `interrupt_agent` / `list_agents`）不再注册；新路径需按上表口径重新实测后另行登记。
+> **委派口径变更（2026-10-03）**：委派从「continuable 后台 + 结算唤醒」改为「一次性前台 + 工具结果回注」（§7.6，CHANGELOG v0.0.32）。#3 的链路结论（派发 → 子执行 → 回报 → 根消化）已按新口径于 2026-10-04 实机复验通过（成功路径）；**#4 失败路径尚未按新口径复验**——控制工具（`send_message` / `interrupt_agent` / `list_agents`）不再注册，失败现场经收尾文本回注的呈现待真实失败例证出现时再验并另行登记。
 
 ## 16.5 切片表与完成定义
 
@@ -94,6 +99,10 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | **T3 脚本面** | `mud-workflow` 独立包 + core3 `workflowEnvFor` 缝 + `login` locked 流程实体 | ✅ |
 | **T4 自主行为** | kickoff 任务书面（admit/唤醒两触发点 + `taskBrief`）+ Wake（re-arm + 三守卫）+ persona 分工协议五条 + LLM 调用面闸门（建账号纯登记，§7.4.1） | ✅（T4b 实机验收通过，§16.4） |
 | **T5 收尾（T11）** | `StatusRow` 边界窄面（`statusRowOf`，world 扁平数组值字符串化）+ webui 状态呈现（画面 HUD 条 + 侧栏「已登录」徽标）+ 零回归 | ✅（§9.4/§9.5） |
+| **T5 自动重连（四期）** | 探活（telnet AYT + `link/keepalive` 纯层 + Wake 到期点前置检查，`probeState` 观测量）+ 自动重连（`hasConnected`/`manualDisconnected` 两标记 + 代次令牌打断循环 + 限次放弃）+ Config fail-loud 校验 + webui「探测中」呈现 | ✅ |
+| **T12 探活精化返工** | 探活从「Wake 到期点串行前置」返工为「link 层自驱静默伴随探测」（锚 = 最后数据到达；90s 首发 × 3 次 × 9s 重发 = **117s 判死**）+ busy 谓词注入 link（busy tick 跳过）+ 判活 link 内部消化（Wake 净删 `probe`/`isProbing`/`onProbeAlive`）+ Config `probeStartMs` 与校验式（`startMs + 次数 × retryMs ≤ silenceMs`） | ✅ |
+| **T13 人工验证码链路** | `captcha` 动作 + `awaitCaptcha` env 原语（双侧）+ locked-only 红线扩展 + `{captcha}` 槽 + `flows/fullme.ts`（主链四段 + stale 自愈环）+ 等待注册表（单槽 + 三退出路径 + run 级缓存）+ remote 四动词 + Config `captchaTimeoutMs` + webui 全局弹窗（独立订阅/首帧补推恢复/清除帧关窗/刷新配额）+ persona 流程说明 | ✅（回归全绿：core3 286 + workflow 40 + webui 7，§16.2） |
+| **T14 流程捕获槽** | wait `captures` 字段 + 解释器捕获/四源替换 + run 级命名槽 + checkFlow 四校验 + `captcha` 动作 `url` 参数化 + `awaitCaptcha(url)` 双侧改 + fullme URL 捕获上移（URL_SRC 加组、自取净删、窄缓存保留、豁免注释清理） | ✅（回归全绿：core3 288 + workflow 56 + webui 7，§16.2） |
 
 **完成定义（每个切片）**
 
@@ -145,10 +154,9 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 |---|---|
 | **画面后置项（C5 遗留）**：输入回传（工具面已落地，是否仍需按使用实证评估）、NAWS/resize 回传、send 回显与 MUD 自回显去重开关、画面历史持久化（headless 屏随 runtime 存活，插件重启即清；s2 聊天栏行环同理随 runtime 存活） | 对应需求实证出现 |
 | **分类规则扩充**（C5.2 已落地，缺省仅 `chat`；`action` 等新 kind） | 语料中出现真实误判/漏判例证（规则 Config 可加，§6.3） |
-| **流程扩展**（`fullme` / 验证码链路、词汇表扩展、参数化 `args` 占位符） | "JSON 词汇表表达不了"的例证（流程**不能等人工**，人工环节留 agent 层） |
+| **流程扩展**（词汇表扩展、参数化 `args` 占位符；~~fullme/验证码链路~~ **已交付**，§8.17——**流程不能等人工**约束随之废止，流程挂起等人工已是常规路径） | "JSON 词汇表表达不了"的例证 |
 | **规则层**（`swallow` 吞行动作、`danger` 危险判据） | 行级规则实证需求（`swallow` 钩子管道已留，§5.2） |
 | **意识层**（系统驱动 `abortWait` 打断） | 系统级打断实证需求（`abortWait` API 已保留；`failOn` 已覆盖 agent 驱动打断） |
-| **自动重连**（热状态自动、冷启动不自动） | **前置 = 真实心跳**（MUD 侧健康探测）——无心跳不区分真断线/半开；此前一律手工 `connect` |
 | **投递策略化**（字段化摘要、按需投递、水位窗口细化；含超长回合持续刷屏的 turn 内强刷） | 投递内容膨胀实证（token 账目恶化，§8.16） |
 | **子级 deadline / 预算 interrupt**（插件侧到期打断） | 子 agent 超时/失控实证（本版委派为一次性前台，取消通道 = 调用 `signal`；插件侧到期打断需宿主 interrupt 面 + 例证） |
 | **`ask` 超时**（`askTimeoutMs`） | 确认"无人应答必须超时"的实证需求（宿主原生 = 永久挂起，§2.4） |

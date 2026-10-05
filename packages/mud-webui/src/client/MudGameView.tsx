@@ -219,7 +219,7 @@ export function MudGameView({ useTabInfo, sessionId, params, remote, connect, di
   }, [remote, sessionId, tab.id, target, reloadKey])
 
   const stateText = (state: string): string => {
-    if (state === 'connected' || state === 'connecting' || state === 'disconnected') return zh[state]
+    if (state === 'connected' || state === 'connecting' || state === 'disconnected' || state === 'probing') return zh[state]
     return state
   }
   const status = error !== null

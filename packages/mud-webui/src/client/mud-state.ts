@@ -34,8 +34,8 @@ export interface MudServer {
   readonly users: readonly MudUser[]
 }
 
-/** Connection lifecycle state. */
-export type MudConnState = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error'
+/** Connection lifecycle state（T5.1：probing = 探活观测态，仅呈现用，非服务端 conn 值）。 */
+export type MudConnState = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error' | 'probing'
 
 /** Connection info shown in the sidebar. */
 export interface MudConnInfo {
@@ -47,12 +47,14 @@ export interface MudConnInfo {
   readonly error: string | null
 }
 
-/** Per-session status (连接 + 接入 + 登录轴 + 世界窄面，T11 扩面). */
+/** Per-session status (连接 + 接入 + 登录轴 + 探活观测 + 世界窄面). */
 export interface SessionStatusRow {
   readonly sessionId: string
   readonly state: string
   readonly admitted: boolean
   readonly loggedIn: 'unknown' | 'inferred' | 'in-game'
+  /** 探活观测态（T5.1；缺省 idle——旧服务端或未探测）。 */
+  readonly probeState?: 'idle' | 'probing'
   readonly world: readonly MudWorldEntry[]
 }
 
@@ -394,13 +396,17 @@ export class MudStateController {
       if (row.sessionId === '') continue
       sessionStatus[row.sessionId] = {
         sessionId: row.sessionId, state: row.state, admitted: row.admitted,
-        loggedIn: row.loggedIn, world: row.world,
+        loggedIn: row.loggedIn,
+        probeState: row.probeState ?? 'idle',
+        world: row.world,
       }
     }
     const focus = focusSessionId ?? this.state.conn.sessionId ?? undefined
     const focusRow = focus !== undefined ? sessionStatus[focus] : undefined
-    const state: MudConnState = focusRow?.state === 'connected' ? 'connected'
+    const focusConn = focusRow?.state === 'connected'
+      ? (focusRow.probeState === 'probing' ? 'probing' : 'connected')
       : focusRow?.state === 'connecting' ? 'connecting' : 'idle'
+    const state: MudConnState = focusConn
     this.set({ sessionStatus, conn: { ...this.state.conn, state, error: null } })
   }
 

@@ -373,3 +373,68 @@
 - §6.3 补「有标行剔除」一句；§9.4 数据面/消费/帧处理/工具栏改双屏口径；C5.2 文档状态改「已执行（2026-10-03）」并留执行偏差记录
 
 > AI生成
+
+## [v0.0.34]§17.3 登记心跳探针实测结论 (2026-10-04)
+
+- **实测**（[probe-heartbeat.mjs](packages/mud-core3/test/probe-heartbeat.mjs)，零依赖最小客户端探针，mud.pkuxkx.net:8081 两次实机运行）：全自动登录（编码选择 2 → 名字 → 密码 → 覆盖 y）后客户端**零发送 240s**，入站 = **0**（无 telnet NOP/AYT/GA/GMCP 推送）→ **服务端无主动心跳**；GMCP 仅 `GMCP.System`/`GMCP.Move` 且只在人物移动时推送。30s 短观察窗复跑消歧，入站仅游戏世界事件。
+- **客户端心跳候选实测**：telnet **AYT(246) 有显式应答 `[-Yes-]`+GA**（唯一可判活信号）；空行回提示符+GA 次之；NOP / GMCP Core.KeepAlive / Core.Ping 静默接受无应答（首次运行 Core.Ping 后 ECONNRESET 曾疑似其所致，短观察窗复测无 RST 排除）；look 对照全链路存活。
+- **文档**：§17.3 自动重连行登记实测结论（前置已消解，待立项）；PLAN.md T5 前置项更新为「已完成」并补范围（服务端主动重启断线覆盖；fullme 活跃度为独立周期任务，不与探活混同）。
+- 探针附带发现：fullme 活跃度机制（长期不用被系统判机器人、信息降级）；服务端广播重启预告（实测时再过 10.5h 重启）。
+
+> AI生成
+
+## [v0.0.35]T5 自动重连落地（探活 + 自动重连 + webui 探测中呈现）(2026-10-04)
+
+- **探活**（T5.1）：`link/keepalive.ts` 纯层（ProbeState `idle|probing`、attempts 计数、retryMs 重发、`observeLine`/`observeBoundary` 判活、幂等 cancel）；探活插在静默唤醒到期点（Wake.onExpiry 传输面守卫全过后、fire 之前，阈值复用 `silenceMs`）；判活完成到期唤醒（静默不重新累计）、判死转硬收尾+自动重连、探测期间抑制一切后续到期；telnet 层加 `sendAyt`，应答判据 `^\[-Yes-\]`（GA 主路径，行刷出 300ms 兜底），`[-Yes-]` 吞行不进流/画面/投递。
+- **自动重连**（T5.2）：runtime 两标记 `hasConnected`/`manualDisconnected`（手工断开与冷启动不重连）；service 重连循环限次放弃（缺省 5 次 × 30s，`reconnectMaxAttempts`/`reconnectIntervalMs`），代次令牌（reconnectToken）打断在飞循环、`reconnecting` Set 禁止重入，connect/disconnect/dispose 三入口打断；成功**只连不登** + 显式 `pulseActivity()` arm 一次静默计时；重连不重读行流（abs 连续 + 水位已复位）。
+- **收尾**（T5.3）：Config fail-loud 校验（五项正整数 + `probeMaxAttempts × probeRetryMs ≤ 300s` + `MAX_TIMEOUT_MS < silenceMs`）；`StatusRow`/`watchStatus` 扩 `probeState` 观测量（不回写 conn 三态）；webui 侧栏「探测中」呈现（MudConnState 加 `probing`、琥珀点、zh/en 文案）；工具连接判据注释同步。
+- **测试**：`keepalive.spec` 18 例 + `wake.spec` 16 例（含探活插入点 6 例）+ `reconnect.spec` 9 例（真 socket：自动重连/限次放弃/手工不重连/打断/dispose 取消/旧行不重投/多会话隔离）；core3 280/280 全绿（22 文件，含 plugin-load e2e）+ mud-workflow 31/31 + webui tsc 清零。
+- **文档**：§0.4 任务索引补探活/重连导航行；§3.2 连接管理表加探活/自动重连行（断线行改自动重连口径）；§10.1 加 `probeState` 观测量；§10.4 「不自动重连」句改自动重连口径；§11.3 状态机图加自动重连分支；§13.1 记录点加探活/重连；§16.3 手工连接行改「手工断开不自动重连」+ 新增「探活与自动重连」断言行；§16.5 切片表加 T5 自动重连行；§17.3 自动重连后置项消项（探针结论收进 §3.2）。
+
+> AI生成
+
+## [v0.0.36]T12 探活精化返工（link 层静默伴随自驱）(2026-10-04)
+
+- **探活归属传输层**：从「Wake 到期点串行前置」返工为「link 层自驱静默伴随探测」（§3.2）——时钟锚 = **最后数据到达时刻**（任何行/GA 到达即判活并重开窗口），静默满 `probeStartMs`（缺省 90s）发 telnet AYT(246)，无应答每 `probeRetryMs`（9s）重发共 `probeMaxAttempts`（3）次，**117s 判死**（落在 `silenceMs` 120s 唤醒到期点之前，留 3s 给上层）；唤醒到期点零探测延迟。
+- **判活 link 内部消化**（无上报回调链，删 `onProbeAlive`）；判死 → 既有 `disconnect` 硬收尾 → 自动重连链（service 零改动，上层只消费断开事实）；判据 `^\[-Yes-\]` 不变（GA 主路径判活，行刷出兜底，应答行吞行不进流/画面/投递）。
+- **busy 谓词注入 link**（`holderBusy || isInTurn`，runtime 构造合成传入）：busy 的探测 tick **跳过**（不发 AYT 不耗次数、不顺延——busy 贯穿窗口 = 本轮零探活，read timeout 与唤醒点守卫兜底）；判死刻度 busy → 零收束不判死。
+- **`link/keepalive.ts` 重构为自驱**：`KeepaliveOptions{startMs,retryMs,maxAttempts}`（构造正整数 fail-loud）+ `KeepaliveDeps{send,onDead(attempts),isBusy?}` + `armIdle()`/幂等 `cancel()`；`onDead` 携带实际发送次数（顺带修正旧实现 cancel 先行致判死日志计 0 次）；探活取消点四处（手工 connect/disconnect/dispose + 重连成功）。
+- **Wake 回归纯唤醒**：净删 `probe`/`isProbing`/`onProbeAlive` 三依赖，到期点三守卫全过即 fire（§7.5）。
+- **Config**：新增 `probeStartMs`（90_000）；fail-loud 校验式改 `probeStartMs + probeMaxAttempts × probeRetryMs ≤ silenceMs`（替换原 `probeTotal ≤ 300s`）。
+- **测试**：`keepalive.spec` 重写（纯层 11 例 fake timers 逐刻度 + Mud 真接线 8 例）；`reconnect.spec` 判死用例改自驱等待；`wake.spec` 删探活插入点 6 例——core3 **275 例 / 22 文件**全绿 + mud-workflow 31/31 + core3/webui tsc 清零。
+- **文档**：§3.2 探活行重写（静默伴随刻度）；§10.1 `probeState` 注「link 层自驱」；§13.1 记录点注「判活内部消化不记日志」；§16.2 账目/覆盖对照补 `keepalive`/`reconnect`/`classify`/`llm-gate`；§16.3 探活断言行按新刻度重写；§16.5 补 T12 行；§15.5 Config 表补 8 键（探活三项 + 重连两项 + C5.2 三项）。
+
+> AI生成
+
+## [v0.0.37]T13 人工验证码链路（fullme 流程 + captcha 双闸 + webui 全局弹窗）(2026-10-05)
+
+- **流程面**（§8.17 新节 + [flows/fullme.md](flows/fullme.md) 新建）：`fullme`（locked）流程实体——主链（等 fullme 提示 → `fullme` 命令 → 读码 → 等验证码挂起 → `fullme {captcha}` 发送）+ abandon 出口 + stale 自愈环（三连 `fullme 1` → fail 收束无重试，15 分钟冷却）；判据常量表与实现一一对应。
+- **词汇表扩展**（§8.10/§8.12/§8.14）：`captcha` 动作（locked-only **双闸**：save 三门 + 执行期拒绝）；`awaitCaptcha` env 原语（mud-workflow 侧声明 + core3 侧实现，双侧 B2）；`{captcha}` 固定单槽（非敏感，**不进 pass 掩码**；未知 `{xxx}` 原样保留）。
+- **双预算分立**：步 `timeoutMs` 管读窗（`awaitCaptcha` 拒绝包内）；Config 新增 `captchaTimeoutMs`（180_000，§15.5 #27）管挂起预算——**独立预算**，不受 `MAX_TIMEOUT_MS`/`silenceMs` 校验约束，正整数 fail-loud。
+- **等待注册表**（core3）：单会话单槽（并发冲突可读拒）+ 三退出路径（signal abort / 断线 / dispose → `closed` 收束 + release）+ run 级缓存（同 run 二次 `awaitCaptcha` 直接复用）。
+- **remote 四动词**（§15.1/§15.2）：`watchCaptcha`（stream：首帧补推挂起态 + 变化推全量快照帧，行摘除 = 清除帧）+ `captchaAnswer`/`captchaAbort`（专用 `aborted` 出口）+ `captchaRefresh`（重抓同 URL，每轮挂起限 1 次配额）。
+- **webui 全局弹窗**（§9.7 新节）：挂侧栏常驻层（`startStatusWatch` 同款生命周期），独立订阅 `watchCaptcha` 流；清除帧驱动关窗（Esc/遮罩 = 本地隐藏不动流程）；刷新页面首帧补推恢复；客户端乐观标记 + 帧边界 diff 对齐刷新配额。
+- **口径修订**：原「流程不能等人工」约束**随 T13 废止**（§8.15 边界、flows/login.md 边界表、§17.3 流程扩展条目同步）。
+- **persona**（cordis.patch.yml）：preset prefix 补验证码流程说明段（被动触发、弹窗等码、持有发送权、stage 现场说明、不立即重跑）。
+- **测试**（先红后绿）：core3 `fullme.spec` 11 例（主链/答错重入/stale 自愈/abort/三退出路径/并发拒/双闸/`{captcha}` 掩码排除）+ mud-workflow `interpreter` 扩 9 例（`awaitCaptcha` 原语解析与超时预算）+ webui `mud-captcha.spec` 7 例（新建测试基建：vitest.config + FakeRemote）；**回归全绿：core3 286/23 + mud-workflow 40/3 + webui 7/1，三包 tsc 清零**（§16.2 账目已按实测更新）。
+
+> AI生成
+
+## [v0.0.38]流程 IO 面重命名（`WorkflowEnv` → `WorkflowIO`）(2026-10-05)
+
+- **纯重命名，零行为变更**：`env` 名不达意（看不出「流程与外界的唯一通道」这层语义），全套改为 `WorkflowIO`——六边形语义对齐（core3 注入 io 原语，解释器纯层只认接口）。
+- **mud-workflow**：`src/env.ts` → `src/io.ts`；`WorkflowEnv` → `WorkflowIO`、`EnvLine/EnvReadOpts/EnvReadResult/EnvState` → `IoLine/IoReadOpts/IoReadResult/IoState`（`CaptchaResume` 不变）；解释器/工具层参数与变量 `env` → `io`（`fakeEnv` → `fakeIO`）。
+- **core3**：缝函数 `workflowEnvFor` → `workflowIoFor`（MudCore3Handle/index 接线同步），返回字段 `env` → `io`；service.ts 本地同形接口 `WorkflowEnv` → `WorkflowIO`；日志文案「流程环境就绪/释放」→「流程 IO 就绪/释放」（workflow.spec 断言同步）。顺带修正 flows/login.ts 注释残留旧口径「流程不能等人工」→「验证码链路独立成流程（§8.17）」。
+- **文档**：§8.14（缝标题/执行序/五工具表）、§8.17（`awaitCaptcha` io 原语行）、§1–§2、§10–§11、§15.2/§15.4、§16.2、§0.3 章节地图、flows/login.md、flows/fullme.md 同步改现役符号；CHANGELOG 历史行与 §16.5 切片表 T3 历史行不回改。
+- **回归**：core3 286/286 + mud-workflow 40/40 + webui 7/7 全绿，三包 `tsc --noEmit` 清零。
+
+> AI生成
+
+## [v0.0.39]流程捕获槽与 fullme 触发时捕获改造（T14）(2026-10-05)
+
+- **mud-workflow**：wait 加 `captures` 字段（组只许 `until[0]` 携带）；解释器 done 收束后、动作前对窗文本按行在 until[0] 首个命中行上 exec 提取捕获组入 run 级命名槽（failOn 收束不捕获；无命中行/组空值 → 结构化 timeout 同型收束不落槽；提取一律无 `g` 实例）；`substitute`/`substituteSlots` 扩四源（次序 `{captcha}` → 命名槽 → `{name}`/`{pass}`，send 侧不碰凭据占位）；checkFlow 加 captures 四校验（槽名合法/非保留名/组数界内/组只许 until[0]）；`captcha` 动作参数化 `{url}`（值过解释器替换）；`WorkflowIO.awaitCaptcha(url)`（D8 双侧改）。
+- **core3**：缝实现 `awaitCaptcha(url)` 消费参数取图，闭包 URL 自取净删（`extractCaptchaUrl` + `CAPTCHA_URL_RE` + recentLines 扫描 + undefined 兜底——报错点前移到 urlwait 结构化 timeout）；**窄缓存保留**（`cachedEntry.url === url` 比对，答错重入沿缓存图不重抓，refresh 原地更新不动）；`io.recentLines` 的「URL 抽取豁免」注释删除（水位过滤代码零改动）；fullme `URL_SRC` 加捕获组 + urlwait `captures: ['captchaUrl']` + answer `{url: '{captchaUrl}'}`。
+- **文档**：§8.10（wait captures + captcha 参数化）、§8.11（保存门四校验）、§8.13（捕获提取/槽替换四源/槽生命周期三行）、§8.17（captcha 动作/`awaitCaptcha(url)`/窄缓存/fullme urlwait 段）、§15.2、§16.2/§16.3/§16.5、flows/fullme.md（步表/URL_SRC 常量/设计要点 1 与 5）同步。
+- **回归**：core3 288/288 + mud-workflow 56/56 + webui 7/7 全绿，三包 `tsc --noEmit` 清零（§16.2）。
+
+> AI生成

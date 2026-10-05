@@ -51,7 +51,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && tsdown",
     "bundle": "tsdown",
-    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "test": "pnpm exec vitest run test"
   },
   "dependencies": {
     "@deepseek-ai/dsh-util-crypto": "^0.1.7-rc.2",

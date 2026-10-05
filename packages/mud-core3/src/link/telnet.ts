@@ -40,6 +40,7 @@ const WONT = 252
 const WILL = 251
 const SB = 250
 const GA = 249
+const AYT = 246 // RFC 854 Are You There（keepalive 探活；服务端显式应答 [-Yes-]+GA）
 const EOR = 239 // RFC 885 End of Record 命令字节（视同 GA 的提交边界）
 const SE = 240
 
@@ -182,6 +183,16 @@ export class TelnetClient extends EventEmitter {
       escapeIac(Buffer.from(String(text), 'utf8')),
       Buffer.from('\r\n', 'ascii'),
     ]))
+    return true
+  }
+
+  /**
+   * 发送 AYT(246) 探活命令（T5.1 keepalive；双字节 IAC+AYT，无选项字节，
+   * 不走 send 的行终止封装）。未连接返回 false（调用方按判死处理）。
+   */
+  sendAyt(): boolean {
+    if (!this.socket || this.socket.destroyed) return false
+    this.socket.write(Buffer.from([IAC, AYT]))
     return true
   }
 

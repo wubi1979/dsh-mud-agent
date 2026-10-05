@@ -26,7 +26,9 @@ note: 入站主干：字节 → 行 → 录制与水位 → 四个消费者
 | **建连失败** | 对端拒绝/关闭 ⇒ **立即失败并销毁 socket**，不等满超时；错误带 `host:port` 与完整 `cause`（§13.1） |
 | **disconnect（硬收尾）** | 立即销毁 socket 并**同步走完收尾**（flush 残留行 → 状态置断开），**不做半开关闭等待**——半开连接仍会继续收数据，其迟到的 close 会污染后续连接 |
 | **连接代次** | 建连/断连各自增；旧连接迟到的 `text`/`boundary`/`close` **一律丢弃**，不得改变新连接状态 |
-| **断线（意外）** | runtime 保留、状态置断开、**世界状态复位**、`pendingLines` 清空、水位复位；**不自动重连**，等手工 `connect`（§11.3） |
+| **断线（意外）** | runtime 保留、状态置断开、**世界状态复位**、`pendingLines` 清空、水位复位；**自动重连**（闸门 `hasConnected && !manualDisconnected`，§11.3 / §10.4） |
+| **探活** | 服务端无主动心跳（2026-10-04 探针实测：[probe-heartbeat.mjs](../../packages/mud-core3/test/probe-heartbeat.mjs)——零发送 240s 零入站，NOP/GMCP Ping 静默不可判活），半开检测靠客户端主动探活：**link 层自驱静默伴随探测**（T12，非周期、无到期点入口）——时钟锚 = **最后数据到达时刻**（任何行/GA 到达即重置锚：判活 + 窗口随下一轮静默重开），静默满 `probeStartMs`（缺省 90s）发送 telnet AYT(246)，无应答每 `probeRetryMs`（缺省 9s）重发共 `probeMaxAttempts`（缺省 3）次，判死刻度 = 90 + 3×9 = **117s**（落在 `silenceMs` 120s 唤醒到期点之前留 3s）；判据 `^\[-Yes-\]`（GA 主路径判活，行刷出兜底）；判活 **link 内部消化**（观测态回 idle，无上报回调）；判死 → 硬收尾转自动重连（上层只消费断开事实）；busy 谓词（`holderBusy ∥ isInTurn`）为真的探测 tick **跳过**（不发 AYT 不耗次数、不顺延——busy 贯穿窗口 = 本轮零探活，read timeout 与唤醒点守卫兜底）；校验 `probeStartMs + probeMaxAttempts × probeRetryMs ≤ silenceMs`（启动 fail-loud，§15.5） |
+| **自动重连** | 限次放弃（缺省 5 次 × 30s）后保持断开等人工/静默唤醒；手工 `connect`/`disconnect` 经代次令牌打断在飞循环；成功**只连不登**（登录归 agent），并显式 arm 一次静默计时；重连不重读行流（`abs` 连续 + 水位已复位，§4.5） |
 | **冷会话** | 宿主释放 agent 时 runtime 与连接**不受影响**（连接归 runtime 自持，与 agent 冷热解耦）；只有会话销毁才拆 |
 | **会话销毁** | `session/disposed` ⇒ 断连 + 拆 runtime / deliverer / 日志 / Wake（§11.4） |
 | **插件卸载** | 全拆：断连全部 + 拆全部 Wake（§11.7） |

@@ -2,13 +2,19 @@
  * mud-core3 wake — 静默唤醒器（T4a，参照 core2 wake 形态裁剪）。
  *
  * 单 timer、到期驱动：行到达即 re-arm（runtime.onActivity 喂 `arm()`），
- * 静默满 silenceMs 到期时检查守卫——三条件全满足才投递任务书，任一不满足
- * 只重新武装不唤醒：
- *   1. 已接入（§6.3 闸门前置：未接入不唤醒）；
- *   2. 非回合中（回合中开新回合会打断节奏，只 re-arm；turn/end 后的持续
- *      静默会再次到期）；
- *   3. 行流持有者空闲（无在途 read/send；在途 read 有自己的 quiet/timeout
- *      收束，收束后的持续静默会再次到期唤醒）。
+ * 静默满 silenceMs 到期时检查守卫。守卫分两层（T5.1 守卫分工）：
+ *   - **传输面**（到期即判，任一不满足只 re-arm）：
+ *     1. 非回合中（回合中开新回合会打断节奏；turn/end 后的持续静默会再次
+ *        到期）；
+ *     2. 行流持有者空闲（无在途 read/send；在途 read 有自己的 quiet/timeout
+ *        收束，收束后的持续静默会再次到期唤醒；锁定 workflow 执行期间持有者
+ *        被流程独占，同被此守卫覆盖）；
+ *   - **闸门面**（完成唤醒时复查）：已接入（§6.3 闸门前置：未接入只重置
+ *     静默起点，不投任务书）。
+ *
+ * 探活归属（T12 D5）：本器**回归纯唤醒**——探活已下沉 link 层自驱静默伴随
+ * 探测（keepalive.ts），到期点零探测依赖（T5.1 的 probe/isProbing/onProbeAlive
+ * 三依赖净删）；探测窗口整体落在静默窗口内、到期点之前收束。
  *
  * 守卫纪律（承 v2 §7.2 V7）：**不做**"无子 agent 在途"守卫——委派结果走
  * subagent 工具返回值（一次性前台，§7.6），插件不查子级；冗余唤醒无害
@@ -76,15 +82,27 @@ export class Wake {
     this.clearTimer()
   }
 
-  /** 到期：三条件任一不满足只 re-arm；全过 → 投递（fire 后不再自动武装，
-   *  后续行到达经 onActivity 重新武装）。 */
+  /**
+   * 到期：**传输面守卫**（非回合中 / 持有者空闲；`admitted` 属闸门面下沉到
+   * complete）任一不满足只 re-arm；全过则完成唤醒（探活已下沉 link 层自驱，
+   * T12 D5——到期点零探测依赖）。
+   */
   private onExpiry(): void {
-    const { admitted, notInTurn, holderIdle } = this.deps.guards
-    if (!admitted() || !notInTurn() || !holderIdle()) {
+    const { notInTurn, holderIdle } = this.deps.guards
+    if (!notInTurn() || !holderIdle()) {
       this.arm()
       return
     }
-    this.deps.fire()
+    this.complete()
+  }
+
+  /** 完成唤醒（闸门面复查）：已接入 → fire；未接入 → 只重置静默起点（re-arm）。 */
+  private complete(): void {
+    if (this.deps.guards.admitted()) {
+      this.deps.fire()
+    } else {
+      this.arm()
+    }
   }
 
   private clearTimer(): void {

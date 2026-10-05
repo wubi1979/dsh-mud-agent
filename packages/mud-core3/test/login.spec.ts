@@ -18,7 +18,7 @@ import { SessionRuntime, type MudLine } from '../src/runtime.ts'
 import { login } from '../src/flows/login.ts'
 
 import { runFlow } from 'mud-workflow'
-import type { WorkflowRecord, WorkflowEnv } from 'mud-workflow'
+import type { WorkflowRecord, WorkflowIO } from 'mud-workflow'
 import { stripIac } from './helpers.ts'
 
 const NAME = 'hero'
@@ -90,14 +90,16 @@ async function startLoginServer(handlers: {
   }
 }
 
-// ── 环境组装：SessionRuntime → WorkflowEnv（envFor 缝的结构化子集）────
+// ── IO 组装：SessionRuntime → WorkflowIO（ioFor 缝的结构化子集）────────
 
-function makeEnv(rt: SessionRuntime): WorkflowEnv {
+function makeIO(rt: SessionRuntime): WorkflowIO {
   return {
     send: cmd => rt.send(cmd),
     sendCredential: cmd => rt.sendCredential(cmd),
     read: (opts, initial) => rt.read(opts, (initial ?? []) as readonly MudLine[]),
     recentLines: n => rt.recentLines(n),
+    // login 不消费 captcha（T13）；stub 满足 io 接口（B2 双侧同形后必填）。
+    awaitCaptcha: async () => ({ kind: 'closed' }),
     state: () => ({ state: rt.connState }),
   }
 }
@@ -116,7 +118,7 @@ describe('login 流程 E2E（真实 TCP）', () => {
     await rt.connect({ host: '127.0.0.1', port: server.port })
     await new Promise(r => setTimeout(r, 100)) // 提示符到达
 
-    const result = await runFlow(loginShort, makeEnv(rt), { name: NAME, pass: PASS })
+    const result = await runFlow(loginShort, makeIO(rt), { name: NAME, pass: PASS })
 
     expect(result.ok).toBe(true)
     expect(result.stage).toBe('success')
@@ -147,7 +149,7 @@ describe('login 流程 E2E（真实 TCP）', () => {
     await rt.connect({ host: '127.0.0.1', port: server.port })
     await new Promise(r => setTimeout(r, 100))
 
-    const result = await runFlow(loginShort, makeEnv(rt), { name: NAME, pass: PASS })
+    const result = await runFlow(loginShort, makeIO(rt), { name: NAME, pass: PASS })
     expect(result.ok).toBe(false)
     expect(result.stage).toBe('bad-pass')
     expect(server.received).toEqual([NAME, PASS]) // 不重试
@@ -165,7 +167,7 @@ describe('login 流程 E2E（真实 TCP）', () => {
     await rt.connect({ host: '127.0.0.1', port: server.port })
     await new Promise(r => setTimeout(r, 100))
 
-    const result = await runFlow(loginShort, makeEnv(rt), { name: 'newbie', pass: PASS })
+    const result = await runFlow(loginShort, makeIO(rt), { name: 'newbie', pass: PASS })
     expect(result.ok).toBe(false)
     expect(result.stage).toBe('need-new')
 
@@ -188,7 +190,7 @@ describe('login 流程 E2E（真实 TCP）', () => {
     await rt.connect({ host: '127.0.0.1', port: server.port })
     await new Promise(r => setTimeout(r, 100))
 
-    const result = await runFlow(loginShort, makeEnv(rt), { name: NAME, pass: PASS })
+    const result = await runFlow(loginShort, makeIO(rt), { name: NAME, pass: PASS })
     expect(result.ok).toBe(true)
     expect(result.stage).toBe('success')
     // 默认答 y：服务端按序收到 name/pass/y（空命令不计入）
@@ -209,7 +211,7 @@ describe('login 流程 E2E（真实 TCP）', () => {
     await rt.connect({ host: '127.0.0.1', port: server.port })
     await new Promise(r => setTimeout(r, 100))
 
-    const result = await runFlow(loginShorter, makeEnv(rt), { name: NAME, pass: PASS })
+    const result = await runFlow(loginShorter, makeIO(rt), { name: NAME, pass: PASS })
     expect(result.ok).toBe(false)
     expect(result.stage).toBe('timeout')
     expect(server.received).toEqual([]) // 没发任何东西

@@ -13,7 +13,7 @@
  *   - 维护 Map<sessionId, SessionRuntime>
  *   - register(sessionId)：登记会话 + 创建 Deliverer + 创建 SessionLog
  *   - connect(sessionId)：查服务器 → runtime.connect（只建连，盲发已退役）
- *   - workflowEnvFor(sessionId, holder)：流程环境缝（凭据解析 + 持有者独占 + env 注入
+ *   - workflowIoFor(sessionId, holder)：流程 IO 缝（凭据解析 + 持有者独占 + io 注入
  *     + release；流程本体在 mud-workflow 子包，core3 只供原语）
  *   - disconnect(sessionId)：runtime.disconnect
  *   - admit(sessionId)：接入闸门开（投递通道开）
@@ -28,6 +28,7 @@
 import { SessionRuntime, type ConnectParams } from './runtime.ts'
 import { Deliverer, type DeliverFn, type DelivererConfig } from './deliver.ts'
 import { Classifier, type ClassifyRuleSpec } from './classify.ts'
+import type { KeepaliveOptions, ProbeState } from './link/keepalive.ts'
 import type { ReadOpts, ReadResult } from './read.ts'
 import type { MudLine } from './link/line.ts'
 import { SessionLog, type LogEntry, type SessionLogOptions } from './log/log-service.ts'
@@ -41,6 +42,10 @@ import type {
   ResolvedCredentials,
   ServerLookup,
 } from './roster.ts'
+// 验证码链路（T13）：恢复帧词汇表类型来自 mud-workflow（双侧同形，B2）；
+// 取图纯层（D3 fetch 注入）。
+import type { CaptchaResume } from 'mud-workflow'
+import { fetchCaptchaImage, type CaptchaFetch } from './captcha.ts'
 
 /** 服务依赖（宿主/测试注入）。 */
 export interface MudServiceDeps {
@@ -67,8 +72,19 @@ export interface MudServiceDeps {
    * 语料校准 2026-10-03）。部署可覆盖（Config 正则清单，构造期编译，非法 fail-loud）。
    */
   readonly classifyRules?: readonly ClassifyRuleSpec[]
+  /** 半开探活参数（T12：Config probeStartMs/probeRetryMs/probeMaxAttempts；缺省 90s/9s/3 次）。 */
+  readonly keepalive?: KeepaliveOptions
+  /** 自动重连参数（T5.2 D5：缺省 5 次 / 30s 间隔；到限次保持断开等人工）。 */
+  readonly reconnect?: ReconnectOptions
   /** 会话日志选项（落盘目录等；缺省仅内存）。 */
   readonly log?: SessionLogOptions
+  /**
+   * 验证码挂起预算毫秒（T13 D4/B4：**独立预算**，不受 MAX_TIMEOUT_MS/silenceMs
+   * 校验约束；缺省 180_000 = URL 有效期 3 分钟；fail-loud 正整数）。
+   */
+  readonly captchaTimeoutMs?: number
+  /** 验证码取图 fetch（T13 D3 注入面；缺省全局 fetch，测试注入假实现）。 */
+  readonly captchaFetch?: CaptchaFetch
   /**
    * 接入成功后的回调（T4a：装配层注入 kickoff 任务书投递——admit 开闸门并投
    * 一条状态任务书触发规划；测试断言接线。stop 不触发）。
@@ -76,13 +92,26 @@ export interface MudServiceDeps {
   readonly onAdmit?: (sessionId: string) => void
 }
 
-/** 连接状态快照（remote status 返回面）。三期起含两轴 + 世界状态。 */
+/** 自动重连参数（T5.2 D5；Config reconnectMaxAttempts/reconnectIntervalMs 注入面）。 */
+export interface ReconnectOptions {
+  /** 意外断线的自动重连尝试次数上限。 */
+  maxAttempts: number
+  /** 重连尝试固定间隔毫秒。 */
+  intervalMs: number
+}
+
+/** 重连缺省刻度（D5：限次放弃）。 */
+const DEFAULT_RECONNECT: ReconnectOptions = { maxAttempts: 5, intervalMs: 30_000 }
+
+/** 连接状态快照（remote status 返回面）。三期起含两轴 + 世界状态；T5.1 加探活观测面。 */
 export interface SessionStatus {
   readonly sessionId: string
   readonly state: ConnState
   readonly admitted: boolean
   /** 登录轴三态（inferred = 行文推断先行，in-game = GMCP 权威；断线复位 unknown）。 */
   readonly loggedIn: LoggedInState
+  /** 探活观测态（T5.1：idle | probing；不回写 conn 三态）。 */
+  readonly probeState: ProbeState
   /** 世界状态快照（GMCP 写入，断线复位）。 */
   readonly world: WorldSnapshot
 }
@@ -92,6 +121,43 @@ export interface StatusFrame {
   readonly sessions: readonly SessionStatus[]
 }
 
+/** 验证码挂起行（watchCaptcha 快照面；JSON 安全，Remote 边界形态）。 */
+export interface CaptchaRow {
+  readonly sessionId: string
+  /** 账号名（弹窗标注来源，D7）。 */
+  readonly account: string
+  /** robot.php 页地址（MUD 行捕获）。 */
+  readonly url: string
+  /** 当前图（data URL；captchaRefresh 原地更新）。 */
+  readonly image: string
+}
+
+/** 验证码流帧（watchCaptcha）：全量挂起快照，变化时整体重推（行摘除 = 清除帧）。 */
+export interface CaptchaFrame {
+  readonly pending: readonly CaptchaRow[]
+}
+
+/**
+ * 验证码等待条目（等待注册表；单会话单槽——并发冲突可读拒，I10 精神）。
+ * run 级缓存 = 环境闭包持有的条目引用：同 URL 沿用（答错重入不重抓），
+ * refresh 原地更新 image（重入与推帧读到新图），条目收束后引用仍留作缓存。
+ */
+interface CaptchaEntry {
+  readonly sessionId: string
+  readonly account: string
+  readonly url: string
+  image: string
+  /** 本轮挂起是否已用过刷新配额（D7：每轮挂起限 1 次——同 URL 共 4 次刷新机会）。 */
+  refetched: boolean
+  /** 取图在途（重复点击忽略）。 */
+  refetching: boolean
+  /** 收束（幂等）：清计时器 + 摘条目 + 推清除帧 + resolve 挂起 Promise。 */
+  readonly finish: (r: CaptchaResume) => void
+}
+
+/** 验证码挂起预算缺省（D4：180s = URL 有效期 3 分钟）。 */
+export const DEFAULT_CAPTCHA_TIMEOUT_MS = 180_000
+
 /** 状态窄面行（Remote 边界形态，§9.5）：SessionStatus 的 JSON 安全投影。 */
 export interface StatusRow {
   readonly sessionId: string
@@ -99,6 +165,8 @@ export interface StatusRow {
   readonly admitted: boolean
   /** 登录轴三态（inferred = 行文推断先行，in-game = GMCP 权威；断线复位 unknown）。 */
   readonly loggedIn: LoggedInState
+  /** 探活观测态（T5.1：idle | probing；不回写 conn 三态）。 */
+  readonly probeState: ProbeState
   /** 世界状态扁平窄面：条目值 JSON 字符串化（`unknown` 不过 Remote 边界）。 */
   readonly world: readonly {
     zone: string
@@ -135,7 +203,7 @@ export function statusRowOf(s: SessionStatus): StatusRow {
       })
     }
   }
-  return { sessionId: s.sessionId, state: s.state, admitted: s.admitted, loggedIn: s.loggedIn, world }
+  return { sessionId: s.sessionId, state: s.state, admitted: s.admitted, loggedIn: s.loggedIn, probeState: s.probeState, world }
 }
 
 /** 工具执行上下文（归属解析结果；工具层按它定位发送目标）。 */
@@ -147,18 +215,18 @@ export interface ToolContext {
 }
 
 /**
- * 流程执行环境（`workflowEnvFor` 注入的 send/read/state 原语；原 workflow.ts
+ * 流程 IO 面（`workflowIoFor` 注入的 send/read/state 原语；原 workflow.ts
  * 余留类型，2026-10-02 并入 service——类型与生产者同址）。
  *
- * 与 mud-workflow 的 WorkflowEnv（env.ts）同形，mud-workflow 工具层按窄结构
+ * 与 mud-workflow 的 WorkflowIO（io.ts）同形，mud-workflow 工具层按窄结构
  * 代位 cast。凭据零泄露的发送/注入两道闸的位置约定随本面保留：
  *   1. 发送侧：sendCredential 直发——不触发 onSend，永不进画面回显与会话日志
  *      （link/mud.ts 的既有闸门）；
- *   2. 注入侧：凭据由 core3 在 workflowEnvFor 时解析后经 creds 交给调用方
+ *   2. 注入侧：凭据由 core3 在 workflowIoFor 时解析后经 creds 交给调用方
  *      （mud-workflow 解释器），不经过模型；
  *   3. 出口侧脱敏（结果行 pass 掩码）在 mud-workflow 解释器统一执行。
  */
-export interface WorkflowEnv {
+export interface WorkflowIO {
   /** 直发命令（进画面回显 + 会话日志）。 */
   send(cmd: string): boolean
   /** 凭据直发（不回显、不落盘、不进会话日志）。 */
@@ -167,6 +235,13 @@ export interface WorkflowEnv {
   read(opts: ReadOpts, initial?: readonly MudLine[]): Promise<ReadResult>
   /** pending 尾部 N 行快照（等待前的"提示符可能已到达"对齐）。 */
   recentLines(n: number): MudLine[]
+  /**
+   * 推图挂起等人工验证码（T13 D4/B2；fullme 链路；T14 D8 url 参数化）：收
+   * 流程捕获槽传入的 URL → 抓图 → 推帧 → 挂起（预算 = captchaTimeoutMs），
+   * resolve 恢复帧——answer/aborted/closed（超时与断线/销毁/取消回合同型，
+   * 解释器按 kind 分流）。与 mud-workflow io.ts 的 WorkflowIO 同形（B2 双侧改）。
+   */
+  awaitCaptcha(url: string): Promise<CaptchaResume>
   /** 会话状态快照（连接/登录/接入/世界）。 */
   state(): SessionStatus
 }
@@ -216,10 +291,28 @@ export class MudService {
 
   /** 状态流订阅者（watchStatus 广播面；多订阅者互不影响）。 */
   private readonly statusListeners = new Set<(frame: StatusFrame) => void>()
+  /** 验证码等待注册表（sessionId → 条目；单会话单槽——并发冲突可读拒）。 */
+  private readonly captchaWaits = new Map<string, CaptchaEntry>()
+  /** 验证码流订阅者（watchCaptcha 广播面；多订阅者互不影响）。 */
+  private readonly captchaListeners = new Set<(frame: CaptchaFrame) => void>()
+  /** 验证码挂起预算（构造期 fail-loud 校验后落定）。 */
+  private readonly captchaTimeoutMs: number
+  /** 重连打断令牌（P1，按会话单调递增）：手工 connect/disconnect 与 dispose 递增，
+   *  重连循环每步校验——不匹配立即退出，防 timer fire 与手工动作并发双连。 */
+  private readonly reconnectTokens = new Map<string, number>()
+  /** 在飞重连循环（按会话）：循环入口禁止重入——循环自身失败不再开第二轮。 */
+  private readonly reconnecting = new Set<string>()
   private readonly deps: MudServiceDeps
 
   constructor(deps: MudServiceDeps) {
     this.deps = deps
+    // 验证码挂起预算（T13 D4/B4）：独立预算，fail-loud 正整数（不并入
+    // MAX_TIMEOUT_MS/silenceMs 校验）。
+    const captchaTimeoutMs = deps.captchaTimeoutMs ?? DEFAULT_CAPTCHA_TIMEOUT_MS
+    if (!Number.isSafeInteger(captchaTimeoutMs) || captchaTimeoutMs <= 0) {
+      throw new Error(`mud-core3 配置 captchaTimeoutMs 必须为正整数，got ${String(captchaTimeoutMs)}`)
+    }
+    this.captchaTimeoutMs = captchaTimeoutMs
   }
 
   /**
@@ -233,7 +326,12 @@ export class MudService {
     const classifier = this.deps.classifyRules === undefined
       ? undefined
       : new Classifier(this.deps.classifyRules)
-    rt = new SessionRuntime(sessionId, this.deps.recordLines, this.deps.view, classifier)
+    rt = new SessionRuntime(
+      sessionId, this.deps.recordLines, this.deps.view, classifier, this.deps.keepalive,
+      // busy 谓词（T12 D4）：持有者在途 ∪ 回合中——link 层探测 tick 为真时跳过。
+      // deliverer 在下方创建，闭包按调用期实时读，无创建时序耦合。
+      () => (rt?.holderBusy ?? false) || (this.deliverers.get(sessionId)?.isInTurn ?? false),
+    )
     if (accountName !== undefined) rt.accountName = accountName
     this.runtimes.set(sessionId, rt)
 
@@ -241,8 +339,17 @@ export class MudService {
     this.logs.set(sessionId, log)
     log.info('runtime', '会话登记（无连接）')
 
-    // 状态迁移 → 广播（C5.1 watchStatus 的推帧源；值变化才触发）
-    rt.onStateChange = () => { this.emitStatus() }
+    // 状态迁移 → 广播（C5.1 watchStatus 的推帧源；值变化才触发）；
+    // 断线迁移（T5.2 D4）→ 自动重连闸门判定（D4：hasConnected && !manualDisconnected）；
+    // 断线（B1①）→ 验证码挂起 closed 收束（结构化，不 reject——挂起期断线靠此收束，
+    // 探测不救：D8 busy 抑制）。
+    rt.onStateChange = (state) => {
+      this.emitStatus()
+      if (state === 'disconnected') {
+        this.resolveCaptcha(sessionId, { kind: 'closed' })
+        this.scheduleAutoReconnect(sessionId, rt)
+      }
+    }
     // 登录轴/世界状态变化（GMCP 到达、断线复位）→ 同一广播面
     rt.onWorldChange = () => { this.emitStatus() }
 
@@ -345,6 +452,8 @@ export class MudService {
 
     log?.info('runtime', `连接 ${server.host}:${server.port}（账号 ${account.name}，preset ${account.preset}）`)
     const params: ConnectParams = { host: server.host, port: server.port }
+    // P1：手工建连先打断在飞重连循环（token 递增），在途 attempt 失效、不双连。
+    this.interruptReconnect(sessionId)
     try {
       await rt.connect(params)
     } catch (error) {
@@ -356,18 +465,22 @@ export class MudService {
   }
 
   /**
-   * 流程环境缝（mud-workflow 解释器消费）：凭据解析 + 会话级持有者 + env 原语。
+   * 流程 IO 缝（mud-workflow 解释器消费）：凭据解析 + 会话级持有者 + IO 原语。
    *
    * 执行序：未登记/未连接可读错 → 凭据解析（失败 fail-loud，与 W9「解析失败
    * 在动作之前」同语义）→ acquireSend(holder)（流程独占 send+read，冲突抛错
-   * → 工具层可读拒绝）→ env + creds 注入。release 由调用方 finally 保证执行
+   * → 工具层可读拒绝）→ io + creds 注入。release 由调用方 finally 保证执行
    *（mud-workflow tools 的 mud_workflow_run 执行链）。
    * @throws 未登记/未连接/未在 roster/凭据解析失败/持有者冲突。
    */
-  async workflowEnvFor(sessionId: string, holder: string): Promise<{
-    env: WorkflowEnv
+  async workflowIoFor(sessionId: string, holder: string): Promise<{
+    io: WorkflowIO
     creds: { name: string; pass: string }
     release(): void
+    /** 取消挂起（B1③：宿主取消回合时 tools 层接 exec.signal abort 调之）——
+     *  验证码挂起 closed 收束（无挂起时空操作）；收束后流程走 timeout 出口，
+     *  release 由调用方 finally 保证。 */
+    cancel(): void
   }> {
     const log = this.logs.get(sessionId)
     const rt = this.runtimes.get(sessionId)
@@ -382,21 +495,75 @@ export class MudService {
     if (!rt.acquireSend(holder)) {
       throw new Error('另一执行体正在发送命令或等待应答（会话级独占），请稍后重试')
     }
-    log?.info('runtime', `流程环境就绪（${holder}）`)
-    const env: WorkflowEnv = {
+    log?.info('runtime', `流程 IO 就绪（${holder}）`)
+
+    // 验证码 run 级窄缓存（T14 D7：URL 由流程捕获槽传入，**image 复用职责保留**）：
+    // 同 URL（答错重入——同轮 fullme 无重发引子，服务端 URL 不变）沿用缓存图
+    // 不重抓；refresh 原地更新 image 随条目走；新 URL（新一轮 fullme）新抓新周期。
+    // run 结束随闭包丢弃（run 级语义）。
+    let cachedEntry: { url: string; image: string } | null = null
+    // T14 D8：URL 参数化——闭包自取（extractCaptchaUrl + recentLines 扫描 +
+    // undefined 兜底报错）删除；URL 缺失的报错点前移到 urlwait 结构化 timeout
+    //（流程 captures 提取空值护栏）。
+    const awaitCaptcha = async (url: string): Promise<CaptchaResume> => {
+      // 单槽先判（并发第二个等待可读拒，I10 精神）。
+      if (this.captchaWaits.has(sessionId)) {
+        throw new Error('该会话已有验证码等待在挂起（单会话单槽），不能重复等待')
+      }
+      let image: string
+      if (cachedEntry !== null && cachedEntry.url === url) {
+        image = cachedEntry.image
+      } else {
+        image = await fetchCaptchaImage(url, this.deps.captchaFetch ?? fetch)
+        cachedEntry = { url, image }
+      }
+      let settled = false
+      let settle!: (r: CaptchaResume) => void
+      const promise = new Promise<CaptchaResume>(res => { settle = res })
+      const timer = setTimeout(() => finish({ kind: 'closed' }), this.captchaTimeoutMs)
+      const finish = (r: CaptchaResume): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        this.captchaWaits.delete(sessionId)
+        this.emitCaptcha() // 清除帧（行从快照消失）
+        settle(r)
+      }
+      const entry: CaptchaEntry = {
+        sessionId,
+        account: account.name,
+        url,
+        image,
+        refetched: false,
+        refetching: false,
+        finish,
+      }
+      cachedEntry = entry // refresh 原地更新 image → 缓存随条目走
+      this.captchaWaits.set(sessionId, entry)
+      this.emitCaptcha() // 挂起帧
+      return promise
+    }
+
+    const io: WorkflowIO = {
       send: cmd => rt.send(cmd),
       sendCredential: cmd => rt.sendCredential(cmd),
+      // recentLines 只回未读行（abs > readAbs 水位过滤）：pending 环不物理消费，
+      // 已被前序收束窗消费的应答行（如答错句残行）不得重入后续读窗——否则答错
+      // 重入时 judge 的 initial 快照会立即再命中旧答错句。（T14.2：原「URL 抽取
+      // 豁免」只为 awaitCaptcha 闭包自取存在，URL 槽化后随之删除——过滤代码零改动。）
       read: (opts, initial) => rt.read(opts, initial ?? []),
-      recentLines: n => rt.recentLines(n),
+      recentLines: n => rt.recentLines(n).filter(l => l.abs > rt.readWatermark()),
+      awaitCaptcha,
       state: () => this.status(sessionId),
     }
     return {
-      env,
+      io,
       creds: { name: credentials.name, pass: credentials.pass },
       release: () => {
         rt.releaseSend(holder)
-        log?.info('runtime', `流程环境释放（${holder}）`)
+        log?.info('runtime', `流程 IO 释放（${holder}）`)
       },
+      cancel: () => { this.resolveCaptcha(sessionId, { kind: 'closed' }) },
     }
   }
 
@@ -404,8 +571,82 @@ export class MudService {
   disconnect(sessionId: string): void {
     const rt = this.runtimes.get(sessionId)
     if (rt === undefined) return
+    // P1：手工断连先打断在飞重连循环（token 递增）；D4 标记②在 runtime.disconnect 置位。
+    this.interruptReconnect(sessionId)
     this.logs.get(sessionId)?.info('runtime', `手工断连（原状态 ${rt.connState}）`)
     rt.disconnect()
+  }
+
+  // ── 自动重连（T5.2 D4/D5）────────────────────────────────────────
+
+  /**
+   * 打断在飞重连（P1）：递增 token 使循环在下一步校验点退出，并清在飞标记。
+   * 手工 connect / disconnect / dispose 三入口调用。
+   */
+  private interruptReconnect(sessionId: string): void {
+    this.reconnectTokens.set(sessionId, (this.reconnectTokens.get(sessionId) ?? 0) + 1)
+    this.reconnecting.delete(sessionId)
+  }
+
+  /**
+   * 自动重连闸门（D4）：曾 connected 且非手工断开、runtime 未销毁 → 启动重连循环。
+   * 循环入口禁止重入（循环自身失败产生的 disconnected 不再开第二轮）。
+   * 冷启动（新 runtime 无 hasConnected）设计保证不进入。
+   */
+  private scheduleAutoReconnect(sessionId: string, rt: SessionRuntime): void {
+    if (this.reconnecting.has(sessionId)) return
+    if (rt.isDisposed || !rt.hasConnected || rt.manualDisconnected) return
+    void this.runReconnectLoop(sessionId, rt)
+  }
+
+  /**
+   * 重连循环（D5：限次 + 固定间隔）。每步开始前与每个 await 返回后都校验
+   * 「token 未变且 runtime 未销毁」，不满足立即退出、不发起新 attempt。
+   * 重连成功只连不登（D6），显式 arm 一次静默计时（C3 pulseActivity）。
+   */
+  private async runReconnectLoop(sessionId: string, rt: SessionRuntime): Promise<void> {
+    const log = this.logs.get(sessionId)
+    const token = (this.reconnectTokens.get(sessionId) ?? 0) + 1
+    this.reconnectTokens.set(sessionId, token)
+    this.reconnecting.add(sessionId)
+    const maxAttempts = this.deps.reconnect?.maxAttempts ?? DEFAULT_RECONNECT.maxAttempts
+    const intervalMs = this.deps.reconnect?.intervalMs ?? DEFAULT_RECONNECT.intervalMs
+    try {
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        if (this.reconnectTokens.get(sessionId) !== token || rt.isDisposed) return
+        const server = this.deps.serverLookup(sessionId)
+        if (server === undefined) {
+          log?.error('runtime', '自动重连终止：会话未绑定服务器')
+          return
+        }
+        log?.info('runtime', `自动重连第 ${attempt}/${maxAttempts} 次 → ${server.host}:${server.port}`)
+        try {
+          await rt.connect({ host: server.host, port: server.port })
+        } catch (error) {
+          // await 返回后校验：手工动作/销毁已打断（token 变）→ 立即退出。
+          if (this.reconnectTokens.get(sessionId) !== token || rt.isDisposed) return
+          log?.error('runtime', `自动重连第 ${attempt} 次失败：${describeError(error)}`)
+          if (attempt >= maxAttempts) {
+            log?.error('runtime', `自动重连已达上限（${maxAttempts} 次），保持断开等人工`)
+            return
+          }
+          await new Promise(r => setTimeout(r, intervalMs))
+          continue
+        }
+        // await 返回后校验（P1）：成功也得确认未被手工动作/销毁打断。
+        if (this.reconnectTokens.get(sessionId) !== token || rt.isDisposed) return
+        // 成功：计数随循环退出自然复位；C3 显式 arm 一次静默计时（提示符静默期
+        // 「到期 → 探活 → 判活 → 唤醒」链路照常推进）。
+        log?.info('runtime', '自动重连成功（只连不登，登录由 agent 规划）')
+        rt.pulseActivity()
+        return
+      }
+    } finally {
+      // 仅当 token 未被替换时清在飞标记（token 已变 = 手工动作已接管并清理）。
+      if (this.reconnectTokens.get(sessionId) === token) {
+        this.reconnecting.delete(sessionId)
+      }
+    }
   }
 
   /**
@@ -453,7 +694,7 @@ export class MudService {
     this.deliverers.get(sessionId)?.onTurnEnd()
   }
 
-  /** 两轴 + 接入 + 世界状态。 */
+  /** 两轴 + 接入 + 探活观测 + 世界状态。 */
   status(sessionId: string): SessionStatus {
     const rt = this.runtimes.get(sessionId)
     const del = this.deliverers.get(sessionId)
@@ -462,6 +703,7 @@ export class MudService {
       state: rt?.connState ?? 'disconnected',
       admitted: del?.isAdmitted ?? false,
       loggedIn: rt?.loggedIn ?? 'unknown',
+      probeState: rt?.probeState ?? 'idle',
       world: rt?.world ?? {},
     }
   }
@@ -521,6 +763,114 @@ export class MudService {
     }
   }
 
+  // ── 验证码通道（T13 D7：独立流动词 + 三输入动词）──────────────────
+
+  /**
+   * 验证码流（watchCaptcha 的流实现）：首帧全量挂起快照（页面刷新/重连/
+   * 重开恢复弹窗），条目变化（挂起/刷新换图/收束）时整体重推——行摘除即清除帧。
+   * signal abort / 迭代器 return 即清订阅。沿 watchStatusStream 同型。
+   */
+  async *watchCaptchaStream(signal: AbortSignal): AsyncIterable<CaptchaFrame> {
+    const queue: CaptchaFrame[] = []
+    let wake: (() => void) | null = null
+    const pulse = (): void => {
+      if (wake !== null) { wake(); wake = null }
+    }
+    const unsubscribe = this.subscribeCaptcha(frame => {
+      queue.push(frame)
+      pulse()
+    })
+    const onAbort = (): void => { pulse() }
+    signal.addEventListener('abort', onAbort, { once: true })
+    try {
+      queue.push(this.captchaSnapshot())
+      while (!signal.aborted) {
+        const frame = queue.shift()
+        if (frame !== undefined) {
+          yield frame
+          continue
+        }
+        await new Promise<void>(resolve => { wake = resolve })
+      }
+    } finally {
+      signal.removeEventListener('abort', onAbort)
+      unsubscribe()
+    }
+  }
+
+  /** 订阅验证码流（首帧补推由 watchCaptchaStream 负责；多订阅者互不影响）。 */
+  subscribeCaptcha(listener: (frame: CaptchaFrame) => void): () => void {
+    this.captchaListeners.add(listener)
+    return () => { this.captchaListeners.delete(listener) }
+  }
+
+  /** 当前挂起快照（watchCaptcha 首帧与广播共用）。 */
+  private captchaSnapshot(): CaptchaFrame {
+    const pending: CaptchaRow[] = []
+    for (const entry of this.captchaWaits.values()) {
+      pending.push({ sessionId: entry.sessionId, account: entry.account, url: entry.url, image: entry.image })
+    }
+    return { pending }
+  }
+
+  /** 广播当前挂起快照（fire-and-forget；单订阅者异常不拖累其他订阅者）。 */
+  private emitCaptcha(): void {
+    if (this.captchaListeners.size === 0) return
+    const frame = this.captchaSnapshot()
+    for (const listener of [...this.captchaListeners]) {
+      try { listener(frame) } catch { /* 订阅者异常不拖累广播 */ }
+    }
+  }
+
+  /** 取挂起条目（无挂起 → 可读错——三输入动词共用的错误面）。 */
+  private requireCaptchaEntry(sessionId: string): CaptchaEntry {
+    const entry = this.captchaWaits.get(sessionId)
+    if (entry === undefined) {
+      throw new Error(`会话 ${sessionId} 当前没有挂起的验证码等待`)
+    }
+    return entry
+  }
+
+  /** 收束挂起（幂等；无挂起空操作）——断线/销毁/取消回合三退出路径共用。 */
+  private resolveCaptcha(sessionId: string, r: CaptchaResume): void {
+    this.captchaWaits.get(sessionId)?.finish(r)
+  }
+
+  /**
+   * 提交人工码值（captchaAnswer）：只 resolve 挂起，`fullme {captcha}` 由流程
+   * 动作统一声明发送（D5：人工只提供值）。
+   */
+  async captchaAnswer(sessionId: string, value: string): Promise<void> {
+    this.requireCaptchaEntry(sessionId).finish({ kind: 'answer', value: value.trim() })
+  }
+
+  /** 中止（captchaAbort）：专用 aborted 出口收束（D4：人工中止是常规路径）。 */
+  async captchaAbort(sessionId: string): Promise<void> {
+    this.requireCaptchaEntry(sessionId).finish({ kind: 'aborted' })
+  }
+
+  /**
+   * 刷新（captchaRefresh）：重抓同 URL 页（页面自动刷新出新图）→ 条目原地更新
+   * → 推新帧；挂起 Promise 不动、计时不重置。每轮挂起限 1 次（D7：同 URL 共
+   * 4 次刷新机会、第 5 次页面失效）；取图在途的重复点击忽略。
+   */
+  async captchaRefresh(sessionId: string): Promise<{ image: string }> {
+    const entry = this.requireCaptchaEntry(sessionId)
+    if (entry.refetched) {
+      throw new Error('本轮刷新配额已用完（每个验证码限刷新 1 次）')
+    }
+    if (entry.refetching) return { image: entry.image }
+    entry.refetching = true
+    try {
+      entry.image = await fetchCaptchaImage(entry.url, this.deps.captchaFetch ?? fetch)
+      entry.refetched = true
+      this.emitCaptcha()
+      return { image: entry.image }
+    } finally {
+      entry.refetching = false
+    }
+  }
+
   /**
    * 读会话日志（内存环条目 + 落盘目标）。
    * 原始行流只落盘不进环（见 SessionLog.stream），所以环里是运行/网络/投递/闸门事件。
@@ -538,6 +888,11 @@ export class MudService {
   dispose(sessionId: string): void {
     const rt = this.runtimes.get(sessionId)
     if (rt === undefined) return
+    // B1②：销毁先收束验证码挂起（closed——结构化收束防未捕获 rejection）。
+    this.resolveCaptcha(sessionId, { kind: 'closed' })
+    // P1：销毁打断在飞重连与探测（否则计时器会把已拆会话拖回来，或对已销毁
+    // runtime 调 connect 抛错）；rt.dispose → disconnect 也取消在飞探测。
+    this.interruptReconnect(sessionId)
     this.logs.get(sessionId)?.info('runtime', '会话销毁：断连 + 拆运行时')
     this.deliverers.get(sessionId)?.dispose()
     this.deliverers.delete(sessionId)

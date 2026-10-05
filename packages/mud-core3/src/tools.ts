@@ -4,7 +4,7 @@
  * 三工具一个原则：**原文返回、模型自决**——mud_send 返回应答行原文（过程即
  * 结果）；mud_connect 只建连（登录归流程面）；mud_state 返回插件状态 + world
  * 合并快照。mud_workflow_run 及流程管理工具在 mud-workflow 子包（独立 preset
- * 行），本包只通过引擎窄面 workflowEnvFor 提供流程环境缝。
+ * 行），本包只通过引擎窄面 workflowIoFor 提供流程 IO 缝。
  *
  * 三期语义（PLAN「T2 范围裁定」，跳过 admit 闸门中间态）：
  *   - mud_connect：只建连不登录（T3 盲发退役，登录由流程面 login 执行）；
@@ -28,7 +28,7 @@ import type { SessionRuntime } from './runtime.ts'
 import type { ReadOpts } from './read.ts'
 import type { ConnState } from './roster.ts'
 import type { LoggedInState, WorldSnapshot } from './world.ts'
-import type { WorkflowEnv } from './service.ts'
+import type { WorkflowIO } from './service.ts'
 
 /** 宿主 ToolDefinition 的窄结构（本包只用到的面）。 */
 export interface MudToolDefinition {
@@ -80,13 +80,16 @@ export interface MudCore3Handle {
   /** 建连 + login（幂等；失败 throw 可读错 → 工具层转可读拒绝）。 */
   connect(sessionId: string): Promise<{ state: string }>
   /**
-   * 流程环境缝（mud-workflow 解释器消费；凭据由引擎解析注入，不出进程、不经
+   * 流程 IO 缝（mud-workflow 解释器消费；凭据由引擎解析注入，不出进程、不经
    * 模型）。失败 throw 可读错（未连接/凭据解析失败/持有者冲突）→ 调用方转可读拒绝。
+   * cancel：宿主取消回合时接 exec.signal abort 调之（B1③）——验证码挂起 closed
+   * 收束，流程走 timeout 出口后 release 由调用方 finally 保证。
    */
-  workflowEnvFor(sessionId: string, holder: string): Promise<{
-    env: WorkflowEnv
+  workflowIoFor(sessionId: string, holder: string): Promise<{
+    io: WorkflowIO
     creds: { name: string; pass: string }
     release(): void
+    cancel(): void
   }>
   /** 状态快照（插件状态 + world 合并）。 */
   stateOf(sessionId: string): MudStateSnapshot
@@ -301,6 +304,8 @@ export function registerMudTools(
       }
 
       // 只对「未连接」设限（三期裁定：不受接入闸门、不要求已登录）。
+      // 探测中（probeState=probing）仍按已连接放行——probeState 是只读观测面，
+      // 不回写 conn 三态（T5.1），TCP 确实通，发送/等待语义不受探测影响。
       if (tc.runtime.connState !== 'connected') return reject(NOT_CONNECTED_ERROR)
 
       // timeoutMs 钳制（§8.7）：缺省注入，上限 MAX_TIMEOUT_MS。

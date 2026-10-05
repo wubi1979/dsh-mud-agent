@@ -205,7 +205,7 @@ agent 工具调用 mud_send{cmd, listen}
 建账号（纯登记：写名册 + 建会话，会话保持 blank）→ 接入（投状态任务书，唯一点火）
    → 任务书回合（根读状态自行规划）
    → 根委派子 agent（宿主原生 subagent，一次性前台）→ 子调 mud_workflow_run{name:'login'}
-   → 归属解析 → workflowEnvFor（凭据 resolve → acquireSend → env 原语）
+   → 归属解析 → workflowIoFor（凭据 resolve → acquireSend → io 原语）
    → 解释器逐步：wait 读窗 → failOn 出口 → action 发送 → 路由
    → 出口过 pass 掩码 → 子写现场并收尾 → 收尾文本作为工具结果回到根 → 根消化后收尾
 ```

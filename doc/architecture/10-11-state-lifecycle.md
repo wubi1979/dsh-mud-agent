@@ -18,6 +18,7 @@ world:     GMCP 事件与（后置的）行级规则驱动（§10.3）
 - **两轴正交**：`conn` 回答"socket 通不通"，`loggedIn` 回答"人在不在游戏里"。
 - **断线时两轴一起复位**，且 `loggedIn` 复位为 **`unknown`（不是 `false`）**——"不知道"与"确定未登录"是两种状态（§10.4）。
 - 状态是**会话私有**（每 runtime 一份）；`setState` 是唯一入口，**值变化才触发** `onStateChange`（§9.5）。
+- **探测态观测量**：`probeState: idle | probing` 是 `conn` 之外只读观测面（探活进行中，§3.2——T12 起 link 层自驱静默伴随探测，窗口刻度见 §3.2）——经 `StatusRow`/`watchStatus` 出口到 webui（侧栏「探测中」），**不回写 `conn` 三态**（探测中仍按 connected 放行发送）。
 
 ## 10.2 登录轴：声明判据先行，GMCP 权威加固（三态）
 
@@ -56,7 +57,7 @@ world:     GMCP 事件与（后置的）行级规则驱动（§10.3）
 重连成功后登录轴按 §10.2 重新置位（判据先行 inferred，GMCP 加固 in-game），World 由 GMCP 重建。
 ```
 
-**不自动重连**：重连是手工动作（`connect` / `mud_connect`）或由静默唤醒兜底触发规划（§7.5）；自动重连的前置是**真实心跳**（§17.3）。
+**自动重连**（2026-10-04 落地，T5）：意外断开（socket close/EOF/探活判死）自动重连——闸门 = **`hasConnected && !manualDisconnected`**（手工断开与冷启动不重连）；限次放弃（缺省 5 次 × 30s，Config 可覆盖）后保持断开等人工/静默唤醒；重连成功**只连不登**，登录轴按 §10.2 重新置位（判据先行 inferred，GMCP 加固 in-game），World 由 GMCP 重建（§11.3）。
 
 ## 10.5 状态出口（全体 agent 共读）
 
@@ -123,7 +124,9 @@ connected（行流开始积累，停在登录提示符；**不自动 login**）
 disconnected（runtime 保留；两轴复位 + world.clear + pending 清空 + 水位 -1）
    │ 连接代次已增：旧连接迟到的 text/boundary/close 一律丢弃
    ▼
-等手工 connect（**不自动重连**；已接入场景的补登录由静默唤醒兜底）
+意外断开：自动重连（闸门 hasConnected && !manualDisconnected；限次缺省 5×30s，
+   手工动作经代次令牌打断；成功只连不登 + 显式 arm 静默计时，§3.2/§10.4）
+手工断开 / 重连放弃：等手工 connect（补登录由 agent 驱动 login 流程，静默唤醒兜底规划）
 ```
 
 | 事件 | runtime | 连接 | 两轴 / 世界 | 行流 |
@@ -147,7 +150,7 @@ disconnected（runtime 保留；两轴复位 + world.clear + pending 清空 + �
 mud_workflow_run { name }
   → 归属解析（§8.5）
   → 注册表取流程（白名单，不接受任意路径）
-  → workflowEnvFor：未登记/未连接 ⇒ 可读错
+  → workflowIoFor：未登记/未连接 ⇒ 可读错
        → 凭据解析（失败 fail-loud，报引用名）
        → acquireSend(holder)（流程独占 send+read）
   → 解释器逐步：wait → failOn 出口 → action → 路由（步转移上限 256）

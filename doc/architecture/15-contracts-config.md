@@ -29,6 +29,10 @@ note: 横切面（索引章）：对外契约 + Config 总表；权威条款在�
 | `logs(sessionId)` | id | `{ sessionId, entries, fileTarget }` | §13.1、§13.2 |
 | `follow(sessionId)` | `@Remote({mode:'stream'})` | `AsyncIterable<GameFrame>`（snapshot / output / state） | §5.3、§9.4 |
 | `watchStatus()` | `@Remote({mode:'stream'})` | 流动词：首帧全量 + 变化推帧 | §9.5、§13.2 |
+| `watchCaptcha()` | `@Remote({mode:'stream'})` | 流动词：首帧补推挂起态 + 变化推全量快照帧（行摘除 = 清除帧） | §8.17、§9.7 |
+| `captchaAnswer(sessionId, value)` | id + 码值（trim） | `{ sessionId }`（resolve 挂起；`fullme {captcha}` 由流程动作统一发送） | §8.17 |
+| `captchaAbort(sessionId)` | id | `{ sessionId }`（专用 `aborted` 出口收束） | §8.17 |
+| `captchaRefresh(sessionId)` | id | `{ sessionId, image }`（重抓同 URL；每轮挂起限 1 次，超配额可读拒） | §8.17、§9.7 |
 
 **错误面统一**：未登记会话抛 `session/not-found` 语义错误，文案统一为「会话未登记，可能宿主重启过或页面残留旧会话——请刷新页面后重连或重建账号」（§9.2）；`undefined`/空 id 由 `requireId` fail-loud。
 
@@ -41,7 +45,7 @@ interface MudCore3Service extends MudCore3Handle {
   runtimeFor(agent): SessionRuntime | null          // 归属解析；不属于本插件 ⇒ null
   toolContextFor(agent): { sessionId, runtime, admitted, connState } | null
   connect(sessionId): Promise<{ state }>            // mud_connect 的落点（幂等）
-  workflowEnvFor(sessionId, holder): WorkflowEnv    // §8.14 缝合点
+  workflowIoFor(sessionId, holder): WorkflowIO        // §8.14 缝合点（io 原语 awaitCaptcha(url)——T14 URL 参数化，§8.17）
   stateOf(sessionId): { connState, loggedIn, admitted, world, recording, dropped }
   defaults: { sendTimeoutMs, sendMaxLines }         // 工具缺省参数
   builtinFlows: readonly WorkflowRecord[]           // 流程实体（login 等），交 mud-workflow 注册表
@@ -51,7 +55,7 @@ interface MudCore3Service extends MudCore3Handle {
 - **归属解析同一路径**：`runtimeFor` 与 `toolContextFor` 都走 roster + 父链上溯（§8.5）。
 - **窄结构代位**：`ctx.get('agents')` 的品牌化 `SessionId` 类型定义在宿主 `@deepseek-ai/dsh-session` 内，pnpm 严格链接下不可直连 import ⇒ 用**最小结构断言**读 `agents.get(id)?.session?.header?.parentSession`（§2.1 事实 9）。
 - **取用走 `ctx.get`（不写进 `inject`）**：`agents` 是**可选依赖**——缺席/提供方 fiber 未 ACTIVE ⇒ `undefined` ⇒ 上溯终止（§2.3）；且必须在**调用期**解析（apply 期未必就绪，与 `storageDomain` 同一课，§14.3）。写成 `ctx.agents` 会因未声明 inject 直接抛错并使 `apply` 整体失败 ⇒ `remote.mud` 全动词 404。
-- `MudService`（内部服务面）：`register` / `connect` / `disconnect` / `admit` / `stop` / `status` / `statuses` / `subscribeStatus` / `watchStatusStream` / `get` / `getDeliverer` / `screenOf` / `logOf` / `flushPending` / `turnStart` / `turnEnd` / `dispose` / `disposeAll`（§11.4、§11.7）。
+- `MudService`（内部服务面）：`register` / `connect` / `disconnect` / `admit` / `stop` / `status` / `statuses` / `subscribeStatus` / `watchStatusStream` / `subscribeCaptcha` / `watchCaptchaStream` / `captchaAnswer` / `captchaAbort` / `captchaRefresh` / `get` / `getDeliverer` / `screenOf` / `logOf` / `flushPending` / `turnStart` / `turnEnd` / `dispose` / `disposeAll`（§11.4、§11.7、§8.17）。
 
 ## 15.3 preset 行清单
 
@@ -77,8 +81,9 @@ interface MudCore3Service extends MudCore3Handle {
 | 保存门三门（zod + `checkFlow` + 凭据红线） | §8.11 |
 | 凭据红线双闸（静态 + 执行） | §8.12 |
 | 解释器语义（步序、出口、步上限、pass 掩码） | §8.13 |
-| 五工具与 `workflowEnvFor` 执行序 | §8.14 |
+| 五工具与 `workflowIoFor` 执行序 | §8.14 |
 | `login` 实体步表与两条实测勘误 | §8.15 + [flows/login.md](../flows/login.md) |
+| `fullme` 实体步表与人工验证码链路（`captcha` 动作 / `awaitCaptcha` / 双预算） | §8.17 + [flows/fullme.md](../flows/fullme.md) |
 | 目标形态（`goto` / `exit`，`'success'` 强制 `ok: true`） | §8.10 |
 
 ## 15.5 Config 总表
@@ -96,17 +101,26 @@ interface MudCore3Service extends MudCore3Handle {
 | 7 | `viewScrollback` | 2000 | 画面通道 snapshot 回放深度（对齐录制缓冲） | §5.3 |
 | 8 | `viewCols` | **120** | 画面通道列数（固定，不做 resize 回传） | §5.3 |
 | 9 | `viewMaxBufferedBytes` | 2MB | 单 follower 缓冲上限（超限显式断流） | §5.3 |
-| 10 | `logFile` | `true` | 是否落盘 JSONL | §13.1 |
-| 11 | `logDir` | `<cwd>/mud-logs` | 日志落盘目录 | §13.1 |
-| 12 | `logBufferMax` | 2000 | 日志内存环上限（`logs` 的可读窗口） | §13.1 |
-| 13 | `rosterStorage` | `true` | 是否挂宿主 storage 域（`false` = 强制内存） | §14.3 |
-| 14 | ~~`bootstrapOnCreate`~~ | — | **已退役**（2026-10-02）：建账号 = 纯登记不投任务书，接入 = 唯一点火点（§7.4、§7.4.1） | §11.2、§7.4 |
-| 15 | `taskBrief` | `DEFAULT_TASK_BRIEF` | 任务书模板（占位符 `{{serverName}}`/`{{endpoint}}`/`{{account}}`/`{{conn}}`/`{{loggedIn}}`） | §7.4 |
-| 16 | `silenceMs` | 120_000 | 静默唤醒时长（**正整数 fail-loud**） | §7.5 |
-| 17 | `sendTimeoutMs` | 15000 | `mud_send` 缺省总超时（工具侧钳制 ≤ 60000） | §8.7 |
-| 18 | `sendMaxLines` | 50 | 裸读尾部 / 兜底行数 | §8.7 |
+| 10 | `viewSubCap` | 1000 | 副屏行环上限（按有标行条数计，超限丢最旧） | §9.4 |
+| 11 | `classifyRules` | 内置（语料校准） | 行分类规则清单（声明序取首个命中；正则字符串，非法正则启动即拒装） | §6.3、§17.4 |
+| 12 | `deliverAllowKinds` | —（有标行一律不投） | 投递白名单：列出放行的 kind（如 `['chat']`） | §6.3 |
+| 13 | `logFile` | `true` | 是否落盘 JSONL | §13.1 |
+| 14 | `logDir` | `<cwd>/mud-logs` | 日志落盘目录 | §13.1 |
+| 15 | `logBufferMax` | 2000 | 日志内存环上限（`logs` 的可读窗口） | §13.1 |
+| 16 | `rosterStorage` | `true` | 是否挂宿主 storage 域（`false` = 强制内存） | §14.3 |
+| 17 | ~~`bootstrapOnCreate`~~ | — | **已退役**（2026-10-02）：建账号 = 纯登记不投任务书，接入 = 唯一点火点（§7.4、§7.4.1） | §11.2、§7.4 |
+| 18 | `taskBrief` | `DEFAULT_TASK_BRIEF` | 任务书模板（占位符 `{{serverName}}`/`{{endpoint}}`/`{{account}}`/`{{conn}}`/`{{loggedIn}}`） | §7.4 |
+| 19 | `silenceMs` | 120_000 | 静默唤醒时长（**正整数 fail-loud**） | §7.5 |
+| 20 | `probeStartMs` | 90_000 | 探活静默首发延迟（自**最后数据到达**起；T12 link 层静默伴随自驱） | §3.2 |
+| 21 | `probeRetryMs` | 9_000 | 探活无应答重发间隔 | §3.2 |
+| 22 | `probeMaxAttempts` | 3 | 探活总次数上限（判死刻度 = `probeStartMs + 次数 × probeRetryMs`，须 ≤ `silenceMs`） | §3.2 |
+| 23 | `reconnectMaxAttempts` | 5 | 意外断线自动重连尝试次数上限（到限次保持断开等人工） | §3.2、§11.3 |
+| 24 | `reconnectIntervalMs` | 30_000 | 自动重连尝试固定间隔 | §3.2、§11.3 |
+| 25 | `sendTimeoutMs` | 15000 | `mud_send` 缺省总超时（工具侧钳制 ≤ 60000） | §8.7 |
+| 26 | `sendMaxLines` | 50 | 裸读尾部 / 兜底行数 | §8.7 |
+| 27 | `captchaTimeoutMs` | 180_000 | 验证码挂起预算（**独立预算**，不受 MAX_TIMEOUT_MS/silenceMs 校验约束；**正整数 fail-loud**） | §8.17 |
 
-> 上表与 `packages/mud-core3/src/index.ts` 的 `MudCore3Config` 一一对应（**18 项**）。变更 Config 必须同时改本表与 §0.1 版本号语义（Y/Z 级）。
+> 上表与 `packages/mud-core3/src/index.ts` 的 `MudCore3Config` 一一对应（**26 项现役 + 1 已退役**）。探活三项 + `silenceMs` 受启动期校验式约束（`probeStartMs + probeMaxAttempts × probeRetryMs ≤ silenceMs`，fail-loud，§3.2）。变更 Config 必须同时改本表与 §0.1 版本号语义（Y/Z 级）。
 
 ### 硬编码项（**不进 Config**，附理由）
 

@@ -11,7 +11,7 @@ import {
   type MudToolDefinition, type MudWorkflowCore, type ToolRegistrar,
 } from '../src/tools.ts'
 import { WorkflowRegistry } from '../src/registry.ts'
-import type { WorkflowEnv } from '../src/env.ts'
+import type { WorkflowIO } from '../src/io.ts'
 
 /** 收集注册的假 registrar。 */
 function fakeRegistrar(): { registrar: ToolRegistrar; defs: Map<string, MudToolDefinition> } {
@@ -39,13 +39,14 @@ const simpleFlow = {
 
 const CREDS = { name: 'hero', pass: 'p' }
 
-/** 脚本化 fake env（单窗 done）。 */
-function fakeEnv(): WorkflowEnv {
+/** 脚本化 fake IO（单窗 done）。 */
+function fakeIO(): WorkflowIO {
   return {
     send: () => true,
     sendCredential: () => true,
     read: async () => ({ lines: [{ text: '完成' }], reason: 'done' }),
     recentLines: () => [],
+    awaitCaptcha: async () => ({ kind: 'closed' }),
     state: () => ({ state: 'connected' }),
   }
 }
@@ -88,7 +89,7 @@ describe('registerMudWorkflowTools', () => {
     let released = false
     const core: MudWorkflowCore = {
       toolContextFor: agent => (agent?.id === 'agent-1' ? { sessionId: 'sess-1' } : null),
-      workflowEnvFor: async () => ({ env: fakeEnv(), creds: CREDS, release: () => { released = true } }),
+      workflowIoFor: async () => ({ io: fakeIO(), creds: CREDS, release: () => { released = true } }),
     }
     registerMudWorkflowTools(registrar, {
       engine: () => ({ registry }),
@@ -105,7 +106,7 @@ describe('registerMudWorkflowTools', () => {
     const { registrar, defs } = fakeRegistrar()
     const core: MudWorkflowCore = {
       toolContextFor: () => null,
-      workflowEnvFor: async () => { throw new Error('不应到达') },
+      workflowIoFor: async () => { throw new Error('不应到达') },
     }
     registerMudWorkflowTools(registrar, {
       engine: () => ({ registry: new WorkflowRegistry() }),
@@ -124,7 +125,7 @@ describe('registerMudWorkflowTools', () => {
       engine: () => ({ registry }),
       core: () => ({
         toolContextFor: () => ({ sessionId: 'sess-1' }),
-        workflowEnvFor: async () => { throw new Error('不应到达（流程不存在）') },
+        workflowIoFor: async () => { throw new Error('不应到达（流程不存在）') },
       }),
     })
     const r = await defs.get('mud_workflow_run')!

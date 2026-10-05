@@ -3,12 +3,16 @@
  *
  * ServerDialog: 添加服务器（name/host/port/cwd）——v1 原样保留。
  * UserDialog: 添加用户（name/pass/preset）——新增 preset 下拉。
- * CaptchaDialog: 移除（core3 第一期不需要）。
+ * CaptchaDialog: 人工验证码弹窗（T13.3，D7 呈现：图片 / 提示行+刷新 /
+ *   输入框 / 中止+提交）；MudCaptchaDialog 为它的全局绑定层（watchCaptcha
+ *   订阅 + 挂起呈现 + 收束关窗），挂载于全局侧栏，与画面 tab 无关。
  * @module @deepseek-ai/dsh-mud-webui/client/MudDialogs
  */
 
-import { useEffect, useRef, useState } from 'react'
-import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { Button, IconRefreshOutlineRegular, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MudCaptchaController } from './mud-captcha.ts'
+import type { MudCaptchaRow, MudRemoteController } from './mud-remote.ts'
 
 const FIELD_STYLE: React.CSSProperties = {
   width: '100%', boxSizing: 'border-box', padding: '8px 10px',
@@ -189,3 +193,119 @@ export function UserDialog({ open, mode, serverName, initial, onClose, onSubmit 
     </Modal>
   )
 }
+
+/** 验证码图片呈现样式（自上而下首元素，D7）。 */
+const CAPTCHA_IMAGE_STYLE: React.CSSProperties = {
+  display: 'block', maxWidth: '100%', margin: '12px auto 0',
+  borderRadius: 6, border: '1px solid var(--dsw-alias-interactive-bg-hover)',
+}
+
+/** 刷新图标钮样式（提示行内联小钮）。 */
+const REFRESH_BUTTON_STYLE: React.CSSProperties = {
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  width: 22, height: 22, padding: 0, borderRadius: 5, cursor: 'pointer',
+  border: '1px solid var(--dsw-alias-interactive-bg-hover)',
+  background: 'var(--dsw-alias-bg-base)', color: 'var(--dsw-alias-label-primary)',
+}
+
+/**
+ * 人工验证码弹窗（T13.3 D7 呈现面，纯 props 驱动）：
+ * 自上而下 = 图片 / 提示行（来源账号名）+ 刷新图标（本轮已用即置灰）/
+ * 输入框（Enter 提交）/ 中止 + 提交。收束关窗由服务端推清除帧驱动
+ * （提交/中止后不清本地窗——等服务端收束，答错重入推新帧重现）。
+ */
+export function CaptchaDialog({ open, row, refetched, busy, error, onClose, onSubmit, onAbort, onRefresh }: {
+  open: boolean
+  /** 当前挂起行（含图片与来源账号名）。 */
+  row: MudCaptchaRow
+  /** 本轮刷新配额是否已用（D7：每轮挂起限 1 次）。 */
+  refetched: boolean
+  /** 提交/中止在途（按钮置灰防双击）。 */
+  busy: boolean
+  error: string | null
+  onClose: () => void
+  onSubmit: (value: string) => void
+  onAbort: () => void
+  onRefresh: () => void
+}) {
+  const [value, setValue] = useState('')
+  // 换行（新一轮/换会话）重置输入；行未变（同轮重推帧）保留已输入值。
+  const sessionIdRef = useRef(row.sessionId)
+  if (sessionIdRef.current !== row.sessionId) {
+    sessionIdRef.current = row.sessionId
+    setValue('')
+  }
+  const submit = (): void => {
+    if (busy || value.trim() === '') return
+    onSubmit(value)
+    setValue('')
+  }
+  const enter = useEnterSubmit(submit)
+
+  return (
+    <Modal open={open} onClose={onClose} title="人工验证码" closeLabel="关闭"
+      footer={<>
+        <Button variant="outline" disabled={busy} onClick={onAbort}>中止</Button>
+        <Button variant="primary" disabled={busy || value.trim() === ''} onClick={submit}>
+          {busy ? '提交中…' : '提交'}
+        </Button>
+      </>}
+    >
+      <img style={CAPTCHA_IMAGE_STYLE} src={row.image} alt="验证码图片" />
+      <label style={{ ...LABEL_STYLE, display: 'flex', alignItems: 'center', gap: 4 }}>
+        <span>请输入图片中的验证码（来源：{row.account}）</span>
+        <Tooltip label={refetched ? '本轮已刷新' : '刷新图片（本轮限 1 次）'} delayMs={300}>
+          <button type="button" style={REFRESH_BUTTON_STYLE} aria-label="刷新图片"
+            disabled={refetched || busy} onClick={onRefresh}
+          >
+            <IconRefreshOutlineRegular size={14} />
+          </button>
+        </Tooltip>
+      </label>
+      <input style={FIELD_STYLE} value={value} autoFocus spellCheck={false}
+        placeholder="输入验证码"
+        onFocus={(e) => { e.target.select() }}
+        onChange={(e) => { setValue(e.target.value) }}
+        onCompositionStart={() => { enter.composing.current = true }}
+        onCompositionEnd={() => { enter.composing.current = false }}
+        onKeyDown={enter.onKeyDown}
+      />
+      {error !== null && <div style={ERROR_STYLE} role="alert">{error}</div>}
+    </Modal>
+  )
+}
+
+/**
+ * 全局验证码弹窗绑定层：持有 MudCaptchaController（订阅 watchCaptcha 流）
+ * 并把快照画成 CaptchaDialog。全局模态——不属于任何会话视图，切换会话仍
+ * 显示并标注来源账号名；Esc/遮罩 = 本地隐藏（不动流程，挂起照常等、服务端
+ * 超时兜底），该行重现或换行时重新显示。
+ */
+export function MudCaptchaDialog({ remote }: { remote: MudRemoteController }) {
+  const ref = useRef<MudCaptchaController | null>(null)
+  if (ref.current === null) ref.current = new MudCaptchaController(remote)
+  const controller = ref.current
+  // 流生命周期跟组件：卸载即停（页面刷新 = 重挂载重新订阅，首帧补推恢复弹窗）。
+  useEffect(() => controller.start(), [controller])
+  const snap = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
+  // Esc/遮罩隐藏的行：行重现（新一轮）或换行时重新显示。
+  const [dismissedFor, setDismissedFor] = useState<string | null>(null)
+  const row = snap.pending[0] ?? null
+  const open = row !== null && row.sessionId !== dismissedFor
+  return (
+    <CaptchaDialog
+      open={open}
+      row={row !== null ? row : EMPTY_ROW}
+      refetched={row !== null && snap.refetched.has(row.sessionId)}
+      busy={row !== null && snap.busy.has(row.sessionId)}
+      error={snap.error}
+      onClose={() => { if (row !== null) setDismissedFor(row.sessionId) }}
+      onSubmit={(value) => { if (row !== null) void controller.submit(row.sessionId, value) }}
+      onAbort={() => { if (row !== null) void controller.abort(row.sessionId) }}
+      onRefresh={() => { if (row !== null) void controller.refresh(row.sessionId) }}
+    />
+  )
+}
+
+/** CaptchaDialog 关闭态的空行占位（open=false 时不渲染内容，类型上仍需一值）。 */
+const EMPTY_ROW: MudCaptchaRow = { sessionId: '', account: '', url: '', image: '' }

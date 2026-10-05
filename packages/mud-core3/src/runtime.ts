@@ -9,6 +9,7 @@
 
 import { Mud } from './link/mud.ts'
 import type { MudLine } from './link/line.ts'
+import type { KeepaliveOptions, ProbeState } from './link/keepalive.ts'
 import { ReadMachine, type ReadOpts, type ReadResult } from './read.ts'
 import { GameScreen, type GameViewOptions } from './view/screen.ts'
 import { World, type LoggedInState, type WorldSnapshot } from './world.ts'
@@ -42,7 +43,7 @@ export interface ConnectParams {
  */
 export class SessionRuntime {
   readonly sessionId: string
-  private readonly mud = new Mud()
+  private readonly mud: Mud
   private state: ConnState = 'disconnected'
   /** 登录轴（三期两轴状态）：GMCP 是权威登录信号，断线复位为 unknown。 */
   private loggedInState: LoggedInState = 'unknown'
@@ -58,6 +59,10 @@ export class SessionRuntime {
   private readonly recordLimit: number
   private dropped = 0
   private disposed = false
+  /** D4 自动重连闸门标记①：曾建连成功（TCP 握手完成即置，不要求已登录）。 */
+  private hasConnectedFlag = false
+  /** D4 自动重连闸门标记②：手工断连（手工 disconnect 置位，connect 成功清除）。 */
+  private manualDisconnectedFlag = false
   /** 等待建连期间 socket 已终结（拒绝/对端关闭）——用于区分"失败"与"超时"。 */
   private connectAborted = false
   // 水位线（§4.3，行号空间 = MudLine.abs）：已见线 seen = max(delivered, read)。
@@ -101,12 +106,27 @@ export class SessionRuntime {
    * @param recordLimit - 录制缓冲上限行数（缺省 2000；超出丢最旧）。
    * @param view - 画面通道参数（scrollback/cols/maxBufferedBytes；缺省取内置缺省）。
    * @param classifier - 行分类器（C5.2 单点打标用；缺省内置缺省规则表）。
+   * @param keepalive - 半开探活参数（T12：Config probeStartMs/probeRetryMs/
+   *   probeMaxAttempts 注入面；缺省 90s 首发 / 9s 重发 / 3 次上限）。
+   * @param busy - busy 谓词（T12 D4：holderBusy || isInTurn，service 合成注入；
+   *   link 层探测 tick 为真时跳过——AYT 应答 GA 会截断在途 read 等待窗）。
    */
-  constructor(sessionId: string, recordLimit = 2000, view?: GameViewOptions, classifier?: Classifier) {
+  constructor(
+    sessionId: string,
+    recordLimit = 2000,
+    view?: GameViewOptions,
+    classifier?: Classifier,
+    keepalive?: KeepaliveOptions,
+    busy?: () => boolean,
+  ) {
     this.sessionId = sessionId
     this.recordLimit = recordLimit < 1 ? 1 : recordLimit
     this.screen = new GameScreen(sessionId, view)
     this.classifier = classifier ?? new Classifier()
+    this.mud = new Mud({
+      ...(keepalive === undefined ? {} : { keepalive }),
+      ...(busy === undefined ? {} : { isBusy: busy }),
+    })
     this.mud.onLog = (level, text) => { this.onLog?.(level, text) }
     this.readMachine.onLog = (level, text) => { this.onLog?.(level, text) }
     // 行路径（单一真相，多消费者按序）：⓪分类单点打标 → ①pending 录制（永远）
@@ -168,8 +188,32 @@ export class SessionRuntime {
     return this.state === 'connected' && this.mud.connected
   }
 
+  /** D4 闸门标记①：曾建连成功（冷启动/新 runtime 为 false ⇒ 设计保证不自动重连）。 */
+  get hasConnected(): boolean {
+    return this.hasConnectedFlag
+  }
+
+  /** D4 闸门标记②：手工断连（true ⇒ 不自动重连，等人工）。 */
+  get manualDisconnected(): boolean {
+    return this.manualDisconnectedFlag
+  }
+
   get connState(): ConnState {
     return this.state
+  }
+
+  /** 探活观测态（T5.1 只读透传；不回写 conn 三态，现役「已连接」判据零改动）。 */
+  get probeState(): ProbeState {
+    return this.mud.probeState
+  }
+
+  /**
+   * 显式静默武装缝（T5.1 C3）：现役只在行到达时 arm（runtime.onActivity），
+   * 重连成功点无行可达时由重连编排调用此缝补一脚——保证提示符静默期
+   * 到期唤醒链路照样推进 agent（探活已下沉 link 层自驱，T12 D5）。
+   */
+  pulseActivity(): void {
+    this.onActivity?.()
   }
 
   /** 登录轴（GMCP 权威信号；断线复位 unknown）。 */
@@ -229,6 +273,11 @@ export class SessionRuntime {
     return n <= 0 ? [] : this.pendingLines.slice(-n)
   }
 
+  /** 工具读水位（readAbs；流程 io 的 initial 快照按此过滤——已消费行不重入后续窗口）。 */
+  readWatermark(): number {
+    return this.readAbs
+  }
+
   /**
    * read（工具面等待引擎）：在途 fail-loud；未连接直接以 disconnected 收束
    * （不启动等待）。返回时推进 readAbs = 结果行与 initial 的最远行号——
@@ -279,12 +328,16 @@ export class SessionRuntime {
     }
 
     this.setState('connected')
+    // D4 标记维护：建连成功即置「曾连接」（不要求已登录）、清「手工断连」。
+    this.hasConnectedFlag = true
+    this.manualDisconnectedFlag = false
     this.screen.setState('connected')
     this.onLog?.('info', `TCP 已建立（${Date.now() - started}ms），等待登录脚本（connect 只建连）`)
   }
 
-  /** 断连（幂等）。 */
+  /** 断连（幂等）：手工断连——置 D4 标记②，之后意外断开闸门才不会误触自动重连。 */
   disconnect(): void {
+    this.manualDisconnectedFlag = true
     this.mud.disconnect()
     this.setState('disconnected')
   }

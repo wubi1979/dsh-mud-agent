@@ -10,8 +10,8 @@
  *   - 本层零宿主 import；接线层 preset.ts 经注入窄结构接口（ToolRegistrar）注册。
  *
  * mud_workflow_run 的模型 API 与 core3 T3 版本不变（{ name } → { ok, stage, lines }）；
- * 执行链 = 归属解析（core3 toolContextFor）→ 注册表取流程 → core3 envFor 缝
- *（凭据解析 + 持有者 + env 原语）→ 解释器 runFlow → release。
+ * 执行链 = 归属解析（core3 toolContextFor）→ 注册表取流程 → core3 ioFor 缝
+ *（凭据解析 + 持有者 + IO 原语）→ 解释器 runFlow → release。
  *
  * 管理四工具是 agent 进化闭环的写手：save 过 schema + 结构 + 凭据红线三门
  *（registry.save），locked 拒改拒删；get 返回完整流程 JSON 供修缮。
@@ -20,7 +20,7 @@
 import { runFlow } from './interpreter.ts'
 import type { WorkflowRegistry } from './registry.ts'
 import type { WorkflowRecord } from './schema.ts'
-import type { WorkflowCredentials, WorkflowEnv } from './env.ts'
+import type { WorkflowCredentials, WorkflowIO } from './io.ts'
 
 /** 宿主 ToolDefinition 的窄结构（core3 tools.ts 同款面）。 */
 export interface MudToolDefinition {
@@ -47,15 +47,18 @@ export interface ToolAgent {
 }
 
 /**
- * core3 引擎缝（ctx.mudCore3 的本包消费面）：归属解析 + envFor。
- * envFor 由 core3 接线提供（凭据解析 + 持有者独占 + env 原语 + release）。
+ * core3 引擎缝（ctx.mudCore3 的本包消费面）：归属解析 + ioFor。
+ * ioFor 由 core3 接线提供（凭据解析 + 持有者独占 + IO 原语 + release）。
  */
 export interface MudWorkflowCore {
   toolContextFor(agent: ToolAgent | undefined): { sessionId: string } | null
-  workflowEnvFor(sessionId: string, holder: string): Promise<{
-    env: WorkflowEnv
+  workflowIoFor(sessionId: string, holder: string): Promise<{
+    io: WorkflowIO
     creds: WorkflowCredentials
     release(): void
+    /** 取消挂起（T13 B1③，可选——旧缝实现无此句柄时跳过）：宿主取消回合
+     *  （exec.signal abort）时由 execute 挂监听调之，验证码挂起 closed 收束。 */
+    cancel?(): void
   }>
 }
 
@@ -98,7 +101,7 @@ function reject(error: string): { ok: false; error: string } {
 /** 引擎缺席时的可读拒绝（I9）。 */
 export const ENGINE_ABSENT_ERROR = '已拒绝：mud-workflow 引擎服务缺席（ctx.mudWorkflow 未装配），工具仅注册未接线'
 
-/** core3 缝缺席时的可读拒绝（run 需要 env 原语；管理工具不受影响）。 */
+/** core3 缝缺席时的可读拒绝（run 需要 IO 原语；管理工具不受影响）。 */
 export const CORE_ABSENT_ERROR = '已拒绝：mud-core3 引擎服务缺席（ctx.mudCore3 未装配），无法执行流程'
 
 /** 归属未命中的可读拒绝。 */
@@ -172,10 +175,14 @@ export function registerMudWorkflowTools(
         return reject(`已拒绝：流程 ${name} 不存在（可用：${known}）`)
       }
       const holder = `workflow:${name}`
-      let handle: Awaited<ReturnType<MudWorkflowCore['workflowEnvFor']>> | null = null
+      let handle: Awaited<ReturnType<MudWorkflowCore['workflowIoFor']>> | null = null
       try {
-        handle = await c.workflowEnvFor(tc.sessionId, holder)
-        const r = await runFlow(record, handle.env, handle.creds)
+        handle = await c.workflowIoFor(tc.sessionId, holder)
+        // 宿主取消回合（B1③）：signal abort → cancel 句柄 → 验证码挂起 closed
+        // 收束（流程走 timeout 出口，release 由 finally 保证）——「人走了」是
+        // 正常路径，必须显式接。
+        exec.signal.addEventListener('abort', () => { handle?.cancel?.() }, { once: true })
+        const r = await runFlow(record, handle.io, handle.creds)
         return { ok: true, stage: r.stage, lines: r.lines }
       } catch (err) {
         return reject((err as Error).message)

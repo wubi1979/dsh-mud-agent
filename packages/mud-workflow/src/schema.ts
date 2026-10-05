@@ -14,10 +14,10 @@
  *     → 分类出口；next：缺省后继；
  *   - 目标 target：goto（后继步）| exit（终结，stage 分类 + ok）。
  *
- * 红线（PLAN「流程面演进」）：sendCredential 动词**只允许 locked 流程使用**
- * ——agent 可写词汇表不含凭据动词（粗胚时序错误会把凭据发进公屏 = 泄露）。
- * 注册表 save 侧静态拒绝（usesCredentialVerb）；引擎执行侧再拦一道（仅
- * locked 流程可执行凭据动作），见 interpreter。
+ * 红线（PLAN「流程面演进」；T13.1 扩列）：sendCredential 与 captcha 动词
+ * **只允许 locked 流程使用**——agent 可写词汇表不含这两个动词（粗胚时序错误
+ * 会把凭据发进公屏 = 泄露）。注册表 save 侧静态拒绝（usesCredentialVerb）；
+ * 引擎执行侧再拦一道（仅 locked 流程可执行这两个动作），见 interpreter。
  */
 
 import { z } from 'zod'
@@ -28,6 +28,9 @@ import { z } from 'zod'
 export const waitSchema = z.object({
   /** 完成判据（正则源；在累积文本上测，可跨批命中——read.ts 语义）。 */
   until: z.array(z.string()).max(8).optional(),
+  /** 捕获槽声明（T14）：until[0] 命中行的捕获组按序入 run 级命名槽（组 1 →
+   * captures[0]…）；槽名校验与组数界内由 checkFlow 把关，此处只收形状。 */
+  captures: z.array(z.string()).max(8).optional(),
   /** 负面判据（正则源；命中即 failOn 收束，优先于 until）。 */
   failOn: z.array(z.string()).max(8).optional(),
   /** GA/EOR 边界计数关窗。 */
@@ -47,13 +50,16 @@ export type Wait = z.infer<typeof waitSchema>
 // ── 动作 ────────────────────────────────────────────────────────
 
 /**
- * 动作（单动作；sendCredential 仅 locked 流程可用——红线，save/执行双侧拦）。
- * sendCredential 允许空串：终态空命令（顶开服务端/跳过 MXP 收 GA）走凭据通道
- * 以免进发送回显（login 终态步同款）；send 空串无意义故拒绝。
+ * 动作（单动作；sendCredential 与 captcha 仅 locked 流程可用——红线，save/
+ * 执行双侧拦）。sendCredential 允许空串：终态空命令（顶开服务端/跳过 MXP
+ * 收 GA）走凭据通道以免进发送回显（login 终态步同款）；send 空串无意义故拒绝；
+ * captcha 收 url 参数（T14 D9 参数化）——URL 由流程声明捕获槽传入（值先过
+ * 解释器 substitute，写死 URL 也允许），抓图/推帧/挂起等码仍由引擎内置。
  */
 export const actionSchema = z.union([
   z.object({ send: z.string().min(1).max(256) }).strict(),
   z.object({ sendCredential: z.string().max(256) }).strict(),
+  z.object({ captcha: z.object({ url: z.string() }).strict() }).strict(),
 ])
 
 export type Action = z.infer<typeof actionSchema>
@@ -132,11 +138,28 @@ export type WorkflowRecord = z.infer<typeof workflowRecordSchema>
 // ── 结构校验（zod 之外：引用完整性 + 命中序界内 + success 约定）────
 
 /**
+ * 捕获槽保留名（T14 D5/2.2）：`captcha` = 引擎固定单槽，`name`/`pass` = 凭据
+ * 占位——三类存储结构性分立，命名槽撞保留名在保存门拒存（不靠运行期判名）。
+ */
+export const RESERVED_SLOTS: readonly string[] = ['captcha', 'name', 'pass']
+
+/**
+ * 静态计组（T14 2.3）：`new RegExp(source + '|')` 在空串上必走末尾空分支，
+ * exec 结果长度 - 1 = 捕获组数。源非法会 throw（调用方给可读上下文）。
+ */
+function countGroups(source: string): number {
+  return new RegExp(`${source}|`).exec('')!.length - 1
+}
+
+/**
  * 流程结构校验（schema 校验通过后调用；registry.save 与引擎执行共用——
  * 校验是确定性的，生效门 = 校验即生效）：
  *   - 步 id 不重复；entry 存在；
  *   - goto 目标必须存在；
  *   - onFailOn 的 index 必须 < failOn 长度；branch 长度必须 ≤ until 长度；
+ *   - captures 声明四校验（T14 2.3/D10/D11）：槽名合法且非保留名；until[0]
+ *     捕获组数 ≥ captures 数（只对 until[0] 计组）；捕获组只允许出现在
+ *     until[0]（其余 until 引入组 = 组号计数与提取错位）；
  *   - stage 'success' 必须 ok:true（防粗胚把失败标成 success——成功判定
  *     是流程作者的责任，但与 ok 矛盾直接拒）。
  *
@@ -169,6 +192,36 @@ export function checkFlow(flow: Flow): void {
         checkTarget(`onFailOn[${k}]`, t)
       }
     }
+    if (step.wait?.captures !== undefined) {
+      const captures = step.wait.captures
+      const until = step.wait.until ?? []
+      if (until.length === 0) {
+        throw new Error(`流程结构非法：步骤 ${step.id} 声明了 captures 但没有 until 判据`)
+      }
+      for (const name of captures) {
+        if (!/^[a-zA-Z0-9_]+$/.test(name)) {
+          throw new Error(`流程结构非法：步骤 ${step.id} 的捕获槽名非法：${name}（只允许字母/数字/下划线）`)
+        }
+        if (RESERVED_SLOTS.includes(name)) {
+          throw new Error(`流程结构非法：步骤 ${step.id} 的捕获槽名是保留名：${name}`)
+        }
+      }
+      // 组数只对 until[0] 计（D10：捕获与路由同源）；源非法在此 throw 可读错。
+      let declared: number
+      try {
+        declared = countGroups(until[0]!)
+      } catch {
+        throw new Error(`流程结构非法：步骤 ${step.id} 的 until[0] 正则非法：${until[0]}`)
+      }
+      if (declared < captures.length) {
+        throw new Error(`流程结构非法：步骤 ${step.id} 的 until[0] 捕获组 ${declared} 个，少于 captures 声明的 ${captures.length} 个`)
+      }
+      for (let i = 1; i < until.length; i++) {
+        if (countGroups(until[i]!) > 0) {
+          throw new Error(`流程结构非法：步骤 ${step.id} 的 until[${i}] 含捕获组（捕获组只允许出现在 until[0]）`)
+        }
+      }
+    }
     if (step.branch !== undefined) {
       const untilLen = step.wait?.until?.length ?? 0
       if (step.branch.length > untilLen) {
@@ -180,9 +233,13 @@ export function checkFlow(flow: Flow): void {
 }
 
 /**
- * 流程是否使用凭据动词（红线判定：agent 可写词汇表不含 sendCredential——
- * registry.save 静态拒绝；引擎执行侧对非 locked 流程再拦一道）。
+ * 流程是否使用 locked-only 动词（红线判定：agent 可写词汇表不含
+ * sendCredential/captcha——registry.save 静态拒绝；引擎执行侧对非 locked
+ * 流程再拦一道）。
  */
 export function usesCredentialVerb(flow: Flow): boolean {
-  return flow.steps.some(s => s.action !== undefined && 'sendCredential' in s.action)
+  return flow.steps.some((s) => {
+    if (s.action === undefined) return false
+    return 'sendCredential' in s.action || 'captcha' in s.action
+  })
 }

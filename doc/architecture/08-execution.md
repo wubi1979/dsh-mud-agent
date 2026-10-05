@@ -119,8 +119,8 @@ mud_send {
 
 | 类别 | 项 | 语义 |
 |---|---|---|
-| **读窗 `wait`** | `until` / `failOn`（字符串正则源 + flags，解释器编译）· `gaCount` · `quietMs` · `maxLines` · **`timeoutMs`（必填）** | **绝不无界等待** |
-| **动作 `action`**（单动作） | `send` \| `sendCredential` | 凭据占位 `{name}` / `{pass}` 由**引擎注入替换**（不经模型）；`send` 空串**拒**，`sendCredential` **允许空串**（终态空命令走凭据通道，不进发送回显） |
+| **读窗 `wait`** | `until` / `failOn`（字符串正则源 + flags，解释器编译）· `captures`（T14：捕获槽声明，组只许 `until[0]` 携带，§8.13）· `gaCount` · `quietMs` · `maxLines` · **`timeoutMs`（必填）** | **绝不无界等待** |
+| **动作 `action`**（单动作） | `send` \| `sendCredential` \| `captcha`（T14 参数化：收 `url`——值过解释器槽替换，流程捕获槽传入或写死均允许；抓图 → 推帧 → 挂起等人工码，§8.17） | 凭据占位 `{name}` / `{pass}` 由**引擎注入替换**（不经模型）；`send` 空串**拒**，`sendCredential` **允许空串**（终态空命令走凭据通道，不进发送回显）；`{captcha}` 与 T14 命名槽同为引擎替换源（非敏感，不进 pass 掩码，§8.13/§8.17） |
 | **路由** | `branch`（`until` 命中序 → 目标）· `onFailOn`（`failOn` 命中序 → 分类出口）· `next`（缺省后继） | 目标 = `goto` \| `exit`（`stage` 分类 + `ok`；`'success'` 强制 `ok: true`） |
 | **后置** | 循环 / 计算 / 条件 | JSON 表达不了的例证出现再评估（§17.3） |
 
@@ -131,7 +131,7 @@ mud_send {
 | **locked 预制** | **拒改拒删**（`login` 锁死，§8.12） |
 | **非 locked** | 预制与 agent 新建均可 `save`（`version` 自增） |
 | **进化闭环** | **粗胚 → 执行 → 结构化失败现场 → 修缮 → 重试**——流程是 **agent 能力的持久化载体**；`delete` 还原预制 |
-| **保存门（三门，确定性校验即生效）** | ① **zod schema 校验** ② **`checkFlow` 结构门**（`goto` 目标存在 / 命中序界内 / `success` 的 `ok: true`）③ **凭据红线**（§8.12） |
+| **保存门（三门，确定性校验即生效）** | ① **zod schema 校验** ② **`checkFlow` 结构门**（`goto` 目标存在 / 命中序界内 / `success` 的 `ok: true`；T14 captures 四校验：槽名合法、非保留名、`until[0]` 组数 ≥ 声明数、捕获组只许出现在 `until[0]`，§8.13）③ **凭据红线**（§8.12） |
 | **存储** | 独立域 `mud_workflow`（表 `workflows`）；域不可用 ⇒ 降级内存并告警，**内存先行、域挂上后迁入**（§14.3） |
 
 ## 8.12 流程面：凭据红线（双闸）
@@ -142,6 +142,8 @@ mud_send {
 2. **执行闸**：解释器执行侧 **throw**。
 
 **依据**：粗胚的时序错误会把凭据发进**错误窗口**（公屏 = 泄露）；`login` 锁死 ⇒ **全系统唯一凭据流程**。配合 §12.2 的三道闸，构成"凭据零泄露"的完整链条。
+
+**红线判定扩展（T13）**：`captcha` 动作与 `sendCredential` 同列 **locked-only**（`usesCredentialVerb` 判定含 `captcha`，静态闸 + 执行闸同款双闸）——发送内容归流程动作统一声明，人工只提供码值（§8.17）。
 
 ## 8.13 流程面：解释器语义
 
@@ -157,6 +159,9 @@ wait（读窗） → failOn 出口 → action（发送） → 路由（branch / 
 | **`initial` 快照** | 等待前取 `pendingLines` **尾部快照**做 `initial`（提示符**先到先结算**） |
 | **判据重测** | `failOn`/`until` 在**本窗文本**上按**声明序**重测（`ReadResult` 不带命中 index） |
 | **结构缺出口** | 无 `next` 且 `branch` 未命中 ⇒ **结构化 timeout**（**点名步骤**，粗胚修缮的失败信号，**不静默**） |
+| **捕获提取（T14）** | `captures` 声明的步：done 收束后、动作前——对窗文本**按行**在 `until[0]` **首个命中行**上 `exec` 提取捕获组，按序入 **run 级命名槽**（组 1 → `captures[0]`…）；`failOn` 收束**不捕获**；无命中行/组空值 ⇒ **结构化 timeout 同型收束**（fail-loud，不落空串进槽、不进后续 send）；提取与计组一律**无 `g` 正则实例**（`lastIndex` 污染会漏捕获）；**判据不写跨行正则**（按行提取天然不跨行，约定无运行期拦截，§8.16） |
+| **槽替换四源（T14）** | 次序固定：`{captcha}` → **命名槽表** → `{name}` / `{pass}`；`sendCredential` 与 captcha 动作参数走全四源，**`send` 侧不碰 `{name}`/`{pass}`**；未知 `{xxx}` **原样保留**；保留名 `captcha`/`name`/`pass` 三类存储结构性分立（不靠运行期判名防撞） |
+| **槽生命周期（T14）** | run 级，两种复用情形显式分立：**重经捕获步 = 重捕获覆盖**（战斗动态词）；**未重经 = 沿用上值**（goto 跳过捕获步不清槽——fullme 答错重入 `judge → goto answer` 的正确性前提，§8.17） |
 | **步转移上限 256** | 防 `goto` 环 |
 | **非 done/failOn 收束** | `timeout` / `quiet` / `signal` / `disconnected` / `danger` **一律走 timeout 出口**（语义 = 放弃等待、帧未提交；现场行随结果返回） |
 | **出口 pass 掩码** | 出口**统一过 pass 掩码**——凭据零泄露最后一道闸（流程作者忘写也不泄露） |
@@ -177,16 +182,16 @@ wait（读窗） → failOn 出口 → action（发送） → 路由（branch / 
 
 | 工具 | 语义 |
 |---|---|
-| `mud_workflow_run { name }` | **白名单执行**（不接受任意路径）；模型 API `{ ok, stage, lines }`。执行链 = 归属解析（§8.5）→ 注册表取流程 → core3 `workflowEnvFor` 缝 → 解释器 → `release` |
+| `mud_workflow_run { name }` | **白名单执行**（不接受任意路径）；模型 API `{ ok, stage, lines }`。执行链 = 归属解析（§8.5）→ 注册表取流程 → core3 `workflowIoFor` 缝 → 解释器 → `release` |
 | `mud_workflow_list` / `get` / `save` / `delete` | 流程管理四工具：`save` 过三门；`locked` 拒改拒删；`get` 返回完整流程 JSON 供修缮 |
 
-**`workflowEnvFor` 缝（core3 侧）——执行序**
+**`workflowIoFor` 缝（core3 侧）——执行序**
 
 ```
 未登记 / 未连接 ⇒ 可读错
   → 凭据解析（失败即 fail-loud，报引用名；明文不进日志/上下文）
   → acquireSend(holder)（流程独占 send+read；冲突可读错）
-  → env 原语：send / sendCredential / read / recentLines / state（+ creds 注入）
+  → io 原语：send / sendCredential / read / recentLines / awaitCaptcha（§8.17）/ state（+ creds 注入）
   → release 由调用方 finally 保证
 ```
 
@@ -215,8 +220,8 @@ wait（读窗） → failOn 出口 → action（发送） → 路由（branch / 
 
 **边界**
 
-- **连接守卫不在流程表**：`workflowEnvFor` 在 env 注入前就拒绝未连接（§8.14）。
-- **验证码链路不进流程**：流程**不能等人工**，人工环节留在 agent 层（§17.3 后置）。
+- **连接守卫不在流程表**：`workflowIoFor` 在 io 注入前就拒绝未连接（§8.14）。
+- **验证码链路独立成流程**（T13 已交付）：`fullme` locked 实体（**流程可等人工**——`captcha` 动作挂起等 WebUI 弹窗输入，原「流程不能等人工」约束随 T13 废止），见 §8.17 + [flows/fullme.md](../flows/fullme.md)。
 - **失败不设恢复路径**：不自作主张重试；失败以结构化出口返回给子 agent（§7.6）。
 
 ## 8.16 已知限制
@@ -225,5 +230,29 @@ wait（读窗） → failOn 出口 → action（发送） → 路由（branch / 
   - 处置：**不引机制**——等 token 账目恶化的实证再按例证加投递策略化（§17.3）。
 - **工具面与流程面共享持有者**：长流程执行期间工具调用会被拒（可读），这是设计意图（独占保证应答不劈半）。
 - **流程表达力**：循环/计算/条件不支持（§8.10 后置）。
+
+## 8.17 fullme 实体与人工验证码链路（T13，locked）
+
+**口径修订（T13 定稿）**：原「流程不能等人工」是简版解释器阶段的实施约束，随本链路**废止**——委派已前台化，流程在工具调用内前台执行，`captcha` 动作挂起等人工与工具等待等价。触发 = **被动处置**：agent 判系统提示/信息降级后跑 `fullme`（不发周期探针）；超时/中止是常规路径。
+
+**词汇表扩展（T13）**
+
+| 项 | 语义 |
+|---|---|
+| `captcha` 动作 | **收 `url` 参数**（T14 D9：`{ captcha: { url } }`，值过解释器槽替换——`{captchaUrl}` 捕获槽传入或写死 URL 均允许）；执行序 = 抓图（Node fetch 抓页取 `<img src>` → base64 data URL，fetch 注入可单测）→ 推帧 → 挂起等人工码 → 值入 `{captcha}` 固定单槽。原「内置捕获 URL（扫 `recentLines`）」随 T14 **净删**（URL 捕获上移为流程声明捕获） |
+| **locked-only** | 与 `sendCredential` 同列红线双闸（§8.12） |
+| `{captcha}` 槽 | run 级固定单槽；`send`/`sendCredential` 均替换；**非敏感**——不进凭据红线与 pass 掩码。T14 命名槽（§8.13）加入后保留名不共用存储 |
+| `awaitCaptcha(url: string)` io 原语 | T14 D8 URL 参数化：**双侧改**（mud-workflow `WorkflowIO` 接口 io.ts + core3 `workflowIoFor` 缝实现），URL 由流程捕获槽传入，闭包自取消失；resolve 恢复帧 `{kind:'answer',value} \| {kind:'aborted'} \| {kind:'closed'}`，解释器按 kind 分流（aborted = 专用出口 stage `aborted`；closed = timeout 出口） |
+| checkFlow 门 | captcha 步**不设 wait 门**（answer 是纯动作步，结构收束由 judge 窗承担；挂起预算走 Config 不依赖步 timeoutMs） |
+
+**双预算分立（先后串行不竞争）**：步 `timeoutMs` 只管读窗（等 URL/判据行）；**挂起预算 = Config `captchaTimeoutMs`**（缺省 180_000 = URL 有效期 3 分钟；**独立预算**，不受 MAX_TIMEOUT_MS/silenceMs 校验约束）。计时每轮独立，刷新不重置当前轮。
+
+**等待注册表（core3 service）**：单会话单槽（并发冲突可读拒，I10 精神）；**窄缓存保留（T14 D7）**——URL 由参数传入（`cachedEntry.url === url` 比对），同 URL（答错重入，同轮无重发引子）沿用缓存图**不重抓**，refresh 原地更新 image，新 URL（新一轮 fullme）新抓新周期；原「URL 锚定自取」删除，URL 缺失的报错点前移到 urlwait 结构化 timeout。**三条退出路径统一 `resolve closed` 不 reject**：① 断线 = runtime onClose 钩子；② 会话销毁/插件卸载 = dispose 链清等待表；③ 宿主取消回合 = `mud_workflow_run` 的 `exec.signal` abort → handle `cancel()`。挂起期**持有 send 锁** ⇒ busy 谓词恒真 ⇒ 探测 tick 抑制（§3.2），行流照常录制。
+
+**remote 四动词（§15.1）**：`watchCaptcha()`（`mode:'stream'`，**首帧补推当前挂起态**——页面刷新/重开恢复弹窗；变化推全量快照帧，行摘除 = 清除帧）+ `captchaAnswer(sessionId, value)`（提交，trim）/ `captchaAbort(sessionId)`（中止 → `aborted` 收束）/ `captchaRefresh(sessionId)`（重抓同 URL，**每轮挂起限 1 次**——服务端同 URL 共 4 次刷新机会；超配额可读拒）。
+
+**webui 呈现（§9.7）**：全局弹窗独立订阅 `watchCaptcha`（与画面 tab 无关）；DSH 标准弹窗 = 图片 / 提示行（来源账号名）+ 刷新图标（本轮已用置灰）/ 输入框 / 中止 + 提交；收束（提交/中止/断线/销毁/超时）服务端推清除帧关窗；提交/中止后本地不清窗——答错重入服务端重推帧（缓存图重现，刷新可再点 1 次）；多会话并发（罕见）按最新帧呈现，未呈现的照常等 + 超时兜底。
+
+**fullme 实体（locked；声明文件 [flows/fullme.md](../flows/fullme.md)）**：主链四段 `request`（发 `fullme`）→ `urlwait`（等 robot.php URL，**until[0] 捕获组入 `captchaUrl` 槽**——T14 URL 捕获上移；仅首轮锚定，答错重入跳过本步沿槽上值；failOn = stale 句 / 冷却句；URL 行未出现 ⇒ 本步结构化 timeout，报错点前移）→ `answer`（captcha 动作，url = `{captchaUrl}`）→ `send-code`（发 `fullme {captcha}`）→ `judge`（答对句 → success / 答错句 → 缺省 goto answer 重入，不重发引子——服务端每次 fullme 只回一次 URL；失效句 failOn → expired）。**stale 自愈环**：urlwait failOn 命中 stale 句 → `abandon1/2/3` 三连 `fullme 1` 放弃悬挂态 → **结构化 fail 收束不重试**（服务端事实：放弃后约 15 分钟冷却，立即重试必再 stale）。answer 后必跟 judge 收束窗——fullme 应答被窗口消费（readAbs 推进）不进投递（答案行不上浮 agent）。判据语料 v1 实录起步（附录 A 同源七常量），实机触发时校准。
 
 > AI生成

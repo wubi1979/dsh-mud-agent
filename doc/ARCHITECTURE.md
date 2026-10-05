@@ -35,13 +35,13 @@ note: 入口文件：只承载文档规则与导航，不承载设计事实
 | §1–§2 | [architecture/01-02-overview-host.md](architecture/01-02-overview-host.md) | **系统总览与总体架构**（定位与上下文、目标与非目标、设计原则与现役不变量、核心领域模型、**分层模型 L1–L7 + L0 宿主**、包与模块地图、状态载体与单一真相、端到端数据流、术语表）· **L0 宿主平台与集成**（宿主事实、加载与模块解析、依赖面、能力缺口、整批复核） |
 | §3–§5 | [architecture/03-05-runtime.md](architecture/03-05-runtime.md) | **L1 接入层**（连接管理、telnet/GMCP、行化与 `MudLine`、语料）· **L2 行流层**（`SessionRuntime`、环形录制、**双水位线 `seen`**、事件分发、断线复位）· **L3 消费层**（`ReadMachine`、`GameScreen`、`Deliverer`、消费者水位契约） |
 | §6–§7 | [architecture/06-07-channels-agent.md](architecture/06-07-channels-agent.md) | **L4 通路层**（三条通道：MUD→agent 投递 / MUD→人 显示 / agent→MUD 发送；**接入闸门**；正交性表）· **L5 agent 层**（preset 装配与 persona、回合节拍、会话接线、**任务书面 kickoff**、**静默唤醒 Wake**、**分工模型**） |
-| §8 | [architecture/08-execution.md](architecture/08-execution.md) | **L6 执行层（单章，不拆）**：工具面（注册承载、三工具、拒绝序、归属上溯、行流持有者、参数）+ 流程面（`mud-workflow` 包、声明式流程本体与词汇表、注册表与进化闭环、凭据红线、解释器、五工具、`workflowEnvFor` 缝、login 实体） |
+| §8 | [architecture/08-execution.md](architecture/08-execution.md) | **L6 执行层（单章，不拆）**：工具面（注册承载、三工具、拒绝序、归属上溯、行流持有者、参数）+ 流程面（`mud-workflow` 包、声明式流程本体与词汇表、注册表与进化闭环、凭据红线、解释器、五工具、`workflowIoFor` 缝、login 实体） |
 | §9 | [architecture/09-webui.md](architecture/09-webui.md) | **L7 呈现层**（`mud-webui`：呈现不改与接线替换、服务器/账号管理面、MUD 日志 tab、游戏画面 tab、状态推送、凭据接线与客户端缓存） |
 | §10–§11 | [architecture/10-11-state-lifecycle.md](architecture/10-11-state-lifecycle.md) | **状态面**（两轴 `conn`/`loggedIn`、GMCP 权威信号、World 分区与置信度、断线整体复位、状态出口）· **生命周期与状态机**（服务器、账号、连接、会话与 agent、流程实例、凭据；全系统迁移总图） |
 | §12–§14 | [architecture/12-14-security-observability-resilience.md](architecture/12-14-security-observability-resilience.md) | **安全设计**（威胁模型、凭据零泄露三道闸、禁发表、归属与越权、闸门、回流唯一通道、不拦项）· **观测与诊断**（`SessionLog`、诊断动词、降级告警点、语料回放）· **错误处理与降级**（可读拒绝 vs throw、失败不丢行、宿主缺面降级、结构化失败、已知限制） |
 | §15 | [architecture/15-contracts-config.md](architecture/15-contracts-config.md) | **契约与配置汇总（索引章）**：`remote.mud.*` 动词表、`mudCore3` 服务窄面、preset 行清单、流程词汇表与保存门、**Config 总表**、宿主依赖面索引 |
 | §16–§17 | [architecture/16-17-acceptance-roadmap.md](architecture/16-17-acceptance-roadmap.md) | **测试与验收**（测试策略与纪律、用例账目、验收断言表、实机验收清单、切片表与完成定义）· **演进路线与后置**（已交付索引、当前待办、后置清单、已定稿未立项、生长纪律） |
-| 从属 | [flows/login.md](flows/login.md) | login 流程实体声明（locked；§8.14 的从属文件） |
+| 从属 | [flows/login.md](flows/login.md)·[flows/fullme.md](flows/fullme.md) | login / fullme 流程实体声明（locked；login = §8.15 从属，fullme = §8.17 从属） |
 | 附录 | [appendices/A-capture-facts.md](appendices/A-capture-facts.md)·[appendices/B-audit-checklist.md](appendices/B-audit-checklist.md) | A 抓包与语料事实（MUD 侧实录）· B 代码审计规约（可执行检查表） |
 | 候选 | [likely/](likely/) | 设计已定稿但**是否执行未定**的候选区（C5.2 已于 2026-10-03 立项执行完毕，见 §17.4；当前暂无在案候选） |
 | 归档 | [archive/README.md](archive/README.md) | v1（mud-core）/ v2（mud-core2）归档索引；**只读、不作依据** |
@@ -55,12 +55,13 @@ note: 入口文件：只承载文档规则与导航，不承载设计事实
 | 心智模型 / 分层 / 模块地图 / 术语 | §1 |
 | 宿主事实与约束 / 插件加载 / 依赖面 / 能力缺口 | §2 |
 | 连接、telnet/GMCP、行流、语料 | §3 |
+| 连接状态机 / 探活 / 自动重连 | §3.2 + §10.4 + §11.3 |
 | 录制缓冲、水位线、行流事件、断线复位 | §4 |
 | 工具读应答 / 裸读 / 画面 / 聚合投递 | §5 |
 | 通道与闸门（接入 admit / 停止 / 未接入语义） | §6 |
 | preset 与 persona、回合节拍、自主行为（任务书 / 唤醒 / 分工） | §7 |
 | 工具（`mud_send`/`mud_state`/`mud_connect`）、拒绝序、归属上溯、持有者、禁发表 | §8 |
-| 流程（声明表 / 词汇表 / 注册表 / 解释器 / 五工具 / login） | §8 + [flows/login.md](flows/login.md) |
+| 流程（声明表 / 词汇表 / 注册表 / 解释器 / 五工具 / login / fullme） | §8 + [flows/login.md](flows/login.md) + [flows/fullme.md](flows/fullme.md) |
 | 管理面（名册 UI / 日志 tab / 画面 tab / 状态推送） | §9 |
 | 状态（两轴 / GMCP / World / 复位 / 状态出口） | §10 |
 | 生命周期（建服务器 / 建账号 / 连接 / 会话销毁/卸载 / 流程实例 / 凭据） | §11 |

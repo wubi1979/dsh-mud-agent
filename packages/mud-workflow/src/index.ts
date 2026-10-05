@@ -29,7 +29,9 @@ export type { Flow, WorkflowRecord } from './schema.ts'
 
 // 解释器出口（core3 E2E 按 read/recentLines 签名直接跑 locked 流程用）。
 export { runFlow } from './interpreter.ts'
-export type { WorkflowEnv } from './env.ts'
+// CaptchaResume 随 WorkflowIO 同出口（T13 B2 双侧同形：core3 缝实现 awaitCaptcha
+// 时按此类型收束恢复帧）。
+export type { CaptchaResume, WorkflowIO } from './io.ts'
 
 /** 必需服务：无（storage 域为可选依赖，就绪前内存先行）。 */
 export const inject: string[] = []

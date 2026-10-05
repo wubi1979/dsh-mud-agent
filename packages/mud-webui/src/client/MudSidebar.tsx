@@ -26,7 +26,7 @@ import type {
 import type { MudCredentialInfo } from './mud-credentials.ts'
 import type { MudLogSnapshot } from './mud-log.ts'
 import type { MudRemoteController } from './mud-remote.ts'
-import { ServerDialog, UserDialog } from './MudDialogs.tsx'
+import { ServerDialog, UserDialog, MudCaptchaDialog } from './MudDialogs.tsx'
 import { MudLogo } from './MudLogo.tsx'
 import css from './MudSidebar.module.css'
 
@@ -62,7 +62,10 @@ export type MudSidebarProps = PropsRuntime<'sidebar'> & InjectFace<MudClientInje
 function rowState(conn: MudConnInfo, sessionStatus: Readonly<Record<string, SessionStatusRow>>, user: MudUser): MudConnState {
   if (user.sessionId !== '') {
     const row = sessionStatus[user.sessionId]
-    if (row !== undefined && row.state === 'connected') return 'connected'
+    if (row !== undefined && row.state === 'connected') {
+      // 探活观测联动（T5.1）：connected + probing → 呈现「探测中」，判活后回原态。
+      return row.probeState === 'probing' ? 'probing' : 'connected'
+    }
     if (row !== undefined && row.state === 'connecting') return 'connecting'
   }
   return conn.userId === user.id ? conn.state : 'idle'
@@ -71,6 +74,7 @@ function rowState(conn: MudConnInfo, sessionStatus: Readonly<Record<string, Sess
 function dotClass(state: MudConnState): string {
   switch (state) {
     case 'connecting': return css.stateConnecting ?? css.stateIdle ?? ''
+    case 'probing': return css.stateConnecting ?? css.stateIdle ?? '' // 探测中复用连接中的琥珀点
     case 'connected': return css.stateConnected ?? css.stateIdle ?? ''
     case 'error': return css.stateError ?? css.stateIdle ?? ''
     default: return css.stateIdle ?? ''
@@ -80,6 +84,7 @@ function dotClass(state: MudConnState): string {
 function connText(conn: MudConnInfo): string {
   switch (conn.state) {
     case 'connected': return `已连接: ${conn.label ?? ''}`
+    case 'probing': return `探测中: ${conn.label ?? ''}`
     case 'connecting': return '连接中…'
     case 'error': return conn.error ?? '连接失败'
     default: return '未连接'
@@ -107,7 +112,7 @@ export function MudSidebar({
   collapsed, useServers,
   addServer, removeServer, addUser, updateUser, removeUser,
   admit, stopAdmit, refreshStatus, startStatusWatch,
-  openUserSession, toggleSidebar,
+  openUserSession, toggleSidebar, remote,
 }: MudSidebarProps) {
   const { servers, conn, sessionStatus, credentialStatus } = useServers(s => s)
   const [serverDialogOpen, setServerDialogOpen] = useState(false)
@@ -343,6 +348,8 @@ export function MudSidebar({
         onClose={() => { setServerDialogOpen(false) }}
         onAdd={(input) => { addServer(input) }}
       />
+      {/* 全局验证码弹窗（T13.3）：独立订阅 watchCaptcha，与画面 tab 无关。 */}
+      <MudCaptchaDialog remote={remote} />
       <UserDialog
         mode="create"
         open={userDialogTarget !== null}

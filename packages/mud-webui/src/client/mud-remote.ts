@@ -11,8 +11,8 @@
 import TYPERT_REMOTE from 'mud-core3/remote'
 // Type-only: pulls the TypertRemoteNamespaceMap augmentation (mud namespace) into the program.
 import type {} from 'mud-core3/remote'
-// Type-only: Remote 边界类型（日志条目、名册记录、画面帧、状态帧）由非根子路径导出。
-import type { AccountRecord, GameFrame, LogEntry, ServerRecord } from 'mud-core3/types'
+// Type-only: Remote 边界类型（日志条目、名册记录、画面帧、状态帧、验证码帧）由非根子路径导出。
+import type { AccountRecord, CaptchaFrame, CaptchaRow, GameFrame, LogEntry, ServerRecord } from 'mud-core3/types'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { RemoteResult, TypertClientRemote } from '@deepseek-ai/dsh-typert-protocol'
 
@@ -27,6 +27,12 @@ export type MudServerRecord = ServerRecord
 
 /** 宿主名册里的账号记录（键 = accountId = sessionId）。 */
 export type MudAccountRecord = AccountRecord
+
+/** 验证码挂起行（watchCaptcha 快照面；账号名标注弹窗来源）。 */
+export type MudCaptchaRow = CaptchaRow
+
+/** 验证码流帧（watchCaptcha）：全量挂起快照，行摘除 = 清除帧。 */
+export type MudCaptchaFrame = CaptchaFrame
 
 /**
  * 世界状态窄面条目（T11 扩面）：服务端 statusRowOf 扁平化产物——值已 JSON
@@ -52,6 +58,8 @@ export interface MudStatusFrame {
     state: string
     admitted: boolean
     loggedIn: 'unknown' | 'inferred' | 'in-game'
+    /** 探活观测态（T5.1；旧服务端缺省 undefined = idle）。 */
+    probeState?: 'idle' | 'probing'
     world: readonly MudWorldEntry[]
   }[]
 }
@@ -161,6 +169,38 @@ export class MudRemoteController {
         : '[mud] remote 尚未挂载')
     }
     return mud.watchStatus(signal)
+  }
+
+  // ── 人工验证码链路（T13.3，watchCaptcha + 三输入动词）──────────
+
+  /**
+   * 验证码挂起流（T13 D7，watchStatus 同型）：首帧补推当前挂起态（页面刷新/
+   * 重开 = 恢复弹窗），随后变化推全量快照帧；清除帧（pending 空）= 服务端
+   * 收束（提交/中止/断线/销毁/超时）。signal abort 即停并清服务端订阅。
+   */
+  watchCaptcha(signal: AbortSignal): AsyncIterable<MudCaptchaFrame> {
+    const mud = this.mud
+    if (mud === null) {
+      throw new Error(this.mountError !== null
+        ? `[mud] remote 尚未挂载（挂载失败: ${this.mountError}）`
+        : '[mud] remote 尚未挂载')
+    }
+    return mud.watchCaptcha(signal)
+  }
+
+  /** 提交人工码值（resolve 挂起；`fullme {captcha}` 由流程动作统一发送）。 */
+  captchaAnswer(sessionId: string, value: string): Promise<{ sessionId: string }> {
+    return this.call(mud => mud.captchaAnswer(sessionId, value))
+  }
+
+  /** 中止挂起（专用 aborted 出口收束——流程结果 agent 可读）。 */
+  captchaAbort(sessionId: string): Promise<{ sessionId: string }> {
+    return this.call(mud => mud.captchaAbort(sessionId))
+  }
+
+  /** 刷新图片（服务端重抓同 URL；挂起 Promise 不动，本轮限 1 次）。 */
+  captchaRefresh(sessionId: string): Promise<{ sessionId: string; image: string }> {
+    return this.call(mud => mud.captchaRefresh(sessionId))
   }
 
   // ── 名册（宿主侧持久：storage 域，重启不丢）────────────────────

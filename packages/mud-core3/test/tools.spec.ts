@@ -107,7 +107,7 @@ function setup(handleOverrides: Partial<MudCore3Handle> = {}, runtimeOverrides: 
   const handle: MudCore3Handle = {
     toolContextFor: () => ({ sessionId: 'acc-1', runtime: rt }),
     connect: async () => ({ state: 'connected' }),
-    workflowEnvFor: async () => { throw new Error('测试未预期调用 workflowEnvFor') },
+    workflowIoFor: async () => { throw new Error('测试未预期调用 workflowIoFor') },
     stateOf: () => ({
       connState: 'connected', loggedIn: 'unknown', admitted: false, world: {}, recording: 0, dropped: 0,
     }),
@@ -342,7 +342,7 @@ async function setupIntegration() {
       const r = await service.connect(sessionId)
       return { state: r.state }
     },
-    workflowEnvFor: (sessionId, holder) => service.workflowEnvFor(sessionId, holder),
+    workflowIoFor: (sessionId, holder) => service.workflowIoFor(sessionId, holder),
     stateOf: sessionId => {
       const s = service.status(sessionId)
       const rt = service.get(sessionId)
