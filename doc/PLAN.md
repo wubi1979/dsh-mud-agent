@@ -33,7 +33,6 @@ note: 计划起草区 + 待办池；不承载已落地事实（落地后同步�
 | **T8** | **宿主换代整批复核** | 宿主换代后按 §2.5 整批重新核对 §2.1 锚点与 API 形态，输出写回 §2.1/相关章节 | §2.5、§0.7 |
 | **T9** | **宿主会话面缺口跟踪** | ① 插件拿不到 `AgentHandle.dispose`、`ctx.sessionController` 无 delete ⇒ 删账号后会话仍在宿主内；② **子会话无清退/归档面**：`ctx.subagents` 只有 `drainContinuableChildren` / `drainContinuableDescendants`（释放驻留 Activation）与 `listChildren` / `listDescendants`（列举），**没有删除会话或归档目录条目的动词** ⇒ 每次派发留下的子会话记录与父会话目录条目永久保留（本仓派发现已为一次性前台：只读留存、不再可续；目录读取成本随累计派发数线性增长）。跟踪宿主是否补面（会话删除 / 目录清退归档） | §2.4、§16.6 #8、§7.6 |
 | **T10** | **装配层加载冒烟可执行化** | **已落地工件面 e2e**（`test/plugin-load.e2e.ts`，加载 `lib/` 产物 + 断言 remote 命名空间在册，见 §16.1/§16.2）；**剩余** = 真宿主组合冒烟（Loader + `--patch` 启动 → 断言无 `1 entry did not activate` 且 `mud/*` 动词在册） | §16.1、§2.2 |
-| **T17** | **宿主接缝漂移防御** | **已立项 → 见本文件 T17 计划**：宿主工具协议的编译期断言（`isConcurrencySafe` 谓词化、`output.schema` 补齐、`render` 返回类型、接线层断言）· mud-workflow 工件面加载冒烟（对齐 core3 `plugin-load`） | §8.2、§16.1 |
 
 > T1（T4b 实机验收）已于 2026-10-02 全项通过并从本表删除，结论见 §16.4。
 > T4（C5.2 行打标与画面分屏）已于 2026-10-03 立项执行完毕并从本表删除，结论见 §17.4 与 `doc/likely/c5.2-line-tagging-split-screen.md`。
@@ -42,41 +41,7 @@ note: 计划起草区 + 待办池；不承载已落地事实（落地后同步�
 > T14（流程捕获槽与 fullme 触发时捕获改造）已于 2026-10-05 落地交付（v0.0.39）并从本文件删除，结论见 §16.5 切片表 / §16.3 断言行 / CHANGELOG。
 > T15（读窗命中信息下沉：core3 独占匹配）已于 2026-10-05 落地交付（v0.0.43）并从本文件删除，结论见 §16.5 切片表 / §16.2 用例账目 / §5.2 / §8.13 / CHANGELOG。
 > T16（流程存储演进与变更账本）已于 2026-10-05 落地交付（v0.0.44）并从本文件删除，结论见 §16.5 切片表 / §16.2 用例账目 / §8.11 / §14.3 / CHANGELOG。
-
-# T17 宿主接缝漂移防御
-
-> 状态：起草中 · 取材：2026-10-05 评审 P3（宿主工具协议无编译期校验，且已有实际偏差）/ P4（本包缺工件面加载冒烟）· 编号：本计划占交付编号 T17，切片 T17.1–T17.2（中小型，压成四节）
-
-## 1 目标与决策
-
-1.1 **问题（实测）**：`host/tools.ts` 的窄结构 `MudToolDefinition` 与宿主 `ToolDefinition` 存在**实际偏差**——`isConcurrencySafe` 宿主是**谓词函数**、本包声明为 `boolean`（写 `false` 恰好因宿主 fail-closed 得到正确结果，写 `true` 会被吞成 exclusive）；`output.schema` 宿主是"对成功返回值强制校验的 JSON Schema"，本包管理四工具统一只有 `ok`/`error`，真实字段（`name`/`version`/`updatedAt`/`record`/`workflows`）未声明；`render` 返回 `readonly` 数组而宿主要求可变 `ContentBlock[]`。这些偏差被接线层 `as unknown as ToolRegistrar` 全部吃掉。core3 `tools.ts` 有同款窄结构。
-1.2 **目标**：把"宿主协议漂移"从"靠 E2E 撞"改成**编译期红**，并给本包补上与 core3 同款的**工件面加载冒烟**。
-
-| # | 决策 | 理由 |
-|---|---|---|
-| D1 | 窄结构改为与宿主**结构可赋值**：`isConcurrencySafe?(args: unknown): boolean`（谓词化，独占 = 恒 `false`）、`render` 返回可变数组、`output.schema` 逐工具补齐真实字段 | 结构可赋值才能做编译期断言；谓词化顺带消掉"写 `true` 被静默吞"的陷阱 |
-| D2 | 断言放在**接线层**（`host/preset.ts`，已 `import type {} from '@deepseek-ai/dsh-tools'`）：`const check: ToolDefinition = def` 式的编译期一致性检查 | 纯层保持零宿主 import 的纪律；接线层本就允许认识宿主 |
-| D3 | core3 `tools.ts` 同款窄结构同步谓词化（两处一致） | 同一份宿主协议在仓内有两份声明，留一份不改 = 留一半漂移 |
-
-## 2 契约与变更
-
-- `packages/mud-workflow/src/host/tools.ts`：`MudToolDefinition` 形状对齐宿主（谓词化 + 可变数组 + `output.schema` 补齐）；五个工具的 `isConcurrencySafe` 改谓词（`mud_workflow_run` 恒 `false`，其余缺省）。
-- `packages/mud-workflow/src/host/preset.ts`：加编译期一致性断言。
-- `packages/mud-core3/src/tools.ts`：同款窄结构谓词化（三工具）。
-- 新增 `packages/mud-workflow/test/plugin-load.e2e.ts`：导入**构建产物** `lib/index.js` + `lib/preset.js`，断言插件 `name`/`inject`/`apply` 形状、`mudWorkflow` 服务面在册、工具注册面拿到 7 个工具名（对齐 core3 `plugin-load` 的工件面纪律）。
-
-## 3 实施与验收
-
-| 切片 | 内容 | 验收断言 |
-|---|---|---|
-| **T17.1** | 谓词化 + `output.schema` 补齐 + 接线层断言（两包） | ① 断言在形状漂移时会红（先红：故意写错一处旧形状 → tsc 红；恢复后绿）；② `mud_workflow_run` 仍为独占（谓词恒 `false`），宿主 `executionMode` 实测仍是 exclusive；③ core3 三工具与 mud-workflow 七工具用例全绿 |
-| **T17.2** | 工件面加载冒烟 | ④ 导入 `lib/index.js` 后 `apply` 不抛；⑤ 断言 `mudWorkflow` 服务面在册、七工具注册；⑥ 三包 build/tsc/用例全绿 |
-
-## 4 未决与收尾
-
-- **未决 1**：是否顺手把 `output.schema` 的 JSON Schema 由手写常量改为从 zod 投影（若宿主提供 zod→JSON Schema 投影工具则采用；否则手写补齐）。
-- **未决 2**：core3 `tools.ts` 的谓词化是否与 T16 同批（两轮独立，互不阻塞）。
-- **完成定义**：两包窄结构与宿主结构可赋值并有编译期断言；本包工件面加载冒烟在册；§8.2/§16.1/§16.2 与 CHANGELOG 同步；本计划从本文件删除并同步待办池。
+> T17（宿主接缝漂移防御）已于 2026-10-05 落地交付（v0.0.45）并从本文件删除，结论见 §16.5 切片表 / §16.2 用例账目 / §8.2 / CHANGELOG。
 
 ## 二、计划模板（复制使用）
 

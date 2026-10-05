@@ -31,16 +31,21 @@ import type { LoggedInState, WorldSnapshot } from './world.ts'
 import type { MudLine } from './link/line.ts'
 import type { WorkflowIoSeam } from 'mud-workflow/contract'
 
-/** 宿主 ToolDefinition 的窄结构（本包只用到的面）。 */
+/**
+ * 宿主 ToolDefinition 的窄结构（本包只用到的面；T17 与宿主真实形状对齐）：
+ * `isConcurrencySafe` 是**谓词函数**`(args) => boolean`（不是 boolean 属性——写
+ * `false` 只因宿主 fail-closed 恰好得到"独占"），`render` 返回**可变**数组
+ * （宿主 `ContentBlock[]`）。漂移由 preset 接线层的编译期断言钉住。
+ */
 export interface MudToolDefinition {
   name: string
   description: string
   parameters: Record<string, unknown>
-  /** 独占调度（socket 写 + 行流等待的工具设 false）。 */
-  isConcurrencySafe?: boolean
+  /** 并发分类谓词：只有恰好返回 `true` 才并行；独占工具恒返回 `false`。 */
+  isConcurrencySafe?(args: unknown): boolean
   output: {
     schema: Record<string, unknown>
-    render(args: unknown, value: unknown): readonly { type: 'text'; text: string }[]
+    render(args: unknown, value: unknown): { type: 'text'; text: string }[]
   }
   execute(args: unknown, exec: { signal: AbortSignal; agent?: unknown }): Promise<unknown>
 }
@@ -248,7 +253,7 @@ export function registerMudTools(
       '向 MUD 发送一条命令并等待应答原文（有 cmd = send + read；无 cmd = 裸读近期行流近况）。'
       + '未连接时被拒绝，可先调用 mud_connect。listen 声明完成判据（缺省等一段完整文字）；'
       + '必须给超时或缺省由系统注入（绝不无界等待）。返回应答行原文，由你自决下一步。',
-    isConcurrencySafe: false, // socket 写 + 行流等待，独占
+    isConcurrencySafe: () => false, // socket 写 + 行流等待，独占（谓词恒 false）
     parameters: {
       type: 'object',
       properties: {

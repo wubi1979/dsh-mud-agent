@@ -27,16 +27,30 @@ import type {
   CallerAgent, SnapshotReason, WorkflowIoSeam, WorkflowOrigin, WorkflowRecord,
 } from '../contract/index.ts'
 
-/** 宿主 ToolDefinition 的窄结构（core3 tools.ts 同款面）。 */
+/** 文本内容块（宿主 `ContentBlock` 的最小可赋值形态：`render` 返回**可变**数组）。 */
+export interface MudContentBlock {
+  type: 'text'
+  text: string
+}
+
+/**
+ * 宿主 ToolDefinition 的窄结构（core3 tools.ts 同款面）。
+ *
+ * 与宿主真实形状对齐的两处（T17，曾在接线层被 `as unknown` 吃掉）：
+ *   - `isConcurrencySafe` 是**谓词函数**`(args) => boolean`（不是 boolean 属性）——
+ *     写 `false` 只因宿主 fail-closed 恰好得到"独占"，写 `true` 会被静默吞成独占；
+ *   - `render` 返回**可变**数组（宿主 `ContentBlock[]`），`readonly` 不可赋值。
+ * 接线层的编译期断言（`host/preset.ts`）钉住这两处。
+ */
 export interface MudToolDefinition {
   name: string
   description: string
   parameters: Record<string, unknown>
-  /** 独占调度（send + 行流等待的工具设 false）。 */
-  isConcurrencySafe?: boolean
+  /** 并发分类谓词：只有恰好返回 `true` 才并行；独占工具恒返回 `false`。 */
+  isConcurrencySafe?(args: unknown): boolean
   output: {
     schema: Record<string, unknown>
-    render(args: unknown, value: unknown): readonly { type: 'text'; text: string }[]
+    render(args: unknown, value: unknown): MudContentBlock[]
   }
   execute(args: unknown, exec: { signal: AbortSignal; agent?: unknown }): Promise<unknown>
 }
@@ -119,12 +133,24 @@ export const CORE_ABSENT_ERROR = '已拒绝：mud-core3 引擎服务缺席（ctx
 /** 归属未命中的可读拒绝。 */
 export const NOT_BOUND_ERROR = '已拒绝：本会话未绑定 MUD 账号'
 
-/** 管理工具共用的 output.schema（ok/error/workflows|record…）。 */
+/** 管理工具共用的 output.schema 基座（ok/error 是所有管理工具的公共字段）。 */
 const BASE_SCHEMA = {
   type: 'object',
   properties: { ok: { type: 'boolean' }, error: { type: 'string' } },
   required: ['ok'],
 } as const
+
+/** 管理工具 output.schema：基座 + 该工具真实返回的字段（宿主会对成功值强制校验）。 */
+function okSchema(extra: Record<string, unknown>): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties: { ...BASE_SCHEMA.properties, ...extra },
+    required: BASE_SCHEMA.required,
+  }
+}
+
+/** 独占谓词（宿主调度：恒 `false` ⇒ 与会话内其它调用串行，不劈半应答）。 */
+const exclusive = (): boolean => false
 
 // ── 工具注册 ────────────────────────────────────────────────────────
 
@@ -144,7 +170,7 @@ export function registerMudWorkflowTools(
       '执行一个声明式流程（JSON 步骤表）：提示符驱动、发送、等待应答、按判据分类出口。'
       + '不做决策不重试，失败原样返回现场。用 mud_workflow_list 查可用流程。'
       + '凭据由系统解析注入，不出进程、不经你（结果行已脱敏）。需要已建立连接（可先 mud_connect）。',
-    isConcurrencySafe: false, // send + read 行流等待，独占
+    isConcurrencySafe: exclusive, // send + read 行流等待，独占（谓词恒 false）
     parameters: {
       type: 'object',
       properties: {
@@ -212,7 +238,7 @@ export function registerMudWorkflowTools(
       + '改进流程 = 扩展你的能力。',
     parameters: { type: 'object', properties: {} },
     output: {
-      schema: BASE_SCHEMA,
+      schema: okSchema({ workflows: { type: 'array', items: { type: 'object' } } }),
       render: (_args, value) => {
         const v = value as WorkflowListResult
         if (!v.ok) return [{ type: 'text', text: v.error }]
@@ -250,7 +276,7 @@ export function registerMudWorkflowTools(
       required: ['name'],
     },
     output: {
-      schema: BASE_SCHEMA,
+      schema: okSchema({ record: { type: 'object' } }),
       render: (_args, value) => {
         const v = value as WorkflowGetResult
         return [{ type: 'text', text: v.ok ? JSON.stringify(v.record.flow, null, 2) : v.error }]
@@ -282,7 +308,9 @@ export function registerMudWorkflowTools(
       required: ['name', 'title', 'flow'],
     },
     output: {
-      schema: BASE_SCHEMA,
+      schema: okSchema({
+        name: { type: 'string' }, version: { type: 'integer' }, updatedAt: { type: 'string' },
+      }),
       render: (_args, value) => {
         const v = value as WorkflowSaveResult
         return [{ type: 'text', text: v.ok ? `已保存：${v.name} v${v.version}` : v.error }]
@@ -320,7 +348,7 @@ export function registerMudWorkflowTools(
       required: ['name'],
     },
     output: {
-      schema: BASE_SCHEMA,
+      schema: okSchema({ deleted: { type: 'boolean' }, lockedBuiltin: { type: 'boolean' } }),
       render: (_args, value) => {
         const v = value as WorkflowDeleteResult
         if (!v.ok) return [{ type: 'text', text: v.error }]
@@ -359,7 +387,7 @@ export function registerMudWorkflowTools(
       required: ['name'],
     },
     output: {
-      schema: BASE_SCHEMA,
+      schema: okSchema({ name: { type: 'string' }, versions: { type: 'array', items: { type: 'object' } } }),
       render: (_args, value) => {
         const v = value as WorkflowHistoryResult
         if (!v.ok) return [{ type: 'text', text: v.error }]
@@ -403,7 +431,9 @@ export function registerMudWorkflowTools(
       required: ['name', 'version'],
     },
     output: {
-      schema: BASE_SCHEMA,
+      schema: okSchema({
+        name: { type: 'string' }, version: { type: 'integer' }, fromVersion: { type: 'integer' },
+      }),
       render: (_args, value) => {
         const v = value as WorkflowRollbackResult
         return [{

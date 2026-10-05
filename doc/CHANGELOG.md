@@ -499,3 +499,15 @@
 - **回归**：core3 296/296 + mud-workflow 75/75 + webui 7/7 全绿，现役两包 `tsc --noEmit` 清零，`pnpm -r build` 通过。
 
 > AI生成
+
+## [v0.0.45]宿主接缝漂移防御（T17）(2026-10-05)
+
+- **问题（实测）**：两包的工具窄结构（`MudToolDefinition`）与宿主 `ToolDefinition` 有**实际偏差**，且被接线层的 `as unknown as ToolRegistrar` 全部吃掉——① `isConcurrencySafe` 宿主要求**谓词函数**`(args) => boolean`，窄结构声明为 boolean 属性：写 `false` 只因宿主 fail-closed（`if (!tool?.isConcurrencySafe) return exclusive`）恰好得到"独占"，**写 `true` 会被 TypeError 吞成 exclusive**；② `render` 宿主返回 `ContentBlock[]`（可变），窄结构声明 `readonly`；③ `output.schema` 宿主要求"对成功返回值强制校验的 JSON Schema"，而管理工具统一只有 `ok`/`error`，真实字段（`record`/`workflows`/`name`/`version`/`updatedAt`/`deleted`…）未声明。
+- **修复（两包同改）**：`isConcurrencySafe` **谓词化**（`mud_send` / `mud_workflow_run` 恒 `false`＝独占；其余缺省）；`render` 返回类型改**可变**数组；`output.schema` 逐工具补齐真实字段（新增 `okSchema(extra)` 基座，避免七处重复）；`mud-core3/src/tools.ts` 与 `mud-workflow/src/host/tools.ts` 同步。
+- **编译期断言（接线层）**：`mud-core3/src/preset.ts` 与 `mud-workflow/src/host/preset.ts` 各导出 `AssertTrue<...>` 形式断言（`ConcurrencySafeIsPredicate` / `RenderReturnsMutableBlocks`）——**形状漂移即 `tsc` 红**；纯层保持零宿主 import（接线层是唯一允许认识宿主的地方）。
+- **工件面加载冒烟（T17.2）**：新增 `packages/mud-workflow/test/plugin-load.e2e.ts`（对齐 core3 同款纪律；缺产物自动跳过）：导入 **`lib/index.js` / `lib/preset.js`**，断言引擎入口 `name/inject/apply` 形状 + 装配即提供 `mudWorkflow` 服务面、preset 入口**七工具**全部过宿主注册面（含 `mud_workflow_run` 的谓词是函数且恒 `false`、每个工具 `output.schema` 为对象根且含真实字段）；`vitest.config.ts` 的 `include` 补 `test/**/*.e2e.ts`。
+- **未决（留档）**：整型可赋值断言（`MudToolDefinition extends ToolDefinition`）需宿主 `JsonSchemaNode` / `ParameterSchemaSpec` / `dsh-llm` 的 `ContentBlock` 类型，手写窄结构无法满足 ⇒ 本轮钉"两处真实漂移的成员"；`output.schema` 的**值级**校验（用宿主 `validateJsonSchemaValue` 对样例值跑一遍）留作后续可选加固。
+- **文档**：§8.2（并发谓词化 + 漂移断言 + 工件面冒烟三条）、§16.2（workflow 75 → 77 例 / 3 → 4 文件、`plugin-load` 用例组补 mud-workflow 同款）、§16.5（T17 切片行）。
+- **回归**：core3 296/296 + mud-workflow 77/77 + webui 7/7 全绿，现役两包 `tsc --noEmit` 清零，`pnpm -r build` 通过。
+
+> AI生成

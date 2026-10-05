@@ -25,7 +25,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | 包 | 用例 | 文件 |
 |---|---|---|
 | **`mud-core3`** | **296 例 / 23 文件** | `link/`：`line` · `telnet` · `mud` · `keepalive` · `corpus`；`src/`：`store` · `accounts` · `runtime` · `deliver` · `read`（含 T15 命中帧）· `tools` · `service`（含 `statusRowOf`）· `world` · `wake` · `screen` · `classify` · `llm-gate` · `reconnect` · `workflow` · `log/log-service`；装配层：`plugin-load`（工件面 e2e）· `login`（流程 E2E 五路径）· `fullme`（流程 E2E 主链/stale 自愈/abort/三退出路径/URL 槽化断言） |
-| **`mud-workflow`** | **75 例 / 3 文件** | `registry`（含捕获槽保存门四校验、名册冲突裁决与来源标记策略 A、T16 迁入取新/账本/回滚/强审计）· `interpreter`（含捕获槽语义、命中帧消费与"去重测"结构断言）· `tools`（含来源/遮蔽呈现、遮蔽修订 delete、history/rollback 贯通） |
+| **`mud-workflow`** | **77 例 / 4 文件** | `registry`（含捕获槽保存门四校验、名册冲突裁决与来源标记策略 A、T16 迁入取新/账本/回滚/强审计）· `interpreter`（含捕获槽语义、命中帧消费与"去重测"结构断言）· `tools`（含来源/遮蔽呈现、遮蔽修订 delete、history/rollback 贯通）· `plugin-load`（工件面 e2e，T17） |
 | **`mud-webui`** | **7 例 / 1 文件** | `mud-captcha`（控制器：订阅/帧 diff/提交/中止/刷新配额/防串帧） |
 
 | 用例组 | 覆盖章节 |
@@ -42,7 +42,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | `fullme`（core3 侧） | §8.17（captcha 双闸、`awaitCaptcha(url)` 原语、`{captcha}` 槽与 pass 掩码排除、stale 自愈环、等待注册表三退出路径；T14：URL 经捕获槽传入、答错重入沿缓存图不重抓、URL 行未出现 → 结构化 timeout、`io.recentLines` 水位过滤回归） |
 | `mud-workflow/{registry,interpreter,tools}` | §8.8（包内三层与契约单点；宿主入口 `lib/index.js` 与契约子路径）、§8.10–§8.15、§8.17（`awaitCaptcha(url)` 端口单点声明 + core3 缝实现 = 编译期断言；T14：捕获槽语义①–⑧ + 保存门四校验；2026-10-05 语义澄清⑨–⑪：捕获与路由同源、整窗 exec（跨行判据可捕获）、非捕获判据路径不吞分类出口；策略 A：locked 内置优先 + `shadowed` 标记 + 遮蔽修订 delete 放行 + `origin` 来源标记；T15（§5.2/§8.13）：解释器消费命中帧、源码级"去重测"结构断言；T16（§8.11/§14.3）：迁入取新与归档、变更账本（上限剪枝）、回滚写新版本、强审计提交、`flags` 白名单收紧。`login` 用例已随实体归 core3，见上行） |
 | `mud-webui/mud-captcha` | §9.7（弹窗呈现：订阅恢复、帧边界 diff、提交/中止/刷新） |
-| `plugin-load`（工件面 e2e） | §16.1（装配层加载冒烟：`apply` 不得失败，引擎窄面与 remote 命名空间在册） |
+| `plugin-load`（工件面 e2e） | §16.1（装配层加载冒烟：`apply` 不得失败，引擎窄面与 remote 命名空间在册）。**mud-workflow 同款**（T17）：导入 `lib/index.js` / `lib/preset.js`，断言 `mudWorkflow` 服务面在册、七工具过注册面（谓词函数 + `output.schema` 对象根与真实字段） |
 
 ## 16.3 验收断言表
 
@@ -105,6 +105,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | **T14 流程捕获槽** | wait `captures` 字段 + 解释器捕获/四源替换 + run 级命名槽 + checkFlow 四校验 + `captcha` 动作 `url` 参数化 + `awaitCaptcha(url)` 双侧改 + fullme URL 捕获上移（URL_SRC 加组、自取净删、窄缓存保留、豁免注释清理） | ✅（回归全绿：core3 288 + workflow 56 + webui 7，§16.2） |
 | **T15 读窗命中信息下沉** | 契约加命中帧（`ReadHit`：`by`/`index`/`groups`）与 `IoReadReason` 单点（core3 `ReadReason` 引用之）；读窗机判定与取组改**同一次 `exec` + 调用前重置 `lastIndex`**（`g`/`y` 有状态正则不再污染）；解释器删 `firstHit`/`captureSlots`，failOn 出口/路由/填槽全部消费命中帧 | ✅（回归全绿：core3 296 + workflow 67 + webui 7，§16.2） |
 | **T16 流程存储演进与变更账本** | 事实核查（宿主 whole-unit 下**永不改域 `version`**、新增表零影响）；域增 `snapshots` 表（只追加账本，`save`/`delete`/`migration` 三类归档、每流程上限 20 剪枝）；迁入**按 version 取新 + 落败方归档 + 失败不挂域不清内存**；强审计提交（账本先行）；`history`/`rollback` 两工具（回滚写新版本）；`wait.flags` 收紧为 `d/i/m/s/u` | ✅（回归全绿：core3 296 + workflow 75 + webui 7，§16.2） |
+| **T17 宿主接缝漂移防御** | `isConcurrencySafe` **谓词化**（两包，独占工具恒 `false`）· `output.schema` 逐工具补齐真实字段 · `render` 返回类型对齐宿主 `ContentBlock[]` · 接线层 `AssertTrue` **编译期断言**钉住这两处成员 · mud-workflow 工件面加载冒烟（`lib/index.js` / `lib/preset.js`，含七工具与 schema 面） | ✅（回归全绿：core3 296 + workflow 77 + webui 7，§16.2） |
 
 **完成定义（每个切片）**
 

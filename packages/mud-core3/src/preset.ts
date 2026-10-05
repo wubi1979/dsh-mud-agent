@@ -17,7 +17,22 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-tools'
 
-import { registerMudTools, type ToolRegistrar, type MudCore3Handle } from './tools.ts'
+import { registerMudTools, type MudCore3Handle, type MudToolDefinition, type ToolRegistrar } from './tools.ts'
+
+/** 编译期一致性断言基元：`T` 不是 `true` 即编译错误。 */
+type AssertTrue<T extends true> = T
+
+/**
+ * 宿主协议漂移断言（T17）：钉住两处曾真实漂移过、又被接线层 `as unknown` 吃掉的
+ * 成员——`isConcurrencySafe` 必须是**谓词函数**、`render` 必须返回**可变**数组
+ * （宿主 `ContentBlock[]`）。漂移在此 `tsc` 红。
+ */
+export type ConcurrencySafeIsPredicate = AssertTrue<
+  MudToolDefinition['isConcurrencySafe'] extends ((args: unknown) => boolean) | undefined ? true : false
+>
+export type RenderReturnsMutableBlocks = AssertTrue<
+  ReturnType<MudToolDefinition['output']['render']> extends { type: 'text'; text: string }[] ? true : false
+>
 
 /** Cordis 插件名（Loader 行标识）。 */
 export const name = 'mud-core3-preset'

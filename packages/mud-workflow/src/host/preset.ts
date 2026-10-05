@@ -19,9 +19,25 @@ import type {} from '@deepseek-ai/dsh-tools'
 
 import {
   registerMudWorkflowTools,
-  type MudWorkflowEngine, type ToolRegistrar,
+  type MudToolDefinition, type MudWorkflowEngine, type ToolRegistrar,
 } from './tools.ts'
 import type { WorkflowIoSeam } from '../contract/index.ts'
+
+/** 编译期一致性断言基元：`T` 不是 `true` 即编译错误。 */
+type AssertTrue<T extends true> = T
+
+/**
+ * 宿主协议漂移断言（T17）：钉住两处曾真实漂移过、又被接线层 `as unknown` 吃掉的
+ * 成员——`isConcurrencySafe` 必须是**谓词函数**（写 boolean 只因宿主 fail-closed
+ * 恰好得到"独占"），`render` 必须返回**可变**数组（宿主 `ContentBlock[]`）。
+ * 漂移在此 `tsc` 红；纯层保持零宿主 import，接线层是唯一允许认识宿主的地方。
+ */
+export type ConcurrencySafeIsPredicate = AssertTrue<
+  MudToolDefinition['isConcurrencySafe'] extends ((args: unknown) => boolean) | undefined ? true : false
+>
+export type RenderReturnsMutableBlocks = AssertTrue<
+  ReturnType<MudToolDefinition['output']['render']> extends { type: 'text'; text: string }[] ? true : false
+>
 
 /** Cordis 插件名（Loader 行标识）。 */
 export const name = 'mud-workflow-preset'

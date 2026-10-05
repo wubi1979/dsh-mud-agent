@@ -32,7 +32,9 @@ L6 是 agent **能动**的唯一出口——把"想做什么"变成"MUD 上发�
 - **工具定义在纯层 `src/tools.ts`**（零宿主 import，可单测）；`preset.ts` 只做 `defineTool` 适配。
 - **注册完整性自检**：期望的工具集缺失即 **fail-loud**（防"preset 行漏挂导致静默少工具"）。
 - **preset 决定能力面**：选 `standard` 的账号**没有** mud 工具（§7.1）。
-- 并发声明：`mud_send` 标 `isConcurrencySafe: false`（独占）；`mud_state` 等零发送只读工具可并发。
+- 并发声明是**谓词函数**（宿主 `isConcurrencySafe?(args) => boolean`，只有恰好返回 `true` 才算并行）：`mud_send` 与 `mud_workflow_run` 恒返回 `false`（独占）；`mud_state` 等零发送只读工具可并发。
+- **宿主协议漂移由编译期断言钉住（T17）**：接线层（`src/preset.ts`）导出 `AssertTrue<...>` 形式的断言，钉住两处曾漂移、又被 `as unknown as ToolRegistrar` 吃掉的成员——`isConcurrencySafe` 必须是**谓词**（曾经是 boolean 属性：写 `false` 只因宿主 fail-closed 恰好得到独占，写 `true` 会被静默吞成独占）、`render` 必须返回**可变**数组（宿主 `ContentBlock[]`）。纯层保持零宿主 import，接线层是唯一允许认识宿主的地方；`output.schema` 逐工具补齐真实字段（宿主对成功返回值强制校验该 JSON Schema）。
+- **工件面加载冒烟**：`packages/mud-workflow/test/plugin-load.e2e.ts` 导入构建产物断言插件面与七工具注册（含谓词与 `output.schema` 面），与 core3 同款纪律（§16.1/§16.2）。
 
 ## 8.3 工具面：工具清单与语义
 
