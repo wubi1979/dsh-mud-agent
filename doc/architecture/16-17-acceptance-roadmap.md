@@ -24,15 +24,15 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 
 | 包 | 用例 | 文件 |
 |---|---|---|
-| **`mud-core3`** | **288 例 / 23 文件** | `link/`：`line` · `telnet` · `mud` · `keepalive` · `corpus`；`src/`：`store` · `accounts` · `runtime` · `deliver` · `read` · `tools` · `service`（含 `statusRowOf`）· `world` · `wake` · `screen` · `classify` · `llm-gate` · `reconnect` · `workflow` · `log/log-service`；装配层：`plugin-load`（工件面 e2e）· `login`（流程 E2E 五路径）· `fullme`（流程 E2E 主链/stale 自愈/abort/三退出路径/URL 槽化断言） |
-| **`mud-workflow`** | **56 例 / 3 文件** | `registry`（含捕获槽保存门四校验）· `interpreter`（含捕获槽语义）· `tools` |
+| **`mud-core3`** | **296 例 / 23 文件** | `link/`：`line` · `telnet` · `mud` · `keepalive` · `corpus`；`src/`：`store` · `accounts` · `runtime` · `deliver` · `read`（含 T15 命中帧）· `tools` · `service`（含 `statusRowOf`）· `world` · `wake` · `screen` · `classify` · `llm-gate` · `reconnect` · `workflow` · `log/log-service`；装配层：`plugin-load`（工件面 e2e）· `login`（流程 E2E 五路径）· `fullme`（流程 E2E 主链/stale 自愈/abort/三退出路径/URL 槽化断言） |
+| **`mud-workflow`** | **75 例 / 3 文件** | `registry`（含捕获槽保存门四校验、名册冲突裁决与来源标记策略 A、T16 迁入取新/账本/回滚/强审计）· `interpreter`（含捕获槽语义、命中帧消费与"去重测"结构断言）· `tools`（含来源/遮蔽呈现、遮蔽修订 delete、history/rollback 贯通） |
 | **`mud-webui`** | **7 例 / 1 文件** | `mud-captcha`（控制器：订阅/帧 diff/提交/中止/刷新配额/防串帧） |
 
 | 用例组 | 覆盖章节 |
 |---|---|
 | `link/{line,telnet,mud,keepalive,corpus}` | §3.2–§3.5（连接代次、建连失败、并发 connect、探活刻度与 busy 谓词、行化、语料） |
 | `reconnect` · `classify` · `llm-gate` | §3.2/§11.3（自动重连限次与打断）、§6.3（行分类与投递剔除）、§7.4.1（LLM 调用面闸门） |
-| `runtime` · `deliver` · `read` | §4.2–§4.5（录制上限、水位线不重投、turn/end 冲刷、失败重试、裸读、判定序） |
+| `runtime` · `deliver` · `read` | §4.2–§4.5（录制上限、水位线不重投、turn/end 冲刷、失败重试、裸读、判定序）；T15（§5.2）：命中帧 `hit`——按声明序下标、`failOn`/`until` 来源、捕获组（未参与组 `undefined`）、`gaCount`/`maxLines` 关窗无帧、`g`/`y` 有状态正则重置（同实例跨 read 复用不丢命中）、`y` 锚定语义保留 |
 | `tools` | §8.2–§8.7（注册自检、拒绝序、禁词全段扫描、`mud_state` 不受闸门、listen 编译、超时钳制） |
 | `screen` | §5.3（ANSI 入 snapshot、回显入屏而凭据缺席、背压断流与 re-follow、两会话屏隔离、跨重连续写、attach 原子性、合批） |
 | `store` · `accounts` | §11.1–§11.2、§14.3（内存/域表、记录 schema、降级、先落名册顺序、失败回滚、`admitted` 持久化） |
@@ -40,7 +40,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | `wake` | §7.5（re-arm、三守卫、fire 后不重复） |
 | `workflow`（core3 侧） | §8.8、§8.14（`workflowIoFor` 缝、login E2E 五路径） |
 | `fullme`（core3 侧） | §8.17（captcha 双闸、`awaitCaptcha(url)` 原语、`{captcha}` 槽与 pass 掩码排除、stale 自愈环、等待注册表三退出路径；T14：URL 经捕获槽传入、答错重入沿缓存图不重抓、URL 行未出现 → 结构化 timeout、`io.recentLines` 水位过滤回归） |
-| `mud-workflow/{registry,interpreter,tools}` | §8.8（包内三层与契约单点；宿主入口 `lib/index.js` 与契约子路径）、§8.10–§8.15、§8.17（`awaitCaptcha(url)` 端口单点声明 + core3 缝实现 = 编译期断言；T14：捕获槽语义①–⑧ + 保存门四校验。`login` 用例已随实体归 core3，见上行） |
+| `mud-workflow/{registry,interpreter,tools}` | §8.8（包内三层与契约单点；宿主入口 `lib/index.js` 与契约子路径）、§8.10–§8.15、§8.17（`awaitCaptcha(url)` 端口单点声明 + core3 缝实现 = 编译期断言；T14：捕获槽语义①–⑧ + 保存门四校验；2026-10-05 语义澄清⑨–⑪：捕获与路由同源、整窗 exec（跨行判据可捕获）、非捕获判据路径不吞分类出口；策略 A：locked 内置优先 + `shadowed` 标记 + 遮蔽修订 delete 放行 + `origin` 来源标记；T15（§5.2/§8.13）：解释器消费命中帧、源码级"去重测"结构断言；T16（§8.11/§14.3）：迁入取新与归档、变更账本（上限剪枝）、回滚写新版本、强审计提交、`flags` 白名单收紧。`login` 用例已随实体归 core3，见上行） |
 | `mud-webui/mud-captcha` | §9.7（弹窗呈现：订阅恢复、帧边界 diff、提交/中止/刷新） |
 | `plugin-load`（工件面 e2e） | §16.1（装配层加载冒烟：`apply` 不得失败，引擎窄面与 remote 命名空间在册） |
 
@@ -62,7 +62,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | **水位线投递** | `turn/end` 一次投出回合内未消费行；read/裸读消费的行**不重复投递**；投递只投 `seen` 之后；投递失败**不丢行**（下次从失败点重试）；未接入零积累零丢弃；裸读返回近期行（尾部截断生效、**含 admit 前录制行**、不重复投） | §4.3、§5.2、§5.4 |
 | **状态面** | 两轴 `conn`/`loggedIn` 语义正确（断线复位两轴 + World 整体复位）；GMCP 包到达即置 `in-game`（**权威信号，不依赖行文匹配**）；World 分区/置信度/来源追溯，后到覆盖 | §10 |
 | **归属上溯** | 子 agent/流程调用沿 `session.header.parentSession` 上溯命中账号会话即可用其 runtime；**祖先不 live → 可读拒**；环深护栏 32 层；**不开 `sessionId` 参数** | §8.5、§12.4 |
-| **流程面** | 五工具（`run` + `list/get/save/delete`）现役；`locked` 拒改拒删；`save` 过三门（zod + `checkFlow` + 凭据红线）；**非 done/failOn 收束一律结构化 timeout**；出口 pass 掩码（凭据不泄露）；`login`（locked）E2E 五路径绿 | §8.10–§8.15 |
+| **流程面** | 七工具（`run` + `list/get/save/delete/history/rollback`）现役；`locked` 拒改拒删；`save` 过三门（zod + `checkFlow` + 凭据红线）；**非 done/failOn 收束一律结构化 timeout**；出口 pass 掩码（凭据不泄露）；`login`（locked）E2E 五路径绿 | §8.10–§8.15 |
 | **人工验证码链路** | `fullme`（locked）E2E：等值 resolve → 槽填充 → `fullme {captcha}` 正确发出；答错 goto answer 重入 + stale 自愈（三连 `fullme 1` → fail 收束无重试）；abort → `aborted` 出口；三退出路径（signal abort/断线/dispose）→ closed 收束 + release；并发冲突拒；`captcha` 非 locked 拒（save + 执行双闸）；`{captcha}` 不进 pass 掩码、未知 `{xxx}` 原样保留；webui 弹窗显示/提交/中止/刷新重取（每轮 1 次配额）/清除帧关窗/刷新页面首帧补推恢复 | §8.17、§9.7 |
 | **流程捕获槽（T14）** | `captures` 声明：until[0] 命中行提取组入 run 级命名槽、本步/跨步 send 正确替换；goto 回跳重经捕获步覆盖旧值、未重经沿用上值（fullme 答错重入同型）；failOn 收束不写槽；保存门四校验拒存（保留名/组数不足/非 until[0] 组/槽名非法/save 侧联动）；未知槽原样保留；组空值/无命中行 → 结构化 timeout 同型收束不落槽；send 侧不碰 `{name}`/`{pass}`；fullme URL 经 `captchaUrl` 槽传入 `awaitCaptcha(url)`（E2E spy），答错重入同 URL 缓存图不重抓（页/图各 1 次），URL 行未出现 → urlwait 结构化 timeout（报错点前移）；已消费行不重入后续读窗 initial 快照（`io.recentLines` 水位回归） | §8.10–§8.13、§8.17 |
 | **静默唤醒** | 行到达 re-arm；静默满 `silenceMs` 到期查**三守卫**（已接入 + 非回合中 + 持有者空闲），任一不满足只 re-arm；命中投状态任务书（`'mud-wake'`）；两触发点（admit/唤醒）**共用同一 kickoff 与模板**；LLM 调用面闸门终审（未接入拦成空 stop，§7.4.1） | §7.4、§7.5 |
@@ -103,6 +103,8 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | **T12 探活精化返工** | 探活从「Wake 到期点串行前置」返工为「link 层自驱静默伴随探测」（锚 = 最后数据到达；90s 首发 × 3 次 × 9s 重发 = **117s 判死**）+ busy 谓词注入 link（busy tick 跳过）+ 判活 link 内部消化（Wake 净删 `probe`/`isProbing`/`onProbeAlive`）+ Config `probeStartMs` 与校验式（`startMs + 次数 × retryMs ≤ silenceMs`） | ✅ |
 | **T13 人工验证码链路** | `captcha` 动作 + `awaitCaptcha` env 原语（双侧）+ locked-only 红线扩展 + `{captcha}` 槽 + `flows/fullme.ts`（主链四段 + stale 自愈环）+ 等待注册表（单槽 + 三退出路径 + run 级缓存）+ remote 四动词 + Config `captchaTimeoutMs` + webui 全局弹窗（独立订阅/首帧补推恢复/清除帧关窗/刷新配额）+ persona 流程说明 | ✅（回归全绿：core3 286 + workflow 40 + webui 7，§16.2） |
 | **T14 流程捕获槽** | wait `captures` 字段 + 解释器捕获/四源替换 + run 级命名槽 + checkFlow 四校验 + `captcha` 动作 `url` 参数化 + `awaitCaptcha(url)` 双侧改 + fullme URL 捕获上移（URL_SRC 加组、自取净删、窄缓存保留、豁免注释清理） | ✅（回归全绿：core3 288 + workflow 56 + webui 7，§16.2） |
+| **T15 读窗命中信息下沉** | 契约加命中帧（`ReadHit`：`by`/`index`/`groups`）与 `IoReadReason` 单点（core3 `ReadReason` 引用之）；读窗机判定与取组改**同一次 `exec` + 调用前重置 `lastIndex`**（`g`/`y` 有状态正则不再污染）；解释器删 `firstHit`/`captureSlots`，failOn 出口/路由/填槽全部消费命中帧 | ✅（回归全绿：core3 296 + workflow 67 + webui 7，§16.2） |
+| **T16 流程存储演进与变更账本** | 事实核查（宿主 whole-unit 下**永不改域 `version`**、新增表零影响）；域增 `snapshots` 表（只追加账本，`save`/`delete`/`migration` 三类归档、每流程上限 20 剪枝）；迁入**按 version 取新 + 落败方归档 + 失败不挂域不清内存**；强审计提交（账本先行）；`history`/`rollback` 两工具（回滚写新版本）；`wait.flags` 收紧为 `d/i/m/s/u` | ✅（回归全绿：core3 296 + workflow 75 + webui 7，§16.2） |
 
 **完成定义（每个切片）**
 

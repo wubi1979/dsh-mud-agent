@@ -9,4 +9,11 @@
  */
 
 export { MAX_TRANSITIONS, PASS_MASK, runFlow } from './interpreter.ts'
-export { WorkflowRegistry, type SaveInput } from './registry.ts'
+export {
+  MAX_SNAPSHOTS_PER_FLOW,
+  WorkflowRegistry,
+  snapshotKey,
+  type MigrationReport,
+  type SaveInput,
+  type WorkflowDomainTables,
+} from './registry.ts'

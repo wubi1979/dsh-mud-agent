@@ -172,7 +172,9 @@ seen = max(deliveredAbs, readAbs)
 | **`abortWait`** | **保留 API**：系统驱动打断的出口（意识层后置，§17.3）；管道已就绪 |
 | **`swallow` 吞行钩子** | 空实现（规则层后置）：规则动作吞行留摘要，吞掉的行不进任何模型面 |
 | **`ReadResult.rest`** | **砍掉**：判据命中后的同批剩余行照常走行路径（逐行回调模型下自然并回） |
-| **失配留痕** | `until` 失配记 error（语料可见）；**GA/EOR 边界关窗不算失配** |
+| **命中帧 `hit`（T15）** | 判据命中时**同时**给出「哪条判据赢了（`by` + `index`）+ 该条首个命中的捕获组（`groups`）」——`by='until'\|'failOn'`、`index` 即 `branch`/`onFailOn` 的键、`groups` 为组 1..n（未参与组 `undefined`）。无判据命中（`gaCount`/`maxLines` 关窗或异步收束）⇒ `hit === undefined`。**判据匹配系统内单点在本机**：流程解释器与工具面都消费该帧，不再各自重测一遍（§8.13） |
+| **取组与有状态正则** | 判定与取组用**同一次 `exec` 调用**（`exec(accText)` 一次拿到命中位置与组，不写 `test` → `exec` 两段），且调用前**重置 `lastIndex`**：`g`/`y` 是**有状态**标志（起点由 `lastIndex` 决定，`y` 还要求"正好落在 `lastIndex` 处"），不重置会让同一判据在窗口变长/跨 read 复用时时灵时不灵。词汇表白名单 = `d/i/m/s/u`（`g`/`y` 对单次 `exec` 无意义或只改锚定起点；保存门拒存留后置，见 §17.3） |
+| **失配留痕** | `until` 失配记 error（语料可见，由命中帧判定，不再复测正则）；**GA/EOR 边界关窗不算失配** |
 | **裸读** | 无 `cmd`：`initial = pendingLines 尾部 maxLines 行快照`（**含 admit 前录制行**——挂机近况回看；**不物理消费**）；缺省判据 `maxLines: 50 + quietMs: 300`；返回时推进 `readAbs` |
 | **有 cmd** | `acc` 只收 **send 之后的新行**（积压留给投递）；返回时推进 `readAbs = acc 尾行号` |
 | **并发** | read 在途**不需要互斥**——水位线天然隔离（`readAbs` 推进后投递从 `seen` 之后拉取，重复被结构消除） |

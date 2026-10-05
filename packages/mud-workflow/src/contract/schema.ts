@@ -45,8 +45,11 @@ export const waitSchema = z.object({
   maxLines: z.number().int().min(1).max(500).optional(),
   /** 总超时毫秒（必填；到点以 timeout 收束）。 */
   timeoutMs: z.number().int().min(1).max(600_000),
-  /** 正则编译 flags（应用于本窗 until+failOn 全部判据；如 'm' 多行锚——login 的 failOn）。 */
-  flags: z.string().regex(/^[dgimsuvy]*$/).max(4).optional(),
+  /** 正则编译 flags（应用于本窗 until+failOn 全部判据；如 'm' 多行锚——login 的 failOn）。
+   * 白名单 `d/i/m/s/u`：`g`/`y` 是**有状态**标志（读窗机逐行评估时起点由 `lastIndex`
+   * 决定，`y` 还要求"正好落在 `lastIndex` 处"），对单次 `exec` 无意义或只改变锚定
+   * 起点 ⇒ 保存门拒存（T16；读窗机的 `lastIndex` 重置见 §5.2）。 */
+  flags: z.string().regex(/^[dimsu]*$/).max(4).optional(),
 }).strict()
 
 export type Wait = z.infer<typeof waitSchema>
@@ -138,6 +141,56 @@ export const workflowRecordSchema = z.object({
 }).strict()
 
 export type WorkflowRecord = z.infer<typeof workflowRecordSchema>
+
+// ── 变更账本（T16：只追加的历史/审计）────────────────────────────
+
+/** 快照归档原因：`save`/`delete` = 生效变更留档；`migration` = 迁入冲突的落败方。 */
+export type SnapshotReason = 'save' | 'delete' | 'migration'
+
+/**
+ * 流程快照（**只追加**账本；键 = `` `${name}:v${version}` ``）。
+ *
+ * 与 `WorkflowRecord` 同形 + 归档时刻与原因：`version` 沿用被归档记录的版本号，
+ * 因此"哪个版本"在历史里唯一可指（回滚动词按 `version` 取）。
+ */
+export const workflowSnapshotSchema = z.object({
+  name: z.string().regex(/^[a-z][a-z0-9_-]*$/).max(32),
+  version: z.number().int().min(1),
+  title: z.string().min(1).max(64),
+  locked: z.boolean(),
+  updatedAt: z.string(),
+  flow: flowSchema,
+  /** 归档时刻（ISO 8601）。 */
+  archivedAt: z.string(),
+  reason: z.enum(['save', 'delete', 'migration']),
+}).strict()
+
+export type WorkflowSnapshot = z.infer<typeof workflowSnapshotSchema>
+
+// ── 视图（list/get 的生效记录 + 来源标记；纯推导，不落库）──────────
+
+/**
+ * 生效来源：由「记录在哪一层」推导，**不进持久化 schema**（故无存量记录兼容问题）——
+ *   - `builtin` = 随代码分发的预制（含 locked）；
+ *   - `refined` = agent 修缮 / 新建（storage 域，或域不可用时的内存降级层）。
+ */
+export type WorkflowOrigin = 'builtin' | 'refined'
+
+/**
+ * 流程视图：**生效**记录 + 来源 + 被遮蔽的同名修缮。
+ *
+ * `shadowed` 只在「**locked 内置优先**」时出现：同名修缮仍在存储层（可 `delete`
+ * 清理），但读取与执行一律用 locked 内置——locked 的「拒改拒删」在读取/执行侧
+ * 同样成立（注册表裁决，§8.11）。
+ */
+export interface WorkflowEntryView {
+  /** 生效记录（执行与 list 呈现用）。 */
+  readonly record: WorkflowRecord
+  /** 生效记录来源。 */
+  readonly origin: WorkflowOrigin
+  /** 被遮蔽的同名修缮（仅 locked 内置优先时有值；可 delete 清理）。 */
+  readonly shadowed?: WorkflowRecord
+}
 
 // ── 结构校验（zod 之外：引用完整性 + 命中序界内 + success 约定）────
 

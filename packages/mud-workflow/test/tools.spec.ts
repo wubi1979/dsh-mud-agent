@@ -39,12 +39,16 @@ const simpleFlow = {
 
 const CREDS = { name: 'hero', pass: 'p' }
 
-/** 脚本化 fake IO（单窗 done）。 */
+/** 脚本化 fake IO（单窗 done；命中帧与 simpleFlow 的 until[0] 一致）。 */
 function fakeIO(): WorkflowIO {
   return {
     send: () => true,
     sendCredential: () => true,
-    read: async () => ({ lines: [{ text: '完成' }], reason: 'done' }),
+    read: async () => ({
+      lines: [{ text: '完成' }],
+      reason: 'done',
+      hit: { by: 'until', index: 0, groups: [] },
+    }),
     recentLines: () => [],
     awaitCaptcha: async () => ({ kind: 'closed' }),
     state: () => ({ state: 'connected' }),
@@ -52,11 +56,12 @@ function fakeIO(): WorkflowIO {
 }
 
 describe('registerMudWorkflowTools', () => {
-  it('注册完整性：五工具全部过 registrar', () => {
+  it('注册完整性：七工具全部过 registrar', () => {
     const { registrar, defs } = fakeRegistrar()
     registerMudWorkflowTools(registrar, { engine: () => null, core: () => null })
     expect([...defs.keys()].sort()).toEqual([
-      'mud_workflow_delete', 'mud_workflow_get', 'mud_workflow_list', 'mud_workflow_run', 'mud_workflow_save',
+      'mud_workflow_delete', 'mud_workflow_get', 'mud_workflow_history', 'mud_workflow_list',
+      'mud_workflow_rollback', 'mud_workflow_run', 'mud_workflow_save',
     ])
   })
 
@@ -157,5 +162,60 @@ describe('registerMudWorkflowTools', () => {
       .execute({ name: 'demo', title: '演示', flow: simpleFlow }, { signal })
     expect(ok).toMatchObject({ ok: true, version: 1 })
     expect(registry.get('demo')).toBeDefined()
+  })
+
+  it('list 报来源与遮蔽标记（策略 A）：内置/修订 + 被遮蔽提示', async () => {
+    const { registrar, defs } = fakeRegistrar()
+    const registry = new WorkflowRegistry()
+    await registry.save({ name: 'login', title: '冒充登录', flow: simpleFlow })
+    await registry.save({ name: 'mine', title: '自建', flow: simpleFlow })
+    registry.registerBuiltins([
+      { name: 'login', title: '登录（内置）', locked: true, version: 1, updatedAt: '', flow: simpleFlow },
+    ])
+    registerMudWorkflowTools(registrar, { engine: () => ({ registry }), core: () => null })
+
+    const def = defs.get('mud_workflow_list')!
+    const r = await def.execute({}, { signal: new AbortController().signal })
+    const rows = (r as { workflows: { name: string; origin: string; shadowed: boolean }[] }).workflows
+    expect(rows.find(w => w.name === 'login')).toMatchObject({ origin: 'builtin', shadowed: true, locked: true })
+    expect(rows.find(w => w.name === 'mine')).toMatchObject({ origin: 'refined', shadowed: false })
+
+    const text = def.output.render({}, r).map(b => b.text).join('\n')
+    expect(text).toContain('遮蔽')
+  })
+
+  it('delete 放行被遮蔽的修缮，并提示 locked 内置继续生效（策略 A）', async () => {
+    const { registrar, defs } = fakeRegistrar()
+    const registry = new WorkflowRegistry()
+    await registry.save({ name: 'login', title: '冒充登录', flow: simpleFlow })
+    registry.registerBuiltins([
+      { name: 'login', title: '登录（内置）', locked: true, version: 1, updatedAt: '', flow: simpleFlow },
+    ])
+    registerMudWorkflowTools(registrar, { engine: () => ({ registry }), core: () => null })
+
+    const def = defs.get('mud_workflow_delete')!
+    const r = await def.execute({ name: 'login' }, { signal: new AbortController().signal })
+    expect(r).toMatchObject({ ok: true, deleted: true, lockedBuiltin: true })
+    const text = def.output.render({ name: 'login' }, r).map(b => b.text).join('\n')
+    expect(text).toContain('locked 内置继续生效')
+  })
+
+  it('history / rollback 贯通账本：历史倒序、回滚写新版本、未知版本可读拒绝', async () => {
+    const { registrar, defs } = fakeRegistrar()
+    const registry = new WorkflowRegistry()
+    await registry.save({ name: 'demo', title: 'v1', flow: simpleFlow })
+    await registry.save({ name: 'demo', title: 'v2', flow: simpleFlow })
+    registerMudWorkflowTools(registrar, { engine: () => ({ registry }), core: () => null })
+    const signal = new AbortController().signal
+
+    const hist = await defs.get('mud_workflow_history')!.execute({ name: 'demo' }, { signal })
+    expect((hist as { versions: { version: number }[] }).versions.map(v => v.version)).toEqual([2, 1])
+
+    const back = await defs.get('mud_workflow_rollback')!.execute({ name: 'demo', version: 1 }, { signal })
+    expect(back).toMatchObject({ ok: true, fromVersion: 1, version: 3 })
+    expect(registry.get('demo')?.title).toBe('v1')
+
+    const miss = await defs.get('mud_workflow_rollback')!.execute({ name: 'demo', version: 99 }, { signal })
+    expect((miss as { error: string }).error).toContain('没有 v99')
   })
 })

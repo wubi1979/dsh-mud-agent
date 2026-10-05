@@ -108,6 +108,90 @@ describe('ReadMachine 判定序', () => {
   })
 })
 
+describe('ReadMachine 命中帧（T15：命中判据 + 捕获组由读窗机返回）', () => {
+  it('① until 按声明序定位命中下标（until[1] 命中 ⇒ index 1）', async () => {
+    const m = new ReadMachine()
+    const p = m.start({ until: [/甲/, /乙/], timeoutMs: 500 })
+    m.onLine(line('无关行'))
+    m.onLine(line('乙出现'))
+    const r = await p
+    expect(r.reason).toBe('done')
+    expect(r.hit).toMatchObject({ by: 'until', index: 1, groups: [] })
+  })
+
+  it('② failOn 命中 ⇒ by=failOn + 正确下标', async () => {
+    const m = new ReadMachine()
+    const p = m.start({ until: [/完成/], failOn: [/无关/, /爆炸/], timeoutMs: 500 })
+    m.onLine(line('爆炸了'))
+    const r = await p
+    expect(r.reason).toBe('failOn')
+    expect(r.hit).toMatchObject({ by: 'failOn', index: 1 })
+  })
+
+  it('③ gaCount 关窗 ⇒ hit 为 undefined（无判据命中，供 D11 判空）', async () => {
+    const m = new ReadMachine()
+    const p = m.start({ until: [/完成/], gaCount: 1, timeoutMs: 2000 })
+    m.onLine(line('普通行'))
+    m.onBoundary()
+    const r = await p
+    expect(r.reason).toBe('done')
+    expect(r.hit).toBeUndefined()
+  })
+
+  it('④ 捕获组按序返回：未参与组为 undefined、参与但空串为 ""', async () => {
+    const m = new ReadMachine()
+    const p = m.start({ until: [/(甲)?(\S+)对(\S*)说/], timeoutMs: 500 })
+    m.onLine(line('张三对说'))
+    const r = await p
+    expect(r.hit?.groups).toEqual([undefined, '张三', ''])
+  })
+
+  it('⑤ 无组判据 ⇒ groups 为空数组', async () => {
+    const m = new ReadMachine()
+    const p = m.start({ until: [/完成/], timeoutMs: 500 })
+    m.onLine(line('完成'))
+    const r = await p
+    expect(r.hit).toEqual({ by: 'until', index: 0, groups: [] })
+  })
+
+  it('⑥a 同一正则实例跨两次 read 复用：lastIndex 重置生效（不重置则第二次丢命中）', async () => {
+    const reused = /第二/g // 调用方缓存编译结果的场景（g 有状态起点会跨 read 残留）
+    const m1 = new ReadMachine()
+    const p1 = m1.start({ until: [reused], timeoutMs: 500 })
+    m1.onLine(line('第二'))
+    expect((await p1).reason).toBe('done')
+
+    const m2 = new ReadMachine()
+    const p2 = m2.start({ until: [reused], timeoutMs: 500 })
+    m2.onLine(line('第二'))
+    const r2 = await p2
+    expect(r2.reason).toBe('done')
+    expect(r2.hit).toMatchObject({ by: 'until', index: 0 })
+  })
+
+  it('⑥b 取组不因“先找下标”而丢：含 g 声明也拿到组（exec 单次调用）', async () => {
+    const m = new ReadMachine()
+    const p = m.start({ until: [/^第二(\d+)/g], timeoutMs: 500 })
+    m.onLine(line('第二42'))
+    const r = await p
+    expect(r.hit).toMatchObject({ by: 'until', index: 0, groups: ['42'] })
+  })
+
+  it('⑥c y（sticky）语义保留：只在窗口起点命中，不向后搜', async () => {
+    const atStart = new ReadMachine()
+    const p1 = atStart.start({ until: [/第二/y], timeoutMs: 500 })
+    atStart.onLine(line('第二在后面'))
+    expect((await p1).hit).toMatchObject({ by: 'until', index: 0 })
+
+    const later = new ReadMachine()
+    const p2 = later.start({ until: [/第二/y], quietMs: 30, timeoutMs: 2000 }, [line('无关')])
+    later.onLine(line('第二在后面'))
+    const r2 = await p2
+    expect(r2.reason).toBe('quiet')
+    expect(r2.hit).toBeUndefined()
+  })
+})
+
 describe('ReadMachine 异步收束源', () => {
   it('quiet：行后静默到期收束', async () => {
     const m = new ReadMachine()

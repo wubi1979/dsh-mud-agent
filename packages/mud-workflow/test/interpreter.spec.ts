@@ -3,15 +3,38 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
 
 import { runFlow } from '../src/core/index.ts'
 import type { WorkflowRecord } from '../src/contract/index.ts'
-import type { CaptchaResume, IoLine, IoReadResult, WorkflowIO } from '../src/contract/index.ts'
+import type {
+  CaptchaResume, IoLine, IoReadOpts, IoReadReason, IoReadResult, ReadHit, WorkflowIO,
+} from '../src/contract/index.ts'
 
 /** 读窗剧本项：一次 read 的应答（窗行 + 收束原因）。 */
 interface Scene {
   lines: string[]
-  reason: string
+  reason: IoReadReason
+}
+
+/**
+ * mini-reader（T15）：按场景收束原因选判据数组，**声明序 `exec` 单次**取"命中 +
+ * 捕获组"、调用前重置 `lastIndex` —— 与 core3 读窗机同规则（本替身只负责模拟缝；
+ * 真实读窗机由 core3 `test/read.spec.ts` 与 `login`/`fullme` E2E 覆盖）。
+ */
+function sceneHit(scene: Scene, opts: IoReadOpts): ReadHit | undefined {
+  if (scene.reason !== 'done' && scene.reason !== 'failOn') return undefined
+  const by = scene.reason === 'failOn' ? 'failOn' : 'until'
+  const res = by === 'failOn' ? opts.failOn : opts.until
+  if (res === undefined) return undefined
+  const text = scene.lines.join('\n')
+  for (let i = 0; i < res.length; i++) {
+    const re = res[i]!
+    re.lastIndex = 0
+    const m = re.exec(text)
+    if (m !== null) return { by, index: i, groups: m.slice(1) }
+  }
+  return undefined
 }
 
 /** 脚本化 fake IO：read 按剧本出窗，awaitCaptcha 按剧本出恢复帧，send/creds 记录调用。 */
@@ -33,13 +56,14 @@ function fakeIO(scenes: Scene[], captchaResumes: CaptchaResume[] = []): {
       if (r === undefined) throw new Error(`captcha 剧本耗尽（第 ${captchaCursor} 次挂起）`)
       return r
     },
-    read: async () => {
+    read: async (opts) => {
       const scene = scenes[cursor]
       cursor += 1
       if (scene === undefined) throw new Error(`剧本耗尽（第 ${cursor} 次读窗）`)
       return {
         lines: scene.lines.map(text => ({ text }) satisfies IoLine),
         reason: scene.reason,
+        hit: sceneHit(scene, opts),
       } satisfies IoReadResult
     },
     recentLines: () => [],
@@ -417,7 +441,7 @@ describe('捕获槽（T14.1：until[0] 命中行提取捕获组入 run 级命名
     expect(sent).toEqual([])
   })
 
-  it('⑥b 空值护栏（D11）：done 收束但 until[0] 无命中行 → 同型 timeout 收束', async () => {
+  it('⑥b 空值护栏（D11）：done 收束但一条 until 都没命中 → 同型 timeout 收束', async () => {
     const flow = {
       entry: 'fight',
       steps: [{
@@ -430,17 +454,19 @@ describe('捕获槽（T14.1：until[0] 命中行提取捕获组入 run 级命名
     const { io, sent } = fakeIO([{ lines: ['一些无关输出'], reason: 'done' }])
     const r = await runFlow(record(flow), io, CREDS)
     expect(r).toMatchObject({ ok: false, stage: 'timeout' })
-    expect(r.lines.join('\n')).toContain('无命中行')
+    expect(r.lines.join('\n')).toContain('本窗无 until 命中判据')
     expect(sent).toEqual([])
   })
 
-  it('⑦ 位置组与命名组等价：多组按序入槽 + 按行提取 + 跨步消费', async () => {
+  it('⑦ 位置组与命名组等价：多组按序入槽 + 整窗 exec（行首锚配 `m`，与路由同源）+ 跨步消费', async () => {
     const flow = {
       entry: 'listen',
       steps: [
         {
           id: 'listen',
-          wait: { until: ['^(\\S+)对(\\S+)说'], captures: ['who', 'whom'], timeoutMs: 1000 },
+          // 行首锚 + 多行窗：按 §8.13 勘误③ 必须配 flags 'm'（整窗匹配模型；
+          // 旧「逐行提取」实现会掩盖这个分歧——见 ⑨–⑪ 语义澄清用例）。
+          wait: { until: ['^(\\S+)对(\\S+)说'], flags: 'm', captures: ['who', 'whom'], timeoutMs: 1000 },
           next: { goto: 'reply' },
         },
         { id: 'reply', action: { send: 'tell {whom} 收到 {who}' }, next: { exit: { stage: 'success', ok: true } } },
@@ -493,5 +519,77 @@ describe('捕获槽（T14.1：until[0] 命中行提取捕获组入 run 级命名
     const r = await runFlow(record(flow), io, CREDS)
     expect(r).toMatchObject({ ok: true, stage: 'success' })
     expect(sent).toEqual(['ask 妖精', 'kill 妖精'])
+  })
+
+  // ── 语义澄清（2026-10-05）：捕获与路由同源 ──────────────────────────
+  // 规则：捕获判定 = 路由判定（同一份 firstHit 结果）。命中 index = 0（捕获判据
+  // 路径）⇒ 整窗 exec 提取，组空 ⇒ D11 结构化 timeout；命中 index > 0（其它已
+  // 声明判据）⇒ 该路径不捕获、不失败，按该判据路由；一条都没命中 ⇒ D11 timeout。
+
+  it('⑨ 其它已声明判据命中时不被捕获失败吞掉：分类出口可达（语义澄清）', async () => {
+    const flow = {
+      entry: 'judge',
+      steps: [
+        {
+          id: 'judge',
+          wait: { until: ['^(\\S+) 想要杀死你', '^你已经死了'], captures: ['attacker'], timeoutMs: 1000 },
+          branch: [{ goto: 'kill' }, { exit: { stage: 'dead', ok: false } }],
+          next: { goto: 'kill' },
+        },
+        { id: 'kill', action: { send: 'kill {attacker}' }, next: { exit: { stage: 'success', ok: true } } },
+      ],
+    }
+    const { io, sent } = fakeIO([{ lines: ['你已经死了'], reason: 'done' }])
+    const r = await runFlow(record(flow), io, CREDS)
+    expect(r).toMatchObject({ ok: false, stage: 'dead' })
+    expect(sent).toEqual([])
+  })
+
+  it('⑩ 跨行捕获判据整窗 exec：显式 \\n 的 until[0] 可捕获（不再逐行失配）', async () => {
+    const flow = {
+      entry: 'look',
+      steps: [
+        {
+          id: 'look',
+          wait: { until: ['^名字：(\\S+)\\n级别'], captures: ['who'], timeoutMs: 1000 },
+          next: { goto: 'use' },
+        },
+        { id: 'use', action: { send: 'ask {who}' }, next: { exit: { stage: 'success', ok: true } } },
+      ],
+    }
+    const { io, sent } = fakeIO([{ lines: ['名字：hero', '级别：3'], reason: 'done' }])
+    const r = await runFlow(record(flow), io, CREDS)
+    expect(r).toMatchObject({ ok: true, stage: 'success' })
+    expect(sent).toEqual(['ask hero'])
+  })
+
+  it('⑪ 命中非捕获判据且无 branch：走 next 不捕获，未填充槽原样保留（语义澄清）', async () => {
+    const flow = {
+      entry: 'wait',
+      steps: [
+        {
+          id: 'wait',
+          wait: { until: ['^A(\\d+)', '^B'], captures: ['n'], timeoutMs: 1000 },
+          next: { goto: 'use' },
+        },
+        { id: 'use', action: { send: 'v={n}' }, next: { exit: { stage: 'success', ok: true } } },
+      ],
+    }
+    const { io, sent } = fakeIO([{ lines: ['B'], reason: 'done' }])
+    const r = await runFlow(record(flow), io, CREDS)
+    expect(r).toMatchObject({ ok: true, stage: 'success' })
+    expect(sent).toEqual(['v={n}'])
+  })
+})
+
+describe('解释器去重测（T15.2：匹配单点在 core3 读窗机）', () => {
+  it('⑪ 解释器源码内不再出现判据匹配（只编译判据，不 test/exec）', () => {
+    const src = readFileSync(new URL('../src/core/interpreter.ts', import.meta.url), 'utf8')
+    // 断言"代码"而非注释：剥掉块注释与行注释后再查。
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+    expect(code).not.toMatch(/\.exec\(/)
+    expect(code).not.toMatch(/\.test\(/)
+    expect(code).not.toContain('captureSlots')
+    expect(code).not.toContain('firstHit')
   })
 })

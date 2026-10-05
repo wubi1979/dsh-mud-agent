@@ -14,7 +14,7 @@ L6 是 agent **能动**的唯一出口——把"想做什么"变成"MUD 上发�
 | 面 | 承载 | 定位 |
 |---|---|---|
 | **工具面** | `mud-core3` preset 行（`src/preset.ts` + 纯层 `src/tools.ts`） | 单条命令的**自由能动**：发命令、看状态、建连 |
-| **流程面** | 独立包 `mud-workflow`（声明表 / 注册表 / 解释器 / 五工具） | **确定性序列**：把"已知的正确步骤"固化成可复用、可修缮的声明 |
+| **流程面** | 独立包 `mud-workflow`（声明表 / 注册表 / 解释器 / 七工具） | **确定性序列**：把"已知的正确步骤"固化成可复用、可修缮的声明 |
 
 **共享执行契约**（两个面都必须满足）
 
@@ -41,7 +41,7 @@ L6 是 agent **能动**的唯一出口——把"想做什么"变成"MUD 上发�
 | **`mud_send`** | 发命令 + **判据驱动等应答**；**不带 `cmd` = 裸读近况** | 不受接入闸门；**只拒未连接**；独占（`isConcurrencySafe: false`）；应答原文返回调用方 |
 | **`mud_state`** | **状态自述**（两轴 + World 合并快照，§10.5） | **不受闸门 / 不受连接约束，只过归属** |
 | **`mud_connect`** | **建连**（幂等：已连接不重连、不踢已登录会话） | 三期把"连接是手工动词"升格为工具，模型可自行调用 |
-| `mud_workflow_run` + `mud_workflow_list/get/save/delete` | 流程执行与管理五工具 | 归 `mud-workflow` 包（§8.14） |
+| `mud_workflow_run` + `mud_workflow_list/get/save/delete/history/rollback` | 流程执行与管理七工具 | 归 `mud-workflow` 包（§8.14） |
 
 ## 8.4 工具面：拒绝序
 
@@ -131,7 +131,7 @@ mud_send {
 
 | 类别 | 项 | 语义 |
 |---|---|---|
-| **读窗 `wait`** | `until` / `failOn`（字符串正则源 + flags，解释器编译）· `captures`（T14：捕获槽声明，组只许 `until[0]` 携带，§8.13）· `gaCount` · `quietMs` · `maxLines` · **`timeoutMs`（必填）** | **绝不无界等待** |
+| **读窗 `wait`** | `until` / `failOn`（字符串正则源 + flags，解释器编译）· `captures`（T14：捕获槽声明 + **与路由同源**提取，组只许 `until[0]` 携带，§8.13）· `gaCount` · `quietMs` · `maxLines` · **`timeoutMs`（必填）** | **绝不无界等待** |
 | **动作 `action`**（单动作） | `send` \| `sendCredential` \| `captcha`（T14 参数化：收 `url`——值过解释器槽替换，流程捕获槽传入或写死均允许；抓图 → 推帧 → 挂起等人工码，§8.17） | 凭据占位 `{name}` / `{pass}` 由**引擎注入替换**（不经模型）；`send` 空串**拒**，`sendCredential` **允许空串**（终态空命令走凭据通道，不进发送回显）；`{captcha}` 与 T14 命名槽同为引擎替换源（非敏感，不进 pass 掩码，§8.13/§8.17） |
 | **路由** | `branch`（`until` 命中序 → 目标）· `onFailOn`（`failOn` 命中序 → 分类出口）· `next`（缺省后继） | 目标 = `goto` \| `exit`（`stage` 分类 + `ok`；`'success'` 强制 `ok: true`） |
 | **后置** | 循环 / 计算 / 条件 | JSON 表达不了的例证出现再评估（§17.3） |
@@ -144,7 +144,14 @@ mud_send {
 | **非 locked** | 预制与 agent 新建均可 `save`（`version` 自增） |
 | **进化闭环** | **粗胚 → 执行 → 结构化失败现场 → 修缮 → 重试**——流程是 **agent 能力的持久化载体**；`delete` 还原预制 |
 | **保存门（三门，确定性校验即生效）** | ① **zod schema 校验** ② **`checkFlow` 结构门**（`goto` 目标存在 / 命中序界内 / `success` 的 `ok: true`；T14 captures 四校验：槽名合法、非保留名、`until[0]` 组数 ≥ 声明数、捕获组只许出现在 `until[0]`，§8.13）③ **凭据红线**（§8.12） |
-| **存储** | 独立域 `mud_workflow`（表 `workflows`）；域不可用 ⇒ 降级内存并告警，**内存先行、域挂上后迁入**（§14.3） |
+| **存储** | 独立域 `mud_workflow`（**两张表**：`workflows` 生效记录 + `snapshots` 变更账本）；域不可用 ⇒ 降级内存并告警（记录与账本同在内存降级层），**内存先行、域挂上后迁入**（§14.3） |
+| **迁入取新（T16）** | 迁入前逐条比对域内既有 `version`：**域内更高 ⇒ 不改域**（取新），把内存期记录**归档**为 `migration` 快照并 `warn` 点名——修复"内存先行窗口期的 save 静默把域内高版本覆盖成低版本"；迁入整体失败 ⇒ **不挂域、不清内存**（内存仍是唯一真相，宿主点名告警） |
+| **变更账本（T16）** | `snapshots` 表**只追加**，键 = `` `${name}:v${version}` ``，记录 `title/flow/updatedAt/archivedAt/reason`（`save`/`delete`/`migration`）；每流程保留最近 `MAX_SNAPSHOTS_PER_FLOW`（20）个版本，超出丢最旧；`history` 按版本倒序读，`rollback(name, version)` = 取该快照的 `title`/`flow` **写一条新版本**（不原地改历史，`version` 继续单调） |
+| **强审计提交（T16）** | **账本先行**（先记快照、再写生效记录）⇒ 不会出现"已生效但无账本"；账本写入失败即**本操作整体失败**（生效记录不写）。极端情况留下"已记账但未生效"的条目——它可从历史里重新回滚出来，不丢数据 |
+| **词汇表演进口径（T16）** | 域 `version` **恒为 1、不用作迁移手段**——本域走宿主 whole-unit 布局，版本不一致时宿主直接 `version-mismatch` 拒绝**整个 open**（`compatibleVersions` 只对 `per-record` 生效）⇒ 改版本 = 全部修缮记录读不出来；词汇表演进一律"**字段可加可选 + 读时归一**"。配套：`wait.flags` 白名单收紧为 `d/i/m/s/u`（`g`/`y` 是**有状态**标志，读窗机逐行评估时起点由 `lastIndex` 决定，§5.2） |
+| **来源标记（零 schema 变更）** | `origin: 'builtin' \| 'refined'` 由「记录在哪一层」**推导**（视图层 `entries(): WorkflowEntryView[]`），**不进持久化 schema** ⇒ 无存量记录兼容问题；`mud_workflow_list` 逐条呈现内置/修订与遮蔽标记 |
+| **同名冲突裁决（2026-10-05 策略 A）** | 优先级在**读取/执行侧**也成立（不再只在保存侧）：**locked 预制 ⇒ 内置优先**——同名修缮降级为 `shadowed`（保留在存储层，`list` 标 ⚠、宿主挂载时 `warn` 点名，`mud_workflow_delete` **放行**清理；删掉只是清掉遮蔽，执行一直用内置版本）；**非 locked 预制 ⇒ 修缮优先**（`delete` 还原为预制）。修复「core3 缺席期抢名 → 内置挂载后被遮蔽且删不掉」的洞（两侧都想删/改时各自的可读拒不变） |
+| **来源标记（零 schema 变更）** | `origin: 'builtin' \| 'refined'` 由「记录在哪一层」**推导**（视图层 `entries(): WorkflowEntryView[]`），**不进持久化 schema** ⇒ 无存量记录兼容问题；`mud_workflow_list` 逐条呈现内置/修订与遮蔽标记 |
 
 ## 8.12 流程面：凭据红线（双闸）
 
@@ -169,9 +176,9 @@ wait（读窗） → failOn 出口 → action（发送） → 路由（branch / 
 |---|---|
 | **动作在路由前执行** | 步骤的应答**总发**；"条件发送"必须写成**独立步骤** |
 | **`initial` 快照** | 等待前取 `pendingLines` **尾部快照**做 `initial`（提示符**先到先结算**） |
-| **判据重测** | `failOn`/`until` 在**本窗文本**上按**声明序**重测（`ReadResult` 不带命中 index） |
+| **判据匹配单点（T15）** | `failOn`/`until` 的匹配**只在 core3 读窗机发生一次**，结果以**命中帧** `hit`（`by` + `index` + 首个命中的 `groups`）随读结果返回（§5.2）；解释器**不重测**——分类（`onFailOn[index]`）、捕获（`groups`）与路由（`branch[index]`）都消费同一帧，三者与收窗在物理上不可能不一致（旧「按声明序重测」纪律随之删除） |
 | **结构缺出口** | 无 `next` 且 `branch` 未命中 ⇒ **结构化 timeout**（**点名步骤**，粗胚修缮的失败信号，**不静默**） |
-| **捕获提取（T14）** | `captures` 声明的步：done 收束后、动作前——对窗文本**按行**在 `until[0]` **首个命中行**上 `exec` 提取捕获组，按序入 **run 级命名槽**（组 1 → `captures[0]`…）；`failOn` 收束**不捕获**；无命中行/组空值 ⇒ **结构化 timeout 同型收束**（fail-loud，不落空串进槽、不进后续 send）；提取与计组一律**无 `g` 正则实例**（`lastIndex` 污染会漏捕获）；**判据不写跨行正则**（按行提取天然不跨行，约定无运行期拦截，§8.16） |
+| **捕获填槽（T14；T15 组值来自命中帧）** | `captures` 声明的步：done 收束后、动作前按**命中帧**分流——① **帧 `by='until'` 且 `index = 0`**（捕获判据路径）：把帧里的 `groups` 按序入 **run 级命名槽**（组 1 → `captures[0]`…），组缺失/空值 ⇒ **结构化 timeout 同型收束**（D11 fail-loud，不落空串进槽、不进后续 send）；② **帧 `by='until'` 且 `index > 0`**（其它已声明判据命中）：该路径不需捕获 ⇒ **不捕获、不失败**，按该判据路由（分类出口可达，不吞分支）；③ **无 `until` 帧**（`gaCount`/`maxLines` 关窗）⇒ 同型 timeout。`failOn` 收束**不捕获**；解释器本层**不做任何正则匹配**（组值由读窗机 `exec` 单次调用取得，§5.2） |
 | **槽替换四源（T14）** | 次序固定：`{captcha}` → **命名槽表** → `{name}` / `{pass}`；`sendCredential` 与 captcha 动作参数走全四源，**`send` 侧不碰 `{name}`/`{pass}`**；未知 `{xxx}` **原样保留**；保留名 `captcha`/`name`/`pass` 三类存储结构性分立（不靠运行期判名防撞） |
 | **槽生命周期（T14）** | run 级，两种复用情形显式分立：**重经捕获步 = 重捕获覆盖**（战斗动态词）；**未重经 = 沿用上值**（goto 跳过捕获步不清槽——fullme 答错重入 `judge → goto answer` 的正确性前提，§8.17） |
 | **步转移上限 256** | 防 `goto` 环 |
@@ -180,7 +187,7 @@ wait（读窗） → failOn 出口 → action（发送） → 路由（branch / 
 
 **判据书写纪律（整窗匹配模型）**
 
-匹配对象 = **整窗文本**（行按 `\n` join：core3 `read.ts` 累积 `accText`、解释器 `lines.map(l => l.text).join('\n')`），正则一次打在整窗上，**无逐行预筛**。作者纪律：
+匹配对象 = **整窗文本**（行按 `\n` join：core3 `read.ts` 累积 `accText`），正则一次打在整窗上，**无逐行预筛**；该匹配**只在读窗机发生一次**（§5.2），流程侧消费命中帧——系统内不存在第二套判据匹配（曾经「路由整窗、捕获逐行」的分歧根源已随 T15 消除）。作者纪律：
 
 1. **行首锚必配 `flags: 'm'`**：无 `'m'` 时 `^`/`$` 只锚窗首（位置 0）——提示行在横幅之后永不命中（勘误 ③，§8.15）。
 2. **单行意图天然行安全**：`.` 无 `/s` 不匹配 `\n`，普通模式不会意外跨行；**跨行意图必须显式**（`/s` 或字符类含 `\n`）。
@@ -188,14 +195,14 @@ wait（读窗） → failOn 出口 → action（发送） → 路由（branch / 
 
 > **未来扩展方向（2026-10-03 评估否决，无例证不立项）**：「判据模式声明」——每条判据显式声明单行/多行、各跑各的、无全局兜底。否决理由：`.` 默认已行安全（防的场景是作者显式写 `/s`）；逐行匹配 = N 行 × M 条次引擎调用，比整窗 M 次扫描**更慢**；混合模式下「单行命中第 5 行 vs 多行命中第 2–8 行」与**声明序**裁定冲突。若判据库扩大后出现整窗模型下的真实误判例证，再按例证重新评估。
 
-## 8.14 流程面：五工具与 `workflowEnvFor` 缝
+## 8.14 流程面：七工具与 `workflowIoFor` 缝
 
-**五工具**（独立 preset 行；原文返回、可读拒绝、注册完整性自检）
+**七工具**（独立 preset 行；原文返回、可读拒绝、注册完整性自检）
 
 | 工具 | 语义 |
 |---|---|
 | `mud_workflow_run { name }` | **白名单执行**（不接受任意路径）；模型 API `{ ok, stage, lines }`。执行链 = 归属解析（§8.5）→ 注册表取流程 → core3 `workflowIoFor` 缝 → 解释器 → `release` |
-| `mud_workflow_list` / `get` / `save` / `delete` | 流程管理四工具：`save` 过三门；`locked` 拒改拒删；`get` 返回完整流程 JSON 供修缮 |
+| `mud_workflow_list` / `get` / `save` / `delete` / `history` / `rollback` | 流程管理六工具：`save` 过三门；`locked` 本体拒改拒删；`get` 返回完整流程 JSON 供修缮；`list` 报 `origin`（内置/修订）与被遮蔽标记；`delete` 放行被 locked 内置遮蔽的同名修订；`history` 读变更账本（版本/时间/原因倒序）；`rollback` 回滚到某个历史版本（写新版本，§8.11） |
 
 **`workflowIoFor` 缝（core3 侧）——执行序**
 
@@ -203,7 +210,7 @@ wait（读窗） → failOn 出口 → action（发送） → 路由（branch / 
 未登记 / 未连接 ⇒ 可读错
   → 凭据解析（失败即 fail-loud，报引用名；明文不进日志/上下文）
   → acquireSend(holder)（流程独占 send+read；冲突可读错）
-  → io 原语：send / sendCredential / read / recentLines / awaitCaptcha（§8.17）/ state（+ creds 注入）
+  → io 原语：send / sendCredential / read（返回现场行 + 收束原因 + **命中帧**，§5.2）/ recentLines / awaitCaptcha（§8.17）/ state（+ creds 注入）
   → release 由调用方 finally 保证
 ```
 

@@ -284,7 +284,7 @@ export class SessionRuntime {
    * 裸读/应答行标记已见，turn/end 不再重复投递（§4.3 水位线语义）。
    */
   async read(opts: ReadOpts, initial: readonly MudLine[] = []): Promise<ReadResult> {
-    if (!this.connected) return { lines: [], reason: 'disconnected' }
+    if (!this.connected) return { lines: [], reason: 'disconnected', hit: undefined }
     const result = await this.readMachine.start(opts, initial)
     const tails = [result.lines, initial].map(lines => lines.at(-1)?.abs ?? -1)
     const maxAbs = Math.max(...tails)

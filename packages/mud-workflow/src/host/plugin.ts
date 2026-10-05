@@ -26,7 +26,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { WorkflowRegistry } from '../core/registry.ts'
 import {
   mudWorkflowDomainSpec,
-  type HostStorageDomain, type HostTable, type WorkflowRecord,
+  type HostStorageDomain, type HostTable, type WorkflowRecord, type WorkflowSnapshot,
 } from '../contract/index.ts'
 
 /** 插件名。 */
@@ -68,10 +68,22 @@ async function attachDomain(
 ): Promise<void> {
   try {
     const opened = await domain.open(mudWorkflowDomainSpec)
-    await registry.attachDomain(opened.table('workflows') as HostTable<WorkflowRecord>)
-    ctx.logger.info(`mud-workflow: 流程已挂 storage 域（${registry.list().length} 条）`)
+    const report = await registry.attachDomain({
+      workflows: opened.table('workflows') as HostTable<WorkflowRecord>,
+      snapshots: opened.table('snapshots') as HostTable<WorkflowSnapshot>,
+    })
+    ctx.logger.info(
+      `mud-workflow: 流程已挂 storage 域（${registry.list().length} 条；迁入 ${report.migrated} 条、账本 ${report.snapshots} 条）`,
+    )
+    // 取新点名（T16）：域内版本更高时内存期修缮不覆盖域，而是归档为 migration 快照。
+    if (report.superseded > 0) {
+      ctx.logger.warn(
+        'mud-workflow: 以下内存期修缮因域内版本更高被取新（已归档为 migration 快照，未覆盖域内记录）：'
+        + report.supersededNames.join('、'),
+      )
+    }
   } catch (error: unknown) {
-    ctx.logger.warn(`mud-workflow: storage 域打开失败，流程退回内存（重启丢 agent 修缮）: ${String(error)}`)
+    ctx.logger.warn(`mud-workflow: storage 域打开/迁入失败，流程退回内存（重启丢 agent 修缮）: ${String(error)}`)
   }
 }
 
@@ -89,6 +101,14 @@ export function apply(ctx: Context, config: MudWorkflowConfig = {}): void {
     if (!Array.isArray(flows) || flows.length === 0) return
     registry.registerBuiltins(flows as readonly WorkflowRecord[])
     ctx.logger.info(`mud-workflow: 已挂载 core3 流程实体（${flows.length} 条）`)
+    // 冲突点名（策略 A：locked 内置优先 ⇒ 同名修订降级 shadowed，必须可见）。
+    const shadowed = registry.entries().filter(entry => entry.shadowed !== undefined)
+    if (shadowed.length > 0) {
+      ctx.logger.warn(
+        'mud-workflow: 以下 agent 修订被 locked 内置遮蔽（内置优先生效，'
+        + `可用 mud_workflow_delete 清理）：${shadowed.map(e => `${e.record.name}（修订 v${e.shadowed?.version}）`).join('、')}`,
+      )
+    }
   }
   const immediateCore: unknown = ctx.get('mudCore3')
   if (immediateCore !== undefined && immediateCore !== null) {

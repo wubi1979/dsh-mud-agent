@@ -5,20 +5,26 @@
  * 因此可脱离宿主被离线校验器/回放器/CLI 直接引用。
  *
  * 执行语义（每步 = wait → failOn 出口 → action → 路由）：
+ *   0. **判据不在此层匹配**（T15）：读窗机随读结果返回**命中帧**（`hit`：哪条判据
+ *      赢了 + 该条首个命中的捕获组，§5.2）；本层只用帧做分类、填槽与路由——系统内
+ *      **不存在第二套判据匹配**（曾经"路由整窗、捕获逐行"的分歧根源由此消除）；
  *   1. **读窗**：wait 存在则先等（判据满足才动作）；等待前取 pending 尾部
  *      快照（SNAP_LINES）做 initial——提示符先到先结算，不丢（login.ts 同款）；
- *   2. **failOn 出口**：reason=failOn 时在**本窗文本**上按声明序重测 failOn
- *      正则，首个命中的 index 查 onFailOn——登记为 exit 即终结（分类出口），
- *      登记为 goto 即转后继步；无登记 → 缺省 timeout 出口（失败行是上一步
- *      应答的分类，重测序 = 声明序，确定性）；
+ *   2. **failOn 出口**：reason=failOn 时用帧的 failOn 下标查 onFailOn——登记为 exit
+ *      即终结（分类出口），登记为 goto 即转后继步；无登记/无帧 → 缺省 timeout 出口；
+ *   2.5 **捕获提取**（T14；T15 改由帧供值）：wait.captures 声明的步，done 收束后、
+ *      动作前——命中帧为 `until` 且 index = 0（捕获判据路径）时把帧里的组值按序入
+ *      run 级命名槽，组缺失/空值 → 结构化 timeout 同型收束（D11 空值护栏，不落空串
+ *      进槽）；`until` 且 index > 0（其它已声明判据）不捕获、不失败，按该判据路由
+ *      （分支路径可组合，不吞分类出口）；无 `until` 帧（gaCount/maxLines 关窗）→ 同型 timeout；
  *   3. **动作**：send 直发（引擎槽 {captcha} + 命名槽替换，不碰 {name}/{pass}）；
  *      sendCredential 先替换 {captcha}/命名槽/{name}/{pass} 再直发（不回显不
  *      落盘）；captcha 推图挂起等人工码值（io.awaitCaptcha(url)——url 由流程
  *      捕获槽传入，T14 D9）——answer 值入 {captcha} 固定单槽继续 / aborted →
  *      专用 aborted 出口 / closed → timeout 出口；发送失败 = 连接已断开 →
  *      timeout 出口；
- *   4. **路由**：本窗文本上按声明序重测 until，首个命中 index 查 branch
- *     （exit = 终结 / goto = 后继）；未命中/越界走 next；**无 next 且无
+ *   4. **路由**：帧为 `until` 且 index 在 branch 界内 ⇒ branch[index]
+ *     （exit = 终结 / goto = 后继）；无帧/越界走 next；**无 next 且无
  *     branch 命中 = 结构缺出口**——返回结构化 timeout 出口并点名步骤
  *     （粗胚修缮闭环的失败信号，不静默）；
  *   5. **非 done/failOn 收束**（timeout/quiet/signal/disconnected/danger）一律
@@ -37,7 +43,7 @@
 
 import type { Step, Wait, WorkflowRecord } from '../contract/schema.ts'
 import type {
-  IoReadOpts, IoReadResult, WorkflowCredentials, WorkflowIO, WorkflowOutcome,
+  IoReadOpts, IoReadResult, ReadHit, WorkflowCredentials, WorkflowIO, WorkflowOutcome,
 } from '../contract/ports.ts'
 
 /** pass 明文的掩码（出口脱敏用）。 */
@@ -73,11 +79,6 @@ function compileWait(wait: Wait): IoReadOpts {
   }
 }
 
-/** 首个命中的正则 index（声明序；无命中返回 -1）。 */
-function firstHit(regexes: RegExp[], text: string): number {
-  return regexes.findIndex(re => re.test(text))
-}
-
 /** 占位替换（T14 四源，次序固定）：{captcha} → 命名槽表 → {name}/{pass}。
  * 三类存储结构性分立（{captcha} 独立变量、命名槽在 Map、凭据在 creds 对象），
  * 保留名不靠运行期判名防撞（保存门已拒存撞名）；未知 {xxx} 原样保留；
@@ -103,24 +104,18 @@ function substituteSlots(cmd: string, captcha: string | undefined, slots: Readon
 }
 
 /**
- * 捕获提取（T14 D3/D10/D11）：对窗文本按行找 until[0] 首个命中行，exec 取
- * 捕获组按序入槽表。用无 g 的独立正则实例（flags 含 g 时剥离——按行多次
- * test/exec，lastIndex 污染会漏捕获）；无命中行/组缺失/空值返回现场说明串
- * （调用方按 D11 空值护栏收束，不落槽），成功返回 null。
+ * 捕获组入槽（T14 D3/D10/D11；T15 起组值由读窗机命中帧供给，本层不再匹配）。
+ *
+ * 只在本窗命中帧为 `until` 且 index = 0（捕获判据路径）时调用：组缺失/空值返回
+ * 现场说明串（调用方按 D11 空值护栏收束，不落槽），成功返回 null。
  */
-function captureSlots(
-  untilSrc: string,
-  flags: string,
-  windowText: string,
+function fillSlots(
+  groups: readonly (string | undefined)[],
   captures: readonly string[],
   slots: Map<string, string>,
 ): string | null {
-  const re = new RegExp(untilSrc, flags.replace(/g/g, ''))
-  const hitLine = windowText.split('\n').find(l => re.test(l))
-  const m = hitLine === undefined ? null : re.exec(hitLine)
-  if (m === null) return `步骤判据在本窗无命中行：${untilSrc}`
   for (let i = 0; i < captures.length; i++) {
-    const v = m[i + 1]
+    const v = groups[i]
     if (v === undefined || v === '') return `捕获槽 ${captures[i]} 提取为空`
     slots.set(captures[i]!, v)
   }
@@ -162,18 +157,21 @@ export async function runFlow(
   // 覆盖、未重经沿用上值——goto 不清槽，D4 两种复用情形由此自然成立）。
   const slots = new Map<string, string>()
   for (let i = 0; i < MAX_TRANSITIONS && step !== undefined; i++) {
-    let windowText = ''
+    // 本窗命中帧（T15）：读窗机判定"哪条判据赢了 + 首个命中的捕获组"，本层只消费
+    // 帧做分类/填槽/路由——不再自己匹配一遍（`undefined` = 无判据命中：gaCount /
+    // maxLines 关窗或异步收束）。
+    let hit: ReadHit | undefined
 
     // 1. 读窗（等待前取尾部快照：提示符可能已到达——先到先结算，不丢）。
     if (step.wait !== undefined) {
       const opts = compileWait(step.wait)
       const r: IoReadResult = await io.read(opts, io.recentLines(SNAP_LINES))
       collect(r.lines)
-      windowText = r.lines.map(l => l.text).join('\n')
+      hit = r.hit
 
       if (r.reason === 'failOn') {
-        // 2. failOn 出口：本窗文本按声明序重测，首个命中 index 查 onFailOn。
-        const idx = firstHit(opts.failOn ?? [], windowText)
+        // 2. failOn 出口：帧给出的 failOn 下标查 onFailOn（无帧/未登记 ⇒ 缺省 timeout）。
+        const idx = hit?.by === 'failOn' ? hit.index : -1
         const target = idx >= 0 ? step.onFailOn?.[String(idx)] : undefined
         if (target === undefined) return timeoutExit()
         if ('exit' in target) return exit(target.exit.stage, target.exit.ok)
@@ -182,16 +180,22 @@ export async function runFlow(
       }
       if (r.reason !== 'done') return timeoutExit()
 
-      // 1.5 捕获提取（T14 D3/D10/D11）：done 收束后、动作前——只在本窗文本
-      // 的 until[0] 命中行上提取（failOn 收束已在上方分叉，不捕获）；无命中行/
-      // 组空值 → 结构化 timeout 同型收束（D11 fail-loud：不落空串进槽、不进
-      // 后续 send，现场可辨）。
-      if (step.wait.captures !== undefined && step.wait.captures.length > 0 && step.wait.until !== undefined) {
-        const failNote = captureSlots(
-          step.wait.until[0]!, step.wait.flags ?? '', windowText, step.wait.captures, slots,
-        )
-        if (failNote !== null) {
-          return timeoutExit([`（步骤 ${step.id} 捕获失败：${failNote}——空值护栏收束，不落槽）`])
+      // 1.5 捕获填槽（T14 D3/D10/D11；T15 组值来自命中帧）
+      //   帧 by='until' && index=0 → 捕获判据路径：按序入槽，组缺失/空值 ⇒ D11 收束；
+      //   帧 by='until' && index>0 → 其它已声明判据路径：不捕获不失败，按该判据路由
+      //                              （不吞分类出口）；
+      //   无 until 帧（gaCount/maxLines 关窗）⇒ D11 收束（不拿旧值/空值进后续 send）。
+      const captures = step.wait.captures
+      if (captures !== undefined && captures.length > 0) {
+        if (hit?.by === 'until' && hit.index === 0) {
+          const failNote = fillSlots(hit.groups, captures, slots)
+          if (failNote !== null) {
+            return timeoutExit([`（步骤 ${step.id} 捕获失败：${failNote}——空值护栏收束，不落槽）`])
+          }
+        } else if (hit?.by !== 'until') {
+          return timeoutExit([
+            `（步骤 ${step.id} 捕获失败：本窗无 until 命中判据（gaCount/maxLines 关窗）——空值护栏收束，不落槽）`,
+          ])
         }
       }
     }
@@ -222,11 +226,11 @@ export async function runFlow(
       }
     }
 
-    // 4. 路由：until 声明序重测 → branch[index]；未命中/越界 → next。
+    // 4. 路由：命中帧的 until 下标 → branch[index]；无帧/越界 → next
+    //    （判据匹配单点在读窗机，本层不做任何扫描）。
     let route: Step['next'] = step.next
-    if (step.wait?.until !== undefined && step.branch !== undefined) {
-      const idx = firstHit(compileSources(step.wait.until, 'until', step.wait.flags ?? ''), windowText)
-      if (idx >= 0 && idx < step.branch.length) route = step.branch[idx]
+    if (step.branch !== undefined && hit?.by === 'until' && hit.index < step.branch.length) {
+      route = step.branch[hit.index]
     }
     if (route === undefined) {
       return timeoutExit([`（步骤 ${step.id} 未声明后继：branch 未命中且无 next——流程结构缺出口）`])

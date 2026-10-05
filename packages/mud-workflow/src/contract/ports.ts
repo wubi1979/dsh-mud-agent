@@ -40,10 +40,40 @@ export interface IoReadOpts {
   timeoutMs: number
 }
 
-/** 读结果（reason 收敛为字符串窄面；done/failOn/timeout/quiet/signal/disconnected/danger）。 */
+/** 读窗收束原因（**单点声明**：core3 `read.ts` 的 `ReadReason` 引用本联合）。 */
+export type IoReadReason =
+  | 'done'      // until / gaCount / maxLines 判据满足
+  | 'failOn'    // 负面判据命中
+  | 'timeout'   // 总超时
+  | 'quiet'     // 行间静默到期
+  | 'signal'    // 中止信号
+  | 'disconnected' // 连接关闭
+  | 'danger'    // 危险中断（abortWait）
+
+/**
+ * 命中判据帧（T15）：读窗机判定"**哪条判据赢了、取到什么值**"的结果。
+ *
+ * 有了它，路由（`branch[index]`）与捕获（`groups`）不必再在流程侧重测一遍——
+ * 分类、捕获与收窗因此物理上不可能不一致（§8.13）。
+ */
+export interface ReadHit {
+  /** 命中的判据所在数组。 */
+  readonly by: 'until' | 'failOn'
+  /** 该判据在数组里的下标（`branch` / `onFailOn` 的键）。 */
+  readonly index: number
+  /** 该判据在整窗文本上**首次命中**的捕获组（组 1..n；未参与组 `undefined`；无组为空数组）。 */
+  readonly groups: readonly (string | undefined)[]
+}
+
+/** 读结果：现场行 + 收束原因 + 命中判据帧。 */
 export interface IoReadResult {
   readonly lines: IoLine[]
-  readonly reason: string
+  readonly reason: IoReadReason
+  /**
+   * 命中帧；窗由 `gaCount` / `maxLines` / `timeout` / `quiet` / `signal` /
+   * `disconnected` / `danger` 关窗时为 `undefined`（无判据命中）。
+   */
+  readonly hit: ReadHit | undefined
 }
 
 /** 会话状态窄面（内核入口只判连接轴）。 */

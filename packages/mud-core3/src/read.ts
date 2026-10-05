@@ -23,25 +23,26 @@
  *   - rest 字段：砍（逐行回调模型下同帧剩余行照常走 runtime 行路径）；
  *   - 自持缓冲：砍（裸读 initial 由调用方从 runtime.pendingLines 取尾部）。
  *
- * 纯度纪律：本文件不 import 宿主。
+ * 纯度纪律：不 import 宿主；**端口词汇表（收束原因 + 命中帧）单点声明在契约层**
+ *（`mud-workflow/contract`，§8.8 A1），本文件 type-only 引用。
+ *
+ * 命中帧（T15，§5.2）：判据命中时同时给出「哪条判据赢了 + 该条首个命中的捕获组」。
+ * 判定与取组用**同一次 `exec` 调用**（不写 test → exec 两段），且调用前重置
+ * `lastIndex`（`g`/`y` 是有状态正则，跨评估会污染起点）。流程侧据此直接路由与
+ * 填槽，不再在解释器里重测一遍。
  */
 
+import type { IoReadReason, ReadHit } from 'mud-workflow/contract'
 import type { MudLine } from './link/line.ts'
 
-/** read 收束原因。 */
-export type ReadReason =
-  | 'done'          // until / gaCount / maxLines 判据满足
-  | 'failOn'        // 负面判据命中
-  | 'timeout'       // 总超时
-  | 'quiet'         // 行间静默到期
-  | 'signal'        // 中止信号
-  | 'disconnected'  // 连接关闭
-  | 'danger'        // 危险中断（abortWait）
+/** read 收束原因（词汇表单点声明在契约层 `IoReadReason`；本名保留供本包内部阅读）。 */
+export type ReadReason = IoReadReason
 
-/** 同步判据命中：收束原因 + 关窗来源（until 失配判责用）。 */
+/** 同步判据命中：收束原因 + 关窗来源（until 失配判责用）+ 命中帧（判据命中才有）。 */
 interface CriterionHit {
   reason: ReadReason
   source: 'failOn' | 'until' | 'gaCount' | 'maxLines'
+  hit: ReadHit | undefined
 }
 
 /** read 参数。timeoutMs 必须显式给出或由工具注入缺省 —— 绝不无界等待。 */
@@ -62,10 +63,16 @@ export interface ReadOpts {
   signal?: AbortSignal
 }
 
-/** read 结果：累积行 + 收束原因（lines 含 initial 与 abortWait 收编的触发行）。 */
+/**
+ * read 结果：累积行 + 收束原因 + 命中判据帧（lines 含 initial 与 abortWait 收编的
+ * 触发行）。本类型是**本包实现面**（行是完整 `MudLine`）；对外端口面见契约
+ * `IoReadResult`（行窄面 `IoLine`、同名字段 `hit`，结构化可赋值）。
+ */
 export interface ReadResult {
   lines: MudLine[]
   reason: ReadReason
+  /** 命中帧；无判据命中（gaCount/maxLines 关窗、异步收束）时为 undefined。 */
+  hit: ReadHit | undefined
 }
 
 /** 在途状态。 */
@@ -129,7 +136,7 @@ export class ReadMachine {
       // 时静默计时器永远不存在，只能等 timeout）。
       if (acc.length > 0) this.armQuiet(state)
       const hit = this.evaluate(state)
-      if (hit !== null) this.finish(hit.reason, hit.source)
+      if (hit !== null) this.finish(hit.reason, hit.source, hit.hit)
     })
   }
 
@@ -142,7 +149,7 @@ export class ReadMachine {
     state.accText += `${state.accText ? '\n' : ''}${line.text}`
     this.armQuiet(state)
     const hit = this.evaluate(state)
-    if (hit !== null) this.finish(hit.reason, hit.source)
+    if (hit !== null) this.finish(hit.reason, hit.source, hit.hit)
   }
 
   /** GA/EOR 边界（runtime 边界钩子在 read 在途时调用）。 */
@@ -151,7 +158,7 @@ export class ReadMachine {
     if (state === null) return
     state.gaSeen += 1
     const hit = this.evaluate(state)
-    if (hit !== null) this.finish(hit.reason, hit.source)
+    if (hit !== null) this.finish(hit.reason, hit.source, hit.hit)
   }
 
   /** 断线收束（runtime 断线路径调用）。 */
@@ -176,20 +183,34 @@ export class ReadMachine {
 
   // ---------------------------------------------------------------------
 
+  /**
+   * 声明序找首个命中判据：**单次 `exec`** 同时得到命中（下标）与捕获组；调用前
+   * 重置 `lastIndex` —— `g`/`y` 是有状态正则（起点由 `lastIndex` 决定），跨评估
+   * 不重置会让"同一判据在窗口变长后时灵时不灵"（§5.2）。
+   */
+  private matchFirst(by: 'until' | 'failOn', res: readonly RegExp[] | undefined, text: string): ReadHit | null {
+    if (res === undefined) return null
+    for (let i = 0; i < res.length; i++) {
+      const re = res[i]!
+      re.lastIndex = 0
+      const m = re.exec(text)
+      if (m !== null) return { by, index: i, groups: m.slice(1) }
+    }
+    return null
+  }
+
   /** 同步判定（写死判定序）：failOn > until > gaCount > maxLines。 */
   private evaluate(state: ReadState): CriterionHit | null {
     const { opts, acc, accText } = state
-    if (opts.failOn !== undefined && opts.failOn.some(re => re.test(accText))) {
-      return { reason: 'failOn', source: 'failOn' }
-    }
-    if (opts.until !== undefined && opts.until.some(re => re.test(accText))) {
-      return { reason: 'done', source: 'until' }
-    }
+    const failOnHit = this.matchFirst('failOn', opts.failOn, accText)
+    if (failOnHit !== null) return { reason: 'failOn', source: 'failOn', hit: failOnHit }
+    const untilHit = this.matchFirst('until', opts.until, accText)
+    if (untilHit !== null) return { reason: 'done', source: 'until', hit: untilHit }
     if (opts.gaCount !== undefined && state.gaSeen >= opts.gaCount) {
-      return { reason: 'done', source: 'gaCount' }
+      return { reason: 'done', source: 'gaCount', hit: undefined }
     }
     if (opts.maxLines !== undefined && acc.length >= opts.maxLines) {
-      return { reason: 'done', source: 'maxLines' }
+      return { reason: 'done', source: 'maxLines', hit: undefined }
     }
     return null
   }
@@ -201,8 +222,8 @@ export class ReadMachine {
     state.quietTimer = setTimeout(() => { this.finish('quiet') }, state.opts.quietMs)
   }
 
-  /** 收束：清计时器/信号监听 → until 失配判责 → resolve。 */
-  private finish(reason: ReadReason, source?: CriterionHit['source']): void {
+  /** 收束：清计时器/信号监听 → until 失配判责 → resolve（带命中帧）。 */
+  private finish(reason: ReadReason, source?: CriterionHit['source'], hit?: ReadHit): void {
     const state = this.state
     if (state === null) return
     this.state = null
@@ -211,12 +232,13 @@ export class ReadMachine {
     if (state.opts.signal !== undefined && state.onAbort !== null) {
       state.opts.signal.removeEventListener('abort', state.onAbort)
     }
-    // until 失配判责（承 core2）：until 声明了且未命中，而收场者是 quiet/timeout
-    // 或被 maxLines 剪断 —— 记 error。gaCount 边界关窗不算失配。
-    if (state.opts.until !== undefined && !state.opts.until.some(re => re.test(state.accText))
+    // until 失配判责（承 core2）：until 声明了却没有 until 命中帧，而收场者是
+    // quiet/timeout 或被 maxLines 剪断 —— 记 error。gaCount 边界关窗不算失配。
+    // 判责由命中帧判定，不再复测正则（顺带消掉有状态正则的第二次调用）。
+    if (state.opts.until !== undefined && hit?.by !== 'until'
       && (reason === 'quiet' || reason === 'timeout' || source === 'maxLines')) {
       this.onLog?.('error', `read 判据失配：until 未命中即收束（reason=${reason}）`)
     }
-    state.resolve({ lines: state.acc, reason })
+    state.resolve({ lines: state.acc, reason, hit })
   }
 }

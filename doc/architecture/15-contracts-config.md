@@ -66,7 +66,7 @@ interface MudCore3Service extends MudCore3Handle {
 | 宿主 `standard` 插件面 | 基础能力（**不覆盖** registry 的 `default`；建账号时显式选 preset） |
 | **引擎行** | `mud-core3`（`lib/index.js`）：名册 / 连接 / 投递 / 服务面 / 流程实体 |
 | **preset 行**（`src/preset.ts` → `lib/preset.js`） | 工具注册（preset 作用域，执行期解析引擎窄面，§8.1–§8.2） |
-| **`mud-workflow` 行** | 流程注册表 + 五工具（§8.14） |
+| **`mud-workflow` 行** | 流程注册表 + 七工具（§8.14） |
 | persona | 玩家身份 + 工具说明 + **分工协议五条**（§7.1、§7.6） |
 
 - **声明合并自扩**：`MessageSourceMap` 增加 `'mud'`（行批次）与 `'mud-wake'`（任务书/唤醒）两种 kind（§6.2、§7.4）。
@@ -80,9 +80,10 @@ interface MudCore3Service extends MudCore3Handle {
 | 读窗 / 动作 / 路由词汇表 | §8.10 |
 | 包内三层与子路径导出（契约 / 内核 / 适配）+ 契约单点 | §8.8 |
 | 保存门三门（zod + `checkFlow` + 凭据红线） | §8.11 |
+| 同名冲突裁决（locked 内置优先）与 `origin` 来源标记 | §8.11 |
 | 凭据红线双闸（静态 + 执行） | §8.12 |
 | 解释器语义（步序、出口、步上限、pass 掩码） | §8.13 |
-| 五工具与 `workflowIoFor` 执行序 | §8.14 |
+| 七工具与 `workflowIoFor` 执行序 | §8.14 |
 | `login` 实体步表与两条实测勘误 | §8.15 + [flows/login.md](../flows/login.md) |
 | `fullme` 实体步表与人工验证码链路（`captcha` 动作 / `awaitCaptcha` / 双预算） | §8.17 + [flows/fullme.md](../flows/fullme.md) |
 | 目标形态（`goto` / `exit`，`'success'` 强制 `ok: true`） | §8.10 |

@@ -99,7 +99,7 @@ function setup(handleOverrides: Partial<MudCore3Handle> = {}, runtimeOverrides: 
           read: async (opts: ReadOpts, initial: readonly MudLine[]) => {
             captured.opts = opts
             captured.initial = initial
-            return { lines: [...initial], reason: 'quiet' } satisfies ReadResult
+            return { lines: [...initial], reason: 'quiet', hit: undefined } satisfies ReadResult
           },
         }),
     ...runtimeOverrides,

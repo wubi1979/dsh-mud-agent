@@ -449,3 +449,53 @@
 - **回归**：core3 288/288 + mud-workflow 56/56 + webui 7/7 全绿，现役两包 `tsc --noEmit` 清零；`pnpm -r build` 通过。
 
 > AI生成
+
+## [v0.0.41]流程捕获语义澄清：捕获与路由同源（T14 收口）(2026-10-05)
+
+- **问题（实测复现）**：T14 的捕获提取用「**逐行**找首个命中行」，而路由用「**整窗**按声明序 `firstHit`」——两套命中模型，与 D3「捕获必须与路由同一条命中行」相反。后果两条：① 声明 `captures` 的步只要 `until[0]` 未命中就**在动作与路由之前**无条件 timeout，即使窗由其它 `until` 命中且**已声明分类出口**（分类出口被吞，实测 `stage` 从 `dead` 变 `timeout`）；② 显式跨行判据（§8.13 允许的 `\n` 写法）**永不命中**（逐行 split 天然不跨行；T14 期以「判据不写跨行正则」的约定回避，而路由侧本无此限制 ⇒ 作者纪律出现两套）。
+- **澄清后的语义（三条路径）**：`hitIdx` = 路由所用的那份 until 命中序，**捕获与路由共用一次计算**——① `hitIdx = 0`（捕获判据路径）：在**整窗文本**上 `exec` `until[0]` 取组入槽，组缺失/空值 ⇒ D11 结构化 timeout（不落空串进槽、不进 send）；② `hitIdx > 0`（其它已声明判据命中）：该路径不需捕获 ⇒ **不捕获、不失败**，按该判据路由（`branch[hitIdx]` / `next`，分类出口可达）；③ 一条 `until` 都没命中（`gaCount`/`maxLines` 关窗）⇒ 同型 timeout（D11 原样保留）。即 fail-loud 只剩两处：**捕获判据命中但组不可用**、**一条判据都没命中**。
+- **代码**：`core/interpreter.ts`——`captureSlots` 改整窗 `exec`（去掉 `split('\n')` 逐行）；`hitIdx` 在读窗后算一次，捕获门与路由共用（顺带去掉路由侧第二次判据编译）；捕获门按上述三路径分支。
+- **测试（先红后绿）**：新增 ⑨（其它已声明判据命中时不吞分类出口）、⑩（跨行捕获判据整窗 exec）、⑪（命中非捕获判据且无 `branch` ⇒ 走 `next`、未填充槽原样保留）——三条在旧实现下**全红**（`3 failed | 56 passed`）、新实现下全绿；⑥b 断言文案随新报文更新（行为不变，仍是 fail-loud）；⑦ 夹具补 `flags: 'm'`（行首锚 + 多行窗：旧逐行匹配掩盖了这个 §8.13 勘误③ 的作者纪律分歧，路由侧本来就不命中）。
+- **文档**：§8.13（捕获提取行重写为三路径 + 判据书写纪律显式声明「捕获与路由共用整窗模型，系统内不存在第二套语义」）、§8.10（`wait` 行 captures 说明）、§16.2（用例账目 56 → 59 与用例组行）。
+- **回归**：core3 288/288（含 fullme E2E——`URL_SRC` 行首锚 + `flags:'m'` 走整窗 exec，行为不变）+ mud-workflow 59/59 + webui 7/7 全绿，现役两包 `tsc --noEmit` 清零。
+
+> AI生成
+
+## [v0.0.42]名册冲突裁决与来源标记（策略 A）(2026-10-05)
+
+- **问题（实测）**：注册表此前只在**保存侧**执行 locked 语义——core3 缺席期 agent 抢先 `save('login')`（无内置 ⇒ 门放行），core3 就绪后挂载 locked `login` 只做内置表 `set`、**不做冲突裁决**，而 `get`/执行仍取修缮层 ⇒ **locked 内置被永久遮蔽**（实测返回 `locked:false` 的修缮版）；且 `delete('login')` 因名对 locked 内置被拒 ⇒ **既赢又删不掉**，只能手工清存储。
+- **裁决（策略 A）**：优先级落到**读取/执行侧的单一落点**（`registry.view`，`get`/`list`/`entries` 共用）——**locked 预制 ⇒ 内置优先**：同名修缮降级 `shadowed`（仍留在存储层），读取与执行一律用 locked 内置；**非 locked 预制 ⇒ 修缮优先**（原进化闭环不变）。`delete` 判据改为「删的是修缮还是内置本体」：**有修缮一律放行**（含 locked 名下的遮蔽修订，删掉只是清掉遮蔽），**无修缮且名对 locked 内置才拒** ⇒ 遮蔽可自愈，不再需要手工清存储。
+- **来源标记（零 schema 变更）**：新增 `WorkflowOrigin = 'builtin' | 'refined'` 与 `WorkflowEntryView{ record, origin, shadowed? }`，由「记录在哪一层」**推导**、**不落库** ⇒ strict schema 与存量记录零影响；新增 `registry.entries()`，`list`/`get` 改由 `view` 派生（同义处行为不变）。
+- **工具面**：`mud_workflow_list` 结果带 `origin`/`shadowed`，render 标注「（内置）/（修订）」与「⚠ 有被 locked 内置遮蔽的修订（delete 可清理）」；`mud_workflow_delete` 结果带 `lockedBuiltin`，render 提示「已删除被遮蔽的修订（locked 内置继续生效）」——结论装进返回值，`render` 保持 args+value 纯投影；两工具 description 同步。
+- **宿主可见性**：`host/plugin.ts` 挂载内置后扫描 `entries()`，有遮蔽即 `ctx.logger.warn` 点名（修订名 + 版本号）——静默降级改为可见。
+- **测试（先红后绿）**：新增 registry ⑫（locked 内置优先 + `shadowed` 保留）、⑬（遮蔽修订 delete 放行）、⑭（无修缮时 delete locked 仍拒）、⑮（来源标记 builtin/refined）、⑯（遮蔽状态下覆盖保存仍拒）与 tools 两条（list 来源/遮蔽呈现、delete 遮蔽修订提示）；先临时把优先级翻回旧行为取证 = `5 failed | 61 passed`，恢复后 = `66 passed`。
+- **未做（本轮裁定延后）**：变更账本（`snapshots` + 回滚）单独一轮；`attachDomain` 迁入时覆盖更高版本持久记录的隐患（评审 P5）仍开放。
+- **文档**：§8.11（新增「同名冲突裁决」「来源标记」两行）、§8.14（五工具行 `list`/`delete` 语义）、§15.4（索引行）、§16.2（用例账目 59 → 66 与用例组行）。
+- **回归**：core3 288/288 + mud-workflow 66/66 + webui 7/7 全绿，现役两包 `tsc --noEmit` 清零。
+
+> AI生成
+
+## [v0.0.43]读窗命中信息下沉：core3 独占匹配（T15）(2026-10-05)
+
+- **根因消除**：判据匹配此前有**两个实现**——core3 读窗机按整窗判定"何时收窗"，流程解释器再在本窗文本上"按声明序重测"取下标与捕获组（`ReadResult` 不带命中信息）。两者必须严格同构，v0.0.41 修的"分类出口被吞 / 跨行判据永不命中"正是不同构所致。本轮把"哪条判据赢了 + 该条首个命中的捕获组"作为**数据**由读窗机返回。
+- **契约（mud-workflow/contract）**：新增 `ReadHit{ by: 'until'|'failOn'; index: number; groups: readonly (string|undefined)[] }`；`IoReadResult` 增必填 `hit: ReadHit | undefined`（无判据命中时为 `undefined`）；`reason` 收紧为 `IoReadReason` 字面量联合，core3 `read.ts` 的 `ReadReason` 改为**引用**该联合（消一处重复声明）。
+- **core3 读窗机（read.ts）**：`evaluate` 把 `*.some(re => re.test(accText))` 换成**声明序 `exec` 单次调用**（一次同时得到命中下标与捕获组，不再写 `test` → `exec` 两段 ⇒ T14 那个"取组必须 strip `g`"的特例消失），且**调用前重置 `lastIndex`**——`g`/`y` 是**有状态**正则（起点由 `lastIndex` 决定，`y` 另要求"正好落在 `lastIndex` 处"），不重置会让同一判据在窗口变长或跨 read 复用时灵时不灵；词汇表白名单 `d/i/m/s/u` 写入 §5.2 纪律，"保存门拒存 `g`/`y`"留 T16（无迁移口径前不收紧持久化契约）。"until 失配判责"日志改由命中帧判定（不再复测一次正则）；`ReadResult`（本包实现面，行是完整 `MudLine`）与契约 `IoReadResult`（窄面 `IoLine`）同带 `hit`、结构化可赋值。
+- **流程解释器（core/interpreter.ts）**：删 `firstHit` 与 `captureSlots` 的匹配职责，改消费命中帧——failOn 出口用 `hit.by==='failOn'` 的 `index` 查 `onFailOn`；路由用 `hit.by==='until'` 的 `index` 查 `branch`；填槽用 `hit.groups`（`index===0` 才填；`index>0` 不捕获不失败；无 `until` 帧 ⇒ D11 收束）。**判据匹配系统内单点**：分类、捕获、路由与收窗在物理上不可能不一致；`windowText` 与路由侧第二次判据编译一并消失。
+- **测试（先红后绿）**：core3 `read.spec` 新增 8 例（命中帧 ①–⑥c：声明序下标、`failOn` 来源、`gaCount`/`maxLines` 关窗无帧、组序（未参与组 `undefined`、参与但空串 `''`）、无组 `[]`、同实例跨 read 复用的重置、含 `g` 声明仍取到组、`y` 锚定语义保留），**先红 7 failed** → 后绿；mud-workflow `interpreter.spec` 的脚本化 fake IO 增 **mini-reader**（与读窗机同规则生成帧）+ 结构断言 ⑪（解释器源码内不再出现 `test`/`exec`/`captureSlots`/`firstHit`，**先红** → 后绿）；`tools.spec`（两侧）与 `runtime.ts` 的结果面补 `hit`。
+- **文档**：§5.2（新增「命中帧」「取组与有状态正则」两行）、§8.13（"判据重测"行改写为"判据匹配单点"、捕获行改为帧驱动、判据书写纪律收敛为单点匹配）、§8.14（io 原语 `read` 标注带帧）、§16.2（core3 288→296、workflow 66→67 与两组用例说明）、§16.5（T15 切片行）。
+- **回归**：core3 296/296（含 `login`/`fullme` E2E——真实"读窗机 → 命中帧 → 解释器"端到端，`captchaUrl` 捕获即由此验证）+ mud-workflow 67/67 + webui 7/7 全绿，现役两包 `tsc --noEmit` 清零，`pnpm -r build` 通过。
+
+> AI生成
+
+## [v0.0.44]流程存储演进与变更账本（T16）(2026-10-05)
+
+- **事实核查（宿主机制，先行落档）**：宿主 `DomainSpec` 的迁移钩子 `compatibleVersions` **只在 `per-record` 布局生效**；本域走缺省 whole-unit，版本不一致时 `storage-json` 直接抛 `version-mismatch` ⇒ **整个 open 拒绝**（退内存 = 全部修缮记录读不出来）。而域 `open` 只按 `spec.tables` 取表、**旧文件缺表读为空** ⇒ 同版本**新增表对存量零影响**。据此立纪律：**域 `version` 恒为 1、永不用作迁移手段**，词汇表演进一律"字段可加可选 + 读时归一"。附带核查：`~/.dsh`（含 `storages/`）与工作区全树**无 `mud_workflow*` 数据** ⇒ 保存门收紧零兼容风险。
+- **契约（mud-workflow/contract）**：域声明增 `snapshots` 表（值 schema = 新增 `workflowSnapshotSchema`：`name/version/title/locked/updatedAt/flow/archivedAt/reason`）并显式 `layout: 'single'`；`wait.flags` 白名单收紧为 `/^[dimsu]*$/`（`g`/`y` 是**有状态**标志，读窗机已重置 `lastIndex`，保存门再拦一道）。
+- **内核（core/registry.ts）**：① **迁入按 `version` 取新**——域内更高 ⇒ 不改域、内存期记录归档为 `migration` 快照（修复评审实测的"内存 v1 覆盖域内 v9"静默版本回退）；② **迁入失败不挂域、不清内存**（内存仍是唯一真相），返回 `MigrationReport`（迁移数 / 取新数 / 点名 / 账本条数）供宿主点名；③ **变更账本**：`snapshots` 只追加、键 `` `${name}:v${version}` ``，`save`/`delete` 各留一档，每流程保留最近 `MAX_SNAPSHOTS_PER_FLOW`（20）个版本；④ **强审计提交**：账本先行（先记快照再写生效记录）⇒ 不会出现"已生效但无账本"，账本失败即操作整体失败；⑤ `history(name)` / `rollback(name, version)`（回滚 = 取该快照的 `title`/`flow` **写一条新版本**，历史不原地改、`version` 继续单调）；⑥ 内存降级层与域表**同形适配**（`mapTable`）：域未挂时账本照常可用，迁入时一并落域。
+- **宿主适配（host/plugin.ts）**：`attachDomain` 传两张表并呈现迁入报告（`info` 迁移/账本数；取新落败者 `warn` **点名**）。
+- **工具面**：新增 **`mud_workflow_history`**（版本/时间/原因倒序）与 **`mud_workflow_rollback`**（回滚结果 = 新版本号）；注册完整性自检 5 → **7**。
+- **测试**：registry 新增 7 条（⑰ 迁入取新 + 归档、⑱ 正常迁入账本随迁与续写、⑲ `delete` 归档、⑳ 回滚写新版本 + 未知版本可读拒绝、㉑ **强审计**（账本写失败 ⇒ 保存整体失败、生效记录不落）、㉒ 上限剪枝、㉓ 迁入失败不挂域不清内存）；tools 新增 `history`/`rollback` 贯通用例、注册自检改七工具。取新用例的"红"证据 = 评审期实测探针（旧实现把域内 v9 覆盖成 v1）。
+- **文档**：§8.11（新增「迁入取新」「变更账本」「强审计提交」「词汇表演进口径」四行）、§8.3/§8.14（五工具 → 七工具；§8.14 标题陈旧的 `workflowEnvFor` 一并改回 `workflowIoFor`）、§14.3（域不可用/迁入失败降级行）、§16.2（workflow 67 → 75 与用例组）、§16.3/§16.5（流程面断言行与 T16 切片行）、§15.3/§15.4/§6–7/§1.6（工具数同步）。
+- **回归**：core3 296/296 + mud-workflow 75/75 + webui 7/7 全绿，现役两包 `tsc --noEmit` 清零，`pnpm -r build` 通过。
+
+> AI生成

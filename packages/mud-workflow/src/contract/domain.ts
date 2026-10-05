@@ -6,7 +6,7 @@
  * （core/registry）。宿主 storage 域以结构化接口接入，本包不引宿主包依赖。
  */
 
-import { workflowRecordSchema } from './schema.ts'
+import { workflowRecordSchema, workflowSnapshotSchema } from './schema.ts'
 
 /** 宿主 storage 表的最小面（`KvTable` 结构化子集，同 core3 store.ts）。 */
 export interface HostTable<V> {
@@ -35,11 +35,21 @@ export const FLOW_SCHEMA_VERSION = 1
 /**
  * 域声明（storage 域 spec；域名/表名须匹配宿主 UNIT_NAME_RE `^[a-z][a-z0-9_]*$`
  * ——无连字符，故用下划线）。与 core3 的 `mud` 域并列，各自独立演进。
+ *
+ * 两条与宿主 storage 机制绑定的纪律（T16 事实核查，见 §14.3）：
+ *   1. **`version` 保持 1、永不用作迁移手段**——本域走 whole-unit 布局，版本不一致
+ *      时宿主直接 `version-mismatch` 拒绝**整个 open**（`compatibleVersions` 只对
+ *      `per-record` 生效）⇒ 改版本 = 全部修缮记录读不出来。词汇表演进一律走"字段
+ *      可加可选 + 读时归一"。
+ *   2. **新增表对存量文件零影响**——宿主只按 `spec.tables` 取表，旧文件缺表读为空。
+ *      `snapshots`（变更账本）即按此新增。
  */
 export const mudWorkflowDomainSpec = {
   name: 'mud_workflow',
   version: FLOW_SCHEMA_VERSION,
+  layout: 'single',
   tables: {
     workflows: { valueSchema: workflowRecordSchema },
+    snapshots: { valueSchema: workflowSnapshotSchema },
   },
 } as const
