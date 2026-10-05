@@ -1,5 +1,8 @@
 /**
- * tools — 工具面纯层：mud_workflow_run + 流程管理四工具（list/get/save/delete）。
+ * host/tools — 工具面纯层：mud_workflow_run + 流程管理四工具（list/get/save/delete）。
+ *
+ * **宿主适配层**（A1）：只做"宿主工具协议 ↔ 内核"的转译——工具定义/参数/render
+ * 是宿主面，执行链把调用转给内核（解释器 + 注册表）。内核与契约都不认识宿主。
  *
  * 承 core3 工具面同款纪律：
  *   - **原文返回、模型自决**：run 返回现场行原文 + stage 前缀；管理工具返回
@@ -7,20 +10,22 @@
  *   - **注册期不依赖引擎**：deps.engine()/deps.core() 执行期解析，缺席时注册
  *     照常、执行给可读拒绝（I9）；
  *   - **拒绝全部可读**（返回 { ok:false, error } 让模型读、能转告用户；不 throw）；
- *   - 本层零宿主 import；接线层 preset.ts 经注入窄结构接口（ToolRegistrar）注册。
+ *   - 本层零宿主 import（宿主工具面以窄结构接口 ToolRegistrar 接入）；接线层
+ *     host/preset.ts 负责解析 ctx。
  *
- * mud_workflow_run 的模型 API 与 core3 T3 版本不变（{ name } → { ok, stage, lines }）；
- * 执行链 = 归属解析（core3 toolContextFor）→ 注册表取流程 → core3 ioFor 缝
+ * mud_workflow_run 的模型 API 不变（{ name } → { ok, stage, lines }）；
+ * 执行链 = 归属解析（core3 缝）→ 注册表取流程 → core3 workflowIoFor 缝
  *（凭据解析 + 持有者 + IO 原语）→ 解释器 runFlow → release。
  *
  * 管理四工具是 agent 进化闭环的写手：save 过 schema + 结构 + 凭据红线三门
  *（registry.save），locked 拒改拒删；get 返回完整流程 JSON 供修缮。
  */
 
-import { runFlow } from './interpreter.ts'
-import type { WorkflowRegistry } from './registry.ts'
-import type { WorkflowRecord } from './schema.ts'
-import type { WorkflowCredentials, WorkflowIO } from './io.ts'
+import { runFlow } from '../core/interpreter.ts'
+import type { WorkflowRegistry } from '../core/registry.ts'
+import type {
+  CallerAgent, WorkflowIoSeam, WorkflowRecord,
+} from '../contract/index.ts'
 
 /** 宿主 ToolDefinition 的窄结构（core3 tools.ts 同款面）。 */
 export interface MudToolDefinition {
@@ -41,27 +46,6 @@ export interface ToolRegistrar {
   register(definition: MudToolDefinition): () => void
 }
 
-/** 调用期 agent 窄结构（工具层只透传不解释）。 */
-export interface ToolAgent {
-  readonly id: unknown
-}
-
-/**
- * core3 引擎缝（ctx.mudCore3 的本包消费面）：归属解析 + ioFor。
- * ioFor 由 core3 接线提供（凭据解析 + 持有者独占 + IO 原语 + release）。
- */
-export interface MudWorkflowCore {
-  toolContextFor(agent: ToolAgent | undefined): { sessionId: string } | null
-  workflowIoFor(sessionId: string, holder: string): Promise<{
-    io: WorkflowIO
-    creds: WorkflowCredentials
-    release(): void
-    /** 取消挂起（T13 B1③，可选——旧缝实现无此句柄时跳过）：宿主取消回合
-     *  （exec.signal abort）时由 execute 挂监听调之，验证码挂起 closed 收束。 */
-    cancel?(): void
-  }>
-}
-
 /** 流程注册表面（ctx.mudWorkflow 的本包消费面）。 */
 export interface MudWorkflowEngine {
   readonly registry: WorkflowRegistry
@@ -72,7 +56,7 @@ export interface MudWorkflowToolDeps {
   /** 流程引擎解析（执行期调用；null = 引擎缺席 ⇒ 可读拒绝）。 */
   engine: () => MudWorkflowEngine | null
   /** core3 缝解析（执行期调用；null = core3 缺席 ⇒ run 可读拒绝，管理工具不受影响）。 */
-  core: () => MudWorkflowCore | null
+  core: () => WorkflowIoSeam | null
 }
 
 // ── 结果形态（canonical JSON 面）────────────────────────────────
@@ -163,7 +147,7 @@ export function registerMudWorkflowTools(
       if (e === null) return reject(ENGINE_ABSENT_ERROR)
       const c = deps.core()
       if (c === null) return reject(CORE_ABSENT_ERROR)
-      const tc = c.toolContextFor(exec.agent as ToolAgent | undefined)
+      const tc = c.toolContextFor(exec.agent as CallerAgent | undefined)
       if (tc === null) return reject(NOT_BOUND_ERROR)
       const name = args.name
       if (name === undefined || name.trim() === '') {
@@ -175,7 +159,7 @@ export function registerMudWorkflowTools(
         return reject(`已拒绝：流程 ${name} 不存在（可用：${known}）`)
       }
       const holder = `workflow:${name}`
-      let handle: Awaited<ReturnType<MudWorkflowCore['workflowIoFor']>> | null = null
+      let handle: Awaited<ReturnType<WorkflowIoSeam['workflowIoFor']>> | null = null
       try {
         handle = await c.workflowIoFor(tc.sessionId, holder)
         // 宿主取消回合（B1③）：signal abort → cancel 句柄 → 验证码挂起 closed

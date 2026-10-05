@@ -4,9 +4,9 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { runFlow } from '../src/interpreter.ts'
-import type { WorkflowRecord } from '../src/schema.ts'
-import type { CaptchaResume, IoLine, IoReadResult, WorkflowIO } from '../src/io.ts'
+import { runFlow } from '../src/core/index.ts'
+import type { WorkflowRecord } from '../src/contract/index.ts'
+import type { CaptchaResume, IoLine, IoReadResult, WorkflowIO } from '../src/contract/index.ts'
 
 /** 读窗剧本项：一次 read 的应答（窗行 + 收束原因）。 */
 interface Scene {

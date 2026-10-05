@@ -1,5 +1,8 @@
 /**
- * registry — 流程注册表：锁定预制（随代码）+ agent 修缮（storage 域 / 内存降级）。
+ * core/registry — 流程注册表：锁定预制（随代码）+ agent 修缮（storage 域 / 内存降级）。
+ *
+ * **内核层**（A1）：只依赖契约层（词汇表 + 保存门 + 域声明），零 cordis、
+ * 零宿主、零 I/O——storage 域以结构化表接口（`HostTable`）接入。
  *
  * 分层语义（PLAN「流程面演进」）：
  *   - **locked 预制**：`locked: true`（login）固锁——拒改拒删，locked-only
@@ -14,33 +17,11 @@
  *
  * 存储纪律承 core3 名册同型：storage 域就绪前内存先行，域挂上后把内存记录
  * 迁入（切换不丢数据）；域不可用长期内存运行（重启丢 agent 修缮，warn 点名）。
- *
- * 纯度纪律：本文件只依赖 zod 与本包 schema；宿主 storage 域以结构化接口接入
- *（HostTable 子集），不引宿主包依赖。
  */
 
-import { workflowRecordSchema, checkFlow, usesCredentialVerb } from './schema.ts'
-import type { Flow, WorkflowRecord } from './schema.ts'
-
-/** 宿主 storage 表的最小面（`KvTable` 结构化子集，同 core3 store.ts）。 */
-export interface HostTable<V> {
-  get(key: string): V | undefined
-  entries(): IterableIterator<[string, V]>
-  put(key: string, value: V): Promise<void>
-  delete(key: string): Promise<boolean>
-}
-
-/**
- * 域声明（storage 域 spec；域名/表名须匹配宿主 UNIT_NAME_RE `^[a-z][a-z0-9_]*$`
- * ——无连字符，故用下划线）。与 core3 的 `mud` 域并列，各自独立演进。
- */
-export const mudWorkflowDomainSpec = {
-  name: 'mud_workflow',
-  version: 1,
-  tables: {
-    workflows: { valueSchema: workflowRecordSchema },
-  },
-} as const
+import { checkFlow, usesCredentialVerb, workflowRecordSchema } from '../contract/schema.ts'
+import type { Flow, WorkflowRecord } from '../contract/schema.ts'
+import type { HostTable } from '../contract/domain.ts'
 
 /** save 输入（locked/version/updatedAt 由注册表管理，不接受外部指定）。 */
 export interface SaveInput {

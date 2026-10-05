@@ -35,8 +35,9 @@ import {
 import type { SessionRuntime } from './runtime.ts'
 import type { MudCore3Handle } from './tools.ts'
 import { MAX_TIMEOUT_MS } from './tools.ts'
-// 流程实体（数据归 core3；mud-workflow 是纯架构）。type-only：词汇表类型引用。
-import type { WorkflowRecord } from 'mud-workflow'
+// 流程实体（数据归 core3；mud-workflow 是纯架构）。type-only：词汇表类型引用
+// 走契约子路径（A1 契约层单点）。
+import type { WorkflowRecord } from 'mud-workflow/contract'
 import { login } from './flows/login.ts'
 import { fullme } from './flows/fullme.ts'
 import type { SessionLogOptions } from './log/log-service.ts'

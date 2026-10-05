@@ -1,15 +1,19 @@
 /**
- * schema — 声明式流程的 JSON 词汇表（zod，持久化边界唯一事实源）。
+ * contract/schema — 声明式流程的 JSON 词汇表 + 静态保存门（zod，持久化边界唯一事实源）。
+ *
+ * **契约层**（A1）：本文件是词汇表与其静态校验的**单点**——引擎侧（core3 流程实体）
+ * 与机制侧（内核解释器 / 注册表保存门）都按此书写与校验，不再各写一份。
+ * 契约层零 cordis、零宿主、零 I/O。
  *
  * 流程本体 = JSON 步骤表（非脚本文本），与 login.md 流程表
  *（driver/action/settle/classify/next）同构——login.ts 手写解释器的表化。
  * JSON 无任意代码，schema + 词汇表白名单 = 静态可验证的安全；无沙箱。
  *
- * 第一版词汇表（从 login 提炼，够用再长；循环/计算/条件后置）：
- *   - 读窗 wait：until/failOn（字符串正则源，解释器编译）+ gaCount/quietMs/
- *     maxLines/timeoutMs（必填——绝不无界等待，read.ts 语义）；
- *   - 动作 action：send | sendCredential（单动作；凭据占位 {name}/{pass} 由
- *     引擎注入替换，不经模型）；
+ * 词汇表（从 login 提炼，够用再长；循环/计算/条件后置）：
+ *   - 读窗 wait：until/failOn（字符串正则源，解释器编译）+ captures（T14 捕获槽）
+ *     + gaCount/quietMs/maxLines/timeoutMs（必填——绝不无界等待，read.ts 语义）；
+ *   - 动作 action：send | sendCredential | captcha（单动作；凭据占位 {name}/{pass}
+ *     与 {captcha} 槽由引擎注入替换，不经模型）；
  *   - 分支 branch：until 命中序（index）→ 后继目标；onFailOn：failOn 命中序
  *     → 分类出口；next：缺省后继；
  *   - 目标 target：goto（后继步）| exit（终结，stage 分类 + ok）。
@@ -17,7 +21,7 @@
  * 红线（PLAN「流程面演进」；T13.1 扩列）：sendCredential 与 captcha 动词
  * **只允许 locked 流程使用**——agent 可写词汇表不含这两个动词（粗胚时序错误
  * 会把凭据发进公屏 = 泄露）。注册表 save 侧静态拒绝（usesCredentialVerb）；
- * 引擎执行侧再拦一道（仅 locked 流程可执行这两个动作），见 interpreter。
+ * 引擎执行侧再拦一道（仅 locked 流程可执行这两个动作），见 core/interpreter。
  */
 
 import { z } from 'zod'

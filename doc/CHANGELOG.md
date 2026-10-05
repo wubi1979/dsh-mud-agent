@@ -438,3 +438,14 @@
 - **回归**：core3 288/288 + mud-workflow 56/56 + webui 7/7 全绿，三包 `tsc --noEmit` 清零（§16.2）。
 
 > AI生成
+
+## [v0.0.40]流程面契约化分层（A1）(2026-10-05)
+
+- **mud-workflow（三层 + 子路径导出）**：包内按依赖方向分三层，边界由 `exports` 表达——**契约层** `src/contract`（词汇表 + 静态保存门 `checkFlow`/`usesCredentialVerb` + IO 与引擎缝端口 + 持久化域声明；子路径 `mud-workflow/contract`；零 cordis / 零宿主 / 零 I/O）· **内核层** `src/core`（`runFlow` + `WorkflowRegistry`；子路径 `mud-workflow/core`；仅依赖契约层 ⇒ 可脱离宿主做离线校验/回放/CI 检查）· **适配层** `src/host` + 根入口薄壳（宿主 patch 仍按绝对路径加载 `lib/index.js` / `lib/preset.js`，逻辑落 `host/plugin.ts` / `host/preset.ts` / `host/tools.ts`）。`exports` 增 `./preset` / `./contract` / `./core`；`build` 前先 `clean`（顺带清掉历史陈旧产物 `lib/flows/login`、`lib/builtins`、`lib/env`）。
+- **契约单点（取代「双侧同形」纪律）**：`WorkflowIO<L>` 加行载体类型参数——契约只承诺 `text`，实现按自己的完整行记录实例化，故 core3 侧 `const io: WorkflowIO<MudLine>` 原样通过而 `recentLines → read(initial)` 回环两侧都无 cast；新增引擎缝端口 `WorkflowIoSeam<L>` / `WorkflowIoHandle<L>`；域声明与 `HostTable`/`HostStorageDomain` 移入契约层，新增 `FLOW_SCHEMA_VERSION`（词汇表文档版本锚点；迁移策略仍未立项）。
+- **core3（删同形副本 + 编译期断言）**：删 `service.ts` 自留的 `WorkflowIO` 同形接口（改 import 契约端口），实现处按 `WorkflowIO<MudLine>` 实例化，`workflowIoFor` 返回 `WorkflowIoHandle<MudLine>`；`MudCore3Handle extends WorkflowIoSeam<MudLine>` ⇒ `satisfies MudCore3Service` 同时就是「本实现满足流程契约」的编译期断言（§8.17 的「双侧改」由纪律升级为类型系统保证）；`src/index.ts` / `flows/{login,fullme}.ts` 与 `login.spec` / `fullme.spec` 改引 `mud-workflow/contract`，用例的 `runFlow` 改引 `mud-workflow/core`；`fullme.spec` 的 `cancel` 改可选调用（端口对消费侧可选，实现恒提供）。
+- **根编排（构建序不可倒）**：`dev` 前置 `pnpm --filter mud-workflow build`（core3 类型面依赖契约产物，原脚本缺此步 ⇒ 干净树上 core3 构建失败、且宿主可能加载陈旧 `lib/`）；新增 `typecheck`；`test` 由 `--filter mud-core3` 改为**现役三包**（mud-workflow + mud-core3 + mud-webui；退役 v1/v2 不入根回归）。
+- **文档**：§8.8（三层表 / 子路径导出 / 契约单点 / 构建序）、§15.2（缝签名改契约端口）、§15.3（启动链）、§15.4（索引行）、§16.1（纯层范围）、§16.2（用例组行删已移出的 `login`）、§1.6（包地图）、§8.17（`awaitCaptcha` 端口归属）。
+- **回归**：core3 288/288 + mud-workflow 56/56 + webui 7/7 全绿，现役两包 `tsc --noEmit` 清零；`pnpm -r build` 通过。
+
+> AI生成

@@ -28,8 +28,9 @@
  * 纪律：`^` 行首锚配 `flags: 'm'`（整窗按行 join 匹配，login 同款）。
  */
 
-// 流程词汇表类型由 mud-workflow 提供（type-only import；数据侧引用架构侧）。
-import type { WorkflowRecord } from 'mud-workflow'
+// 流程词汇表类型由 mud-workflow 契约层提供（type-only import；数据侧引用
+// 架构侧的契约子路径，A1）。
+import type { WorkflowRecord } from 'mud-workflow/contract'
 
 /** 步预算（urlwait/judge 读窗；挂起预算另走 Config captchaTimeoutMs，两预算串行分立）。 */
 const STEP_MS = 30_000

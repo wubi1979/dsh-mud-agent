@@ -29,7 +29,6 @@ import { SessionRuntime, type ConnectParams } from './runtime.ts'
 import { Deliverer, type DeliverFn, type DelivererConfig } from './deliver.ts'
 import { Classifier, type ClassifyRuleSpec } from './classify.ts'
 import type { KeepaliveOptions, ProbeState } from './link/keepalive.ts'
-import type { ReadOpts, ReadResult } from './read.ts'
 import type { MudLine } from './link/line.ts'
 import { SessionLog, type LogEntry, type SessionLogOptions } from './log/log-service.ts'
 import type { GameScreen, GameViewOptions } from './view/screen.ts'
@@ -42,9 +41,9 @@ import type {
   ResolvedCredentials,
   ServerLookup,
 } from './roster.ts'
-// 验证码链路（T13）：恢复帧词汇表类型来自 mud-workflow（双侧同形，B2）；
+// 验证码链路（T13）：恢复帧词汇表类型来自 mud-workflow 契约层（A1 单点声明）；
 // 取图纯层（D3 fetch 注入）。
-import type { CaptchaResume } from 'mud-workflow'
+import type { CaptchaResume, WorkflowIO, WorkflowIoHandle } from 'mud-workflow/contract'
 import { fetchCaptchaImage, type CaptchaFetch } from './captcha.ts'
 
 /** 服务依赖（宿主/测试注入）。 */
@@ -215,36 +214,21 @@ export interface ToolContext {
 }
 
 /**
- * 流程 IO 面（`workflowIoFor` 注入的 send/read/state 原语；原 workflow.ts
- * 余留类型，2026-10-02 并入 service——类型与生产者同址）。
+ * 流程 IO 面（`workflowIoFor` 注入的 send/read/state 原语）。
  *
- * 与 mud-workflow 的 WorkflowIO（io.ts）同形，mud-workflow 工具层按窄结构
- * 代位 cast。凭据零泄露的发送/注入两道闸的位置约定随本面保留：
+ * **端口类型单点定义在契约层**（mud-workflow `contract/ports.ts` 的
+ * `WorkflowIO<L>`，A1 契约化）：core3 不再自留一份同形接口——本文件按
+ * `WorkflowIO<MudLine>` 实例化（行载体参数 = 本包完整行记录，`read(initial)`
+ * 原样回环无需 cast），实现处即得编译期校验；缝的一致性由
+ * `MudCore3Handle extends WorkflowIoSeam<MudLine>` 断言（tools.ts）。
+ *
+ * 凭据零泄露的发送/注入两道闸的位置约定随本面保留：
  *   1. 发送侧：sendCredential 直发——不触发 onSend，永不进画面回显与会话日志
  *      （link/mud.ts 的既有闸门）；
  *   2. 注入侧：凭据由 core3 在 workflowIoFor 时解析后经 creds 交给调用方
  *      （mud-workflow 解释器），不经过模型；
- *   3. 出口侧脱敏（结果行 pass 掩码）在 mud-workflow 解释器统一执行。
+ *   3. 出口侧脱敏（结果行 pass 掩码）在 mud-workflow 内核统一执行。
  */
-export interface WorkflowIO {
-  /** 直发命令（进画面回显 + 会话日志）。 */
-  send(cmd: string): boolean
-  /** 凭据直发（不回显、不落盘、不进会话日志）。 */
-  sendCredential(cmd: string): boolean
-  /** 判据驱动读应答（initial 可带 pending 尾部快照，提示符先到不丢）。 */
-  read(opts: ReadOpts, initial?: readonly MudLine[]): Promise<ReadResult>
-  /** pending 尾部 N 行快照（等待前的"提示符可能已到达"对齐）。 */
-  recentLines(n: number): MudLine[]
-  /**
-   * 推图挂起等人工验证码（T13 D4/B2；fullme 链路；T14 D8 url 参数化）：收
-   * 流程捕获槽传入的 URL → 抓图 → 推帧 → 挂起（预算 = captchaTimeoutMs），
-   * resolve 恢复帧——answer/aborted/closed（超时与断线/销毁/取消回合同型，
-   * 解释器按 kind 分流）。与 mud-workflow io.ts 的 WorkflowIO 同形（B2 双侧改）。
-   */
-  awaitCaptcha(url: string): Promise<CaptchaResume>
-  /** 会话状态快照（连接/登录/接入/世界）。 */
-  state(): SessionStatus
-}
 
 /** 连接结果。 */
 export interface ConnectResult {
@@ -465,23 +449,18 @@ export class MudService {
   }
 
   /**
-   * 流程 IO 缝（mud-workflow 解释器消费）：凭据解析 + 会话级持有者 + IO 原语。
+   * 流程 IO 缝（mud-workflow 内核消费）：凭据解析 + 会话级持有者 + IO 原语。
+   *
+   * 端口类型 = 契约层 `WorkflowIoHandle<MudLine>`（A1 单点声明）；本实现因此
+   * 在编译期被断言为契约的实现（`MudCore3Handle extends WorkflowIoSeam<MudLine>`）。
    *
    * 执行序：未登记/未连接可读错 → 凭据解析（失败 fail-loud，与 W9「解析失败
    * 在动作之前」同语义）→ acquireSend(holder)（流程独占 send+read，冲突抛错
    * → 工具层可读拒绝）→ io + creds 注入。release 由调用方 finally 保证执行
-   *（mud-workflow tools 的 mud_workflow_run 执行链）。
+   *（mud-workflow host/tools 的 mud_workflow_run 执行链）。
    * @throws 未登记/未连接/未在 roster/凭据解析失败/持有者冲突。
    */
-  async workflowIoFor(sessionId: string, holder: string): Promise<{
-    io: WorkflowIO
-    creds: { name: string; pass: string }
-    release(): void
-    /** 取消挂起（B1③：宿主取消回合时 tools 层接 exec.signal abort 调之）——
-     *  验证码挂起 closed 收束（无挂起时空操作）；收束后流程走 timeout 出口，
-     *  release 由调用方 finally 保证。 */
-    cancel(): void
-  }> {
+  async workflowIoFor(sessionId: string, holder: string): Promise<WorkflowIoHandle<MudLine>> {
     const log = this.logs.get(sessionId)
     const rt = this.runtimes.get(sessionId)
     if (rt === undefined) throw sessionNotRegistered(sessionId)
@@ -544,7 +523,9 @@ export class MudService {
       return promise
     }
 
-    const io: WorkflowIO = {
+    // 实现按契约端口实例化：行载体 = MudLine（read(initial) 原样回环），
+    // 契约面只承诺 text（窄面），两侧都不需要 cast。
+    const io: WorkflowIO<MudLine> = {
       send: cmd => rt.send(cmd),
       sendCredential: cmd => rt.sendCredential(cmd),
       // recentLines 只回未读行（abs > readAbs 水位过滤）：pending 环不物理消费，
@@ -563,6 +544,9 @@ export class MudService {
         rt.releaseSend(holder)
         log?.info('runtime', `流程 IO 释放（${holder}）`)
       },
+      // 取消挂起（B1③：宿主取消回合时 host/tools 层接 exec.signal abort 调之）——
+      // 验证码挂起 closed 收束（无挂起时空操作）；收束后流程走 timeout 出口，
+      // release 由调用方 finally 保证。
       cancel: () => { this.resolveCaptcha(sessionId, { kind: 'closed' }) },
     }
   }

@@ -28,7 +28,8 @@ import type { SessionRuntime } from './runtime.ts'
 import type { ReadOpts } from './read.ts'
 import type { ConnState } from './roster.ts'
 import type { LoggedInState, WorldSnapshot } from './world.ts'
-import type { WorkflowIO } from './service.ts'
+import type { MudLine } from './link/line.ts'
+import type { WorkflowIoSeam } from 'mud-workflow/contract'
 
 /** 宿主 ToolDefinition 的窄结构（本包只用到的面）。 */
 export interface MudToolDefinition {
@@ -73,24 +74,18 @@ export interface MudStateSnapshot {
 /**
  * 引擎窄面（index.ts `ctx.provide('mudCore3', …)` 暴露；preset 行执行期
  * `ctx.get('mudCore3')` 解析，缺席 = null ⇒ 执行可读拒绝，I9）。
+ *
+ * **契约化（A1）**：extends `WorkflowIoSeam<MudLine>`——流程缝端口（归属解析 +
+ * `workflowIoFor`）的类型单点定义在 mud-workflow 契约层，本接口只补本包自有的
+ * 更宽面（含 runtime 的归属结果、connect、stateOf、defaults）。因此
+ * index.ts 的 `satisfies MudCore3Service` 同时就是"本实现满足流程契约"的
+ * 编译期断言，不再靠"双侧同形"的人工纪律。
  */
-export interface MudCore3Handle {
+export interface MudCore3Handle extends WorkflowIoSeam<MudLine> {
   /** 归属解析（父链上溯查名册）；未绑定返回 null。 */
   toolContextFor(agent: ToolAgent | undefined): { sessionId: string; runtime: SessionRuntime } | null
   /** 建连 + login（幂等；失败 throw 可读错 → 工具层转可读拒绝）。 */
   connect(sessionId: string): Promise<{ state: string }>
-  /**
-   * 流程 IO 缝（mud-workflow 解释器消费；凭据由引擎解析注入，不出进程、不经
-   * 模型）。失败 throw 可读错（未连接/凭据解析失败/持有者冲突）→ 调用方转可读拒绝。
-   * cancel：宿主取消回合时接 exec.signal abort 调之（B1③）——验证码挂起 closed
-   * 收束，流程走 timeout 出口后 release 由调用方 finally 保证。
-   */
-  workflowIoFor(sessionId: string, holder: string): Promise<{
-    io: WorkflowIO
-    creds: { name: string; pass: string }
-    release(): void
-    cancel(): void
-  }>
   /** 状态快照（插件状态 + world 合并）。 */
   stateOf(sessionId: string): MudStateSnapshot
   /** mud_send 缺省参数。 */

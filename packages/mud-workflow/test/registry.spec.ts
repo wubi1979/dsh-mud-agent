@@ -5,9 +5,8 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { WorkflowRegistry, type HostTable } from '../src/registry.ts'
-import { checkFlow } from '../src/schema.ts'
-import type { Flow, WorkflowRecord } from '../src/schema.ts'
+import { WorkflowRegistry } from '../src/core/index.ts'
+import { checkFlow, type Flow, type HostTable, type WorkflowRecord } from '../src/contract/index.ts'
 
 /** 最小合法流程（单步，等一行后成功出口）。 */
 function simpleFlow(overrides: Partial<Flow> = {}): Flow {

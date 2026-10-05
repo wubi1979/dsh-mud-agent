@@ -35,9 +35,9 @@
  * 失败不设恢复路径（用户名/密码是人工给的，流程不自作主张重试）。
  */
 
-// 流程词汇表类型由 mud-workflow 提供（type-only import，编译后无运行时依赖；
-// core3 devDep mud-workflow，依赖方向 = 数据侧引用架构侧的词汇表）。
-import type { WorkflowRecord } from 'mud-workflow'
+// 流程词汇表类型由 mud-workflow 契约层提供（type-only import，编译后无运行时
+// 依赖；core3 devDep mud-workflow，依赖方向 = 数据侧引用架构侧的契约）。
+import type { WorkflowRecord } from 'mud-workflow/contract'
 
 /** 步预算（login.md：流程级缺省步预算 30s，终态收尾 5s 兜底）。 */
 const STEP_MS = 30_000

@@ -1,6 +1,6 @@
 {
   "name": "mud-workflow",
-  "description": "MUD 声明式流程子包（纯架构）：流程本体 = JSON 声明式步骤表（schema + 注册表 + 解释器 + 五工具），进程内解释器执行（1 次工具调用、0 次模型调用），agent 经流程管理工具改进流程（进化闭环）。不含流程实体——数据归 core3（builtinFlows 启动期挂载）。",
+  "description": "MUD 声明式流程子包（A1 三层）：契约层（词汇表 + 保存门 + IO/缝端口 + 域声明，子路径 ./contract）· 内核层（解释器 + 注册表，零 cordis/零宿主/零 I/O，子路径 ./core）· 宿主适配层（插件装配 + preset 行 + 工具面）。流程本体 = JSON 声明式步骤表，进程内解释器执行（1 次工具调用、0 次模型调用），agent 经流程管理工具改进流程（进化闭环）。不含流程实体——数据归 core3（builtinFlows 启动期挂载）。",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -11,13 +11,26 @@
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
+    "./preset": {
+      "types": "./lib/preset.d.ts",
+      "default": "./lib/preset.js"
+    },
+    "./contract": {
+      "types": "./lib/contract/index.d.ts",
+      "default": "./lib/contract/index.js"
+    },
+    "./core": {
+      "types": "./lib/core/index.d.ts",
+      "default": "./lib/core/index.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
     "lib"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\"",
+    "build": "pnpm run clean && tsc -p tsconfig.json",
     "test": "pnpm exec vitest run test",
     "typecheck": "tsc -p tsconfig.test.json"
   },

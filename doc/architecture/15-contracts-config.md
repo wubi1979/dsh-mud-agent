@@ -45,7 +45,7 @@ interface MudCore3Service extends MudCore3Handle {
   runtimeFor(agent): SessionRuntime | null          // 归属解析；不属于本插件 ⇒ null
   toolContextFor(agent): { sessionId, runtime, admitted, connState } | null
   connect(sessionId): Promise<{ state }>            // mud_connect 的落点（幂等）
-  workflowIoFor(sessionId, holder): WorkflowIO        // §8.14 缝合点（io 原语 awaitCaptcha(url)——T14 URL 参数化，§8.17）
+  workflowIoFor(sessionId, holder): Promise<WorkflowIoHandle<MudLine>>  // §8.14 缝合点；端口类型 = 契约层单点（§8.8，A1），io 原语 awaitCaptcha(url)（§8.17）
   stateOf(sessionId): { connState, loggedIn, admitted, world, recording, dropped }
   defaults: { sendTimeoutMs, sendMaxLines }         // 工具缺省参数
   builtinFlows: readonly WorkflowRecord[]           // 流程实体（login 等），交 mud-workflow 注册表
@@ -71,13 +71,14 @@ interface MudCore3Service extends MudCore3Handle {
 
 - **声明合并自扩**：`MessageSourceMap` 增加 `'mud'`（行批次）与 `'mud-wake'`（任务书/唤醒）两种 kind（§6.2、§7.4）。
 - 加载形态：patch 的 `name` 指向构建产物；`headless` 屏 cols 等视图参数成组（§15.5）。
-- **启动链**（根 `package.json`）：`gen:typert` → build `mud-core3` → build `mud-webui` → `dsh web --patch <patch>`（§2.2）。
+- **启动链**（根 `package.json`）：build `mud-workflow`（契约产物——core3 类型面依赖它）→ `gen:typert` → build `mud-core3` → build `mud-webui` → `dsh web --patch <patch>`（§2.2、§8.8）。
 
 ## 15.4 流程词汇表与保存门（索引）
 
 | 项 | 权威章节 |
 |---|---|
 | 读窗 / 动作 / 路由词汇表 | §8.10 |
+| 包内三层与子路径导出（契约 / 内核 / 适配）+ 契约单点 | §8.8 |
 | 保存门三门（zod + `checkFlow` + 凭据红线） | §8.11 |
 | 凭据红线双闸（静态 + 执行） | §8.12 |
 | 解释器语义（步序、出口、步上限、pass 掩码） | §8.13 |

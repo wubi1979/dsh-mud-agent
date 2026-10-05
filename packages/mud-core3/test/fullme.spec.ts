@@ -23,8 +23,8 @@ import { MudService } from '../src/service.ts'
 import type { AccountRecord, ServerRecord } from '../src/roster.ts'
 import type { CaptchaFetch, CaptchaResponse } from '../src/captcha.ts'
 import { fullme } from '../src/flows/fullme.ts'
-import { runFlow } from 'mud-workflow'
-import type { WorkflowRecord } from 'mud-workflow'
+import { runFlow } from 'mud-workflow/core'
+import type { WorkflowRecord } from 'mud-workflow/contract'
 import { stripIac } from './helpers.ts'
 
 // ── 语料（与 flows/fullme.ts 同源；服务端侧原样下发）──────────────────
@@ -327,7 +327,9 @@ describe('三退出路径 + 挂起预算（T13 断言⑩）', () => {
       const last = frames[frames.length - 1] as { pending: unknown[] }
       return last !== undefined && last.pending.length === 1
     })
-    handle.cancel() // tools.ts 接 exec.signal abort 后等价于取消回合
+    // tools.ts 接 exec.signal abort 后等价于取消回合；契约里 cancel 对消费侧
+    // 可选（旧缝实现可无此句柄）——本包实现恒提供，用可选调用对齐契约语义。
+    handle.cancel?.()
     const r = await p
     expect(r.ok).toBe(false)
     expect(r.stage).toBe('timeout')

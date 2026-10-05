@@ -8,10 +8,10 @@ import { describe, expect, it } from 'vitest'
 import {
   registerMudWorkflowTools,
   CORE_ABSENT_ERROR, ENGINE_ABSENT_ERROR,
-  type MudToolDefinition, type MudWorkflowCore, type ToolRegistrar,
-} from '../src/tools.ts'
-import { WorkflowRegistry } from '../src/registry.ts'
-import type { WorkflowIO } from '../src/io.ts'
+  type MudToolDefinition, type ToolRegistrar,
+} from '../src/host/tools.ts'
+import { WorkflowRegistry } from '../src/core/index.ts'
+import type { WorkflowIO, WorkflowIoSeam } from '../src/contract/index.ts'
 
 /** 收集注册的假 registrar。 */
 function fakeRegistrar(): { registrar: ToolRegistrar; defs: Map<string, MudToolDefinition> } {
@@ -87,7 +87,7 @@ describe('registerMudWorkflowTools', () => {
     const registry = new WorkflowRegistry()
     await registry.save({ name: 'demo', title: '演示', flow: simpleFlow })
     let released = false
-    const core: MudWorkflowCore = {
+    const core: WorkflowIoSeam = {
       toolContextFor: agent => (agent?.id === 'agent-1' ? { sessionId: 'sess-1' } : null),
       workflowIoFor: async () => ({ io: fakeIO(), creds: CREDS, release: () => { released = true } }),
     }
@@ -104,7 +104,7 @@ describe('registerMudWorkflowTools', () => {
 
   it('run：未绑定会话可读拒绝', async () => {
     const { registrar, defs } = fakeRegistrar()
-    const core: MudWorkflowCore = {
+    const core: WorkflowIoSeam = {
       toolContextFor: () => null,
       workflowIoFor: async () => { throw new Error('不应到达') },
     }

@@ -1,5 +1,8 @@
 /**
- * interpreter — 声明式流程解释器（纯函数，进程内，无沙箱）。
+ * core/interpreter — 声明式流程解释器（纯函数，进程内，无沙箱）。
+ *
+ * **内核层**（A1）：只依赖契约层（`../contract`），零 cordis、零宿主、零 I/O——
+ * 因此可脱离宿主被离线校验器/回放器/CLI 直接引用。
  *
  * 执行语义（每步 = wait → failOn 出口 → action → 路由）：
  *   1. **读窗**：wait 存在则先等（判据满足才动作）；等待前取 pending 尾部
@@ -16,7 +19,7 @@
  *      timeout 出口；
  *   4. **路由**：本窗文本上按声明序重测 until，首个命中 index 查 branch
  *     （exit = 终结 / goto = 后继）；未命中/越界走 next；**无 next 且无
- *      branch 命中 = 结构缺出口**——返回结构化 timeout 出口并点名步骤
+ *     branch 命中 = 结构缺出口**——返回结构化 timeout 出口并点名步骤
  *     （粗胚修缮闭环的失败信号，不静默）；
  *   5. **非 done/failOn 收束**（timeout/quiet/signal/disconnected/danger）一律
  *      timeout 出口（等待未达成；现场行已收集随结果返回）。
@@ -28,14 +31,14 @@
  *      无界循环（每步读窗有超时，环只烧预算不烧死进程）；
  *   - 出口统一过 pass 掩码（凭据零泄露最后一道闸——流程作者忘写也不泄露）。
  *
- * 结构合法性（goto 目标存在/命中序界内）由 schema.checkFlow 在保存/装载时
+ * 结构合法性（goto 目标存在/命中序界内）由契约层 checkFlow 在保存/装载时
  * 保证，解释器不重复校验；运行期只对"缺出口"给结构化失败。
  */
 
-import type { Step, Wait, WorkflowRecord } from './schema.ts'
+import type { Step, Wait, WorkflowRecord } from '../contract/schema.ts'
 import type {
   IoReadOpts, IoReadResult, WorkflowCredentials, WorkflowIO, WorkflowOutcome,
-} from './io.ts'
+} from '../contract/ports.ts'
 
 /** pass 明文的掩码（出口脱敏用）。 */
 export const PASS_MASK = '******'

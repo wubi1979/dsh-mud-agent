@@ -11,7 +11,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 
 | 策略 | 说明 |
 |---|---|
-| **纯层可单测** | `link/*`、`src/tools.ts`、`read.ts`、`world.ts`、`wake.ts`、`deliver.ts`、`mud-workflow/*` 均零宿主 import ⇒ 直接单测 |
+| **纯层可单测** | `link/*`、`src/tools.ts`、`read.ts`、`world.ts`、`wake.ts`、`deliver.ts`、`mud-workflow/{contract,core}` 均零宿主 import ⇒ 直接单测（适配层 `host/*` 由工件面 e2e 覆盖，§8.8） |
 | **装配层抽策略** | 装配层（`index.ts`）不内联业务分支；可测逻辑抽成独立模块（如 `accounts.ts` 的名册写路径），装配层只做接线 |
 | **装配层必过宿主组合加载冒烟** | 纯层用例**不加载插件**：`index.ts` 改动后必须真加载一次（自动化见下行；手工 = 真启动宿主，§2.2 启动链），确认 `mud-core3` 条目**已激活**（无 `1 entry did not activate`）且 `remote.mud` 动词在册。**`apply` 抛错 = 全部 `mud/*` 动词 404**——页面侧只表现为名册操作失败（建服务器那步的错误被状态行吞掉），极易误判为路由/前端问题 |
 | **插件的加载冒烟走工件面** | `test/plugin-load.e2e.ts` 导入 **`lib/index.js`（宿主实际加载的产物）**，不导入 `src/`：插件源用**标准装饰器**（`@Remote`），vitest 的 esbuild 转译不支持（`Invalid or unexpected token`）⇒ 源码面根本不可加载；工件面同时对齐宿主行为，代价是**依赖最新构建**（§2.2「改码后必须重建」）。用例只提供 `typert`（唯一必需服务），`agents`/`credentials`/`sessionController`/`storageDomain` 全缺席 |
@@ -40,7 +40,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | `wake` | §7.5（re-arm、三守卫、fire 后不重复） |
 | `workflow`（core3 侧） | §8.8、§8.14（`workflowIoFor` 缝、login E2E 五路径） |
 | `fullme`（core3 侧） | §8.17（captcha 双闸、`awaitCaptcha(url)` 原语、`{captcha}` 槽与 pass 掩码排除、stale 自愈环、等待注册表三退出路径；T14：URL 经捕获槽传入、答错重入沿缓存图不重抓、URL 行未出现 → 结构化 timeout、`io.recentLines` 水位过滤回归） |
-| `mud-workflow/{registry,interpreter,tools,login}` | §8.10–§8.15、§8.17（`awaitCaptcha` 原语双侧同步：接口声明 + 缝实现；T14：捕获槽语义①–⑧ + 保存门四校验） |
+| `mud-workflow/{registry,interpreter,tools}` | §8.8（包内三层与契约单点；宿主入口 `lib/index.js` 与契约子路径）、§8.10–§8.15、§8.17（`awaitCaptcha(url)` 端口单点声明 + core3 缝实现 = 编译期断言；T14：捕获槽语义①–⑧ + 保存门四校验。`login` 用例已随实体归 core3，见上行） |
 | `mud-webui/mud-captcha` | §9.7（弹窗呈现：订阅恢复、帧边界 diff、提交/中止/刷新） |
 | `plugin-load`（工件面 e2e） | §16.1（装配层加载冒烟：`apply` 不得失败，引擎窄面与 remote 命名空间在册） |
 

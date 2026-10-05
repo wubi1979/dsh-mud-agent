@@ -133,7 +133,7 @@ note: 全局视图 + 宿主底座；任何任务必读本文（§1 分层模型�
 | 包 | 目录 | 角色 |
 |---|---|---|
 | `mud-core3` | `packages/mud-core3/` | **宿主引擎插件**：`remote.mud.*` 动词、名册、连接与行流、投递与工具面、状态面、唤醒；`ctx.provide('mudCore3')` 服务窄面 |
-| `mud-workflow` | `packages/mud-workflow/` | **纯流程架构包**（schema / 注册表 / 解释器 / 五工具，零宿主 import）；`ctx.provide` 出 `mudWorkflow` 注册表面 |
+| `mud-workflow` | `packages/mud-workflow/` | **纯流程架构包**（三层：契约 `./contract` / 内核 `./core` / 适配 `host/*`，前两层零宿主 import，§8.8）；`ctx.provide` 出 `mudWorkflow` 注册表面 |
 | `mud-webui` | `packages/mud-webui/` | **Web 壳**（浏览器侧插件）：名册管理、MUD 日志 tab、只读画面 tab、状态订阅 |
 | `typert-protocol` | `packages/typert-protocol/` | remote 工件（`gen:typert`）的协议镜像，与宿主检出对齐 |
 | `mud-core`（v1） | `packages/mud-core/` | **已退役**（2026-09-27）：代码留存不删、不再演进 |

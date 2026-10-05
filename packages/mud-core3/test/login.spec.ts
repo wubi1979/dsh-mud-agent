@@ -17,8 +17,9 @@ import type { AddressInfo } from 'node:net'
 import { SessionRuntime, type MudLine } from '../src/runtime.ts'
 import { login } from '../src/flows/login.ts'
 
-import { runFlow } from 'mud-workflow'
-import type { WorkflowRecord, WorkflowIO } from 'mud-workflow'
+// 内核（解释器）与契约（词汇表/端口）按子路径引用（A1 分层）。
+import { runFlow } from 'mud-workflow/core'
+import type { WorkflowRecord, WorkflowIO } from 'mud-workflow/contract'
 import { stripIac } from './helpers.ts'
 
 const NAME = 'hero'

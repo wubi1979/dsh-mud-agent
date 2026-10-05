@@ -99,7 +99,19 @@ mud_send {
 ## 8.8 流程面：包结构与纯度裁定
 
 - 流程面**独立成包** `packages/mud-workflow`（与 `mud-webui`/`mud-core3` 同级）：挂载即提供 `mudWorkflow` 服务面（注册表），工具走**独立 preset 行**。
-- **纯度裁定**：`mud-workflow` 是**纯架构不含数据**（schema / 注册表 / 解释器 / 工具面，**零宿主 import**）；**流程实体归 core3 `src/flows/`**（type-only import 词汇表类型，运行时零循环）。
+- **纯度裁定**：`mud-workflow` 是**纯架构不含数据**（契约 / 内核 / 适配三层，**零宿主 import** 落在契约与内核两层）；**流程实体归 core3 `src/flows/`**（type-only import 契约词汇表，运行时零循环）。
+- **三层与子路径导出（A1，2026-10-05）**：包内按依赖方向分层，**边界由 exports 表达**，不靠目录习惯或人工纪律——
+
+  | 层 | 子路径 | 内容 | 依赖 |
+  |---|---|---|---|
+  | **契约层** | `mud-workflow/contract` | 词汇表 + 静态保存门（zod / `checkFlow` / `usesCredentialVerb`）+ IO 与引擎缝端口（`WorkflowIO<L>` / `WorkflowIoSeam<L>` / `CaptchaResume`）+ 持久化域声明（`mudWorkflowDomainSpec` / `FLOW_SCHEMA_VERSION`） | 无（零 cordis / 零宿主 / 零 I/O） |
+  | **内核层** | `mud-workflow/core` | 解释器 `runFlow` + 注册表 `WorkflowRegistry`（保存门 + 存储双态策略） | 仅契约层 |
+  | **适配层** | `mud-workflow`（根入口）/ `host/*` | 插件装配（根 `index.ts` → `host/plugin.ts`）· preset 行（根 `preset.ts` → `host/preset.ts`）· 工具面（`host/tools.ts`） | 内核 + 契约 + cordis |
+
+  - **入口薄壳**：宿主 patch 按绝对路径加载 `lib/index.js` / `lib/preset.js`，故两个入口固定在包根、只做转发；逻辑在各层。
+  - **可复用性**：内核零 cordis ⇒ 离线校验器 / 语料回放 / CLI / CI 静态检查可只依赖 `mud-workflow/core`。
+- **契约单点（取代"双侧同形"纪律）**：端口类型只在契约层声明**一次**——core3 侧 `MudCore3Handle extends WorkflowIoSeam<MudLine>`、实现处 `const io: WorkflowIO<MudLine>`，于是**缺一侧或形状漂移 = 编译期红**（§8.17 的"双侧改"由纪律升级为类型系统保证；core3 原先自留的同形接口已删除）。行载体类型参数 `L` 让实现携带自己的完整行记录（`MudLine`：abs/样式/分类标）而契约只承诺 `text`，`recentLines → read(initial)` 原样回环，两侧都无 cast。
+- **构建序**：core3 在**类型面**引用契约（devDep `mud-workflow`）⇒ 必须**先 build mud-workflow 再 build core3**；根 `dev`/`build`/`test`/`typecheck` 已按此编排（§15.3），本包 `build` 前先 `clean`（防陈旧产物被宿主加载）。
 - **交接缝**：core3 经 `ctx.provide('mudCore3', { builtinFlows })` 把流程实体交给注册表挂载；`registerBuiltins` **fail-loud 校验、幂等、不触碰 agent 修缮层**。
 
 ## 8.9 流程面：流程本体与取舍
@@ -242,7 +254,7 @@ wait（读窗） → failOn 出口 → action（发送） → 路由（branch / 
 | `captcha` 动作 | **收 `url` 参数**（T14 D9：`{ captcha: { url } }`，值过解释器槽替换——`{captchaUrl}` 捕获槽传入或写死 URL 均允许）；执行序 = 抓图（Node fetch 抓页取 `<img src>` → base64 data URL，fetch 注入可单测）→ 推帧 → 挂起等人工码 → 值入 `{captcha}` 固定单槽。原「内置捕获 URL（扫 `recentLines`）」随 T14 **净删**（URL 捕获上移为流程声明捕获） |
 | **locked-only** | 与 `sendCredential` 同列红线双闸（§8.12） |
 | `{captcha}` 槽 | run 级固定单槽；`send`/`sendCredential` 均替换；**非敏感**——不进凭据红线与 pass 掩码。T14 命名槽（§8.13）加入后保留名不共用存储 |
-| `awaitCaptcha(url: string)` io 原语 | T14 D8 URL 参数化：**双侧改**（mud-workflow `WorkflowIO` 接口 io.ts + core3 `workflowIoFor` 缝实现），URL 由流程捕获槽传入，闭包自取消失；resolve 恢复帧 `{kind:'answer',value} \| {kind:'aborted'} \| {kind:'closed'}`，解释器按 kind 分流（aborted = 专用出口 stage `aborted`；closed = timeout 出口） |
+| `awaitCaptcha(url: string)` io 原语 | T14 D8 URL 参数化，**契约单点**（§8.8 A1）：端口声明在 mud-workflow 契约层 `contract/ports.ts`（`WorkflowIO<L>.awaitCaptcha`），core3 `workflowIoFor` 缝实现按编译期断言对齐（`MudCore3Handle extends WorkflowIoSeam<MudLine>`）；URL 由流程捕获槽传入，闭包自取消失；resolve 恢复帧 `{kind:'answer',value} \| {kind:'aborted'} \| {kind:'closed'}`，解释器按 kind 分流（aborted = 专用出口 stage `aborted`；closed = timeout 出口） |
 | checkFlow 门 | captcha 步**不设 wait 门**（answer 是纯动作步，结构收束由 judge 窗承担；挂起预算走 Config 不依赖步 timeoutMs） |
 
 **双预算分立（先后串行不竞争）**：步 `timeoutMs` 只管读窗（等 URL/判据行）；**挂起预算 = Config `captchaTimeoutMs`**（缺省 180_000 = URL 有效期 3 分钟；**独立预算**，不受 MAX_TIMEOUT_MS/silenceMs 校验约束）。计时每轮独立，刷新不重置当前轮。
