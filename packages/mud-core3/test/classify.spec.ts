@@ -65,6 +65,46 @@ const CORPUS_NEGATIVE = [
   '杨玄胜开始认真考虑这个问题。', // 无规则命中留主屏（房间说话暂不打标，用户裁定）
 ]
 
+/**
+ * 实录他人穿戴/装备/给与/离场行（2026-10-06 用户提供：批量换装与给物刷屏，泄漏进 agent）。
+ * 与 2026-10-03 语料的差别：谓语不在句末（物名词收尾）、量词不止「件/双」、离场句带后续子句。
+ */
+const CORPUS_ACTION_EQUIP = [
+  '大王巡山快步离开，如山的气势也随之而散。',
+  '寒夜戴上一件天罗之护心。',
+  '寒夜戴上一件万象之鳞甲。',
+  '寒夜戴上一双万象之披风。',
+  '寒夜装备刑天之锤做武器。',
+  '醉江南给风簇浪一把玉石子。',
+  '霁月给风簇浪一把玉石子。',
+  '渡假戴上一件玄铁之板甲。',
+  '渡假戴上一件血饮摘星 铁血之盔。',
+  '文玉给梁红蝉一双巨灵之靴。', // 2026-10-03 旧例（量词「双」）不得回归
+  '风簇浪给醉万清一个圣火令。', // 全量回放揪出：量词「个」漏网（2026-10-03/10-06 语料各多次）
+  '风簇浪给醉万清一瓶牛黃血竭丹。', // 同上：量词「瓶」
+  '渡铁断线超过 60 分钟，自动退出这个世界。', // 断线句式扩展（原规则只覆盖「断线了。」）
+  '渡刘一步一顿走了过来，身后坚实的地面上留下了一串脚印。', // 走了过来 + 后续子句（原规则锚行尾）
+  '蛮嗨江湖身形略动，已经离开了这里。', // 离场句带宾语（原规则只认「离开」+ 标点/游戏）
+]
+
+/** 实录他人自我增益/调息刷屏（同日实录：提气/凝神后接状态句）。 */
+const CORPUS_VITALS_SELF_BUFF = [
+  '渡假默默提气，顿时感觉自己身轻如燕。',
+  '渡假微一凝神，气沉丹田，全身肌肤如铁。',
+  '鸭鸭子摒置杂念，缓缓催动内劲游走四肢百骸，丝丝缕缕的真气开始渗入枯竭的本源，滋养受损的精血。',
+  '小鶴仙强压下体内泛起的虚空感，咬牙运转残存的真气，小心翼翼地护住心脉，开始艰难地重聚亏空精血。',
+]
+
+/** 实录负例：同型句的**自身**版本（主语「你」）必须保留主屏、不打标。 */
+const CORPUS_NEGATIVE_SELF_EQUIP = [
+  '你快步离开，如山的气势也随之而散。',
+  '你戴上一件天罗之护心。',
+  '你装备刑天之锤做武器。',
+  '你给风簇浪一把玉石子。',
+  '你默默提气，顿时感觉自己身轻如燕。',
+  '你微一凝神，气沉丹田，全身肌肤如铁。',
+]
+
 /** ANSI 包裹的同型行：分类输入 = 去 ANSI 的 text 变体，色标不影响命中。 */
 const CORPUS_CHAT_ANSI = '\x1b[36m【闲聊】\x1b[0m测试者(Tst): 大家好呀'
 
@@ -96,6 +136,25 @@ describe('Classifier 规则', () => {
       expect(line.kind, text).toBe('vitals')
     }
     for (const text of CORPUS_NEGATIVE) {
+      const line: MudLine = { text, raw: text, style: [], abs: 0, time: 0, isPrompt: false, kind: null }
+      c.mark(line)
+      expect(line.kind, JSON.stringify(text)).toBeNull()
+    }
+  })
+
+  it('语料回放打标（2026-10-06 实录）：他人穿戴/装备/给与/离场 → action；他人调息 → vitals；自身同型句 null', () => {
+    const c = new Classifier()
+    for (const text of CORPUS_ACTION_EQUIP) {
+      const line: MudLine = { text, raw: text, style: [], abs: 0, time: 0, isPrompt: false, kind: null }
+      c.mark(line)
+      expect(line.kind, text).toBe('action')
+    }
+    for (const text of CORPUS_VITALS_SELF_BUFF) {
+      const line: MudLine = { text, raw: text, style: [], abs: 0, time: 0, isPrompt: false, kind: null }
+      c.mark(line)
+      expect(line.kind, text).toBe('vitals')
+    }
+    for (const text of CORPUS_NEGATIVE_SELF_EQUIP) {
       const line: MudLine = { text, raw: text, style: [], abs: 0, time: 0, isPrompt: false, kind: null }
       c.mark(line)
       expect(line.kind, JSON.stringify(text)).toBeNull()

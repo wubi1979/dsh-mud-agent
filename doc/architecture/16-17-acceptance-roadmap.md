@@ -25,7 +25,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 
 | 包 | 用例 | 文件 |
 |---|---|---|
-| **`mud-core3`** | **320 例 / 24 文件** | `link/`：`line` · `telnet` · `mud` · `keepalive` · `corpus`；`src/`：`store` · `accounts` · `runtime` · `deliver` · `read`（含 T15 命中帧）· `tools` · `service`（含 `statusRowOf`）· `world` · `wake` · `screen` · `classify` · `llm-gate` · `reconnect` · `workflow` · `elide`（T18 遮蔽判定与适配）· `log/log-service`；装配层：`plugin-load`（工件面 e2e）· `login`（流程 E2E 五路径）· `fullme`（流程 E2E 主链/stale 自愈/abort/三退出路径/URL 槽化断言） |
+| **`mud-core3`** | **323 例 / 24 文件** | `link/`：`line` · `telnet` · `mud` · `keepalive` · `corpus`；`src/`：`store` · `accounts` · `runtime` · `deliver` · `read`（含 T15 命中帧）· `tools` · `service`（含 `statusRowOf`）· `world` · `wake` · `screen` · `classify` · `llm-gate` · `reconnect` · `workflow` · `elide`（T18 遮蔽判定与适配）· `log/log-service`；装配层：`plugin-load`（工件面 e2e）· `login`（流程 E2E 五路径）· `fullme`（流程 E2E 主链/stale 自愈/abort/三退出路径/URL 槽化断言） |
 | **`mud-workflow`** | **77 例 / 4 文件** | `registry`（含捕获槽保存门四校验、名册冲突裁决与来源标记策略 A、T16 迁入取新/账本/回滚/强审计）· `interpreter`（含捕获槽语义、命中帧消费与"去重测"结构断言）· `tools`（含来源/遮蔽呈现、遮蔽修订 delete、history/rollback 贯通）· `plugin-load`（工件面 e2e，T17） |
 | **`mud-webui`** | **7 例 / 1 文件** | `mud-captcha`（控制器：订阅/帧 diff/提交/中止/刷新配额/防串帧） |
 
