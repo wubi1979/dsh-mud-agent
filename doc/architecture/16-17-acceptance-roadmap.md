@@ -25,7 +25,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 
 | 包 | 用例 | 文件 |
 |---|---|---|
-| **`mud-core3`** | **317 例 / 24 文件** | `link/`：`line` · `telnet` · `mud` · `keepalive` · `corpus`；`src/`：`store` · `accounts` · `runtime` · `deliver` · `read`（含 T15 命中帧）· `tools` · `service`（含 `statusRowOf`）· `world` · `wake` · `screen` · `classify` · `llm-gate` · `reconnect` · `workflow` · `elide`（T18 遮蔽判定与适配）· `log/log-service`；装配层：`plugin-load`（工件面 e2e）· `login`（流程 E2E 五路径）· `fullme`（流程 E2E 主链/stale 自愈/abort/三退出路径/URL 槽化断言） |
+| **`mud-core3`** | **320 例 / 24 文件** | `link/`：`line` · `telnet` · `mud` · `keepalive` · `corpus`；`src/`：`store` · `accounts` · `runtime` · `deliver` · `read`（含 T15 命中帧）· `tools` · `service`（含 `statusRowOf`）· `world` · `wake` · `screen` · `classify` · `llm-gate` · `reconnect` · `workflow` · `elide`（T18 遮蔽判定与适配）· `log/log-service`；装配层：`plugin-load`（工件面 e2e）· `login`（流程 E2E 五路径）· `fullme`（流程 E2E 主链/stale 自愈/abort/三退出路径/URL 槽化断言） |
 | **`mud-workflow`** | **77 例 / 4 文件** | `registry`（含捕获槽保存门四校验、名册冲突裁决与来源标记策略 A、T16 迁入取新/账本/回滚/强审计）· `interpreter`（含捕获槽语义、命中帧消费与"去重测"结构断言）· `tools`（含来源/遮蔽呈现、遮蔽修订 delete、history/rollback 贯通）· `plugin-load`（工件面 e2e，T17） |
 | **`mud-webui`** | **7 例 / 1 文件** | `mud-captcha`（控制器：订阅/帧 diff/提交/中止/刷新配额/防串帧） |
 
@@ -44,7 +44,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | `mud-workflow/{registry,interpreter,tools}` | §8.8（包内三层与契约单点；宿主入口 `lib/index.js` 与契约子路径）、§8.10–§8.15、§8.17（`awaitCaptcha(url)` 端口单点声明 + core3 缝实现 = 编译期断言；T14：捕获槽语义①–⑧ + 保存门四校验；2026-10-05 语义澄清⑨–⑪：捕获与路由同源、整窗 exec（跨行判据可捕获）、非捕获判据路径不吞分类出口；策略 A：locked 内置优先 + `shadowed` 标记 + 遮蔽修订 delete 放行 + `origin` 来源标记；T15（§5.2/§8.13）：解释器消费命中帧、源码级"去重测"结构断言；T16（§8.11/§14.3）：迁入取新与归档、变更账本（上限剪枝）、回滚写新版本、强审计提交、`flags` 白名单收紧。`login` 用例已随实体归 core3，见上行） |
 | `mud-webui/mud-captcha` | §9.7（弹窗呈现：订阅恢复、帧边界 diff、提交/中止/刷新） |
 | `plugin-load`（工件面 e2e） | §16.1（装配层加载冒烟：`apply` 不得失败，引擎窄面与 remote 命名空间在册）。**mud-workflow 同款**（T17）：导入 `lib/index.js` / `lib/preset.js`，断言 `mudWorkflow` 服务面在册、七工具过注册面（谓词函数 + `output.schema` 对象根与真实字段） |
-| `elide` | §11.2（T18 上下文收口）：判定矩阵——空表面 / 只有 head / node 0 非 head / 无历史 / 本 epoch 已遮蔽 / 含后续 `system/message` / 未配对 `tool/call`（两个方向）⇒ **skip**；head + 历史 ⇒ replace 且 `shadowedSeqs` 全覆盖；**端点按 surface 顺序**（不假设 seq 单调，`start` 可大于 `end`）；标记形状冻结 + 正文含 epoch + 无凭据面；epoch 同进程稳定。适配层：`append` 被拒 / 替换体未落表面 / 被遮蔽节点仍在表面 / 快照不一致 ⇒ **failure**（接线层据此阻断本步） |
+| `elide` | §11.2（T18 上下文收口）：判定矩阵——空表面 / 只有 head / node 0 非 head / 无历史（含"尾节点是 system/message 且无其它历史"）/ 本 epoch 已遮蔽 / **日志含未解析 `tool/call`** ⇒ **skip**；head + 历史 ⇒ replace 且 `shadowedSeqs` 全覆盖；**端点按 surface 顺序**（不假设 seq 单调，`start` 可大于 `end`）；**中段后续 `system/message` 随历史遮蔽**、**尾节点是 `system/message` 则保留尾节点**（v0.0.47，真实会话形态）；`tool/call` 是 log-only ⇒ 配对判定看日志。标记形状冻结 + 正文含 epoch + 无凭据面；epoch 同进程稳定。适配层：`append` 被拒 / 替换体未落表面 / 被遮蔽节点仍在表面 / 快照不一致 ⇒ **failure**（接线层据此阻断本步） |
 
 ## 16.3 验收断言表
 
@@ -82,6 +82,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 - [x] **6. admit 前手动「连接」不触发规划**（2026-10-02 实机）
 - [x] **7. 零回归**：webui 三 tab、mud 三工具、`login` 流程五路径、单测全绿（2026-10-02 用户确认：三 tab 巡检通过；单测 core3 222 + workflow 31 全绿）
 - [x] **8. 上下文收口（T18）重放级实机冒烟**（2026-10-06，临时 `DSH_HOME` + 真宿主组合，配方见 §16.1 末行；证据见 `doc/likely/t18-surface-elision-spike.md` §8）：① 空表面 ⇒ skip 不阻断（第 1 轮请求照发、回合 `completed`）· ② 有历史会话首轮之后被遮蔽（第 2 轮请求 `MARK=true / OLD=false / NEW=true`，`replaceGeneration=1`）· ③ 新进程 `create` 同 id 重放**不判 corrupt** 且旧节点不在表面（`oldSeqs=[3,8,13] stillVisible=[]`）· ④ 二次进程再遮蔽一次（`replaceGeneration=2`；请求中的 epoch = 本进程 epoch）。**未覆盖（留 §17.2）**：真 token 压力下宿主 compaction 与遮蔽叠加；跨度含未配对 `tool/call` 的端到端（已由纯层用例覆盖）；失败注入阻断的实机复现（reject 语义由宿主源码与宿主自测核实）
+- [x] **9. T18 修正：真实会话命中两条规则（v0.0.47，2026-10-06，用户实测报告驱动）**：对用户真实会话（`session-a076ae0b…`，494 事件 / 表面 124 节点 / `system/message`×3 / `tool/call`×20 全在日志侧）做**离线折叠诊断**，定位两条"永不遮蔽"的原因：① 计划里的 `later-system-node` 保守 skip 在真实会话上必然命中（工具集/提示词更新会追加后续 system 节点）；② `applyElision` 的配对检查只在**表面节点**里找 `tool/call`，而官方 `SurfaceEventType` **不含 `tool/call`**（log-only）⇒ 任何有工具结果的会话都被误判未配对。修正：遮蔽范围改为 `node 1 … 末节点`（**尾节点是 `system/message` 时保留**，中段后续 system 节点随历史遮蔽，同 compaction，§2.1 事实 15）；工具配对改为看**日志**（每个 `tool/call` 都有配对结果）。离线复算同一真实日志 ⇒ `REPLACE [8..490]`（遮蔽 123 节点）。用例夹具按真实形态重写（`tool/call` 不再作为表面节点），`elide.spec` 24/24
 
 **验收结论（2026-10-02）**：T4b 全项通过，**T4 自主行为正式关闭**——建账号纯登记 → 接入唯一点火 → 根规划/子执行/宿主结算 → 静默唤醒兜底，链路完整。
 
@@ -154,7 +155,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | 1 | **清理 §16.6 一致性清单**（注释与门面） | §16.6 |
 | 2 | 宿主能力缺口跟踪（会话删除面 + 子会话清退/归档面） | §2.4 |
 | 3 | **装配层加载冒烟可执行化**（当前为手工步骤） | §16.1 |
-| 4 | T18 残留复核：真 token 压力下宿主 compaction 与表面遮蔽叠加（当前未实测）；本 `mud-player` preset 是否会在会话中途追加 `system/message`（现取保守 skip，§11.2 ③） | §11.2、§16.4 #8 |
+| 4 | T18 残留复核：真 token 压力下宿主 compaction 与表面遮蔽叠加（当前未实测）；遮蔽后 loop 的提示词规范化路径（v0.0.47 后取"后续 system 节点随历史遮蔽 + 尾节点保留"，依赖官方"规范化把当前提示词写回 head"语义，实机提示词更新例证出现时再验） | §11.2、§16.4 #8/#9 |
 
 ## 17.3 后置清单（按例证生长，本版不做）
 

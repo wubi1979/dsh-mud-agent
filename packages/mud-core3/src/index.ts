@@ -831,7 +831,9 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
   // （surfaceOp replace；判定与适配在纯层 elide.ts，宿主语义见 doc/likely/t18-surface-elision-spike.md）。
   // 归属 = 根会话 + 名册账号会话（子会话是一次性 spawn，无跨进程历史）。
   // 失败 ⇒ 返回 { kind:'reject' } **阻断本步**（裁决：宁可这一步不跑，也不把污上下文送进模型）；
-  // 预期 skip（表面未就绪 / 无历史 / 已遮蔽 / 保守不变量）⇒ 照常放行。
+  // 预期 skip（表面未就绪 / 无历史 / 已遮蔽 / 日志含未解析 tool/call）⇒ 照常放行。
+  // 每会话每进程只记**首条决策**（成功 / skip 原因 / 失败）——否则 pre-step 每步都刷屏。
+  const elisionLogged = new Set<string>()
   const elideStep = (rawAgent: unknown, signal: { readonly aborted?: boolean } | undefined): boolean => {
     try {
       const agent = rawAgent as { readonly id?: unknown; readonly session?: HostSessionFace } | undefined
@@ -843,12 +845,18 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
       if (signal?.aborted === true) return false
       const outcome = applyElision(session, processEpoch())
       if (outcome.kind === 'replaced') {
-        ctx.logger.info(`mud-core3: 会话 ${sessionId} 已遮蔽上一进程上下文（起点标记 seq=${outcome.seq}，遮蔽 ${outcome.shadowedSeqs.length} 个表面节点）`)
+        elisionLogged.add(sessionId)
+        service.appendRuntimeLog(sessionId, 'info', `上下文收口：已遮蔽上一进程上下文（起点标记 seq=${outcome.seq}，遮蔽 ${outcome.shadowedSeqs.length} 个表面节点）`)
         return false
       }
       if (outcome.kind === 'failed') {
-        ctx.logger.error(`mud-core3: 会话 ${sessionId} 上下文遮蔽失败，本步阻断：${outcome.reason}`)
+        service.appendRuntimeLog(sessionId, 'error', `上下文收口：遮蔽失败，本步阻断（${outcome.reason}）`)
         return true
+      }
+      // 预期 skip：每会话每进程只记一条（首次决策），否则 pre-step 会刷屏。
+      if (!elisionLogged.has(sessionId)) {
+        elisionLogged.add(sessionId)
+        service.appendRuntimeLog(sessionId, 'info', `上下文收口：跳过（原因：${outcome.reason}）`)
       }
       return false
     } catch (error: unknown) {

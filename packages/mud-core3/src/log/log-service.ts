@@ -27,7 +27,7 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
 /** 日志通道（来源分组；前端按此筛选/着色）。 */
 export type LogChannel =
-  | 'runtime' // 生命周期：登记/建连/登录/断连/销毁
+  | 'runtime' // 生命周期：登记/建连/登录/断连/销毁/上下文收口（T18）
   | 'network' // telnet 网络层：协商/断线/协议异常
   | 'stream'  // 行流：MUD 文本行（debug 级，排查用）
   | 'deliver' // 投递：聚合批次/补投/缓冲溢出

@@ -525,3 +525,39 @@
 - **未决（留档）**：真 token 压力下宿主 compaction 与遮蔽叠加未实测；本 preset 是否中途追加 `system/message`（现取保守 skip）；每进程一条替换事件、`replaceGeneration` 单调（接受，作观测面）；跨度含未配对 `tool/call` 的端到端未复现（纯层用例覆盖）。
 
 > AI生成
+
+## [v0.0.47]T18 修正：真实会话从不遮蔽的两条原因（对数与范围规则）(2026-10-06)
+
+- **问题（用户实测报告）**：T18 落地后用户实际运行，留存会话的历史**没有被遮蔽**。**先排除"会话是改版前创建的"**——对用户真实会话（`session-a076ae0b…`，`session.v4.jsonl.zstd`，494 事件 / 表面 124 节点）做**离线折叠诊断**（逐 zstd 帧解码 → 按 `surfaceOp` 折叠表面）后定位到两条**与创建时间无关**的原因。
+- **根因 ①（规则过保守）**：该会话表面含 **3 个 `system/message`**（`#7` head + `#317` + `#436`，对应 2 次 `developer/message` 工具集变更后的提示词更新）⇒ 命中 v0.0.46 的 `later-system-node` 保守 skip。真实会话因提示词/工具更新**必然**出现后续 system 节点 ⇒ 该规则等于"永不遮蔽"。官方语义本就允许（`reference/subsystems/session`：「后续系统节点是普通历史，**压缩替换可以遮蔽它**」，`compaction` 亦如此）。
+- **根因 ②（实现 bug）**：`applyElision` 的配对检查只在**表面节点**里收集 `tool/call`，而官方 `SurfaceEventType` 只含 `system/developer/user/assistant/tool/result` —— **`tool/call` 是 log-only，永远不在表面上** ⇒ 只要会话有过工具结果（该会话 20 条），就是"结果多、call 空" ⇒ 判未配对 ⇒ skip。v0.0.46 的用例夹具把 `tool/call` 当成表面节点，因此**测试没抓到**（夹具不符宿主实际，教训入档）。
+- **修正**：① 遮蔽范围改为 `node 1 … 末节点`，**尾节点是 `system/message` 时保留它**（中段后续 system 节点随历史一起遮蔽；本轮 assembly 的提示词规范化会把当前渲染提示词写回 head ⇒ 不丢提示词）；② 工具配对改为**看日志**（每个 `tool/call` 都有配对结果才遮蔽）；`ElisionSkipReason` 去 `later-system-node`、`unpaired-tool-call` → **`unresolved-tool-call`**。
+- **可诊断性**：接线层新增**每会话每进程首条决策**日志（`已遮蔽上一进程上下文（起点标记 seq=…，遮蔽 N 个表面节点）` / `上下文收口跳过（原因）` / `遮蔽失败，本步阻断：原因`）——本次排查之所以要靠离线折叠，就是因为 skip 当时是静默的。
+- **验证（先红后绿）**：用例夹具按**真实形态**重写（`tool/call` 不再作为表面节点；新增中段 system 节点、尾节点保留、尾节点即 head、日志侧未解析 call、result 被更早替换遮蔽等用例）⇒ 先红 `6 failed | 18 passed`、修后 **24/24 绿**；离线复算**同一条真实日志** ⇒ `REPLACE [8 .. 490]`（遮蔽 123 节点，`node 0 = system/message#7`，日志侧 20/20 call 已解析）。
+- **文档**：§11.2 ③（范围规则与 skip 清单）、§16.2（`elide` 用例组行）、§16.4（**#9** 真实会话诊断与修正）、§17.2（残留行改为"提示词规范化路径待实机例证 + compaction 叠加未测"）。
+- **回归**：core3 320/320（24 文件）+ mud-workflow 77/77 + webui 7/7 全绿，现役两包 `tsc` 清零，`pnpm -r build` 通过。
+- **未决（留档）**：真 token 压力下 compaction 与遮蔽叠加仍未实测；"遮蔽掉后续 system 节点后 loop 规范化写回 head"依赖官方语义，待实机提示词更新例证。
+
+> AI生成
+
+## [v0.0.48]回合末投递冲刷推迟微任务（修复 followup 重入护栏报错）(2026-10-06)
+
+- **问题（用户实测会话日志）**：反复出现 `投递未达：N 行未投出（水位不推进，待补投）——followup 抛错：session append cannot reenter while another append is being published`，该批行延后一个回合才补投（P7 保证了不丢行，但每次记一条 error）。
+- **根因（既有缺陷，非 T18 引入）**：`session/event`（`turn/end`）是**已提交 append 的观察回调**，宿主 `Session.append` 在整个发布期持有 `appending` 标志（同步覆盖观察者调用，`finally` 才清，`core/session/src/index.ts:741-772`），期内任何重入追加都被拒。本层却在 `turn/end` 观察者里**同步**冲刷投递，而冲刷经 `deliver → agent.followup` 追加 `user/message` ⇒ 必被护栏拒绝。
+- **修复**：`MudService.turnEnd()` 把冲刷**推迟一个微任务**（`queueMicrotask`）——发布期结束后再投；`turnStart`（只置抑制标志、不追加）保持不变；`flushPending`（`agent/created` 触发，非 append 发布期）保持不变。
+- **测试（先红后绿）**：`service.spec` 新增「turnEnd 的冲刷推迟一个微任务（避开宿主 append 发布期的重入护栏）」——先红（同步阶段 `isInTurn` 已为 `false`），修后绿。
+- **文档**：§7.2 回合节拍表 `turn/end` 行补护栏与微任务说明。
+- **回归**：core3 321/321（24 文件）+ mud-workflow 77/77 + webui 7/7 全绿，现役两包 `tsc` 清零，`pnpm -r build` 通过。
+
+> AI生成
+
+## [v0.0.49]上下文收口日志出口到前端（MUD 日志 tab）(2026-10-06)
+
+- **需求（用户）**：遮蔽日志此前只走宿主 `ctx.logger`（宿主控制台），而用户看的是**前端「MUD 日志」tab** ⇒ 看不到，容易误判"没生效"。
+- **实现**：新增 `MudService.appendRuntimeLog(sessionId, level, text)`，把决策写进**会话日志**（`runtime` 通道；会话未登记时静默）。接线层三条决策改走它：`上下文收口：已遮蔽上一进程上下文（起点标记 seq=…，遮蔽 N 个表面节点）`（`info`）/ `上下文收口：跳过（原因：…）`（`info`，每会话每进程首条）/ `上下文收口：遮蔽失败，本步阻断（原因）`（`error`，SessionLog 自动镜像宿主 logger）。
+- **前端零改动**：日志 tab 本就按 `[channel] text` 通用渲染（未知通道/级别回退灰色，`MudLogView`），`runtime` 是既有通道；`remote.mud.logs` 读的就是这份会话日志（§13.2）——**无需重建 webui**，只需重建 core3 并重启宿主。
+- **测试（先红后绿）**：`service.spec` 新增「appendRuntimeLog 写入会话日志（前端「MUD 日志」tab 读的就是它）；未登记会话静默」——先红（方法不存在 + 视图读法写错），后绿；顺带钉住 `logOf` 视图的 `entries` 是**属性**（`SessionLog.entries(since)` 才是方法）。
+- **文档**：§13.1 记录点补「上下文收口」；§11.2 ⑦ 可见性；`log-service.ts` 的 `runtime` 通道注释补「上下文收口」。
+- **回归**：core3 322/322（24 文件）+ mud-workflow 77/77 + webui 7/7 全绿，现役两包 `tsc` 清零，`pnpm -r build` 通过。
+
+> AI生成

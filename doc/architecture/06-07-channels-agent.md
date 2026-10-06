@@ -106,7 +106,7 @@ MUD 行流 → 聚合（静默窗口，§5.4）→ 一条用户消息投递进�
 | 宿主事件 | 本层动作 |
 |---|---|
 | `turn/start` | **抑制模式**：投递器不武装定时器，行只进 `pendingLines`（不打断回合节奏） |
-| `turn/end` | **冲刷一次**：回合内积累的行一次投出（订阅 `session/event` global） |
+| `turn/end` | **冲刷一次**：回合内积累的行一次投出（订阅 `session/event` global）。**必须推迟一个微任务**：该观察者处于宿主 `Session.append` 的发布期内，而发布期内禁止重入追加（`session append cannot reenter while another append is being published`），同步冲刷会经 `followup` 追加 `user/message` 而被护栏拒绝（症状：投递报错、该批行延后一回合补投） |
 | （空闲） | 静默定时语义保留：`quietMs` / `maxWaitMs` 到期即 flush |
 | `agent/created` | `flushPending`：把冷会话期间保留的批次投出（触发首个回合） |
 

@@ -51,14 +51,16 @@ export type ElisionSkipReason =
   | 'empty-surface'
   /** node 0 不是 `system/message`（head 未就位或已被破坏）——绝不在 head 之前追加。 */
   | 'no-head'
-  /** 表面只有 head（没有可遮蔽的历史）。 */
+  /** 除 node 0 与"尾节点是 system/message"外没有可遮蔽的历史。 */
   | 'no-history'
   /** 日志里已含本 epoch 的起点标记（同进程幂等）。 */
   | 'already-elided'
-  /** 表面含 node 0 以外的 `system/message`：保守跳过，避免与 loop 的提示词规范化抢位。 */
-  | 'later-system-node'
-  /** 被遮蔽跨度内含未配对的 `tool/call`（结果尚未落盘或不在表面）：跳过以免留下悬挂结果。 */
-  | 'unpaired-tool-call'
+  /**
+   * 日志里存在**未解析**的 `tool/call`（其结果尚未落盘）：此时遮蔽会把该 call 一起遮掉，
+   * 而它的结果将来落盘就会成为悬挂的 `tool/result`。`tool/call` 是 **log-only**（不是 surface
+   * 事件，官方 `SurfaceEventType` 不含它）⇒ 配对判定必须看**日志**，不能看表面节点。
+   */
+  | 'unresolved-tool-call'
 
 /** 遮蔽判定结果：`skip`（预期，放行本步）或 `replace`（执行一次遮蔽）。 */
 export type ElisionPlan =
@@ -136,9 +138,13 @@ export function epochMarker(epoch: string): EpochMarker {
 /**
  * 判定本步是否需要遮蔽，并给出替换计划（纯函数；宿主调用由接线层执行）。
  *
- * 预期跳过（`skip`）绝不视为失败：新会话、只有 head、含后续 system 节点、未配对工具调用、
- * 本 epoch 已遮蔽，都照常放行本步。**快照与表面不一致**属失败，直接抛错（接线层据此返回
- * `{ kind:'reject' }` 阻断本步，见 §11.2）。
+ * 遮蔽范围 = **surface 顺序**的 `node 1 … 末节点`，但**尾节点若是 `system/message` 则保留它**
+ * （loop 的"最新系统节点"是有效提示词载体，保留它可避免与提示词规范化抢位；中段的后续
+ * system 节点是普通历史，与 compaction 同样处理、随历史一起遮蔽）。
+ *
+ * 预期跳过（`skip`）绝不视为失败：新会话、无 head、无可遮蔽历史、本 epoch 已遮蔽、
+ * 日志含未解析 `tool/call`，都照常放行本步。**快照与表面不一致**属失败，直接抛错
+ * （接线层据此返回 `{ kind:'reject' }` 阻断本步，见 §11.2）。
  *
  * @param input - epoch、表面节点序、日志快照。
  * @returns `skip`（含原因）或 `replace`（含端点、被遮蔽集与替换体）。
@@ -157,24 +163,24 @@ export function elisionPlan(input: ElisionInput): ElisionPlan {
 
   const head = surface[0]
   if (head === undefined || head.event.type !== HEAD_TYPE) return { kind: 'skip', reason: 'no-head' }
-  if (surface.length < 2) return { kind: 'skip', reason: 'no-history' }
+
+  const lastIdx = surface.length - 1
+  const endIdx = surface[lastIdx]?.event.type === HEAD_TYPE ? lastIdx - 1 : lastIdx
+  if (endIdx < 1) return { kind: 'skip', reason: 'no-history' }
   if (events.some(event => stringField(event.data, 'id') === `${MARKER_ID_PREFIX}${epoch}`)) {
     return { kind: 'skip', reason: 'already-elided' }
   }
-
-  const shadowed = surface.slice(1)
-  if (shadowed.some(node => node.event.type === HEAD_TYPE)) return { kind: 'skip', reason: 'later-system-node' }
-  if (!toolBalanced(shadowed)) return { kind: 'skip', reason: 'unpaired-tool-call' }
+  if (!toolCallsResolved(events)) return { kind: 'skip', reason: 'unresolved-tool-call' }
 
   const start = surface[1]
-  const last = surface[surface.length - 1]
-  /* v8 ignore next -- surface.length >= 2 已保证两个端点存在 */
+  const last = surface[endIdx]
+  /* v8 ignore next -- endIdx >= 1 已保证两个端点存在 */
   if (start === undefined || last === undefined) return { kind: 'skip', reason: 'no-history' }
   return {
     kind: 'replace',
     startSeq: start.seq,
     endSeq: last.seq,
-    shadowedSeqs: shadowed.map(node => node.seq),
+    shadowedSeqs: surface.slice(1, endIdx + 1).map(node => node.seq),
     marker: epochMarker(epoch),
   }
 }
@@ -249,15 +255,20 @@ function toolPairOf(event: ElisionEvent): ToolPair | 'malformed' | undefined {
 }
 
 /**
- * 被遮蔽跨度是否工具配对闭合（每个 call 的结果也在跨度内，反之亦然）。
- * @param span - 将被遮蔽的表面节点（含事件）。
- * @returns 闭合为 true；任一方向缺失或 callId 不可读为 false。
+ * 日志里的工具调用是否全部已解析（每个 `tool/call` 都有配对 `tool/result`，反之亦然）。
+ *
+ * 只看**日志**：`tool/call` 是 log-only（不是 surface 事件），而 `tool/result` 是 surface 事件
+ * ⇒ 任何"在表面节点里找配对"的写法都会把正常会话误判为未配对（真实会话诊断教训，见 CHANGELOG v0.0.47）。
+ * callId 不可读的工具事件按"未解析"处理（保守跳过）。
+ *
+ * @param events - 会话日志快照（全量）。
+ * @returns 全部解析为 true；任一方向缺失或 callId 不可读为 false。
  */
-function toolBalanced(span: readonly { readonly event: ElisionEvent }[]): boolean {
+function toolCallsResolved(events: readonly ElisionEvent[]): boolean {
   const calls = new Set<string>()
   const results = new Set<string>()
-  for (const node of span) {
-    const pair = toolPairOf(node.event)
+  for (const event of events) {
+    const pair = toolPairOf(event)
     if (pair === undefined) continue
     if (pair === 'malformed') return false
     if (pair.kind === 'call') calls.add(pair.callId)

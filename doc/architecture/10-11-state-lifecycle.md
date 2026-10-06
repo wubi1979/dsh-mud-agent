@@ -108,10 +108,11 @@ world:     GMCP 事件与（后置的）行级规则驱动（§10.3）
 - **冷启动的上下文收口（T18，2026-10-06 落地）**：宿主按 id 恢复会话 ⇒ 上一进程的上下文（行批次 / 任务书 / 委派收尾）成为**过期断言**。运行时世界状态已是进程级（§4.5 断线整体复位 + 冷启动不回读），未收口的是**模型可见上下文**：在本进程**第一次 model step 之前**（`agent/pre-step`——宿主 compaction 的同一替换缝、**先于请求推导**），把 `node 0`（受保护 `system/message` head）之外的**全部表面节点**替换为一条**进程起点标记**（`surfaceOp:{op:'replace'}`；`source.kind='mud-epoch'`；正文含进程 epoch）。要点：
   - ① 标记是**持久会话事件** ⇒ 下一进程重放（折叠）后旧节点仍不在表面；每进程每会话**恰好一次**（按 epoch 幂等，无需内存集合）；
   - ② **会话 id / 账号 id / 名册零变化**（不换身份、不归档、无 schema 变更）；归属 = 根会话 + 名册账号会话（子会话是一次性 spawn）；
-  - ③ **预期 skip 照常放行**：表面未就绪（新会话 head 未就位）/ 无历史 / 本 epoch 已遮蔽 / 表面含后续 `system/message`（保守，不与 loop 的提示词规范化抢位）/ 跨度含未配对 `tool/call`；
+  - ③ **遮蔽范围**：按 surface 顺序取 `node 1 … 末节点`；**尾节点是 `system/message` 时保留它**（其余后续 system 节点是普通历史，与 compaction 同样随历史遮蔽——本轮 assembly 的提示词规范化会把当前渲染提示词写回 head，故不丢提示词）。**预期 skip 照常放行**：表面未就绪（新会话 head 未就位）/ 无历史 / 本 epoch 已遮蔽 / **日志含未解析 `tool/call`**（`tool/call` 是 **log-only**、不是 surface 事件 ⇒ 工具配对判定必须看日志，不能看表面节点）；
   - ④ **失败 ⇒ `{kind:'reject'}` 阻断本步**（判定抛错 / `append` 被拒 / 遮蔽后表面与预期不符）：回合记 `turn/end {reason:{kind:'blocked'}}`、无 `step/start`、无模型调用；该回合已 claim 的投递批次不入日志（fail-closed 的已知代价）；
   - ⑤ **旧事件仍在会话日志里**（§13.1），只是不进对话；`"旧历史不进模型"只对对话请求成立`——标题生成等**辅助调用从日志取料**，不受遮蔽保护；
   - ⑥ 只追加宿主**已知**事件类型（`user/message`）：新增事件类型会让未装本插件的读取器**拒绝重建整条日志**。
+  - ⑦ **可见性**：遮蔽成功 / 跳过原因 / 失败阻断各记一条**会话日志**（`runtime` 通道，前端「MUD 日志」tab 与落盘文件同源；失败为 `error`，SessionLog 自动镜像宿主 logger），每会话每进程只记首条决策（避免 pre-step 刷屏）。
   - 实测证据与硬不变量（head 之前追加 message ⇒ 日志下一进程判 corrupt）见 `doc/likely/t18-surface-elision-spike.md`；纯层/接线/冒烟见 §16.2、§16.4 #8。
 - **会话销毁本期做不到**：插件拿不到 `AgentHandle.dispose`，`ctx.sessionController` 也没有 delete 动词（§2.4）——删账号后会话本身仍在宿主内。
 

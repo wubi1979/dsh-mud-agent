@@ -447,6 +447,38 @@ describe('MudService 接入闸门错误面', () => {
     service.register('a1')
     expect(() => service.flushPending('a1')).not.toThrow()
   })
+
+  it('appendRuntimeLog 写入会话日志（前端「MUD 日志」tab 读的就是它）；未登记会话静默', () => {
+    const service = serviceWithDeliverer()
+    expect(() => service.appendRuntimeLog('nope', 'info', '未登记应静默')).not.toThrow()
+    service.register('a1')
+    service.appendRuntimeLog('a1', 'info', '上下文收口：已遮蔽上一进程上下文（遮蔽 123 个表面节点）')
+    service.appendRuntimeLog('a1', 'debug', '上下文收口：跳过（原因：unresolved-tool-call）')
+    const view = service.logOf('a1')
+    const entries = view === null ? [] : [...view.entries]
+    const replaced = entries.find(entry => entry.text.includes('已遮蔽上一进程上下文'))
+    const skipped = entries.find(entry => entry.text.includes('跳过'))
+    expect(replaced?.channel).toBe('runtime')
+    expect(replaced?.level).toBe('info')
+    expect(skipped?.level).toBe('debug')
+  })
+
+  it('turnEnd 的冲刷推迟一个微任务（避开宿主 append 发布期的重入护栏）', async () => {    const service = serviceWithDeliverer()
+    service.register('a1')
+    service.admit('a1')
+    const deliverer = service.getDeliverer('a1')
+    expect(deliverer).not.toBeNull()
+
+    service.turnStart('a1')
+    expect(deliverer?.isInTurn).toBe(true)
+    service.turnEnd('a1')
+    // turnEnd 由 session/event（turn/end）观察者触发；宿主 Session.append 在发布期禁止重入追加
+    // （`session append cannot reenter while another append is being published`），而回合末冲刷会经
+    // followup 追加 user/message ⇒ 同步阶段不得冲刷（isInTurn 仍为 true），微任务后才收束。
+    expect(deliverer?.isInTurn).toBe(true)
+    await Promise.resolve()
+    expect(deliverer?.isInTurn).toBe(false)
+  })
 })
 
 describe('MudService watchStatus 状态流', () => {

@@ -6,14 +6,16 @@
  *   2. head + 历史 ⇒ 遮蔽 node1..last（surface 顺序、shadowed 全覆盖）；
  *   3. 幂等：已含本 epoch 标记 ⇒ skip；只含上一 epoch 标记 ⇒ 再遮蔽（旧标记本身也被遮蔽）；
  *   4. 端点按 surface 顺序取，**不假设 seq 单调**（一次替换后 start 数值可大于 end）；
- *   5. 保守 skip：表面含 node 0 以外的 system/message、跨度含未配对 tool/call；
- *   6. 已配对 tool call/result ⇒ 正常遮蔽；
- *   7. skip 与 failure 分流：快照不一致（表面节点不在日志里）⇒ 抛错，不是 skip；
- *   8. 标记形状冻结、正文含 epoch、无凭据面（P6 口径）；
- *   9. 进程 epoch 同进程稳定。
+ *   5. 保守/规则 skip：日志含**未解析** `tool/call`（其结果尚未落盘）；
+ *   6. 真实会话形态：中段/尾部的后续 `system/message` **不再 skip**（中段随历史一起遮蔽；**尾节点是 head 则保留尾节点**）；
+ *   7. `tool/call` 是 log-only（**不是** surface 事件，官方 `SurfaceEventType` 不含它），配对判定必须看**日志**；
+ *   8. skip 与 failure 分流：快照不一致（表面节点不在日志里）⇒ 抛错，不是 skip；
+ *   9. 标记形状冻结、正文含 epoch、无凭据面（P6 口径）；
+ *  10. 进程 epoch 同进程稳定。
  *
  * 依据：spike 实测（doc/likely/t18-surface-elision-spike.md）+ 官方 reference/subsystems/session
- * （node 0 `system/message` 受保护、端点按 surface 位置而非数值区间）。
+ * （node 0 `system/message` 受保护、端点按 surface 位置而非数值区间）+ **真实会话离线折叠诊断**
+ * （v0.0.47：surface 124 节点、`system/message`×3、`tool/result` 20 且 `tool/call` 全在日志侧）。
  */
 
 import { describe, expect, it } from 'vitest'
@@ -88,23 +90,49 @@ describe('elisionPlan 预期 skip（不阻断回合）', () => {
       .toEqual({ kind: 'skip', reason: 'already-elided' })
   })
 
-  it('⑤ 表面含 node 0 以外的 system/message ⇒ skip later-system-node（保守）', () => {
-    const events = [ev(SYS, 0, { turn: 1, step: 1 }), ev(USER, 1, { id: 'u1' }), ev(SYS, 2, { turn: 1, step: 2 })]
-    expect(elisionPlan({ epoch: EPOCH, nodes: [0, 1, 2], events }))
-      .toEqual({ kind: 'skip', reason: 'later-system-node' })
+  it('⑤ 中段有后续 system/message（真实会话形态）⇒ 不再 skip，随历史一起遮蔽', () => {
+    const events = [ev(SYS, 0, { turn: 1, step: 1 }), ev(USER, 1, { id: 'u1' }), ev(SYS, 2, { turn: 5, step: 1 }), ev(ASSISTANT, 3, { id: 'a1' })]
+    const plan = elisionPlan({ epoch: EPOCH, nodes: [0, 1, 2, 3], events })
+    expect(plan.kind).toBe('replace')
+    if (plan.kind !== 'replace') return
+    expect(plan.shadowedSeqs).toEqual([1, 2, 3])
   })
 
-  it('⑥ 跨度含未配对 tool/call（结果尚未落盘）⇒ skip unpaired-tool-call', () => {
+  it('⑤b 尾节点是 system/message ⇒ 保留尾节点（endSeq 退一格）', () => {
+    const events = [ev(SYS, 0, { turn: 1, step: 1 }), ev(USER, 1, { id: 'u1' }), ev(SYS, 2, { turn: 5, step: 1 })]
+    const plan = elisionPlan({ epoch: EPOCH, nodes: [0, 1, 2], events })
+    expect(plan.kind).toBe('replace')
+    if (plan.kind !== 'replace') return
+    expect(plan.startSeq).toBe(1)
+    expect(plan.endSeq).toBe(1)
+    expect(plan.shadowedSeqs).toEqual([1])
+  })
+
+  it('⑤c 尾节点是 head 且无其它历史 ⇒ skip no-history', () => {
+    const events = [ev(SYS, 0, { turn: 1, step: 1 }), ev(SYS, 1, { turn: 5, step: 1 })]
+    expect(elisionPlan({ epoch: EPOCH, nodes: [0, 1], events }))
+      .toEqual({ kind: 'skip', reason: 'no-history' })
+  })
+
+  it('⑥ 日志含未解析 tool/call（结果尚未落盘）⇒ skip unresolved-tool-call', () => {
+    // tool/call 是 log-only：它出现在日志里，但不是表面节点
     const events = [ev(SYS, 0, { turn: 1, step: 1 }), ev(USER, 1, { id: 'u1' }), call(2, 'c1')]
-    expect(elisionPlan({ epoch: EPOCH, nodes: [0, 1, 2], events }))
-      .toEqual({ kind: 'skip', reason: 'unpaired-tool-call' })
+    expect(elisionPlan({ epoch: EPOCH, nodes: [0, 1], events }))
+      .toEqual({ kind: 'skip', reason: 'unresolved-tool-call' })
   })
 
-  it('⑦ 结果存在但不在表面（被更早的替换遮蔽）⇒ skip unpaired-tool-call', () => {
+  it('⑦ call/result 均已落盘（result 在表面、call 只在日志）⇒ 正常遮蔽', () => {
     const events = [ev(SYS, 0, { turn: 1, step: 1 }), ev(USER, 1, { id: 'u1' }), call(2, 'c1'), result(3, 'c1')]
-    // seq 3 存在但不在当前表面 ⇒ 表面内的 call 无配对结果
-    expect(elisionPlan({ epoch: EPOCH, nodes: [0, 1, 2], events }))
-      .toEqual({ kind: 'skip', reason: 'unpaired-tool-call' })
+    const plan = elisionPlan({ epoch: EPOCH, nodes: [0, 1, 3], events })
+    expect(plan.kind).toBe('replace')
+    if (plan.kind !== 'replace') return
+    expect(plan.shadowedSeqs).toEqual([1, 3])
+  })
+
+  it('⑦b result 已被更早的替换遮蔽（不在表面）但日志已解析 ⇒ 仍遮蔽', () => {
+    const events = [ev(SYS, 0, { turn: 1, step: 1 }), ev(USER, 1, { id: 'u1' }), call(2, 'c1'), result(3, 'c1')]
+    const plan = elisionPlan({ epoch: EPOCH, nodes: [0, 1], events })
+    expect(plan.kind).toBe('replace')
   })
 })
 
@@ -140,12 +168,19 @@ describe('elisionPlan 遮蔽计划', () => {
     expect(plan.shadowedSeqs).toEqual([9, 3])
   })
 
-  it('⑪ 已配对 tool call/result ⇒ 正常遮蔽并覆盖两个节点', () => {
-    const events = [ev(SYS, 0, { turn: 1, step: 1 }), ev(USER, 1, { id: 'u1' }), call(2, 'c1'), result(3, 'c1')]
-    const plan = elisionPlan({ epoch: EPOCH, nodes: [0, 1, 2, 3], events })
+  it('⑪ 真实会话形态（多段历史 + 两次工具结果 + 中段 system 节点）⇒ 全覆盖遮蔽', () => {
+    const events = [
+      ev(SYS, 0, { turn: 1, step: 1 }), ev(USER, 1, { id: 'u1' }), call(2, 'c1'), result(3, 'c1'),
+      ev(ASSISTANT, 4, { id: 'a1' }), ev(SYS, 5, { turn: 4, step: 1 }), ev(USER, 6, { id: 'u2' }),
+      call(7, 'c2'), result(8, 'c2'), ev(ASSISTANT, 9, { id: 'a2' }),
+    ]
+    const nodes = [0, 1, 3, 4, 5, 6, 8, 9] // 表面：tool/call 不入表面（log-only）
+    const plan = elisionPlan({ epoch: EPOCH, nodes, events })
     expect(plan.kind).toBe('replace')
     if (plan.kind !== 'replace') return
-    expect(plan.shadowedSeqs).toEqual([1, 2, 3])
+    expect(plan.startSeq).toBe(1)
+    expect(plan.endSeq).toBe(9)
+    expect(plan.shadowedSeqs).toEqual(nodes.slice(1))
   })
 
   it('⑫ 快照不一致（表面节点不在日志里）⇒ 抛错（failure，不是 skip）', () => {

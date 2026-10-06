@@ -30,7 +30,7 @@ import { Deliverer, type DeliverFn, type DelivererConfig } from './deliver.ts'
 import { Classifier, type ClassifyRuleSpec } from './classify.ts'
 import type { KeepaliveOptions, ProbeState } from './link/keepalive.ts'
 import type { MudLine } from './link/line.ts'
-import { SessionLog, type LogEntry, type SessionLogOptions } from './log/log-service.ts'
+import { SessionLog, type LogEntry, type LogLevel, type SessionLogOptions } from './log/log-service.ts'
 import type { GameScreen, GameViewOptions } from './view/screen.ts'
 import type { LoggedInState, WorldConfidence, WorldSnapshot } from './world.ts'
 import type {
@@ -399,6 +399,17 @@ export class MudService {
   }
 
   /**
+   * 写一条**会话日志**（接线层用；会话未登记时静默）——`runtime` 通道，前端「MUD 日志」tab
+   * 与落盘文件读的都是它（§13.1/§13.2）。`warn`/`error` 由 SessionLog 自动镜像宿主 logger。
+   * @param sessionId - 会话 id。
+   * @param level - 日志级别。
+   * @param text - 正文（可读、点名事实）。
+   */
+  appendRuntimeLog(sessionId: string, level: LogLevel, text: string): void {
+    this.logs.get(sessionId)?.[level]('runtime', text)
+  }
+
+  /**
    * 取已装配的投递器；未登记/未装配时抛错（与 connect 的错误面一致）。
    * @param sessionId - 会话 id。
    * @returns 该会话的投递器。
@@ -672,10 +683,20 @@ export class MudService {
     this.deliverers.get(sessionId)?.onTurnStart()
   }
 
-  /** turn 结束（宿主 turn/end 事件）：退出抑制并冲刷一次。 */
+  /**
+   * turn 结束（宿主 turn/end 事件）：退出抑制并冲刷一次。
+   *
+   * **必须推迟一个微任务**：本方法由 `session/event`（turn/end）观察者触发，而宿主 `Session.append`
+   * 在整个 append 发布期（含观察者回调；`appending` 标志同步覆盖、`finally` 才清）禁止重入追加
+   * （`session append cannot reenter while another append is being published`）。回合末冲刷会经
+   * `deliver → agent.followup` 追加 `user/message` ⇒ 同步冲刷必被护栏拒绝（实测：投递报错、该批行延后
+   * 一个回合才补投）。微任务在发布期结束之后执行，投递语义（§7.2 回合末冲刷）不变。
+   */
   turnEnd(sessionId: string): void {
     this.logs.get(sessionId)?.debug('deliver', '回合结束：冲刷 pending')
-    this.deliverers.get(sessionId)?.onTurnEnd()
+    const deliverer = this.deliverers.get(sessionId)
+    if (deliverer === undefined) return
+    queueMicrotask(() => { deliverer.onTurnEnd() })
   }
 
   /** 两轴 + 接入 + 探活观测 + 世界状态。 */
