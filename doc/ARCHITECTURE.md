@@ -61,10 +61,11 @@ note: 入口文件：只承载文档规则与导航，不承载设计事实
 | 通道与闸门（接入 admit / 停止 / 未接入语义） | §6 |
 | preset 与 persona、回合节拍、自主行为（任务书 / 唤醒 / 分工） | §7 |
 | 工具（`mud_send`/`mud_state`/`mud_connect`）、拒绝序、归属上溯、持有者、禁发表 | §8 |
-| 流程（声明表 / 词汇表 / 注册表 / 解释器 / 五工具 / login / fullme） | §8 + [flows/login.md](flows/login.md) + [flows/fullme.md](flows/fullme.md) |
+| 流程（声明表 / 词汇表 / 注册表 / 解释器 / 七工具 / login / fullme） | §8 + [flows/login.md](flows/login.md) + [flows/fullme.md](flows/fullme.md) |
 | 管理面（名册 UI / 日志 tab / 画面 tab / 状态推送） | §9 |
 | 状态（两轴 / GMCP / World / 复位 / 状态出口） | §10 |
 | 生命周期（建服务器 / 建账号 / 连接 / 会话销毁/卸载 / 流程实例 / 凭据） | §11 |
+| 冷启动旧上下文干扰 / 进程级上下文收口（表面遮蔽） | §11.2 + §2.1（事实 14–16） |
 | 安全（凭据 / 禁发表 / 越权 / 闸门） | §12 |
 | 观测与诊断 / 降级告警 | §13 |
 | 错误与降级 / 已知限制 | §14 |

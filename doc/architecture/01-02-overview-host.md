@@ -157,6 +157,7 @@ note: 全局视图 + 宿主底座；任何任务必读本文（§1 分层模型�
 | `wake.ts` | 任务书模板与静默唤醒器 | §7.4、§7.5 |
 | `world.ts` | 世界状态（分区 / 置信度 / 来源） | §10.3 |
 | `store.ts` / `roster.ts` / `accounts.ts` | 名册存储域、记录类型、写路径 | §11.2、§15.1 |
+| `elide.ts` | 会话上下文的进程级收口：进程 epoch / 起点标记 / 遮蔽判定与适配（纯层） | §11.2 |
 | `log/log-service.ts` | 会话日志（内存环 + JSONL） | §13.1 |
 | `index.ts` | 宿主装配：事件接线、remote 注册、`provide`、`kickoff` | §2.3、§7.3、§15 |
 
@@ -260,6 +261,9 @@ agent 工具调用 mud_send{cmd, listen}
 | 11 | 会话列表投影中 `blank` **只由 `turn/start` 翻转**，blank 会话不渲染会话头/会话体（含自建 view） | `api/session-controller/src/list.ts` |
 | 12 | 会话记录可指定 preset 且**中途不可切换**（已开过回合 → `agent-preset/locked`）；角色跨冷启持久 | `agent-preset-registry/src/index.ts:317-333` |
 | 13 | **subagent 有两条创建路径**：一次性 run（`start()`，产出经 `SubagentRun.result` 由调用方收集）与可继续子会话（`startContinuable()`，结算通知投递给父会话）；工具行 `backgroundMode` 选路（缺省 `one-shot`），父会话 `subagentCatalog` 记录**两种模式**的目录条目 | `subagent/tool-subagent/src/index.ts:111,303,322,526-567`；`subagent/subagent/README.md` |
+| 14 | **会话表面（model-visible 派生历史）可被替换**：`Session.surface.nodes`（node 0 = 受保护的 `system/message` head）+ `Session.append(type, data, { surfaceOp, sourceEventSeqs })`；`{ op:'replace', startSeq, endSeq }` 遮蔽闭区间并**原位**插入新节点，端点是**表面位置**（一次替换后高 seq 新节点落在旧位置 ⇒ `start` **可大于** `end`）；`sourceEventSeqs` 必须"完整、非空"覆盖被遮蔽节点；官方措辞明示"Used by compaction; **any surface-replacing producer may use it**" | `core/session/src/types.ts:439-478`、`core/session/src/surface.ts:229-258`；官方 `reference/subsystems/session` |
+| 15 | **表面不变量与替换缝**：折叠**拒绝任何覆盖 node 0 `system/message` 的替换**（后续 system 节点是普通历史、可被遮蔽）；**head 就位前追加 message 会让日志在下一进程重放判 corrupt**（`system/message requires a protected first surface head`）；`agent/pre-step` 是合法替换缝且**先于请求推导**；`SessionEventMap` 的未知**非 ignorable** 事件会让读取器**拒绝重建整条日志** | 官方 `reference/subsystems/session`、`reference/subsystems/compaction`；实测 `doc/likely/t18-surface-elision-spike.md` §2/§4/§6 |
+| 16 | **辅助模型调用从日志取料、不读表面**：会话标题生成取"human messages"（实测读到被表面遮蔽的事件）⇒ 表面遮蔽只对**对话请求**成立 | 实测 `doc/likely/t18-surface-elision-spike.md` §6；`session-title-first-prompt-llm` |
 
 ## 2.2 加载与模块解析
 
@@ -294,11 +298,12 @@ agent 工具调用 mud_send{cmd, listen}
 | **preset 一棵树共享** | 工具定义共享、能力面无法按会话切换 | 数据一律**调用期按会话解析**（窄面 `toolContextFor`）（§8.1、§8.5） |
 | **`Workspace` 无自定义字段** | 无处存 host/port | 服务器字段存 roster（键 = workspaceId）（§1.4） |
 | **会话 preset 中途不可切换** | 建账号时选定的 preset 终身有效 | 建账号时显式传 `agentPreset`；不覆盖 registry 默认（§7.1） |
+| **无"会话上下文重置/压缩"面** | 会话历史随 id 持久并被恢复，插件没有"清空/重置本会话上下文"的动词（`ctx.sessions` 无删除面、无 surface 清空动词；`registerMessageProjection` 会让会话**绑定插件在场**，卸载即拒读） | 只能靠**表面遮蔽**（§11.2 T18：一次性 `surfaceOp` 替换）或换会话 id；本仓取前者 |
 
 ## 2.5 宿主引用整批复核
 
 1. 本章 §2.1 的锚点是**一个宿主检出版本**的快照；宿主换代后按 §0.7 **整批**重新核对，不逐处信任旧行号。
-2. 复核范围：会话/preset 机制与 API 形态、`credentials`/`storage`/`agents` 服务名与签名、`agent/created` 等事件名与载荷、工具注册与权限闸门、`blank` 与 `turn/*` 语义、子 agent 委派语义（一次性 run 与可继续子会话两条路径，§2.1 事实 13）。
+2. 复核范围：会话/preset 机制与 API 形态、`credentials`/`storage`/`agents` 服务名与签名、`agent/created` 等事件名与载荷、工具注册与权限闸门、`blank` 与 `turn/*` 语义、子 agent 委派语义（一次性 run 与可继续子会话两条路径，§2.1 事实 13）、**会话表面与 `surfaceOp` 替换语义（node 0 保护、surface 位置端点、`sourceEventSeqs` 完整性）**、**`agent/pre-step` 瀑布决策（`{kind:'reject'}` ⇔ 回合 `blocked`、无模型调用）**、`ctx.sessions` 公开面（`create`/`prepare`/`enter`/`announce`/`flush`/`get`/`list`/`fork`/`registerMessageProjection`，**无删除动词**）。官方 `reference/subsystems/{session,compaction}` 两页可作为引用面（§2.1 事实 14–16 的部分锚点）。
 3. 复核输出写回 §2.1 与相关章节；不一致项记入 §17.2 待办。
 
 > AI生成

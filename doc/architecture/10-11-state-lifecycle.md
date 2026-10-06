@@ -105,6 +105,14 @@ world:     GMCP 事件与（后置的）行级规则驱动（§10.3）
 - **密码不经本插件**：页面写入宿主凭据域，`addAccount` 只收**引用名**（§11.6）。
 - **blank 语义**：建账号后会话保持 blank（会话体暂不渲染），**第一次接入**（onAdmit → kickoff 任务书真实回合）才翻——不伪造 `turn/start`（会污染回合计数与 replay）。
 - **重启恢复 = 冷启动**（2026-10-02 裁定）：宿主重启后历史会话**一律回到未接入**（Deliverer fresh，名册 `admitted` 不回读——仅作最近状态记录），人工点接入再点火；**冷启动不自动**（同 T5 自动重连纪律：重启后两轴全 unknown，自动点火 = agent 醒来即自主连游戏）。恢复期 LLM 调用面闸门 fail-closed 兜底（§7.4.1）。
+- **冷启动的上下文收口（T18，2026-10-06 落地）**：宿主按 id 恢复会话 ⇒ 上一进程的上下文（行批次 / 任务书 / 委派收尾）成为**过期断言**。运行时世界状态已是进程级（§4.5 断线整体复位 + 冷启动不回读），未收口的是**模型可见上下文**：在本进程**第一次 model step 之前**（`agent/pre-step`——宿主 compaction 的同一替换缝、**先于请求推导**），把 `node 0`（受保护 `system/message` head）之外的**全部表面节点**替换为一条**进程起点标记**（`surfaceOp:{op:'replace'}`；`source.kind='mud-epoch'`；正文含进程 epoch）。要点：
+  - ① 标记是**持久会话事件** ⇒ 下一进程重放（折叠）后旧节点仍不在表面；每进程每会话**恰好一次**（按 epoch 幂等，无需内存集合）；
+  - ② **会话 id / 账号 id / 名册零变化**（不换身份、不归档、无 schema 变更）；归属 = 根会话 + 名册账号会话（子会话是一次性 spawn）；
+  - ③ **预期 skip 照常放行**：表面未就绪（新会话 head 未就位）/ 无历史 / 本 epoch 已遮蔽 / 表面含后续 `system/message`（保守，不与 loop 的提示词规范化抢位）/ 跨度含未配对 `tool/call`；
+  - ④ **失败 ⇒ `{kind:'reject'}` 阻断本步**（判定抛错 / `append` 被拒 / 遮蔽后表面与预期不符）：回合记 `turn/end {reason:{kind:'blocked'}}`、无 `step/start`、无模型调用；该回合已 claim 的投递批次不入日志（fail-closed 的已知代价）；
+  - ⑤ **旧事件仍在会话日志里**（§13.1），只是不进对话；`"旧历史不进模型"只对对话请求成立`——标题生成等**辅助调用从日志取料**，不受遮蔽保护；
+  - ⑥ 只追加宿主**已知**事件类型（`user/message`）：新增事件类型会让未装本插件的读取器**拒绝重建整条日志**。
+  - 实测证据与硬不变量（head 之前追加 message ⇒ 日志下一进程判 corrupt）见 `doc/likely/t18-surface-elision-spike.md`；纯层/接线/冒烟见 §16.2、§16.4 #8。
 - **会话销毁本期做不到**：插件拿不到 `AgentHandle.dispose`，`ctx.sessionController` 也没有 delete 动词（§2.4）——删账号后会话本身仍在宿主内。
 
 ## 11.3 连接生命周期
@@ -139,6 +147,7 @@ disconnected（runtime 保留；两轴复位 + world.clear + pending 清空 + �
 
 | 事件 | 动作 |
 |---|---|
+| `agent/pre-step`（T18） | 上下文收口：本进程首次 model step 前遮蔽上一进程上下文（按 epoch 幂等，§11.2）；失败 ⇒ `{kind:'reject'}` 阻断本步（回合 `blocked`、无模型调用） |
 | `agent/created` | roster 判定 → `service.register`（幂等）→ 记 agent 句柄 → 装 Wake → `flushPending` 补投 |
 | `agent/disposed` | 移除 agent 句柄；**runtime / deliverer / 连接 / Wake 保留**（冷会话语义） |
 | `session/disposed` | 拆 Wake → 断连 → 拆 runtime / deliverer / 日志 |

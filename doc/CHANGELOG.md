@@ -511,3 +511,17 @@
 - **回归**：core3 296/296 + mud-workflow 77/77 + webui 7/7 全绿，现役两包 `tsc --noEmit` 清零，`pnpm -r build` 通过。
 
 > AI生成
+
+## [v0.0.46]会话上下文的进程级收口（表面遮蔽，T18）(2026-10-06)
+
+- **问题（用户报告）**：`sessionId = accountId` 随名册持久（§1.4）⇒ 宿主冷启动按 id 恢复会话，上一进程的上下文（行批次 / 任务书 / 委派收尾）成为**过期断言**污染新连接。运行时世界状态已是进程级（§4.5 断线整体复位 + 冷启动不回读 `admitted`），未收口的是**模型可见上下文**。
+- **裁决（用户拍板）**：**不换会话身份**（换 id 会牵动 webui 行身份/标签页/日志键、名册 schema 与归档事务），改为在**本进程第一次 model step 之前**（`agent/pre-step`——宿主 compaction 的同一替换缝、**先于请求推导**）把 `node 0`（受保护 `system/message` head）之外的**全部表面节点**替换为一条**进程起点标记**（`surfaceOp:{op:'replace',startSeq,endSeq}`；`source.kind='mud-epoch'`；正文含进程 epoch）。会话 id / 账号 id / 名册零变化。
+- **spike 实证（先行）**：临时 `DSH_HOME` + `--patch` 探针验证三问——① 外部插件可追加替换且表面真的收缩；② 替换后**对话请求**不再含被遮蔽历史（含对照组：不替换时历史在场）；③ 与宿主 compaction 同组合共存。硬不变量实测：**head 就位前追加 message ⇒ `append` 当场成功、日志照写，但下一进程重放判 corrupt**（`system/message requires a protected first surface head`）。另实测：标题生成等**辅助调用从日志取料**（不读表面）⇒ 遮蔽只对对话请求成立。记录见 `doc/likely/t18-surface-elision-spike.md`。
+- **实现**：新增纯层 `packages/mud-core3/src/elide.ts`（`processEpoch()` / `epochMarker()` / `elisionPlan()` / `applyElision()`，零宿主依赖，判定与适配全在纯层）；`src/index.ts` 加 `agent/pre-step` 接线（归属 = 根会话 + 名册账号会话；`AgentsLive` 扩出 session 面；`MessageSourceMap` 增 `'mud-epoch'` 声明）；**失败 ⇒ `{kind:'reject'}` 阻断本步**（回合 `turn/end {reason:{kind:'blocked'}}`、无 `step/start`、无模型调用），**预期 skip 照常放行**（表面未就绪 / 无历史 / 本 epoch 已遮蔽 / 含后续 `system/message` / 跨度含未配对 `tool/call`）。
+- **先红后绿**：`test/elide.spec.ts` 21 例（判定矩阵 15 + 适配 6）；先跑 `Cannot find module '../src/elide.ts'`（0 test FAIL）→ 实现后 14/15（第 ⑩ 例是我 fixture 误读"端点含 head"，改为规范非单调形态后）→ 21/21 绿；适配层先红 `applyElision is not a function`（7 failed）→ 绿。
+- **重放级实机冒烟（T18.2）**：`spike/smoke-probe.mjs` + `spike/smoke.patch.yml`（临时 `DSH_HOME`；探针用真 `ctx.get('mudRemote')` / `sessionController` 建号+驱动两轮对话、`{prepend:true}` 捕获 `llm/stream` 请求）：① 空表面 ⇒ skip 且不阻断（第 1 轮请求照发、回合 `completed`）；② 有历史会话首轮后遮蔽（第 2 轮请求 `MARK=true / OLD=false / NEW=true`，`replaceGeneration=1`）；③ 新进程 `create` 同 id **重放不 corrupt** 且旧节点不在表面（`oldSeqs=[3,8,13] stillVisible=[]`）；④ 二次进程再遮蔽一次（`replaceGeneration=2`，请求中的 epoch = 本进程 epoch）。**配方陷阱（已登记 §16.1）**：探针退出前必须 `ctx.sessions.flush(session)`，否则日志被截在半个回合、之后 resume 不再起回合。
+- **文档**：§1.6（`elide.ts` 模块行）、§2.1（事实 14–16：表面与 `surfaceOp` 语义 / 不变量与 `agent/pre-step` 缝 / 辅助调用读日志）、§2.4（新增宿主缺口：无"会话上下文重置/压缩"面）、§2.5（复核范围补）、§6.3（与接入解耦）、§7.4（与任务书分工）、§11.2（收口机制与阻断语义）、§11.4（`agent/pre-step` 行）、§13.1（遮蔽只改表面、旧事件仍在日志）、§16.1（重放级冒烟纪律）、§16.2（core3 296 → **317 例 / 24 文件**）、§16.4（#8 实机结论）、§16.5（T18 切片行）、§17.2（残留复核）。
+- **回归**：core3 317/317（24 文件）+ mud-workflow 77/77 + webui 7/7 全绿，现役两包 `tsc` 清零，`pnpm -r build` 通过。
+- **未决（留档）**：真 token 压力下宿主 compaction 与遮蔽叠加未实测；本 preset 是否中途追加 `system/message`（现取保守 skip）；每进程一条替换事件、`replaceGeneration` 单调（接受，作观测面）；跨度含未配对 `tool/call` 的端到端未复现（纯层用例覆盖）。
+
+> AI生成

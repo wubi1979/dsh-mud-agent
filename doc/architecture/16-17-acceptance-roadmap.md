@@ -19,12 +19,13 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | **回放用例** | `link/` 层以语料回放为主测试手段（§13.4） |
 | **账目以当次实测为准** | 例数、计数、规模**一律以当次实测登记**，不硬编码历史值 |
 | **测试即证据** | 结论必须能给出 `文件:行` / `§` / 命令输出三者之一（附录 B 审计规约 E1–E3） |
+| **替换类改动必过"重放级"冒烟** | 表面遮蔽的合法性只在**重放/折叠**时最终判定（在 `system/message` head 就位前追加 message ⇒ `append` 当场成功、日志照写，**下一进程**判 corrupt，§2.1 事实 15）⇒ `index.ts` 的 T18 接线改动必须跑 `spike/smoke-probe.mjs` + `spike/smoke.patch.yml`（临时 `DSH_HOME` + `dsh web --patch … --port 3083 --no-open`；探针用**真实** `ctx.get('mudRemote')` / `sessionController` 驱动两轮对话并捕获 `llm/stream` 组装出的请求）：① 空表面 ⇒ skip 且**不阻断**（请求照发）；② 有历史会话首轮之后被遮蔽（请求含起点标记、不含上一轮文本）；③ 新进程 `create` 同 id **重放不 corrupt** 且旧节点不在表面；④ 二次进程再遮蔽一次（`replaceGeneration` 单调、请求中的 epoch = 本进程）。**探针退出前必须 `ctx.sessions.flush(session)`**——直接 `process.exit` 会把日志截在半个回合，之后 resume 的进程不再起回合（配方陷阱，非遮蔽路径） |
 
 ## 16.2 用例账目
 
 | 包 | 用例 | 文件 |
 |---|---|---|
-| **`mud-core3`** | **296 例 / 23 文件** | `link/`：`line` · `telnet` · `mud` · `keepalive` · `corpus`；`src/`：`store` · `accounts` · `runtime` · `deliver` · `read`（含 T15 命中帧）· `tools` · `service`（含 `statusRowOf`）· `world` · `wake` · `screen` · `classify` · `llm-gate` · `reconnect` · `workflow` · `log/log-service`；装配层：`plugin-load`（工件面 e2e）· `login`（流程 E2E 五路径）· `fullme`（流程 E2E 主链/stale 自愈/abort/三退出路径/URL 槽化断言） |
+| **`mud-core3`** | **317 例 / 24 文件** | `link/`：`line` · `telnet` · `mud` · `keepalive` · `corpus`；`src/`：`store` · `accounts` · `runtime` · `deliver` · `read`（含 T15 命中帧）· `tools` · `service`（含 `statusRowOf`）· `world` · `wake` · `screen` · `classify` · `llm-gate` · `reconnect` · `workflow` · `elide`（T18 遮蔽判定与适配）· `log/log-service`；装配层：`plugin-load`（工件面 e2e）· `login`（流程 E2E 五路径）· `fullme`（流程 E2E 主链/stale 自愈/abort/三退出路径/URL 槽化断言） |
 | **`mud-workflow`** | **77 例 / 4 文件** | `registry`（含捕获槽保存门四校验、名册冲突裁决与来源标记策略 A、T16 迁入取新/账本/回滚/强审计）· `interpreter`（含捕获槽语义、命中帧消费与"去重测"结构断言）· `tools`（含来源/遮蔽呈现、遮蔽修订 delete、history/rollback 贯通）· `plugin-load`（工件面 e2e，T17） |
 | **`mud-webui`** | **7 例 / 1 文件** | `mud-captcha`（控制器：订阅/帧 diff/提交/中止/刷新配额/防串帧） |
 
@@ -43,6 +44,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | `mud-workflow/{registry,interpreter,tools}` | §8.8（包内三层与契约单点；宿主入口 `lib/index.js` 与契约子路径）、§8.10–§8.15、§8.17（`awaitCaptcha(url)` 端口单点声明 + core3 缝实现 = 编译期断言；T14：捕获槽语义①–⑧ + 保存门四校验；2026-10-05 语义澄清⑨–⑪：捕获与路由同源、整窗 exec（跨行判据可捕获）、非捕获判据路径不吞分类出口；策略 A：locked 内置优先 + `shadowed` 标记 + 遮蔽修订 delete 放行 + `origin` 来源标记；T15（§5.2/§8.13）：解释器消费命中帧、源码级"去重测"结构断言；T16（§8.11/§14.3）：迁入取新与归档、变更账本（上限剪枝）、回滚写新版本、强审计提交、`flags` 白名单收紧。`login` 用例已随实体归 core3，见上行） |
 | `mud-webui/mud-captcha` | §9.7（弹窗呈现：订阅恢复、帧边界 diff、提交/中止/刷新） |
 | `plugin-load`（工件面 e2e） | §16.1（装配层加载冒烟：`apply` 不得失败，引擎窄面与 remote 命名空间在册）。**mud-workflow 同款**（T17）：导入 `lib/index.js` / `lib/preset.js`，断言 `mudWorkflow` 服务面在册、七工具过注册面（谓词函数 + `output.schema` 对象根与真实字段） |
+| `elide` | §11.2（T18 上下文收口）：判定矩阵——空表面 / 只有 head / node 0 非 head / 无历史 / 本 epoch 已遮蔽 / 含后续 `system/message` / 未配对 `tool/call`（两个方向）⇒ **skip**；head + 历史 ⇒ replace 且 `shadowedSeqs` 全覆盖；**端点按 surface 顺序**（不假设 seq 单调，`start` 可大于 `end`）；标记形状冻结 + 正文含 epoch + 无凭据面；epoch 同进程稳定。适配层：`append` 被拒 / 替换体未落表面 / 被遮蔽节点仍在表面 / 快照不一致 ⇒ **failure**（接线层据此阻断本步） |
 
 ## 16.3 验收断言表
 
@@ -79,6 +81,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 - [x] **5. 静默唤醒兜底**：三守卫 + 状态任务书机制已有单测覆盖；**实机触发窗口难构造，用户裁定先算通过**（待日常使用中观察）
 - [x] **6. admit 前手动「连接」不触发规划**（2026-10-02 实机）
 - [x] **7. 零回归**：webui 三 tab、mud 三工具、`login` 流程五路径、单测全绿（2026-10-02 用户确认：三 tab 巡检通过；单测 core3 222 + workflow 31 全绿）
+- [x] **8. 上下文收口（T18）重放级实机冒烟**（2026-10-06，临时 `DSH_HOME` + 真宿主组合，配方见 §16.1 末行；证据见 `doc/likely/t18-surface-elision-spike.md` §8）：① 空表面 ⇒ skip 不阻断（第 1 轮请求照发、回合 `completed`）· ② 有历史会话首轮之后被遮蔽（第 2 轮请求 `MARK=true / OLD=false / NEW=true`，`replaceGeneration=1`）· ③ 新进程 `create` 同 id 重放**不判 corrupt** 且旧节点不在表面（`oldSeqs=[3,8,13] stillVisible=[]`）· ④ 二次进程再遮蔽一次（`replaceGeneration=2`；请求中的 epoch = 本进程 epoch）。**未覆盖（留 §17.2）**：真 token 压力下宿主 compaction 与遮蔽叠加；跨度含未配对 `tool/call` 的端到端（已由纯层用例覆盖）；失败注入阻断的实机复现（reject 语义由宿主源码与宿主自测核实）
 
 **验收结论（2026-10-02）**：T4b 全项通过，**T4 自主行为正式关闭**——建账号纯登记 → 接入唯一点火 → 根规划/子执行/宿主结算 → 静默唤醒兜底，链路完整。
 
@@ -106,6 +109,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | **T15 读窗命中信息下沉** | 契约加命中帧（`ReadHit`：`by`/`index`/`groups`）与 `IoReadReason` 单点（core3 `ReadReason` 引用之）；读窗机判定与取组改**同一次 `exec` + 调用前重置 `lastIndex`**（`g`/`y` 有状态正则不再污染）；解释器删 `firstHit`/`captureSlots`，failOn 出口/路由/填槽全部消费命中帧 | ✅（回归全绿：core3 296 + workflow 67 + webui 7，§16.2） |
 | **T16 流程存储演进与变更账本** | 事实核查（宿主 whole-unit 下**永不改域 `version`**、新增表零影响）；域增 `snapshots` 表（只追加账本，`save`/`delete`/`migration` 三类归档、每流程上限 20 剪枝）；迁入**按 version 取新 + 落败方归档 + 失败不挂域不清内存**；强审计提交（账本先行）；`history`/`rollback` 两工具（回滚写新版本）；`wait.flags` 收紧为 `d/i/m/s/u` | ✅（回归全绿：core3 296 + workflow 75 + webui 7，§16.2） |
 | **T17 宿主接缝漂移防御** | `isConcurrencySafe` **谓词化**（两包，独占工具恒 `false`）· `output.schema` 逐工具补齐真实字段 · `render` 返回类型对齐宿主 `ContentBlock[]` · 接线层 `AssertTrue` **编译期断言**钉住这两处成员 · mud-workflow 工件面加载冒烟（`lib/index.js` / `lib/preset.js`，含七工具与 schema 面） | ✅（回归全绿：core3 296 + workflow 77 + webui 7，§16.2） |
+| **T18 会话上下文的进程级收口** | 纯层 `elide.ts`（进程 epoch + 起点标记 + 遮蔽判定 + 适配后置校验）· `index.ts` `agent/pre-step` 接线（归属 = 根会话 + 名册账号会话；**失败 `{kind:'reject'}` 阻断本步**）· `source.kind='mud-epoch'` 声明合并 · 重放级实机冒烟（`spike/smoke-probe.mjs` + `smoke.patch.yml`） | ✅（回归全绿：core3 317 + workflow 77 + webui 7，§16.2；实机见 §16.4 #8） |
 
 **完成定义（每个切片）**
 
@@ -150,6 +154,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | 1 | **清理 §16.6 一致性清单**（注释与门面） | §16.6 |
 | 2 | 宿主能力缺口跟踪（会话删除面 + 子会话清退/归档面） | §2.4 |
 | 3 | **装配层加载冒烟可执行化**（当前为手工步骤） | §16.1 |
+| 4 | T18 残留复核：真 token 压力下宿主 compaction 与表面遮蔽叠加（当前未实测）；本 `mud-player` preset 是否会在会话中途追加 `system/message`（现取保守 skip，§11.2 ③） | §11.2、§16.4 #8 |
 
 ## 17.3 后置清单（按例证生长，本版不做）
 

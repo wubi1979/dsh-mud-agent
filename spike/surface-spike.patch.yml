@@ -1,0 +1,6 @@
+# surface spike patch（临时验证层，最后加载）：
+#   $env:DSH_HOME='D:\code\_spike\dshhome'
+#   pnpm --dir D:/Code/deepseek-harness dsh headless --patch D:/Code/dsh-mud-agent/spike/surface-spike.patch.yml "spike"
+- insert:
+    - id: surface-spike
+      name: 'file:///D:/Code/dsh-mud-agent/spike/surface-spike.mjs'

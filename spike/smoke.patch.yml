@@ -1,0 +1,14 @@
+# T18.2 实机冒烟 patch（临时验证层；与 mud-core3 生产条目同形 path + config）。
+#
+# 运行（临时 DSH_HOME，web profile；不污染真实宿主）：
+#   $env:DSH_HOME='D:\code\_spike\smoke\dshhome'
+#   $env:SMOKE_PHASE='1'
+#   pnpm --dir D:/Code/deepseek-harness dsh web --patch D:/code/dsh-mud-agent/spike/smoke.patch.yml --port 3083 --no-open
+#   （phase 1 结束自行 process.exit；phase 2 复跑同命令并把 SMOKE_PHASE 设为 2）
+- insert:
+    - id: smoke-probe
+      name: 'file:///D:/Code/dsh-mud-agent/spike/smoke-probe.mjs'
+    - id: mud-core3
+      name: 'file:///D:/Code/dsh-mud-agent/packages/mud-core3/lib/index.js'
+      config:
+        logDir: D:/code/_spike/smoke/logs

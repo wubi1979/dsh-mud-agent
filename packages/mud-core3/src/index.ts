@@ -56,6 +56,9 @@ import {
   addAccount as writeAccount, addServer as writeServer, removeAccount as dropAccount,
   removeServer as dropServer, setAdmitted, renameAccount,
 } from './accounts.ts'
+// T18.2：会话上下文的进程级收口（表面遮蔽）。判定/适配在纯层 elide.ts，这里只做归属与阻断接线。
+import { applyElision, processEpoch } from './elide.ts'
+import type { ElisionSession } from './elide.ts'
 
 /** 插件名。 */
 export const name = 'mud-core3'
@@ -189,12 +192,18 @@ function hostStorageDomain(ctx: Context): HostStorageDomain | undefined {
 }
 
 /**
+ * 宿主会话面的窄结构（`ctx.get('agents').get(id).session`）：T18 遮蔽用 `ElisionSession`，
+ * 归属上溯读 `header.parentSession`。
+ */
+type HostSessionFace = ElisionSession & { readonly header?: { readonly parentSession?: string } }
+
+/**
  * 宿主 live agent 注册表的最小结构面（`ctx.get('agents')`）。
  * `AgentRegistry.get` 的形参是品牌化 `SessionId`，其定义在传递包 `@deepseek-ai/dsh-session`
  * 内（pnpm 严格链接下不可直连 import）⇒ 只保留本条读法（§15.2）。
  */
 interface AgentsLive {
-  get(id: string): { session?: { header?: { parentSession?: string } } } | undefined
+  get(id: string): { session?: HostSessionFace } | undefined
 }
 
 /** 唤醒署名：MUD 消息以用户消息到达，署名 'mud' 以区分人工提问。 */
@@ -210,6 +219,14 @@ declare module '@deepseek-ai/dsh-llm' {
      */
     'mud-wake': {
       kind: 'mud-wake'
+      plugin: string
+    }
+    /**
+     * 进程起点标记署名（T18）：冷启动后首次 model step 前遮蔽上一进程上下文的替换体。
+     * 独立种类 = 不冒充人类消息（标题生成/会话活动等按 kind 区分来源者可排除它）。
+     */
+    'mud-epoch': {
+      kind: 'mud-epoch'
       plugin: string
     }
   }
@@ -806,6 +823,43 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     if (event.type === 'turn/start') service.turnStart(sessionId)
     else if (event.type === 'turn/end') service.turnEnd(sessionId)
     return undefined
+  }, { global: true })
+
+  // ── 会话上下文的进程级收口（T18.2，表面遮蔽）──────────────────
+  // 冷启动按 id 恢复的旧会话带着上一进程的上下文（行批次 / 任务书 / 委派收尾），成为过期断言。
+  // 在本进程第一次 model step 之前，把"本进程之前的全部表面节点"替换为一条进程起点标记
+  // （surfaceOp replace；判定与适配在纯层 elide.ts，宿主语义见 doc/likely/t18-surface-elision-spike.md）。
+  // 归属 = 根会话 + 名册账号会话（子会话是一次性 spawn，无跨进程历史）。
+  // 失败 ⇒ 返回 { kind:'reject' } **阻断本步**（裁决：宁可这一步不跑，也不把污上下文送进模型）；
+  // 预期 skip（表面未就绪 / 无历史 / 已遮蔽 / 保守不变量）⇒ 照常放行。
+  const elideStep = (rawAgent: unknown, signal: { readonly aborted?: boolean } | undefined): boolean => {
+    try {
+      const agent = rawAgent as { readonly id?: unknown; readonly session?: HostSessionFace } | undefined
+      const session = agent?.session
+      if (session === undefined) return false
+      if (session.header?.parentSession !== undefined) return false
+      const sessionId = String(agent?.id ?? '')
+      if (sessionId === '' || store.account(sessionId) === undefined) return false
+      if (signal?.aborted === true) return false
+      const outcome = applyElision(session, processEpoch())
+      if (outcome.kind === 'replaced') {
+        ctx.logger.info(`mud-core3: 会话 ${sessionId} 已遮蔽上一进程上下文（起点标记 seq=${outcome.seq}，遮蔽 ${outcome.shadowedSeqs.length} 个表面节点）`)
+        return false
+      }
+      if (outcome.kind === 'failed') {
+        ctx.logger.error(`mud-core3: 会话 ${sessionId} 上下文遮蔽失败，本步阻断：${outcome.reason}`)
+        return true
+      }
+      return false
+    } catch (error: unknown) {
+      ctx.logger.error(`mud-core3: 上下文遮蔽接线异常，本步阻断：${error instanceof Error ? error.message : String(error)}`)
+      return true
+    }
+  }
+  ctx.on('agent/pre-step', (payload, next) => {
+    const step = payload as unknown as { readonly agent?: unknown; readonly signal?: { readonly aborted?: boolean } }
+    if (elideStep(step.agent, step.signal)) return Promise.resolve({ kind: 'reject' as const })
+    return next()
   }, { global: true })
 
   // ── LLM 调用面闸门（llm/stream 瀑布终审，2026-10-02）──────────
