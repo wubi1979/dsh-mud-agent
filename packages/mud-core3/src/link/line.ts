@@ -63,9 +63,11 @@ export interface MudLine {
   isPrompt: boolean
   /**
    * 行分类标（C5.2）：null = 无标（普通游戏行）；'chat' = 聊天频道行；
-   * 'action' = 他人动作行。**全系统唯一一次分类**在 runtime 行路径单点写入
-   * （classify 模块，规则 = Config 正则清单）；link 层保持纯净——commitLine
-   * 缺省置 null，本层不做任何分类。
+   * 'action' = 他人动作行；'status' = 状态追踪剔除标（T19）。**分类**全系统
+   * 唯一一次在 runtime 行路径单点写入（classify 模块，规则 = Config 正则清单）；
+   * T19 状态追踪器在同一行路径、分类器之后只对 kind===null 的行补 status 标
+   * （不覆盖分类结果）；link 层保持纯净——commitLine 缺省置 null，本层不做
+   * 任何分类。
    */
   kind: string | null
 }

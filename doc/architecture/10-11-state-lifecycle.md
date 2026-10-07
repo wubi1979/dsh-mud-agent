@@ -38,12 +38,13 @@ world:     GMCP 事件与（后置的）行级规则驱动（§10.3）
 
 | 维 | 取值 | 说明 |
 |---|---|---|
-| **分区 `zone`** | `vitals` / `combat` / `location` / `session` / `gmcp` / … | 按用途分区，按需生长 |
-| **置信度** | `measured`（直接测量）/ `inferred`（推断） | 登录轴已用 `inferred` 先行（§10.2）；World 条目的推断写入源留给后置的**规则层**（§17.3） |
-| **来源追溯** | `kind` + `time` | 每个条目可回答"什么时候、由谁写的" |
+| **分区 `zone`** | `vitals` / `combat` / `location` / `session` / `gmcp` / … | 按用途分区，按需生长；追踪解析写**语义分区**（`vitals`/`combat`/`inventory`/`skills`/`items`/`character`，T19） |
+| **置信度** | `measured`（直接测量）/ `inferred`（推断） | 登录轴已用 `inferred` 先行（§10.2）；World 条目的推断写入源留给后置的**规则层**（§17.3）；`measured` 口径 = 直接测量，**含游戏原文的判据解析**（T19 追踪写入恒 `measured`） |
+| **来源追溯** | `kind` + `time` | 每个条目可回答"什么时候、由谁写的"；`kind`: `gmcp`（服务器 GMCP 包）/ **`track`（状态追踪判据解析，T19）** / `system`（**类型预留，现无写入方**） |
 
 - **同 `zone + key` 后到覆盖旧值**（单一真相，不做多版本）。
-- **行级规则后置**：本版 World 的写入源是 GMCP 与流程显式 patch；**无例证不建规则层**（§17.3）。
+- **写入源（现役）**：① GMCP 事件（`zone='gmcp'`）；② **状态追踪器**（T19）：每会话一个 `StateTracker`（`src/tracker.ts`），在行路径分类器同一点 `observe(line)`（D1），把游戏文本按**判据**（正则/列位/位置序，实录出处 = 附录 A.7）解析为结构化条目写入——**零 LLM**；GMCP 写 `zone='gmcp'` 为**权威**，追踪器写语义分区补文字源，同一事实两源同键后到覆盖（D10）。判据消解：追踪规则可声明 `clear`（如「你不再感到饥饿」→ 删除 `vitals.食物状态`），`World.delete(zone, key)` 幂等删除（D9）。
+- **追踪打标剔除**（D8）：追踪命中的行（表格块整块、`#` 序列、别称行）打 `status` kind ⇒ 不进 agent 投递（C5.2 剔除通道，§5.4）、进副屏行环；**只对 `kind === null` 的行打标**（分类规则优先，聊天行不误剔）。剔除只作用于**投递通道**——`mud_send` 的应答仍返回原文；要表格原文就 `mud_send{cmd, wait:false}` 发送即走（§8.7）后裸读。
 
 ## 10.4 断线整体复位
 
@@ -52,9 +53,10 @@ world:     GMCP 事件与（后置的）行级规则驱动（§10.3）
   → conn = disconnected
   → loggedIn = unknown
   → world.clear()                    // 世界状态随连接存亡
+  → tracker.reset()                  // 追踪器 in-block/in-sequence 状态不跨连接（T19）
   → pendingLines 清空、水位重置 -1   // §4.5
   → 在途 read 以 disconnected 收束   // §5.2
-重连成功后登录轴按 §10.2 重新置位（判据先行 inferred，GMCP 加固 in-game），World 由 GMCP 重建。
+重连成功后登录轴按 §10.2 重新置位（判据先行 inferred，GMCP 加固 in-game），World 由 GMCP 与追踪器重建。
 ```
 
 **自动重连**（2026-10-04 落地，T5）：意外断开（socket close/EOF/探活判死）自动重连——闸门 = **`hasConnected && !manualDisconnected`**（手工断开与冷启动不重连）；限次放弃（缺省 5 次 × 30s，Config 可覆盖）后保持断开等人工/静默唤醒；重连成功**只连不登**，登录轴按 §10.2 重新置位（判据先行 inferred，GMCP 加固 in-game），World 由 GMCP 重建（§11.3）。

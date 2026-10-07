@@ -16,8 +16,11 @@ export type WorldConfidence = 'measured' | 'inferred'
 
 /** 来源追溯：值从哪来、何时来。 */
 export interface WorldSource {
-  /** 来源种类：gmcp = 服务器 GMCP 包；system = 插件本地写入。 */
-  readonly kind: 'gmcp' | 'system'
+  /**
+   * 来源种类：gmcp = 服务器 GMCP 包；system = 插件本地写入；
+   * track = 状态追踪解析写入（游戏原文的判据解析，T19；置信度恒 measured）。
+   */
+  readonly kind: 'gmcp' | 'system' | 'track'
   /** 写入时刻（Date.now()）。 */
   readonly time: number
 }
@@ -60,6 +63,14 @@ export class World {
   /** 读单条（无则 undefined）。 */
   get(zone: string, key: string): WorldEntry | undefined {
     return this.zones.get(zone)?.get(key)
+  }
+
+  /**
+   * 消解单条（T19 D9）：状态消失时删除（如「你不再感到饥饿」→ 食物状态消解）。
+   * zone 或 key 不存在时静默（幂等）。 @returns 是否实际删除了条目。
+   */
+  delete(zone: string, key: string): boolean {
+    return this.zones.get(zone)?.delete(key) ?? false
   }
 
   /** 快照（防御性拷贝；外部改动不影响内部状态）。 */

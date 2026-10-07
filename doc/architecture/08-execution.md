@@ -40,7 +40,7 @@ L6 是 agent **能动**的唯一出口——把"想做什么"变成"MUD 上发�
 
 | 工具 | 语义 | 约束 |
 |---|---|---|
-| **`mud_send`** | 发命令 + **判据驱动等应答**；**不带 `cmd` = 裸读近况** | 不受接入闸门；**只拒未连接**；独占（`isConcurrencySafe: false`）；应答原文返回调用方 |
+| **`mud_send`** | 发命令 + **判据驱动等应答**；**不带 `cmd` = 裸读近况**；**`wait: false` = 发送即走**（T19 D11：只 send 不 read、不设超时、不判成败——分页/save 等"发了就行"的动作；返回 `reason:'sent'`，仍过持有者与拒绝序） | 不受接入闸门；**只拒未连接**；独占（`isConcurrencySafe: false`）；应答原文返回调用方 |
 | **`mud_state`** | **状态自述**（两轴 + World 合并快照，§10.5） | **不受闸门 / 不受连接约束，只过归属** |
 | **`mud_connect`** | **建连**（幂等：已连接不重连、不踢已登录会话） | 三期把"连接是手工动词"升格为工具，模型可自行调用 |
 | `mud_workflow_run` + `mud_workflow_list/get/save/delete/history/rollback` | 流程执行与管理七工具 | 归 `mud-workflow` 包（§8.14） |
@@ -84,6 +84,7 @@ L6 是 agent **能动**的唯一出口——把"想做什么"变成"MUD 上发�
 ```ts
 mud_send {
   cmd?: string                                  // 缺省 = 裸读近况
+  wait?: boolean                                // T19 D11：false = 发送即走（缺省 true = 发+等应答）
   listen?: { until?, failOn?, gaCount?, quietMs?, maxLines? }
   timeoutMs?: number
 }
@@ -92,10 +93,11 @@ mud_send {
 | 项 | 规则 |
 |---|---|
 | `listen` 编译 | 全空 ⇒ `{}`（不武装判据）；缺省判据按模式注入：**有 `cmd` ⇒ `gaCount: 1` + `maxLines` 兜底**；**裸读 ⇒ `quietMs: 300`** |
+| `wait: false` | 只 `runtime.send(cmd)`，**不 read、不设超时、不判成败**；返回 `{ok:true, reason:'sent', lines:[]}`；需提供 `cmd`（裸读不适用）；仍过禁发表/连接闸门/持有者（拒绝序不变，§8.4） |
 | `until` / `failOn` | 字符串正则源（解释器/工具侧编译），命中序有意义（§8.13） |
 | `timeoutMs` | **钳制 ≤ 60000**（协作式超时上限）；Config 缺省 `sendTimeoutMs` 15000 |
 | 兜底行数 | Config 缺省 `sendMaxLines` 50 |
-| `render` | `ok: true` ⇒ 行原文 `join('\n')`；拒/错 ⇒ 可读文本 |
+| `render` | `ok: true` ⇒ 行原文 `join('\n')`（`reason:'sent'` ⇒ 发送即走说明文案）；拒/错 ⇒ 可读文本 |
 | **硬编码项** | 禁词表最小集（§12.3）与裸读 `quietMs = 300`：**无例证不进 Config** |
 
 ## 8.8 流程面：包结构与纯度裁定

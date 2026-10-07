@@ -14,6 +14,7 @@ import { ReadMachine, type ReadOpts, type ReadResult } from './read.ts'
 import { GameScreen, type GameViewOptions } from './view/screen.ts'
 import { World, type LoggedInState, type WorldSnapshot } from './world.ts'
 import { Classifier } from './classify.ts'
+import { StateTracker } from './tracker.ts'
 import type { ConnState } from './roster.ts'
 
 // 类型面 re-export（E2E/流程环境按 read/recentLines 签名桥接用）。
@@ -53,6 +54,8 @@ export class SessionRuntime {
   private readonly screen: GameScreen
   /** 行分类器（C5.2）：行路径单点打标（mark 就地写 line.kind）。 */
   private readonly classifier: Classifier
+  /** 状态追踪器（T19）：游戏原文判据解析 → World（kind='track'）+ 块级行打标剔除。 */
+  private readonly tracker: StateTracker
   /** 行流缓冲（单一真相：录制 + 工具裸读源 + 投递拉取源；环形上限，超出丢最旧）。 */
   private pendingLines: MudLine[] = []
   /** 录制上限（行）：挂机模式长期不收时，内存不随行数无界增长。 */
@@ -123,6 +126,10 @@ export class SessionRuntime {
     this.recordLimit = recordLimit < 1 ? 1 : recordLimit
     this.screen = new GameScreen(sessionId, view)
     this.classifier = classifier ?? new Classifier()
+    this.tracker = new StateTracker({
+      onWrite: (zone, key, value) => { this.writeWorld(zone, key, value) },
+      onDelete: (zone, key) => { this.deleteWorld(zone, key) },
+    })
     this.mud = new Mud({
       ...(keepalive === undefined ? {} : { keepalive }),
       ...(busy === undefined ? {} : { isBusy: busy }),
@@ -134,6 +141,9 @@ export class SessionRuntime {
     this.mud.onLine = line => {
       // C5.2：全系统唯一一次分类——先于录制/画面路由/投递，保证所有消费者看到 kind。
       this.classifier.mark(line)
+      // T19（D1）：状态追踪在分类器同一点观察——判据解析写 World + 块级行打标
+      //（kind 在此定案，随后的画面路由/投递即见最终标）。
+      this.tracker.observe(line)
       this.pendingLines.push(line)
       const over = this.pendingLines.length - this.recordLimit
       if (over > 0) {
@@ -173,6 +183,7 @@ export class SessionRuntime {
       // 断线同时反转两轴 + 世界状态复位（重连后由 GMCP 重新置位/写入）。
       this.loggedInState = 'unknown'
       this.worldState.clear()
+      this.tracker.reset() // in-block/in-sequence 状态不跨连接（T19）
       this.onWorldChange?.()
       this.pendingLines = []
       // 水位线复位（§4.3/§4.5：初始/断线 = -1）+ 在途 read 以 disconnected 收束。
@@ -224,6 +235,21 @@ export class SessionRuntime {
   /** 世界状态快照（分区/置信度/来源；只读拷贝）。 */
   get world(): WorldSnapshot {
     return this.worldState.snapshot()
+  }
+
+  /**
+   * 追踪解析写入口（T19）：状态追踪器把游戏原文判据解析出的条目写入 World
+   *（置信度恒 measured，来源 kind='track'），并触发 onWorldChange（状态帧
+   * 照常广播）。同 zone+key 后到覆盖（World.set 语义）。
+   */
+  writeWorld(zone: string, key: string, value: unknown): void {
+    this.worldState.set(zone, key, value, 'measured', { kind: 'track', time: Date.now() })
+    this.onWorldChange?.()
+  }
+
+  /** 追踪消解口（T19 D9）：clear 规则命中时删除 World 条目；实际删除才广播。 */
+  deleteWorld(zone: string, key: string): void {
+    if (this.worldState.delete(zone, key)) this.onWorldChange?.()
   }
 
   /** 画面通道（remote.mud.follow 经 service.screenOf 取用）。 */

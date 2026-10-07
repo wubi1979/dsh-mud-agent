@@ -188,6 +188,39 @@ describe('mud_send 拒绝序（stub）', () => {
     expect(sent).toEqual([])
   })
 
+  // ── T19.5 D11 发送即走（wait:false）───────────────────────────────
+
+  it('wait:false：send 后立即返回 reason=sent，绝不 read', async () => {
+    const sent: string[] = []
+    const { call } = setup({}, {
+      send: (cmd: string) => { sent.push(cmd); return true },
+      read: async () => { throw new Error('wait=false 不应调用 read') },
+    })
+    await expect(call('mud_send', { cmd: 'hpbrief', wait: false })).resolves.toEqual({
+      ok: true, reason: 'sent', lines: [],
+    })
+    expect(sent).toEqual(['hpbrief'])
+  })
+
+  it('wait:false 仍过禁发表与连接闸门（拒绝序不变）', async () => {
+    const { call } = setup({}, { connState: 'disconnected' })
+    await expect(call('mud_send', { cmd: 'suicide', wait: false })).resolves.toMatchObject({
+      ok: false, error: /危险命令（suicide）被禁/,
+    })
+    await expect(call('mud_send', { cmd: 'save', wait: false })).resolves.toEqual({ ok: false, error: NOT_CONNECTED_ERROR })
+  })
+
+  it('wait:false 无 cmd：可读拒绝（裸读请省略 wait）', async () => {
+    const { call } = setup()
+    await expect(call('mud_send', { wait: false })).resolves.toMatchObject({ ok: false, error: /需要提供 cmd/ })
+  })
+
+  it('wait 缺省行为不变：send + read（应答原文返回）', async () => {
+    const { call, readCapture } = setup()
+    await expect(call('mud_send', { cmd: 'look' })).resolves.toMatchObject({ ok: true, reason: 'quiet' })
+    expect(readCapture().opts.gaCount).toBe(1) // 有 cmd 缺省判据（§8.7）未被 wait 分支破坏
+  })
+
   it('send 失败（连接已断）：可读拒绝并释放持有者', async () => {
     let released = false
     const { call } = setup({}, {

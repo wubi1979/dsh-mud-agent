@@ -1,5 +1,5 @@
 /**
- * tools — 工具面纯层（三期 T2b 三工具）：mud_connect / mud_send / mud_state。
+ * tools — 工具面纯层：mud_connect / mud_send / mud_state（三期 T2b）。
  *
  * 三工具一个原则：**原文返回、模型自决**——mud_send 返回应答行原文（过程即
  * 结果）；mud_connect 只建连（登录归流程面）；mud_state 返回插件状态 + world
@@ -251,13 +251,19 @@ export function registerMudTools(
     name: 'mud_send',
     description:
       '向 MUD 发送一条命令并等待应答原文（有 cmd = send + read；无 cmd = 裸读近期行流近况）。'
-      + '未连接时被拒绝，可先调用 mud_connect。listen 声明完成判据（缺省等一段完整文字）；'
-      + '必须给超时或缺省由系统注入（绝不无界等待）。返回应答行原文，由你自决下一步。',
+      + 'wait=false 时发送即走：只发命令不等应答（不 read、不判成败），用于翻页/save 等'
+      + '"发了就行"的动作。未连接时被拒绝，可先调用 mud_connect。listen 声明完成判据'
+      + '（缺省等一段完整文字）；必须给超时或缺省由系统注入（绝不无界等待）。'
+      + '返回应答行原文，由你自决下一步。',
     isConcurrencySafe: () => false, // socket 写 + 行流等待，独占（谓词恒 false）
     parameters: {
       type: 'object',
       properties: {
         cmd: { type: 'string', description: '要发送的命令；缺省 = 裸读（不发命令，读近期行流）' },
+        wait: {
+          type: 'boolean',
+          description: '缺省 true = 发送并等待应答；false = 发送即走（只发不等，不判成败）',
+        },
         listen: {
           type: 'object',
           description: '完成判据（缺省：有 cmd = 一段完整文字；裸读 = 最近行 + 短静默窗口）',
@@ -287,11 +293,14 @@ export function registerMudTools(
         // 模型面合同：原文/可读文本，不让模型读 JSON（canonical JSON 只走
         // output.schema/持久化面）。
         const v = value as MudSendResult
-        return [{ type: 'text', text: v.ok ? v.lines.join('\n') : v.error }]
+        if (!v.ok) return [{ type: 'text', text: v.error }]
+        // 发送即走（wait:false）：无应答行可给，明说语义并指引状态面。
+        if (v.reason === 'sent') return [{ type: 'text', text: '已发送（发送即走：未等待应答；状态可用 mud_state 查看）' }]
+        return [{ type: 'text', text: v.lines.join('\n') }]
       },
     },
     async execute(rawArgs, exec) {
-      const args = rawArgs as { cmd?: string; listen?: ListenSpec; timeoutMs?: number }
+      const args = rawArgs as { cmd?: string; listen?: ListenSpec; timeoutMs?: number; wait?: boolean }
       const c = core()
       if (c === null) return reject(CORE_ABSENT_ERROR)
       const tc = c.toolContextFor(exec.agent as ToolAgent | undefined)
@@ -307,6 +316,20 @@ export function registerMudTools(
       // 探测中（probeState=probing）仍按已连接放行——probeState 是只读观测面，
       // 不回写 conn 三态（T5.1），TCP 确实通，发送/等待语义不受探测影响。
       if (tc.runtime.connState !== 'connected') return reject(NOT_CONNECTED_ERROR)
+
+      // T19 D11 发送即走：只 send 不 read、不设超时、不判成败（分页/save 等
+      // "发了就行"的动作）。仍过会话级持有者（避免劈开他人在途应答）；拒绝序不变。
+      if (args.wait === false) {
+        if (args.cmd === undefined) return reject('已拒绝：wait=false（发送即走）需要提供 cmd；裸读请省略 wait')
+        const holder = String((exec.agent as ToolAgent | undefined)?.id ?? '')
+        if (!tc.runtime.acquireSend(holder)) return reject(HOLDER_BUSY_ERROR)
+        try {
+          if (!tc.runtime.send(args.cmd)) return reject('已拒绝：发送失败（连接可能已断开）')
+        } finally {
+          tc.runtime.releaseSend(holder)
+        }
+        return { ok: true, reason: 'sent', lines: [] }
+      }
 
       // timeoutMs 钳制（§8.7）：缺省注入，上限 MAX_TIMEOUT_MS。
       let timeoutMs: number

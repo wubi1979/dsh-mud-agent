@@ -1,5 +1,7 @@
 /**
- * mud-core3 classify — 行分类器（C5.2）：MudLine.kind 的**全系统唯一写入点**。
+ * mud-core3 classify — 行分类器（C5.2）：MudLine.kind 的**全系统唯一分类写入点**
+ * （T19 状态追踪器是第二个写入点——在同一行路径、本模块 mark 之后只对 kind===null
+ * 的行补 `status` 标，不覆盖分类结果，见 tracker.ts）。
  *
  * 分类与路由判定都在服务端（规则更新 = 后端重启即生效，无前后端规则不一致）：
  *   - 输入 = `line.text`（纯文本，无 ANSI——解析层已剥离，恰为判据匹配变体）；
@@ -106,7 +108,8 @@ export class Classifier {
   }
 
   /**
-   * 唯一打标入口：按声明序取首个命中写 `line.kind`；无命中保留 null。
+   * 唯一分类打标入口：按声明序取首个命中写 `line.kind`；无命中保留 null
+   * （T19 追踪器随后只补 kind===null 的 status 标，见 tracker.ts）。
    * 匹配输入 = `line.text`（去 ANSI 变体）；不改行的其他任何字段。
    */
   mark(line: MudLine): void {

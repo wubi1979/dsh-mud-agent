@@ -573,3 +573,19 @@
 - **生效**：规则在 runtime 行路径单点生效（服务端），**重建 core3 + 重启宿主**即生效；前端零改动。部署可用 Config `classifyRules` 覆盖缺省表、`allowKinds` 放行特定 kind。
 
 > AI生成
+
+## [v0.0.51]T19 状态追踪：游戏文本 → World 结构化状态 (2026-10-06)
+
+- **需求（用户）**：把游戏文本里的状态（`hpbrief`/`hp`/`skills`/`i`/`id`/`sc`）持续、**零 LLM** 地解析为 World 结构化条目（§10.3），agent 用 `mud_state` 读结构化值而非在原文里找数字；噪声表格不进 agent。
+- **实现**：
+  - 新增 `src/tracker.ts`（纯层）：三形状（`table`/`lines`/`sequence`）+ 判据规则表（声明序 hpbrief→hp→sc→i→skills→id-header→id）+ `observe(line)`；命中规则即写**语义分区**（`vitals`/`combat`/`inventory`/`skills`/`items`/`character`，`kind:'track'`、置信度 `measured`，D6/D10）并打 `status` 标剔除投递（D8：**块级从 `┌` 起整块打标、含未命中块**——`screen.write` 随行同步路由，事后补标对画面无效；World 写入仍必须规则命中、无命中的块只剔不写；只对 `kind === null` 行打标，C5.2 规则优先）。
+  - `world.ts`：`WorldSource.kind` 加 `'track'`（D6）；新增 `delete(zone, key)`（幂等）供 `clear` 规则消解（D9）；断线复位补 `tracker.reset()`（§10.4）。
+  - `runtime.ts`：行路径分类器同一点后接 `observe`（D1）；写/删薄封装 + `onWorldChange` 广播。
+  - `tools.ts`：`mud_send` 加 `wait?: boolean`（D11）——`false` = 发送即走：不 read、不设超时，返回 `{ok:true, reason:'sent', lines:[]}`；仍过禁发表/连接/持有者，拒绝序不变；裸读不适用。
+  - `hpbrief` 18 位表按**已定稿**判据落地（D5 完整性校验：`^#` 三行 × 6 纯数字，任一不满足不写不猜）；hp/skills/id/i/sc 判据按 PLAN 片段先行，**待完整实录校准**（A.7.3）。
+- **文档**：§8.3/§8.7（`wait` 参数面）、§10.3/§10.4（写入源两源 + 复位）、§6.3（追踪打标 = 第二写入点）、A.6 口径扩为「判据」+ 新增 A.7 实录档、§16.2/§16.5、persona 补一句（先用 `mud_state` 读结构化状态，刷新用 `mud_send{wait:false}`）。
+- **测试（先红后绿）**：`tracker.spec` 新增 16 例（hpbrief 实录回放 18 键、完整性失败零写入、hp 表逐键与同键覆盖、块级打标与聊天不撞、section 提取、`id` 别称、sc/i/skills 逐键、clear + delete 幂等、reset、runtime TCP 回放接线含 `source.kind='track'`）；`tools.spec` 新增 4 例（`wait:false` 不 read、闸门拒绝序不变、无 `cmd` 拒绝、缺省行为不变）。
+- **回归**：core3 343/343（25 文件）+ mud-workflow 77/77 + webui 7/7 全绿，现役两包 `tsc` 清零，`pnpm -r build` 通过。
+- **待办**：用户贴完整实录后补 A.7.3 校准（skills/id/i/sc 列位判据），修正判据与用例（A.6 纪律）。
+
+> AI生成

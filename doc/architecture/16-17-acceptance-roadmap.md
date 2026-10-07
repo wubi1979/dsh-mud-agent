@@ -25,7 +25,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 
 | 包 | 用例 | 文件 |
 |---|---|---|
-| **`mud-core3`** | **323 例 / 24 文件** | `link/`：`line` · `telnet` · `mud` · `keepalive` · `corpus`；`src/`：`store` · `accounts` · `runtime` · `deliver` · `read`（含 T15 命中帧）· `tools` · `service`（含 `statusRowOf`）· `world` · `wake` · `screen` · `classify` · `llm-gate` · `reconnect` · `workflow` · `elide`（T18 遮蔽判定与适配）· `log/log-service`；装配层：`plugin-load`（工件面 e2e）· `login`（流程 E2E 五路径）· `fullme`（流程 E2E 主链/stale 自愈/abort/三退出路径/URL 槽化断言） |
+| **`mud-core3`** | **343 例 / 25 文件** | `link/`：`line` · `telnet` · `mud` · `keepalive` · `corpus`；`src/`：`store` · `accounts` · `runtime`（含 T19 tracker 接线）· `deliver` · `read`（含 T15 命中帧）· `tools`（含 T19 `wait:false`）· `tracker`（T19）· `service`（含 `statusRowOf`）· `world` · `wake` · `screen` · `classify` · `llm-gate` · `reconnect` · `workflow` · `elide`（T18 遮蔽判定与适配）· `log/log-service`；装配层：`plugin-load`（工件面 e2e）· `login`（流程 E2E 五路径）· `fullme`（流程 E2E 主链/stale 自愈/abort/三退出路径/URL 槽化断言） |
 | **`mud-workflow`** | **77 例 / 4 文件** | `registry`（含捕获槽保存门四校验、名册冲突裁决与来源标记策略 A、T16 迁入取新/账本/回滚/强审计）· `interpreter`（含捕获槽语义、命中帧消费与"去重测"结构断言）· `tools`（含来源/遮蔽呈现、遮蔽修订 delete、history/rollback 贯通）· `plugin-load`（工件面 e2e，T17） |
 | **`mud-webui`** | **7 例 / 1 文件** | `mud-captcha`（控制器：订阅/帧 diff/提交/中止/刷新配额/防串帧） |
 
@@ -34,7 +34,8 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | `link/{line,telnet,mud,keepalive,corpus}` | §3.2–§3.5（连接代次、建连失败、并发 connect、探活刻度与 busy 谓词、行化、语料） |
 | `reconnect` · `classify` · `llm-gate` | §3.2/§11.3（自动重连限次与打断）、§6.3（行分类与投递剔除）、§7.4.1（LLM 调用面闸门） |
 | `runtime` · `deliver` · `read` | §4.2–§4.5（录制上限、水位线不重投、turn/end 冲刷、失败重试、裸读、判定序）；T15（§5.2）：命中帧 `hit`——按声明序下标、`failOn`/`until` 来源、捕获组（未参与组 `undefined`）、`gaCount`/`maxLines` 关窗无帧、`g`/`y` 有状态正则重置（同实例跨 read 复用不丢命中）、`y` 锚定语义保留 |
-| `tools` | §8.2–§8.7（注册自检、拒绝序、禁词全段扫描、`mud_state` 不受闸门、listen 编译、超时钳制） |
+| `tools` | §8.2–§8.7（注册自检、拒绝序、禁词全段扫描、`mud_state` 不受闸门、listen 编译、超时钳制）；T19（§8.3/§8.7）：`wait:false` 发送即走（不 read、返回 `reason:'sent'`、裸读不适用、无 `cmd` 拒绝、缺省行为与拒绝序不变） |
+| `tracker`（T19） | §10.3（D1–D10）：hpbrief 定长序列（实录回放 18 键 + 完整性校验失败不写不猜）、hp 表格逐键（含文本状态/加成/战意，与 hpbrief 同键覆盖）、块级打标剔除（含未命中块、聊天行不撞、C5.2 优先不覆盖分类）、section 提取、lines 形状（`id` 别称）、`clear` 消解 + `World.delete` 幂等、断线 reset、skills/`i`/`sc` 逐键、runtime 行路径接线（TCP 回放 → World + `source.kind='track'`） |
 | `screen` | §5.3（ANSI 入 snapshot、回显入屏而凭据缺席、背压断流与 re-follow、两会话屏隔离、跨重连续写、attach 原子性、合批） |
 | `store` · `accounts` | §11.1–§11.2、§14.3（内存/域表、记录 schema、降级、先落名册顺序、失败回滚、`admitted` 持久化） |
 | `world` | §10.3–§10.4（分区/来源、断线复位） |
@@ -111,6 +112,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | **T16 流程存储演进与变更账本** | 事实核查（宿主 whole-unit 下**永不改域 `version`**、新增表零影响）；域增 `snapshots` 表（只追加账本，`save`/`delete`/`migration` 三类归档、每流程上限 20 剪枝）；迁入**按 version 取新 + 落败方归档 + 失败不挂域不清内存**；强审计提交（账本先行）；`history`/`rollback` 两工具（回滚写新版本）；`wait.flags` 收紧为 `d/i/m/s/u` | ✅（回归全绿：core3 296 + workflow 75 + webui 7，§16.2） |
 | **T17 宿主接缝漂移防御** | `isConcurrencySafe` **谓词化**（两包，独占工具恒 `false`）· `output.schema` 逐工具补齐真实字段 · `render` 返回类型对齐宿主 `ContentBlock[]` · 接线层 `AssertTrue` **编译期断言**钉住这两处成员 · mud-workflow 工件面加载冒烟（`lib/index.js` / `lib/preset.js`，含七工具与 schema 面） | ✅（回归全绿：core3 296 + workflow 77 + webui 7，§16.2） |
 | **T18 会话上下文的进程级收口** | 纯层 `elide.ts`（进程 epoch + 起点标记 + 遮蔽判定 + 适配后置校验）· `index.ts` `agent/pre-step` 接线（归属 = 根会话 + 名册账号会话；**失败 `{kind:'reject'}` 阻断本步**）· `source.kind='mud-epoch'` 声明合并 · 重放级实机冒烟（`spike/smoke-probe.mjs` + `smoke.patch.yml`） | ✅（回归全绿：core3 317 + workflow 77 + webui 7，§16.2；实机见 §16.4 #8） |
+| **T19 状态追踪（游戏文本 → World）** | 纯层 `tracker.ts`（三形状 table/lines/sequence + 判据规则表 hpbrief/hp/sc/i/skills/id + 块级 `status` 打标剔除 + `clear` 消解 + 断线 reset）· `world.ts` 加 `kind:'track'` 与 `delete(zone,key)` · `runtime.ts` 行路径分类器后 `observe` 接线 · `mud_send` 加 `wait:false` 发送即走（D11）· 判据实录入档 A.7（hpbrief 已定稿；skills/id/i/sc 待实录校准） | ✅（回归全绿：core3 343 + workflow 77 + webui 7，§16.2；实机验证待用户实录校准 A.7.3 后按需复验） |
 
 **完成定义（每个切片）**
 
