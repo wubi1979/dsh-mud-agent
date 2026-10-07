@@ -30,6 +30,8 @@ export interface AccountRecord {
   readonly preset: string
   /** 接入状态（缺省 false = 未接入；持久化，重启保留）。 */
   readonly admitted: boolean
+  /** 自主战斗总开关（T21.6 combatAuto；缺省/缺字段 = true。持久化，重启保留人的意愿）。 */
+  readonly combatAuto?: boolean
 }
 
 /**

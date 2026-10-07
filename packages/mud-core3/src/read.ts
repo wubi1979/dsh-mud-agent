@@ -48,9 +48,9 @@ interface CriterionHit {
 /** read 参数。timeoutMs 必须显式给出或由工具注入缺省 —— 绝不无界等待。 */
 export interface ReadOpts {
   /** 完成判据：在累积文本（各行 text 以 \n 连接）上测，**可跨批命中**。 */
-  until?: RegExp[]
+  until?: readonly RegExp[]
   /** 负面判据：命中即以 failOn 收束（优先于 until）。 */
-  failOn?: RegExp[]
+  failOn?: readonly RegExp[]
   /** GA/EOR 边界计数关窗（undefined = 无 GA 关窗；工具层注入缺省 1）。 */
   gaCount?: number
   /** 行间静默毫秒：最后一次行到达后静默即收（quiet）。 */

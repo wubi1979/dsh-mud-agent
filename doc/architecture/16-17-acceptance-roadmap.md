@@ -113,6 +113,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | **T17 宿主接缝漂移防御** | `isConcurrencySafe` **谓词化**（两包，独占工具恒 `false`）· `output.schema` 逐工具补齐真实字段 · `render` 返回类型对齐宿主 `ContentBlock[]` · 接线层 `AssertTrue` **编译期断言**钉住这两处成员 · mud-workflow 工件面加载冒烟（`lib/index.js` / `lib/preset.js`，含七工具与 schema 面） | ✅（回归全绿：core3 296 + workflow 77 + webui 7，§16.2） |
 | **T18 会话上下文的进程级收口** | 纯层 `elide.ts`（进程 epoch + 起点标记 + 遮蔽判定 + 适配后置校验）· `index.ts` `agent/pre-step` 接线（归属 = 根会话 + 名册账号会话；**失败 `{kind:'reject'}` 阻断本步**）· `source.kind='mud-epoch'` 声明合并 · 重放级实机冒烟（`spike/smoke-probe.mjs` + `smoke.patch.yml`） | ✅（回归全绿：core3 317 + workflow 77 + webui 7，§16.2；实机见 §16.4 #8） |
 | **T19 状态追踪（游戏文本 → World）** | 纯层 `tracker.ts`（三形状 table/lines/sequence + 判据规则表 hpbrief/hp/sc/i/skills/id + 块级 `status` 打标剔除 + `clear` 消解 + 断线 reset）· `world.ts` 加 `kind:'track'` 与 `delete(zone,key)` · `runtime.ts` 行路径分类器后 `observe` 接线 · `mud_send` 加 `wait:false` 发送即走（D11）· 判据实录入档 A.7（hpbrief 已定稿；skills/id/i/sc 待实录校准） | ✅（回归全绿：core3 343 + workflow 77 + webui 7，§16.2；实机验证待用户实录校准 A.7.3 后按需复验） |
+| **T21 战斗自主（完全自主，PLAN T21 D1–D15）** | 战斗键（tracker：气势/敌档/目标/敌人数，hpbrief 负值格合法）· 分档边沿（`combat/state.ts` 纯层，百分比分档 + 跨变边沿）· 规则引擎与人工种子（`combat/rules.ts`：设置型/占拍型 + 节流 + 危险规则集）· `kind:'combat'` 计数与会话日志（`combat/report.ts`）· 行流接管状态机（`combat/controller.ts`：held/pending + 长读窗 + 释放与静默兜底 + 重入合并闸）· 危险抢占通道（`combat/danger.ts`：文本/状态两判定点 + `abortWait('danger')` + `stealSend` 直发 + 危险态退出）· `combatAuto` 总开关（remote 动词 + webui 战斗刹车 + 恢复不追补闩）· A.8 实录回放（`test/combat.replay.spec.ts`） | ✅（回归全绿：core3 402 + workflow 77 + webui 7；真机冒烟待实测：胜利/脱战/干预行文等 A.8.5 推断值） |
 
 **完成定义（每个切片）**
 
@@ -166,8 +167,8 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | **画面后置项（C5 遗留）**：输入回传（工具面已落地，是否仍需按使用实证评估）、NAWS/resize 回传、send 回显与 MUD 自回显去重开关、画面历史持久化（headless 屏随 runtime 存活，插件重启即清；s2 聊天栏行环同理随 runtime 存活） | 对应需求实证出现 |
 | **分类规则扩充**（C5.2 已落地，缺省仅 `chat`；`action` 等新 kind） | 语料中出现真实误判/漏判例证（规则 Config 可加，§6.3） |
 | **流程扩展**（词汇表扩展、参数化 `args` 占位符；~~fullme/验证码链路~~ **已交付**，§8.17——**流程不能等人工**约束随之废止，流程挂起等人工已是常规路径） | "JSON 词汇表表达不了"的例证 |
-| **规则层**（`swallow` 吞行动作、`danger` 危险判据） | 行级规则实证需求（`swallow` 钩子管道已留，§5.2） |
-| **意识层**（系统驱动 `abortWait` 打断） | 系统级打断实证需求（`abortWait` API 已保留；`failOn` 已覆盖 agent 驱动打断） |
+| **规则层**（`swallow` 吞行动作；~~`danger` 危险判据~~ **已交付**，T21.5 战斗危险通道，§5.2/§8.6） | 行级规则实证需求（`swallow` 钩子管道已留，§5.2） |
+| **意识层**（系统驱动 `abortWait` 打断） | 系统级打断实证需求（`abortWait` 首个调用者 = 战斗危险抢占通道，T21.5；意识层复用后置） |
 | **投递策略化**（字段化摘要、按需投递、水位窗口细化；含超长回合持续刷屏的 turn 内强刷） | 投递内容膨胀实证（token 账目恶化，§8.16） |
 | **子级 deadline / 预算 interrupt**（插件侧到期打断） | 子 agent 超时/失控实证（本版委派为一次性前台，取消通道 = 调用 `signal`；插件侧到期打断需宿主 interrupt 面 + 例证） |
 | **`ask` 超时**（`askTimeoutMs`） | 确认"无人应答必须超时"的实证需求（宿主原生 = 永久挂起，§2.4） |

@@ -60,6 +60,8 @@ export interface MudStatusFrame {
     loggedIn: 'unknown' | 'inferred' | 'in-game'
     /** 探活观测态（T5.1；旧服务端缺省 undefined = idle）。 */
     probeState?: 'idle' | 'probing'
+    /** 自主战斗总开关（T21.6；旧服务端缺省 undefined = true）。 */
+    combatAuto?: boolean
     world: readonly MudWorldEntry[]
   }[]
 }
@@ -258,6 +260,14 @@ export class MudRemoteController {
   /** 停止接入：MUD 信息不再进入 agent。 */
   stop(sessionId: string): Promise<{ sessionId: string; admitted: boolean }> {
     return this.call(mud => mud.stop(sessionId))
+  }
+
+  /**
+   * 战斗刹车（T21.6 combatAuto 总开关）：关闭 = 人打断——立即释放当前遭遇并挂起；
+   * 恢复 = 新遭遇照常接管（不追补当前场）。
+   */
+  combatAuto(sessionId: string, enabled: boolean): Promise<{ sessionId: string; combatAuto: boolean }> {
+    return this.call(mud => mud.combatAuto(sessionId, enabled))
   }
 
   /** 连接状态 + 接入状态（轮询回填；行面与 watchStatus 同为 StatusRow 窄面）。 */

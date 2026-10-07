@@ -333,6 +333,63 @@ describe('id（items 别称表：lines 形状）', () => {
   })
 })
 
+// ── T21.1：combat 判据（lines 形状，A.8.3 实录判据）─────────────────
+
+describe('combat 判据（T21.1：A.8.3 实录）', () => {
+  it('气势累积行 → combat.气势（整数百分比）+ status 标', () => {
+    const { tracker, writes } = harness()
+    const l = line('你在攻击中不断积蓄攻势。(气势：4%)')
+    tracker.observe(l)
+    expect(l.kind).toBe(STATUS_KIND)
+    expectWritten(writes, 'combat', '气势', 4)
+    const l2 = line('你在攻击中不断积蓄攻势。(气势：100%)')
+    tracker.observe(l2)
+    expect(writes.findLast(w => w.zone === 'combat' && w.key === '气势')?.value).toBe(100)
+  })
+
+  it('开战行（实录：我方发起）→ combat.目标 + combat.敌人数=1', () => {
+    const { tracker, writes } = harness()
+    const l = line('你大喝一声，开始对大狼狗发动攻击！')
+    tracker.observe(l)
+    expect(l.kind).toBe(STATUS_KIND)
+    expectWritten(writes, 'combat', '目标', '大狼狗')
+    expectWritten(writes, 'combat', '敌人数', 1)
+  })
+
+  it('敌意行（实录：敌方确立）→ combat.目标 + combat.敌人数=1', () => {
+    const { tracker, writes } = harness()
+    const l = line('看起来大狼狗想杀死你！')
+    tracker.observe(l)
+    expect(l.kind).toBe(STATUS_KIND)
+    expectWritten(writes, 'combat', '目标', '大狼狗')
+    expectWritten(writes, 'combat', '敌人数', 1)
+  })
+
+  it('敌方档位行（实录 1 级判据）→ combat.敌档（括号内原文）；我方戳行（带『』）不误配', () => {
+    const { tracker, writes } = harness()
+    const l = line('( 大狼狗已经伤痕累累，正在勉力支撑著不倒下去。 )')
+    tracker.observe(l)
+    expect(l.kind).toBe(STATUS_KIND)
+    expectWritten(writes, 'combat', '敌档', '大狼狗已经伤痕累累，正在勉力支撑著不倒下去。')
+    // 我方伤情戳行（A.8.4：主语你 + 『』戳尾）不打标不写（描述语非刻度，用户裁定）
+    const mine = line('( 你已经陷入半昏迷状态，随时都可能摔倒晕去。)『夫差(damage:+32 气血:0%/61%)』')
+    tracker.observe(mine)
+    expect(mine.kind).toBeNull()
+    expect(writes.find(w => w.key === '敌档' && String(w.value).includes('你'))).toBeUndefined()
+    expect(writes.length).toBe(1)
+  })
+
+  it('非战斗行不撞：普通叙述/聊天行零写入零打标', () => {
+    const { tracker, writes } = harness()
+    for (const s of ['你伸了个懒腰。', '看起来今天天气不错！', '( 这里有一块石碑。)', '【闲聊】张三：气势如虹']) {
+      const l = line(s)
+      tracker.observe(l)
+      expect(l.kind).toBeNull()
+    }
+    expect(writes).toEqual([])
+  })
+})
+
 // ── runtime 行路径接线 ──────────────────────────────────────────────
 
 /** 接受连接并回放原始行的 TCP 服务端。 */

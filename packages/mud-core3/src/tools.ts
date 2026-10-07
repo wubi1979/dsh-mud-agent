@@ -183,6 +183,8 @@ export const NOT_CONNECTED_ERROR = '已拒绝：未连接，无法发送命令�
 
 /** 会话级持有者冲突的可读拒绝（应答不劈半）。 */
 export const HOLDER_BUSY_ERROR = '已拒绝：另一执行体正在发送命令或等待应答（会话级独占），请稍后重试'
+/** 交战接管期专属拒绝文案（T21 W5：mud_state 照常，发送/读窗可读拒绝）。 */
+export const COMBAT_HOLDING_ERROR = '已拒绝：交战中，行流由战斗系统持有（自主战斗进行中），请战斗结束后再试'
 
 /** 工具执行体返回形态（canonical JSON）。 */
 export type MudConnectResult =
@@ -322,7 +324,9 @@ export function registerMudTools(
       if (args.wait === false) {
         if (args.cmd === undefined) return reject('已拒绝：wait=false（发送即走）需要提供 cmd；裸读请省略 wait')
         const holder = String((exec.agent as ToolAgent | undefined)?.id ?? '')
-        if (!tc.runtime.acquireSend(holder)) return reject(HOLDER_BUSY_ERROR)
+        if (!tc.runtime.acquireSend(holder)) {
+          return reject(tc.runtime.sendHolderId === 'combat' ? COMBAT_HOLDING_ERROR : HOLDER_BUSY_ERROR)
+        }
         try {
           if (!tc.runtime.send(args.cmd)) return reject('已拒绝：发送失败（连接可能已断开）')
         } finally {
@@ -352,7 +356,9 @@ export function registerMudTools(
 
       // 会话级持有者：同一时刻只允许一个执行体在 send+read（冲突可读拒绝，不劈半）。
       const holder = String((exec.agent as ToolAgent | undefined)?.id ?? '')
-      if (!tc.runtime.acquireSend(holder)) return reject(HOLDER_BUSY_ERROR)
+      if (!tc.runtime.acquireSend(holder)) {
+        return reject(tc.runtime.sendHolderId === 'combat' ? COMBAT_HOLDING_ERROR : HOLDER_BUSY_ERROR)
+      }
       try {
         const bare = args.cmd === undefined
         if (args.cmd !== undefined && !tc.runtime.send(args.cmd)) {

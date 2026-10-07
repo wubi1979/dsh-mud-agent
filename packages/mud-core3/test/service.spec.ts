@@ -158,6 +158,7 @@ function makeStatus(over: Partial<{
   admitted: boolean
   loggedIn: 'unknown' | 'in-game'
   probeState: 'idle' | 'probing'
+  combatAuto: boolean
   world: Record<string, Record<string, { value: unknown; confidence: 'measured' | 'inferred'; source: { kind: 'gmcp' | 'system'; time: number } }>>
 }> = {}): Parameters<typeof import('../src/service.ts')['statusRowOf']>[0] {
   return {
@@ -166,6 +167,7 @@ function makeStatus(over: Partial<{
     admitted: true,
     loggedIn: 'unknown',
     probeState: 'idle',
+    combatAuto: true,
     world: {},
     ...over,
   }

@@ -12,7 +12,7 @@ import type { MudLine } from './link/line.ts'
 import type { KeepaliveOptions, ProbeState } from './link/keepalive.ts'
 import { ReadMachine, type ReadOpts, type ReadResult } from './read.ts'
 import { GameScreen, type GameViewOptions } from './view/screen.ts'
-import { World, type LoggedInState, type WorldSnapshot } from './world.ts'
+import { World, type LoggedInState, type WorldEntry, type WorldSnapshot } from './world.ts'
 import { Classifier } from './classify.ts'
 import { StateTracker } from './tracker.ts'
 import type { ConnState } from './roster.ts'
@@ -86,6 +86,8 @@ export class SessionRuntime {
 
   /** 行流回调（C3 聚合投递接此；C2 可选，测试用）。 */
   onLine: ((line: MudLine) => void) | null = null
+  /** 行路径最前钩子（T21.5 危险抢占判定点①接此；先于分类/追踪/读窗消费）。 */
+  onEarlyLine: ((line: MudLine) => void) | null = null
   /** 行到达钩子（T4a 静默唤醒 re-arm 接此；每行一次，与投递无关）。 */
   onActivity: (() => void) | null = null
   /** 断线回调（装配层接此标记断开）。 */
@@ -136,9 +138,12 @@ export class SessionRuntime {
     })
     this.mud.onLog = (level, text) => { this.onLog?.(level, text) }
     this.readMachine.onLog = (level, text) => { this.onLog?.(level, text) }
-    // 行路径（单一真相，多消费者按序）：⓪分类单点打标 → ①pending 录制（永远）
-    // → ②read 在途累积判定 → ③投递（onLine 回调 → Deliverer 水位拉取）。
+    // 行路径（单一真相，多消费者按序）：⓪onEarlyLine（T21.5 危险抢占，先于一切）
+    // → ①分类单点打标 → ②tracker 观察 → ③pending 录制（永远）
+    // → ④read 在途累积判定 → ⑤投递（onLine 回调 → Deliverer 水位拉取）。
     this.mud.onLine = line => {
+      // T21.5 判定点①（文本类）：命中即进入危险态并接管（abortWait 打断在途读窗）。
+      this.onEarlyLine?.(line)
       // C5.2：全系统唯一一次分类——先于录制/画面路由/投递，保证所有消费者看到 kind。
       this.classifier.mark(line)
       // T19（D1）：状态追踪在分类器同一点观察——判据解析写 World + 块级行打标
@@ -238,6 +243,13 @@ export class SessionRuntime {
   }
 
   /**
+   * 世界状态单条读取（T21 战斗控制器等高频读用；避免整快照拷贝）。
+   */
+  worldEntry(zone: string, key: string): WorldEntry | undefined {
+    return this.worldState.get(zone, key)
+  }
+
+  /**
    * 追踪解析写入口（T19）：状态追踪器把游戏原文判据解析出的条目写入 World
    *（置信度恒 measured，来源 kind='track'），并触发 onWorldChange（状态帧
    * 照常广播）。同 zone+key 后到覆盖（World.set 语义）。
@@ -250,6 +262,15 @@ export class SessionRuntime {
   /** 追踪消解口（T19 D9）：clear 规则命中时删除 World 条目；实际删除才广播。 */
   deleteWorld(zone: string, key: string): void {
     if (this.worldState.delete(zone, key)) this.onWorldChange?.()
+  }
+
+  /**
+   * 战斗模块写入口（T21 D8）：模块计数落 zone='combat'、来源 kind='combat'
+   *（与 gmcp/track 并列的第三种来源；画面/HUD 按 `combat#key` 呈现）。
+   */
+  writeCombatWorld(key: string, value: unknown): void {
+    this.worldState.set('combat', key, value, 'measured', { kind: 'combat', time: Date.now() })
+    this.onWorldChange?.()
   }
 
   /** 画面通道（remote.mud.follow 经 service.screenOf 取用）。 */
@@ -410,5 +431,27 @@ export class SessionRuntime {
   /** 释放发送权（只解除自己的持有）。 */
   releaseSend(holder: string): void {
     if (this.sendHolder === holder) this.sendHolder = null
+  }
+
+  /** 当前持有者标识（null = 空闲；'combat' = 战斗接管期，工具/流程拒绝文案据此区分）。 */
+  get sendHolderId(): string | null {
+    return this.sendHolder
+  }
+
+  /**
+   * 抢占发送权（T21 D5/PLAN 3.4）：清掉任何现持有者并归属调用方——危险通道与
+   * 「待接管转正式接管」专用；被抢者已因危险收束（abortWait/timeout 出口）走
+   * 既有 finally 释放，不存在悬挂。
+   */
+  stealSend(holder: string): void {
+    this.sendHolder = holder
+  }
+
+  /**
+   * 打断在途 read（T21 D5/PLAN 3.5 危险抢占通道；§5.2 abortWait 首次启用）：
+   * 以 reason:'danger' 收束，触发行由调用方收编进结果（现场随结果上抛）。
+   */
+  abortWait(line?: MudLine): void {
+    this.readMachine.abortWait(line)
   }
 }

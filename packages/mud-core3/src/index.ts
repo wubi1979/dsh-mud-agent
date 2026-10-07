@@ -54,7 +54,7 @@ import { Wake, DEFAULT_TASK_BRIEF, fillTaskBrief } from './wake.ts'
 import { shouldVeto, vetoStopStream } from './llm-gate.ts'
 import {
   addAccount as writeAccount, addServer as writeServer, removeAccount as dropAccount,
-  removeServer as dropServer, setAdmitted, renameAccount,
+  removeServer as dropServer, setAdmitted, renameAccount, setCombatAuto as writeCombatAuto,
 } from './accounts.ts'
 // T18.2：会话上下文的进程级收口（表面遮蔽）。判定/适配在纯层 elide.ts，这里只做归属与阻断接线。
 import { applyElision, processEpoch } from './elide.ts'
@@ -409,6 +409,23 @@ export class MudRemoteService extends TypertRemoteService {
     this.service.stop(id)
     await setAdmitted(this.writeDeps(), id, false)
     return { sessionId: id, admitted: this.service.status(id).admitted }
+  }
+
+  /**
+   * 战斗刹车（T21.6 combatAuto 总开关）：关闭 = 人打断——立即释放当前遭遇并挂起
+   * （不接管、不开窗、危险通道也不动作）；恢复 = 新遭遇照常接管（不追补当前场）。
+   * 名册持久化（重启保留人的意愿）。
+   */
+  @Remote
+  async combatAuto(
+    sessionId: string | undefined,
+    enabled: boolean | undefined,
+  ): Promise<{ sessionId: string; combatAuto: boolean }> {
+    const id = requireId(sessionId, 'sessionId')
+    if (enabled === undefined) throw new Error('enabled 必填')
+    this.service.setCombatAuto(id, enabled)
+    await writeCombatAuto(this.writeDeps(), id, enabled)
+    return { sessionId: id, combatAuto: enabled }
   }
 
   /** 连接状态 + 接入状态。 */
@@ -776,6 +793,8 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     const account = store.account(sessionId)
     if (account === undefined) return // 不在名册 = 不是我们的会话
     const rt = service.register(sessionId, account.name)
+    // 战斗开关初始化（T21.6）：名册持久偏好（缺省/缺字段 = true）应用到控制器。
+    service.setCombatAuto(sessionId, account.combatAuto !== false)
     // 记录 agent 句柄（投递用；agent 有 followup 方法）
     agentMap.set(sessionId, { followup: msg => agent.followup(msg) })
     // 静默唤醒器（每会话一实例）：行到达 re-arm + 到期守卫，命中投任务书。

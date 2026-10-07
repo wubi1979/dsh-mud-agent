@@ -169,7 +169,7 @@ seen = max(deliveredAbs, readAbs)
 | **挂载** | 独立类，挂 `SessionRuntime`；`onBoundary` 直挂它（GA 判据） |
 | **有界缓冲** | **复用 `runtime.pendingLines`**，不自建缓冲（P2） |
 | **`failOn`** | **agent 驱动的打断**：突发行一到达即命中收束，并返回累积行**含触发行** |
-| **`abortWait`** | **保留 API**：系统驱动打断的出口（意识层后置，§17.3）；管道已就绪 |
+| **`abortWait`** | **系统驱动打断的出口，已有调用者**（T21.5）：战斗危险抢占通道在威胁行到达时以触发行打断在途读窗（`reason:'danger'` 收束，触发行含在结果尾，§6.3）；意识层复用后置（§17.3） |
 | **`swallow` 吞行钩子** | 空实现（规则层后置）：规则动作吞行留摘要，吞掉的行不进任何模型面 |
 | **`ReadResult.rest`** | **砍掉**：判据命中后的同批剩余行照常走行路径（逐行回调模型下自然并回） |
 | **命中帧 `hit`（T15）** | 判据命中时**同时**给出「哪条判据赢了（`by` + `index`）+ 该条首个命中的捕获组（`groups`）」——`by='until'\|'failOn'`、`index` 即 `branch`/`onFailOn` 的键、`groups` 为组 1..n（未参与组 `undefined`）。无判据命中（`gaCount`/`maxLines` 关窗或异步收束）⇒ `hit === undefined`。**判据匹配系统内单点在本机**：流程解释器与工具面都消费该帧，不再各自重测一遍（§8.13） |

@@ -33,6 +33,10 @@ import type { MudLine } from './link/line.ts'
 import { SessionLog, type LogEntry, type LogLevel, type SessionLogOptions } from './log/log-service.ts'
 import type { GameScreen, GameViewOptions } from './view/screen.ts'
 import type { LoggedInState, WorldConfidence, WorldSnapshot } from './world.ts'
+import { CombatController, type CombatWindowOptions } from './combat/controller.ts'
+import { CombatEdgeDetector } from './combat/state.ts'
+import { CombatRuleEngine } from './combat/rules.ts'
+import { CombatReporter } from './combat/report.ts'
 import type {
   AccountLookup,
   AccountRecord,
@@ -89,6 +93,16 @@ export interface MudServiceDeps {
    * 一条状态任务书触发规划；测试断言接线。stop 不触发）。
    */
   readonly onAdmit?: (sessionId: string) => void
+  /** 战斗系统参数（T21：退路 move 命令 + 长读窗刻度；缺省 = 撤离规则不启用、内置刻度）。 */
+  readonly combat?: CombatServiceOptions
+}
+
+/** 战斗系统参数（T21，service 注入面）。 */
+export interface CombatServiceOptions {
+  /** 退路 move 命令（D14 退路数据；缺省不注入 ⇒ 撤离规则不启用并告警）。 */
+  readonly retreatMove?: string
+  /** 长读窗与重试刻度覆盖（quiet/timeout/maxLines/silentMax/pendingRetryMs）。 */
+  readonly window?: CombatWindowOptions
 }
 
 /** 自动重连参数（T5.2 D5；Config reconnectMaxAttempts/reconnectIntervalMs 注入面）。 */
@@ -111,6 +125,8 @@ export interface SessionStatus {
   readonly loggedIn: LoggedInState
   /** 探活观测态（T5.1：idle | probing；不回写 conn 三态）。 */
   readonly probeState: ProbeState
+  /** 自主战斗总开关（T21.6 combatAuto；未登记会话缺省 true）。 */
+  readonly combatAuto: boolean
   /** 世界状态快照（GMCP 写入，断线复位）。 */
   readonly world: WorldSnapshot
 }
@@ -166,6 +182,8 @@ export interface StatusRow {
   readonly loggedIn: LoggedInState
   /** 探活观测态（T5.1：idle | probing；不回写 conn 三态）。 */
   readonly probeState: ProbeState
+  /** 自主战斗总开关（T21.6 combatAuto；战斗刹车呈现用）。 */
+  readonly combatAuto: boolean
   /** 世界状态扁平窄面：条目值 JSON 字符串化（`unknown` 不过 Remote 边界）。 */
   readonly world: readonly {
     zone: string
@@ -202,7 +220,7 @@ export function statusRowOf(s: SessionStatus): StatusRow {
       })
     }
   }
-  return { sessionId: s.sessionId, state: s.state, admitted: s.admitted, loggedIn: s.loggedIn, probeState: s.probeState, world }
+  return { sessionId: s.sessionId, state: s.state, admitted: s.admitted, loggedIn: s.loggedIn, probeState: s.probeState, combatAuto: s.combatAuto, world }
 }
 
 /** 工具执行上下文（归属解析结果；工具层按它定位发送目标）。 */
@@ -272,6 +290,7 @@ export class MudService {
   private readonly runtimes = new Map<string, SessionRuntime>()
   private readonly deliverers = new Map<string, Deliverer>()
   private readonly logs = new Map<string, SessionLog>()
+  private readonly combatControllers = new Map<string, CombatController>()
 
   /** 状态流订阅者（watchStatus 广播面；多订阅者互不影响）。 */
   private readonly statusListeners = new Set<(frame: StatusFrame) => void>()
@@ -323,19 +342,43 @@ export class MudService {
     this.logs.set(sessionId, log)
     log.info('runtime', '会话登记（无连接）')
 
+    // 战斗控制器（T21.4）：每会话一个，未接入也运转（D9：不看 admit 闸门）。
+    // World 计数经 writeCombatWorld（kind='combat'）；日志走 runtime 通道。
+    const combat = new CombatController({
+      io: rt,
+      world: { get: (z, k) => rt.worldEntry(z, k), delete: (z, k) => rt.deleteWorld(z, k) },
+      engine: new CombatRuleEngine(this.deps.combat?.retreatMove === undefined
+        ? {}
+        : { retreatMove: this.deps.combat.retreatMove }),
+      detector: new CombatEdgeDetector(),
+      reporter: new CombatReporter({
+        write: (key, value) => { rt.writeCombatWorld(key, value) },
+        log: text => { log.info('runtime', text) },
+      }),
+      window: this.deps.combat?.window,
+    })
+    this.combatControllers.set(sessionId, combat)
+
+    // 行路径最前（T21.5 判定点①文本类）：威胁行文命中即进入危险态并接管。
+    rt.onEarlyLine = line => { combat.onThreatLine(line) }
     // 状态迁移 → 广播（C5.1 watchStatus 的推帧源；值变化才触发）；
     // 断线迁移（T5.2 D4）→ 自动重连闸门判定（D4：hasConnected && !manualDisconnected）；
     // 断线（B1①）→ 验证码挂起 closed 收束（结构化，不 reject——挂起期断线靠此收束，
-    // 探测不救：D8 busy 抑制）。
+    // 探测不救：D8 busy 抑制）；断线 → 战斗控制器释放 + interrupted 记账（T21 W10）。
     rt.onStateChange = (state) => {
       this.emitStatus()
       if (state === 'disconnected') {
+        combat.onDisconnected()
         this.resolveCaptcha(sessionId, { kind: 'closed' })
         this.scheduleAutoReconnect(sessionId, rt)
       }
     }
-    // 登录轴/世界状态变化（GMCP 到达、断线复位）→ 同一广播面
-    rt.onWorldChange = () => { this.emitStatus() }
+    // 登录轴/世界状态变化（GMCP 到达、断线复位、tracker 状态写入）→ 战斗控制器
+    //（状态驱动 D1）→ 同一广播面
+    rt.onWorldChange = () => {
+      combat.onWorldChange()
+      this.emitStatus()
+    }
 
     // 网络层日志（telnet 协商/断线/协议异常）→ 会话日志
     rt.onLog = (level, text) => { log.append({ level, channel: 'network', text }) }
@@ -343,6 +386,8 @@ export class MudService {
     // 投递器（pull 模型）：源 = runtime 水位线面；投递结果写会话日志。
     const delivererConfig: DelivererConfig = {
       ...this.deps.delivererConfig,
+      // 交战接管期零投递（T21 D4）：战斗原文由长读窗消费并推进 readAbs，不回放。
+      suppress: () => combat.suppressDelivery,
       onBatch: (id, lineCount, delivered, reason) => {
         log.info('deliver', delivered
           ? `投递 ${lineCount} 行（agent 已收）`
@@ -396,6 +441,11 @@ export class MudService {
   /** 取投递器（测试/观测用）。 */
   getDeliverer(sessionId: string): Deliverer | null {
     return this.deliverers.get(sessionId) ?? null
+  }
+
+  /** 取战斗控制器（测试/T21.6 总开关接线用；未登记返回 null）。 */
+  combatOf(sessionId: string): CombatController | null {
+    return this.combatControllers.get(sessionId) ?? null
   }
 
   /**
@@ -483,7 +533,9 @@ export class MudService {
     const credentials = await this.resolveCredentials(account, log)
 
     if (!rt.acquireSend(holder)) {
-      throw new Error('另一执行体正在发送命令或等待应答（会话级独占），请稍后重试')
+      throw new Error(rt.sendHolderId === 'combat'
+        ? '交战中：行流由战斗系统持有（自主战斗进行中），agent 工具/流程暂不可用'
+        : '另一执行体正在发送命令或等待应答（会话级独占），请稍后重试')
     }
     log?.info('runtime', `流程 IO 就绪（${holder}）`)
 
@@ -699,7 +751,7 @@ export class MudService {
     queueMicrotask(() => { deliverer.onTurnEnd() })
   }
 
-  /** 两轴 + 接入 + 探活观测 + 世界状态。 */
+  /** 两轴 + 接入 + 探活观测 + 战斗开关 + 世界状态。 */
   status(sessionId: string): SessionStatus {
     const rt = this.runtimes.get(sessionId)
     const del = this.deliverers.get(sessionId)
@@ -709,8 +761,21 @@ export class MudService {
       admitted: del?.isAdmitted ?? false,
       loggedIn: rt?.loggedIn ?? 'unknown',
       probeState: rt?.probeState ?? 'idle',
+      combatAuto: this.combatControllers.get(sessionId)?.combatAuto ?? true,
       world: rt?.world ?? {},
     }
+  }
+
+  /**
+   * 战斗刹车（T21.6 combatAuto 总开关）：关闭 = 人打断——立即释放当前遭遇并挂起
+   * （不接管、不开窗、危险通道也不动作）；恢复 = 新遭遇照常接管，不追补当前场。
+   * @throws 会话未登记时抛错。
+   */
+  setCombatAuto(sessionId: string, on: boolean): void {
+    const combat = this.combatControllers.get(sessionId)
+    if (combat === undefined) throw new Error(`会话 ${sessionId} 未登记`)
+    combat.setCombatAuto(on)
+    this.emitStatus()
   }
 
   /** 全部会话状态（管理面用）。 */
@@ -901,6 +966,7 @@ export class MudService {
     this.logs.get(sessionId)?.info('runtime', '会话销毁：断连 + 拆运行时')
     this.deliverers.get(sessionId)?.dispose()
     this.deliverers.delete(sessionId)
+    this.combatControllers.delete(sessionId)
     rt.dispose()
     this.runtimes.delete(sessionId)
     this.logs.delete(sessionId)

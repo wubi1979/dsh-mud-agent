@@ -67,6 +67,11 @@ export interface DelivererConfig {
   allowKinds?: string[]
   /** 每批投递结果回调（观测用；delivered=false 表示该批未投出、水位不推进，reason = 失败原因）。 */
   onBatch?: (sessionId: string, lineCount: number, delivered: boolean, reason?: string) => void
+  /**
+   * 投递压制谓词（T21.4 交战接管注入）：返回 true 时 flush 零拉取——接管期
+   * 战斗原文不进 agent（行已被长读窗消费并推进 readAbs，释放后不回放）。
+   */
+  suppress?: () => boolean
 }
 
 const DEFAULT_QUIET_MS = 500
@@ -95,6 +100,8 @@ export class Deliverer {
   private readonly onBatch:
     | ((sessionId: string, lineCount: number, delivered: boolean, reason?: string) => void)
     | undefined
+  /** 投递压制谓词（T21.4 交战接管注入；缺省恒不压制）。 */
+  private readonly suppress: () => boolean
 
   private admitted = false
   /** turn 抑制模式（turn/start → turn/end 之间不武装定时器）。 */
@@ -120,6 +127,7 @@ export class Deliverer {
     this.maxChars = config.maxChars ?? DEFAULT_MAX_CHARS
     this.allowSet = new Set(config.allowKinds ?? [])
     this.onBatch = config.onBatch
+    this.suppress = config.suppress ?? (() => false)
   }
 
   /** 是否已接入。 */
@@ -217,6 +225,7 @@ export class Deliverer {
   private flush(): void {
     this.clearTimers()
     if (this.disposed || !this.admitted) return
+    if (this.suppress()) return // 交战接管期：零拉取（战斗原文由长读窗消费，D4）
     const seen = this.source.seenAbs()
     const lines = this.source.linesAfter(seen)
     if (lines.length === 0) return

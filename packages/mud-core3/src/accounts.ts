@@ -166,3 +166,22 @@ export async function setAdmitted(
   await deps.store.putAccount(next)
   return next
 }
+
+/**
+ * 写回自主战斗总开关（T21.6「战斗刹车」持久化；重启后仍按人的意愿）。
+ * @param deps - 名册依赖。
+ * @param sessionId - 账号 id。
+ * @param combatAuto - 目标开关（true = 自主战斗开）。
+ * @throws 账号不在名册时抛错。
+ */
+export async function setCombatAuto(
+  deps: AccountWriteDeps,
+  sessionId: string,
+  combatAuto: boolean,
+): Promise<AccountRecord> {
+  const current = deps.store.account(sessionId)
+  if (current === undefined) throw new Error(`账号 ${sessionId} 不在名册`)
+  const next: AccountRecord = { ...current, combatAuto }
+  await deps.store.putAccount(next)
+  return next
+}

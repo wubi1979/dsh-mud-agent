@@ -108,8 +108,10 @@ function splitRowCells(text: string): string[] {
 
 // ── hpbrief：定长 3 行位置映射（§2.2 已定稿 18 位表；实录 2026-10-06 同刻校准）──
 
-/** hpbrief 单行判据：恰好 6 个纯数字 cell（D5 完整性校验的一部分；不满足整组不写）。 */
-const HPBRIEF_CELL_RE = /^\d+$/
+/** hpbrief 单行判据：恰好 6 个纯数字 cell（D5 完整性校验的一部分；不满足整组不写）。
+ *  负号合法：气血可为 -1（A.8.1 死亡断面实录 `#313,193,-1,…`；A.8.4：气血 <= 0
+ *  不是死亡判据，状态须照写）。 */
+const HPBRIEF_CELL_RE = /^-?\d+$/
 
 /**
  * hpbrief 行映射（按行序 index）：
@@ -352,6 +354,39 @@ function aliasRow(row: RowContext): TrackEntry[] | undefined {
   return [{ key: m[1] ?? '', value: aliases }]
 }
 
+// ── combat（T21.1：战斗判据，lines 形状；实录出处 A.8.3）────────────
+
+/** 气势累积：`你在攻击中不断积蓄攻势。(气势：4%)` → 整数百分比（A.8.3）。 */
+const COMBAT_MOMENTUM_RE = /^你在攻击中不断积蓄攻势。\(气势：(\d+)%\)$/
+/** 我方开战：`你大喝一声，开始对大狼狗发动攻击！` → 目标 + 敌人数（A.8.3）。
+ * 导出供危险抢占通道文本判定点①复用（T21.5，判据单点）。 */
+export const COMBAT_ENGAGE_RE = /^你大喝一声，开始对(.{1,20}?)发动攻击！$/
+/** 敌意确立：`看起来大狼狗想杀死你！` → 目标 + 敌人数（A.8.3）。
+ * 导出供危险抢占通道文本判定点①复用（T21.5，判据单点）。 */
+export const COMBAT_HOSTILE_RE = /^看起来(.{1,20}?)想杀死你！$/
+/**
+ * 敌方档位：实录确认仅 1 级 `( X已经伤痕累累，正在勉力支撑著不倒下去。 )`
+ * （A.8.3）；阶梯其余档〔推断〕待实录（A.8.5），不得据此扩判据。锚「名 + 已经 +
+ * 行尾右括号」——我方伤情行（主语你、『』戳尾，A.8.4）不匹配（描述语非刻度，
+ * 用户裁定 2026-10-06，不作阈值依据）。
+ */
+const COMBAT_ENEMY_TIER_RE = /^\(\s*([\u4e00-\u9fff]{2,12})已经(.+?)\s*\)\s*$/
+
+/** 战斗行判据（lines 形状，块外逐行；zone 固定 combat）。 */
+function combatRow(row: RowContext): TrackEntry[] | undefined {
+  const m = COMBAT_MOMENTUM_RE.exec(row.raw)
+  if (m !== null) return [{ key: '气势', value: Number.parseInt(m[1] ?? '0', 10) }]
+  const engage = COMBAT_ENGAGE_RE.exec(row.raw)
+  if (engage !== null) return [{ key: '目标', value: engage[1] ?? '' }, { key: '敌人数', value: 1 }]
+  const hostile = COMBAT_HOSTILE_RE.exec(row.raw)
+  if (hostile !== null) return [{ key: '目标', value: hostile[1] ?? '' }, { key: '敌人数', value: 1 }]
+  if (!row.raw.includes('『')) {
+    const tier = COMBAT_ENEMY_TIER_RE.exec(row.raw)
+    if (tier !== null) return [{ key: '敌档', value: `${tier[1] ?? ''}已经${tier[2] ?? ''}`.trim() }]
+  }
+  return undefined
+}
+
 // ── 缺省规则集 ──────────────────────────────────────────────────────
 
 /**
@@ -368,6 +403,7 @@ export const DEFAULT_TRACK_RULES: readonly AnyTrackRule[] = [
   { id: 'skills', shape: 'table', zone: 'skills', match: skillsRow },
   { id: 'id-header', shape: 'lines', zone: 'items', match: (row) => (ALIAS_HEADER_RE.test(row.raw) ? [] : undefined) },
   { id: 'id', shape: 'lines', zone: 'items', match: aliasRow },
+  { id: 'combat', shape: 'lines', zone: 'combat', match: combatRow },
 ]
 
 /** 缺省 clear 规则（D9；按例证逐条加）。 */

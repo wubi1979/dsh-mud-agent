@@ -589,3 +589,23 @@
 - **待办**：用户贴完整实录后补 A.7.3 校准（skills/id/i/sc 列位判据），修正判据与用例（A.6 纪律）。
 
 > AI生成
+
+## [v0.0.52]T21 战斗自主：状态驱动 + 危险抢占 + 行流接管 + 完全自主总开关 (2026-10-07)
+> 总结：战斗系统落地（PLAN T21，切片 T21.1–T21.7）：遭遇开始到结束由系统按规则打完整场，零模型调用；状态驱动（跨变才匹配规则）；危险最高优先级抢占；战斗原文不进 agent；2026-10-07 用户三裁定（文本判定点命中即进入危险态并接管 · 危险态退出 = 结局类行文 ∨ 回升跨变 ∨ 脱战 ∨ 断线 · 释放条件裁砍 maxRounds）。
+
+- **实现**：
+  - `tracker.ts`：战斗判据规则族（`combat.气势`/`敌档`/`目标`/`敌人数`，lines 形状，判据出处 A.8.3）；hpbrief 单元格判据放宽负号（`-?\d+`：A.8.1 死亡断面实录 `#313,193,-1,…`，A.8.4 气血 ≤ 0 不是死亡判据，状态须照写）。
+  - `combat/state.ts`（新，纯层）：比值（气血比/容量比/内力比，上限 200%）+ 百分比分档（伤情描述语不作阈值依据，A.8.4 裁定）+ 上一档快照与跨变边沿（常态档基线，首拍即异常也产出边沿）。
+  - `combat/rules.ts`（新，纯层）：规则形态（条件→动作；设置型按已设值节流 / 占拍型由假转真触发）+ 人工种子表（flee/heal/medicine/jiali-on/jiali-off/perform 留位）+ 危险规则集直发求值（绕过节流）；干预命令原文 A.8.5〔推断〕待实录校准。
+  - `combat/report.ts`（新）：World 计数（`zone='combat'`、`kind:'combat'`：拍数/干预/最后动作/规则命中，D8 三分语义）+ 会话日志（命中/放弃/接管失败留痕）。
+  - `combat/controller.ts`（新）：接管状态机（idle/held/pending；遭遇开始 `acquireSend('combat')` + 覆盖整场的长读窗，收束重估/重开；释放 = 结局行/脱战/断线 interrupted 记账/静默兜底）；**重入合并闸**（T21.7 回放揭示：自身写回经 writeCombatWorld/deleteWorld 再入 onWorldChange 会自激递归——同步处理期间再入事件一律吞掉）；危险态（进入 = 文本判定点①/危险档跨变②，退出 = 结局类行文/回升跨变/脱战/断线，2026-10-07 裁定；危险直发受边沿门控——evaluateDanger 无节流，逐状态行求值会每拍重发）；`setCombatAuto` 总开关（关闭 = 立即释放 + interrupted 记账 + 挂起；恢复不追补当前场——skipCurrent 闩到本场消解）。
+  - `combat/danger.ts`（新）：危险判据单点（文本 COMBAT_THREAT_RES 与 tracker 战斗行判据同源导出；危险档 = 气血比 <25%/濒危 或 容量比 <50%；回升跨变语义）。
+  - `runtime.ts`/`service.ts`：行路径最前 `onEarlyLine` 钩子接线判定点①；持有者增补 `stealSend`；`abortWait` 首次启用（reason='danger'）；投递 suppress 谓词（held 期零投递，D4）；每会话战斗控制器装配。
+  - `roster.ts`/`accounts.ts`/`index.ts`：`combatAuto` 偏好持久化 + 名册应用 + 新 remote 动词 `combatAuto(sessionId, enabled)`（已 gen:typert + build）。
+  - `mud-webui`：`mud-remote.ts` combatAuto 方法、`MudSidebar` 账号菜单「战斗刹车/恢复自主战斗」、`MudHudTable` 非 gmcp zone 键显示 `zone/key` 前缀（combat 计数呈现）。
+- **测试（先红后绿）**：`combat-state`/`combat-rules`/`combat-report`/`combat-controller`/`combat.replay` 五规格；A.8 实录回放（D15）以实录语料纯层端到端：开战行危险抢占接管 → 11 拍受击戳命中序列（heal 只在五成/危险/濒危三处跨变拍）→ 未跨档不发 → -1 濒危 → 死亡结局行释放 + 清遭遇键；回放揭示并修复三处（tracker 负值格、重入自激、危险直发无刻度）。断线 interrupted 记账回放一例。
+- **文档**：§5.2（`abortWait` 已有调用者）、§6.3（交战接管期零投递）、§8.6（`stealSend` 抢占动词）、§10.3（`kind:'combat'`）、§16.5（T21 切片行）。
+- **回归**：core3 402/402（30 文件）+ mud-workflow 77/77 + webui 7/7 全绿，全仓 `pnpm -r typecheck` 清零。
+- **待实测（真机冒烟）**：胜利/脱战/逃的行文、干预行文（perform/jiali/运功/药/halt/move）、敌方档位完整阶梯、忙位何时非 0、战后处置、多敌行文、未受伤拍是否也推 hpbrief（A.8.5 推断值清单）。
+
+> AI生成

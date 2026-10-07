@@ -40,7 +40,7 @@ world:     GMCP 事件与（后置的）行级规则驱动（§10.3）
 |---|---|---|
 | **分区 `zone`** | `vitals` / `combat` / `location` / `session` / `gmcp` / … | 按用途分区，按需生长；追踪解析写**语义分区**（`vitals`/`combat`/`inventory`/`skills`/`items`/`character`，T19） |
 | **置信度** | `measured`（直接测量）/ `inferred`（推断） | 登录轴已用 `inferred` 先行（§10.2）；World 条目的推断写入源留给后置的**规则层**（§17.3）；`measured` 口径 = 直接测量，**含游戏原文的判据解析**（T19 追踪写入恒 `measured`） |
-| **来源追溯** | `kind` + `time` | 每个条目可回答"什么时候、由谁写的"；`kind`: `gmcp`（服务器 GMCP 包）/ **`track`（状态追踪判据解析，T19）** / `system`（**类型预留，现无写入方**） |
+| **来源追溯** | `kind` + `time` | 每个条目可回答"什么时候、由谁写的"；`kind`: `gmcp`（服务器 GMCP 包）/ **`track`（状态追踪判据解析，T19）** / **`combat`（战斗模块写入的计数：拍数/干预/最后动作/规则命中，T21 D8）** / `system`（**类型预留，现无写入方**） |
 
 - **同 `zone + key` 后到覆盖旧值**（单一真相，不做多版本）。
 - **写入源（现役）**：① GMCP 事件（`zone='gmcp'`）；② **状态追踪器**（T19）：每会话一个 `StateTracker`（`src/tracker.ts`），在行路径分类器同一点 `observe(line)`（D1），把游戏文本按**判据**（正则/列位/位置序，实录出处 = 附录 A.7）解析为结构化条目写入——**零 LLM**；GMCP 写 `zone='gmcp'` 为**权威**，追踪器写语义分区补文字源，同一事实两源同键后到覆盖（D10）。判据消解：追踪规则可声明 `clear`（如「你不再感到饥饿」→ 删除 `vitals.食物状态`），`World.delete(zone, key)` 幂等删除（D9）。

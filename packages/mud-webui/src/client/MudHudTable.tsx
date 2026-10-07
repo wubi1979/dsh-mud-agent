@@ -93,7 +93,7 @@ export function MudHudTable({ row, emptyText = '暂无状态' }: MudHudTableProp
           : entries.map(e => (
             <tr key={`${e.zone}#${e.key}`}
               title={`${e.zone}/${e.key} · ${e.c} · ${e.sk}\n${e.v}`}>
-              <td style={TD_STYLE}>{e.key}</td>
+              <td style={TD_STYLE}>{e.zone === 'gmcp' ? e.key : `${e.zone}/${e.key}`}</td>
               <td style={TD_STYLE}>{e.v}</td>
             </tr>
           ))}

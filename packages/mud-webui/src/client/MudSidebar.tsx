@@ -50,6 +50,8 @@ export interface MudClientInjected {
   admit: (sessionId: string) => Promise<void>
   /** 停止接入：MUD 信息不再进入 agent。 */
   stopAdmit: (sessionId: string) => Promise<void>
+  /** 战斗刹车（T21.6）：enabled=false 人打断自主战斗；true 恢复（新遭遇照常接管）。 */
+  setCombatAuto: (sessionId: string, enabled: boolean) => Promise<void>
   refreshStatus: (sessionId?: string) => Promise<void>
   /** 订阅服务端 watchStatus 状态流（C5.1：首帧快照 + 变化推帧）；返回停止函数。 */
   startStatusWatch: () => () => void
@@ -111,7 +113,7 @@ function admitBadge(sessionStatus: Readonly<Record<string, SessionStatusRow>>, s
 export function MudSidebar({
   collapsed, useServers,
   addServer, removeServer, addUser, updateUser, removeUser,
-  admit, stopAdmit, refreshStatus, startStatusWatch,
+  admit, stopAdmit, setCombatAuto, refreshStatus, startStatusWatch,
   openUserSession, toggleSidebar, remote,
 }: MudSidebarProps) {
   const { servers, conn, sessionStatus, credentialStatus } = useServers(s => s)
@@ -247,6 +249,8 @@ export function MudSidebar({
                 const badge = credBadge(user.passRef, credentialStatus[user.passRef])
                 const admitted = admitBadge(sessionStatus, user.sessionId)
                 const isAdmitted = sessionStatus[user.sessionId]?.admitted === true
+                // 战斗刹车（T21.6）：combatAuto 缺省开；关 = 自主战斗挂起。
+                const combatAutoOn = sessionStatus[user.sessionId]?.combatAuto !== false
                 return (
                   <div
                     key={user.id}
@@ -287,6 +291,10 @@ export function MudSidebar({
                         isAdmitted
                           ? { id: 'stop-admit', label: '停止接入' }
                           : { id: 'admit', label: '接入' },
+                        // 战斗刹车（T21.6）：关 = 人打断（立即释放并挂起）；开 = 恢复自主战斗
+                        combatAutoOn
+                          ? { id: 'combat-brake', label: '战斗刹车（停自主战斗）' }
+                          : { id: 'combat-resume', label: '恢复自主战斗' },
                         { id: 'delete-user', label: '删除账号' },
                       ]}
                       onSelect={(id) => {
@@ -294,6 +302,8 @@ export function MudSidebar({
                         if (id === 'delete-user') removeUser(server.id, user.id)
                         if (id === 'admit' && user.sessionId !== '') void admit(user.sessionId)
                         if (id === 'stop-admit' && user.sessionId !== '') void stopAdmit(user.sessionId)
+                        if (id === 'combat-brake' && user.sessionId !== '') void setCombatAuto(user.sessionId, false)
+                        if (id === 'combat-resume' && user.sessionId !== '') void setCombatAuto(user.sessionId, true)
                         setUserMenuFor(null)
                       }}
                       portal align="start"

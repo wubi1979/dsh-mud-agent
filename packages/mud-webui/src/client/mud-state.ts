@@ -55,6 +55,8 @@ export interface SessionStatusRow {
   readonly loggedIn: 'unknown' | 'inferred' | 'in-game'
   /** 探活观测态（T5.1；缺省 idle——旧服务端或未探测）。 */
   readonly probeState?: 'idle' | 'probing'
+  /** 自主战斗总开关（T21.6；缺省 true——旧服务端无此字段）。 */
+  readonly combatAuto?: boolean
   readonly world: readonly MudWorldEntry[]
 }
 
@@ -398,6 +400,7 @@ export class MudStateController {
         sessionId: row.sessionId, state: row.state, admitted: row.admitted,
         loggedIn: row.loggedIn,
         probeState: row.probeState ?? 'idle',
+        combatAuto: row.combatAuto ?? true,
         world: row.world,
       }
     }
