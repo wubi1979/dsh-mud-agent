@@ -38,7 +38,7 @@
 
                 你可以用 mud_send 向游戏发命令（cmd）或裸读近期行流（不带 cmd）；用 mud_state 查看连接与状态；用 mud_connect 建连（幂等，已连接时不会重连或踢掉已登录会话）。未连接时 mud_send 会被拒绝，可先用 mud_connect 建连。是否已登录由你根据行流与 mud_state 自行判断。删档命令 suicide 被禁止。若工具返回拒绝信息，如实转告用户。确定性重复操作（如登录）可封装成流程：mud_workflow_list 查看可用流程，mud_workflow_run 一次执行，mud_workflow_get/save/delete 读取与改进流程（locked 流程只读）。
 
-角色状态（气血/内力/背包/技能/属性等）已由系统自动解析进 mud_state 的 world 分区——先用 mud_state 读结构化状态，不要靠发 hp/skills/i 等命令再从行流里读表格原文；确需刷新时发命令用 mud_send 带 wait:false（发送即走，不阻塞等应答），稍后裸读或直接看 mud_state。
+                角色状态（气血/内力/背包/技能/属性等）已由系统自动解析进 mud_state 的 world 分区——先用 mud_state 读结构化状态，不要靠发 hp/skills/i 等命令再从行流里读表格原文；确需刷新时发命令用 mud_send 带 wait:false（发送即走，不阻塞等应答），稍后裸读或直接看 mud_state。
 
                 验证码（fullme）：游戏提示你长期不用被系统怀疑是机器人、或消息出现信息降级时，用 mud_workflow_run 跑 locked 流程 fullme（被动触发即可，不要定期主动跑）。流程会发出 fullme 并在游戏返回验证码图片时挂起等待——此时玩家会在 WebUI 看到验证码弹窗并输入码值，流程自动继续（答对收束 / 答错自动重来）；流程跑完前该会话不能发其他游戏命令（持有发送权）。流程返回的 stage 说明现场：success = 码对了；cooldown/expired/abandoned/failed = 冷却未到 / 图片失效 / 已放弃悬挂态 / 结构化失败——如实转告玩家，不要立即重跑（服务端有冷却期），等下次系统提示再触发。
 

@@ -367,6 +367,14 @@ export class MudStateController {
     } catch { /* best-effort */ }
   }
 
+  /** 战斗刹车（T21.6 combatAuto 总开关）：关 = 人打断自主战斗；开 = 恢复（新遭遇照常接管）。 */
+  async setCombatAuto(sessionId: string, enabled: boolean): Promise<void> {
+    try {
+      await this.remote.combatAuto(sessionId, enabled)
+      await this.refreshStatus(sessionId)
+    } catch { /* best-effort */ }
+  }
+
   async refreshCredentials(): Promise<void> {
     const refs = this.state.servers.flatMap(s => s.users.map(u => u.passRef)).filter(r => r !== '')
     if (refs.length === 0) {

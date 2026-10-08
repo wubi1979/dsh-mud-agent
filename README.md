@@ -17,8 +17,8 @@
 | `mud-workflow` | `packages/mud-workflow/` | **纯流程架构包**：声明式流程 schema / 注册表 / 解释器 / 五工具（零宿主 import） | ✅ 在役 |
 | `mud-webui` | `packages/mud-webui/` | **Web 壳**：名册管理、MUD 日志 tab、只读画面 tab、状态订阅 | ✅ 在役 |
 | `typert-protocol` | `packages/typert-protocol/` | remote 工件（`gen:typert`）协议镜像，与宿主检出对齐 | ✅ 在役 |
-| `mud-core`（v1） | `packages/mud-core/` | 初版引擎 | ⛔ 2026-09-27 退役（代码留存不删、不再演进） |
-| `mud-core2`（v2） | `packages/mud-core2/` | 自主玩家 / 五层心智版 | ⛔ 2026-09-28 整体作废（原位保留、不再演进） |
+| `mud-core`（v1） | ~~`packages/mud-core/`~~ | 初版引擎 | ⛔ 2026-09-27 退役；2026-10-08 删除（git 历史 / tag `retired-v1-v2` 可溯） |
+| `mud-core2`（v2） | ~~`packages/mud-core2/`~~ | 自主玩家 / 五层心智版 | ⛔ 2026-09-28 整体作废；2026-10-08 删除（git 历史 / tag `retired-v1-v2` 可溯） |
 
 两套退役设计的文档已整体移入 [`doc/archive/`](doc/archive/README.md)；**唯一从归档中提升为现役**的是 `login` 流程声明（→ [`doc/flows/login.md`](doc/flows/login.md)）。
 
@@ -79,3 +79,5 @@ pnpm dev            # gen:typert + build(core3, webui) + 启动 harness web prof
 | [`doc/PLAN.md`](doc/PLAN.md) | 计划起草区 + 待办池 |
 | [`doc/CHANGELOG.md`](doc/CHANGELOG.md) | 变更记录（只追加） |
 | [`doc/archive/`](doc/archive/README.md) | v1/v2 归档索引（**只读**） |
+
+> AI生成

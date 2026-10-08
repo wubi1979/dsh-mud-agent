@@ -241,7 +241,7 @@ export function apply(ctx: ClientContext): void {
     },
     admit: (sessionId) => mud.admit(sessionId).then(() => { openGameAfterAdmit(sessionId) }),
     stopAdmit: (sessionId) => mud.stopAdmit(sessionId),
-    setCombatAuto: (sessionId, enabled) => mud.combatAuto(sessionId, enabled),
+    setCombatAuto: (sessionId, enabled) => mud.setCombatAuto(sessionId, enabled),
     refreshStatus: (sessionId) => mud.refreshStatus(sessionId),
     startStatusWatch: () => mud.startStatusWatch(),
     openUserSession,
