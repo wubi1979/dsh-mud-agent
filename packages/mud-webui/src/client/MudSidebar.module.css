@@ -248,8 +248,8 @@
 .userRow {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 6px 4px 22px;
+  gap: 4px;
+  padding: 3px 6px 3px 22px;
   border-radius: 6px;
 }
 
@@ -264,6 +264,7 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+/* 账号名：flex:1 占满剩余宽度（连接点在行首、状态钮靠右，名字居中伸展截断）。 */
 .userName {
   flex: 1;
   min-width: 0;
@@ -274,6 +275,7 @@
   text-overflow: ellipsis;
 }
 
+/* 账号行连接状态点：行首常显（颜色由 .stateXxx 的 background 承担）。 */
 .stateDot {
   width: 8px;
   height: 8px;
@@ -283,32 +285,34 @@
   opacity: 0.55;
 }
 
-/* 凭据徽标: 只在"需要用户动手"或"已就绪"时占用宽度 (无密码/未配置/只读/已配置)。 */
-.credBadge {
-  flex: none;
-  padding: 1px 5px;
-  border-radius: 4px;
-  font-size: 10.5px;
-  line-height: 1.6;
-  white-space: nowrap;
-  border: 1px solid transparent;
+/* 凭据/已接入文字徽标已退役（图标状态钮已表达）；样式删除。 */
+
+/* 账号行状态钮（接入/战斗）：常显（不随行 hover 隐藏）——轴状态而非临时动作。 */
+.stateToggle {
+  width: 22px;
+  height: 22px;
+  color: var(--dsw-alias-label-tertiary);
 }
 
-.credOk {
+/* 接入激活：绿（同 stateConnected 色系，跟宿主亮暗主题由色值语义不变保证）。 */
+.toggleOn {
   color: #5fbf77;
-  border-color: color-mix(in srgb, #5fbf77 40%, transparent);
 }
 
-.credMissing {
-  color: #d85f5f;
-  border-color: color-mix(in srgb, #d85f5f 40%, transparent);
+.toggleOn:hover {
+  color: #5fbf77;
 }
 
-.credReadonly {
+/* 战斗刹车警示：琥珀（同 stateConnecting 色系）。 */
+.toggleWarn {
   color: #d8a15a;
-  border-color: color-mix(in srgb, #d8a15a 40%, transparent);
 }
 
+.toggleWarn:hover {
+  color: #d8a15a;
+}
+
+/* 状态色：底栏/rail 圆点用 background（.stateDot）与账号图标用 color（.userIcon）双挂。 */
 .stateIdle {
   background: var(--dsw-alias-label-secondary);
   opacity: 0.4;

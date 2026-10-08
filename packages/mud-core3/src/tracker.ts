@@ -277,58 +277,110 @@ function inventoryRow(row: RowContext): TrackEntry[] | undefined {
   return out.length > 0 ? out : undefined
 }
 
-// ── skills（§2.4；列位凭片段推断，待实录校准）───────────────────────
+// ── skills（§2.4；实录校准 2026-10-08，A.7.3：中文名+英文id 同 cell 括号形式）──
 
-/** 英文 id cell（D12：skills 用英文 id 当 key，稳定性不随显示名变）。 */
-const SKILL_ID_RE = /^[a-z][a-z0-9-]{1,}$/
-/** 等级 cell：`level / cap`，cap 为 `-`（无上限）时省略（D12/§2.4）。 */
+/**
+ * 技能行名称 cell：`＋医道(medicine)` / `□太极拳(taiji-quan)` / `  招魂术(evocation)`——
+ * 可选 ＋/□ 前缀（已激发/未激发）+ 中文名 + 同 cell 括号内英文 id（实录 A.7.3）。
+ */
+const SKILL_NAME_RE = /^\s*([＋□])?\s*([\u4e00-\u9fff]{1,12})\(([a-z][a-z0-9-]{1,})\)\s*$/
+/** 等级 cell：`16.00/78`，cap 为 `-`（无上限，如知识类）时保留 `-`（D12/§2.4）。 */
 const SKILL_LEVEL_RE = /^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?|-)$/
-/** 槽位汇总的百分比 cell（capDelta 原文，如 `-5.56%`）。 */
-const SKILL_PCT_RE = /^-?\d+(?:\.\d+)?%$/
-/** `＋`/`□` 已学/未学前缀 → flag（§2.4）。 */
-const SKILL_FLAG_RE = /^\s*([＋□])/
+/**
+ * 槽位汇总行（全句单 cell，实录 A.7.3）：
+ * `共使用了17.5个技能槽位，空余槽位(12.5)。级别上限：-5.56%。`
+ */
+const SKILL_SLOT_RE = /共使用了(\d+(?:\.\d+)?)个技能槽位，空余槽位\((\d+(?:\.\d+)?)\)。级别上限：(-?\d+(?:\.\d+)?)%/
 const HAS_CJK_RE = /[\u4e00-\u9fff]/
 
 function skillsRow(row: RowContext): TrackEntry[] | undefined {
-  // 槽位汇总行：带百分比 cell 的 `used / free`。
-  const pct = row.cells.find(c => SKILL_PCT_RE.test(c))
-  if (pct !== undefined) {
-    for (const c of row.cells) {
-      const m = /^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/.exec(c)
-      if (m !== null) {
-        return [{ key: '槽位', value: { used: Number(m[1]), free: Number(m[2]), capDelta: pct } }]
-      }
+  // 槽位汇总行：全句 cell 命中即写（used / free / capDelta 原文含 %）。
+  for (const c of row.cells) {
+    const slot = SKILL_SLOT_RE.exec(c)
+    if (slot !== null) {
+      return [{ key: '槽位', value: { used: Number(slot[1]), free: Number(slot[2]), capDelta: `${slot[3]}%` } }]
     }
   }
-  // 技能行：英文 id cell + 等级 cell 必备（缺一不写不猜）。
-  const idCell = row.cells.find(c => SKILL_ID_RE.test(c))
-  if (idCell === undefined) return undefined
-  let level: { value: string; cap: string } | null = null
+  // 技能行：名称 cell（flag + 中文名 + 英文 id）与等级 cell 必备（缺一不写不猜）。
+  let name: { flag?: string; cn: string; id: string } | undefined
+  let level: { value: string; cap: string } | undefined
+  let tier: string | undefined
   for (const c of row.cells) {
-    const m = SKILL_LEVEL_RE.exec(c)
-    if (m !== null) { level = { value: m[1] ?? '', cap: m[2] ?? '' }; break }
+    if (name === undefined) {
+      const nm = SKILL_NAME_RE.exec(c)
+      if (nm !== null) {
+        name = { cn: (nm[2] ?? '').trim(), id: nm[3] ?? '', ...(nm[1] !== undefined ? { flag: nm[1] } : {}) }
+        continue
+      }
+    }
+    if (level === undefined) {
+      const lm = SKILL_LEVEL_RE.exec(c)
+      if (lm !== null) { level = { value: lm[1] ?? '', cap: lm[2] ?? '' }; continue }
+    }
+    // 描述（境界）cell：其余中文 cell（不堪一击/初窥门径…；名称 cell 已 continue 不重复计）。
+    if (tier === undefined && HAS_CJK_RE.test(c)) tier = c.trim()
   }
-  if (level === null) return undefined
-  // 名称 = 首个含中文的 cell（剥 ＋/□ 前缀 → flag）；category 来自节标题。
-  let flag: string | undefined
-  let name: string | undefined
-  for (const c of row.cells) {
-    if (!HAS_CJK_RE.test(c)) continue
-    const f = SKILL_FLAG_RE.exec(c)?.[1]
-    const bare = (f !== undefined ? c.replace(SKILL_FLAG_RE, '') : c).trim()
-    if (bare !== '') { flag = f; name = bare; break }
-  }
-  if (name === undefined) return undefined
+  if (name === undefined || level === undefined) return undefined
   return [{
-    key: idCell,
+    key: name.id,
     value: {
-      name,
+      name: name.cn,
       level: Number(level.value),
       ...(level.cap !== '-' && level.cap !== '' ? { cap: Number(level.cap) } : {}),
-      ...(flag !== undefined ? { flag } : {}),
+      ...(tier !== undefined ? { tier } : {}),
+      ...(name.flag !== undefined ? { flag: name.flag } : {}),
       ...(row.section !== undefined ? { category: row.section } : {}),
     },
   }]
+}
+
+// ── id（items 别称表，§2.4：lines 形状；待实录校准）─────────────────
+
+// ── exp（character，实录 2026-10-08：级别/经验对照 + 连线时长）────────
+
+/**
+ * 对照行 cell：纯数字（级别或经验值）。一行最多 6 个数字 cell（三列对：
+ * 级别/经验 ×3），按 cell 序偶数位 = 级别、奇数位 = 经验（实录列序固定）。
+ */
+const EXP_NUM_RE = /^\d+$/
+/** 连线时长句：`你连线进入北侠已经有四十八分三十九秒了。`（中文时长原文）。 */
+const EXP_ONLINE_RE = /^你连线进入北侠已经有(.+?)了。$/
+
+/**
+ * exp 表行判据（table 形状，块内逐行）：
+ *   - 对照行（≥2 个纯数字 cell，级别/经验 列对）→ 追加进块内积攒 `pairs`；
+ *   - 连线时长句（单 cell 全句命中）→ `character.连线时长`（中文时长原文；
+ *     「经验没有变化」句不稳定不抓）。
+ * 对照行的合并写由块收口完成（`finishTableBlock`，见下）——表头/框线行零写入。
+ */
+function expRow(row: RowContext): TrackEntry[] | undefined {
+  for (const c of row.cells) {
+    const online = EXP_ONLINE_RE.exec(c)
+    if (online !== null) return [{ key: '连线时长', value: (online[1] ?? '').trim() }]
+  }
+  const nums = row.cells.filter(c => EXP_NUM_RE.test(c))
+  if (nums.length < 2 || nums.length % 2 !== 0) return undefined
+  // 全数字 cell 行也须在 exp 表内（块节标题或表头行文佐证）——由调用方
+  // （StateTracker.matchTableRow 的块上下文）保证：本规则只在表格块内被调用，
+  // 其他表格（hp/sc/i/skills）的行已先被声明序更前的规则独占。
+  return []
+}
+
+/**
+ * exp 对照行积攒（块内状态）：{tracker 内部用}。一行三列对 = 6 个数字 cell，
+ * 按「偶位=级别、奇位=经验」配对；块收口时整体写一次 `character.经验表`
+ *（数组后到覆盖——新表刷新旧表）。
+ */
+function expPairsOf(cells: readonly string[]): { level: number; exp: number }[] {
+  const nums = cells.filter(c => EXP_NUM_RE.test(c))
+  const out: { level: number; exp: number }[] = []
+  for (let i = 0; i + 1 < nums.length; i += 2) {
+    const level = Number.parseInt(nums[i] ?? '', 10)
+    const exp = Number.parseInt(nums[i + 1] ?? '', 10)
+    if (!Number.isFinite(level) || !Number.isFinite(exp)) continue
+    out.push({ level, exp })
+  }
+  return out
 }
 
 // ── id（items 别称表，§2.4：lines 形状；待实录校准）─────────────────
@@ -401,6 +453,7 @@ export const DEFAULT_TRACK_RULES: readonly AnyTrackRule[] = [
   { id: 'sc', shape: 'table', zone: 'character', match: scRow },
   { id: 'i', shape: 'table', zone: 'inventory', match: inventoryRow },
   { id: 'skills', shape: 'table', zone: 'skills', match: skillsRow },
+  { id: 'exp', shape: 'table', zone: 'character', match: expRow },
   { id: 'id-header', shape: 'lines', zone: 'items', match: (row) => (ALIAS_HEADER_RE.test(row.raw) ? [] : undefined) },
   { id: 'id', shape: 'lines', zone: 'items', match: aliasRow },
   { id: 'combat', shape: 'lines', zone: 'combat', match: combatRow },
@@ -419,10 +472,12 @@ export const DEFAULT_TRACK_SPEC: TrackSpec = {
 
 // ── 状态追踪器 ──────────────────────────────────────────────────────
 
-/** 块内最小状态（§2.1）：仅「当前节标题 + 已见行数（护栏用）」。 */
+/** 块内最小状态（§2.1）：「当前节标题 + 已见行数（护栏用）」；exp 表块内加对照对积攒。 */
 interface BlockState {
   section?: string
   rows: number
+  /** exp 表对照对积攒（行序追加；块收口时整体写一次 `character.经验表`）。 */
+  expPairs?: { level: number; exp: number }[]
 }
 
 /** 序列状态：所属规则 + 已攒行（打标随到随打，写入等凑齐全量校验）。 */
@@ -467,11 +522,15 @@ export class StateTracker {
     if (this.block !== null) {
       this.tag(line)
       if (TABLE_CLOSE_RE.test(text)) {
+        this.finishTableBlock()
         this.block = null
       } else if (TABLE_ROW_RE.test(text)) {
         this.matchTableRow(text)
         this.block.rows += 1
-        if (this.block.rows > MAX_TABLE_LINES) this.block = null // 失控块止损（标已打，不再解析）
+        if (this.block.rows > MAX_TABLE_LINES) { // 失控块止损（标已打，不再解析）
+          this.finishTableBlock()
+          this.block = null
+        }
       } else if (TABLE_BORDER_RE.test(text)) {
         const section = SECTION_CJK_RE.exec(text)?.[0]
         if (section !== undefined) this.block.section = section
@@ -529,7 +588,8 @@ export class StateTracker {
     if (line.kind === null) line.kind = STATUS_KIND
   }
 
-  /** 表格行匹配：声明序首个命中规则独占该行（产出经其 zone 写入）。 */
+  /** 表格行匹配：声明序首个命中规则独占该行（产出经其 zone 写入）。
+   *  exp 规则特殊：对照行返回空产出（占位独占）+ 对照对积攒进块，块收口统一写。 */
   private matchTableRow(text: string): void {
     const block = this.block
     if (block === null) return
@@ -539,9 +599,27 @@ export class StateTracker {
       const ctx: RowContext = { cells, raw: text, index: block.rows, ...(block.section !== undefined ? { section: block.section } : {}) }
       const entries = r.match(ctx)
       if (entries !== undefined) {
-        this.write(entries, r.zone)
+        if (r.id === 'exp' && entries.length === 0) {
+          // exp 对照行（空产出占位独占）：纯数字 cell 列对积攒进块，块收口统一写；
+          // 其余产出（连线时长句）照常写。
+          const first = cells[0] ?? ''
+          if (EXP_NUM_RE.test(first)) {
+            block.expPairs = [...(block.expPairs ?? []), ...expPairsOf(cells)]
+          }
+        } else {
+          this.write(entries, r.zone)
+        }
         return
       }
+    }
+  }
+
+  /** 表格块收口（└ 或失控止损）：exp 对照对积攒非空 ⇒ 整体写一次经验表。 */
+  private finishTableBlock(): void {
+    const block = this.block
+    if (block === null) return
+    if (block.expPairs !== undefined && block.expPairs.length > 0) {
+      this.deps.onWrite('character', '经验表', block.expPairs)
     }
   }
 

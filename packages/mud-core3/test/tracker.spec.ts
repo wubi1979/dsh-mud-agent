@@ -302,20 +302,41 @@ describe('i（inventory：件数/负重/财物）', () => {
   })
 })
 
-describe('skills（table：节标题/flag/cap/槽位汇总）', () => {
-  it('技能行 + 槽位汇总行回放：英文 id 当键，cap 为 - 省略', () => {
+describe('skills（table：节标题/flag/cap/描述/槽位汇总；实录 A.7.3 2026-10-08）', () => {
+  it('技能实录回放：中文名+英文id 同 cell、等级/描述独立 cell、＋/□ 前缀、cap 为 - 省略', () => {
     const { tracker, writes } = harness()
     for (const s of [
-      '┌────┐',
-      '├────[ 基本功夫 ]────┤',
-      '│＋ 基础拳脚│ unarmed │ 10/100 │',
-      '│□ 流云飞袖│ liuyun │ 5/- │',
-      '│技能槽位│ 17.5 / 12.5 │ -5.56%│',
-      '└────┘',
+      '┌───技能列表(共十四项)───────────┬──────┬───────┐',
+      '│技能                                          │描述        │级别/上限     │',
+      '├───四项杂学────────────────┼──────┼───────┤',
+      '│  招魂术(evocation)                           │不堪一击    │   16.00/78   │',
+      '│  读书写字(literate)                          │初窥门径    │   89.42/-    │',
+      '│＋医道(medicine)                              │不堪一击    │    4.00/78   │',
+      '├───七项基本功夫──────────────┼──────┼───────┤',
+      '│  基本刀法(blade)                             │不堪一击    │   27.00/78   │',
+      '│□太极拳(taiji-quan)                          │不堪一击    │   20.14/78   │',
+      '│  梯云纵(tiyunzong)                           │不堪一击    │    4.40/78   │',
+      '├───────────────────────┴──────┴───────┤',
+      '│共使用了17.5个技能槽位，空余槽位(12.5)。级别上限：-5.56%。                  │',
+      '└─────────────────────────────北大侠客行─────┘',
     ]) tracker.observe(line(s))
-    expectWritten(writes, 'skills', 'unarmed', { name: '基础拳脚', level: 10, cap: 100, flag: '＋', category: '基本功夫' })
-    expectWritten(writes, 'skills', 'liuyun', { name: '流云飞袖', level: 5, flag: '□', category: '基本功夫' })
+    expectWritten(writes, 'skills', 'evocation', { name: '招魂术', level: 16, cap: 78, tier: '不堪一击', category: '四项杂学' })
+    expectWritten(writes, 'skills', 'literate', { name: '读书写字', level: 89.42, tier: '初窥门径', category: '四项杂学' })
+    expectWritten(writes, 'skills', 'medicine', { name: '医道', level: 4, cap: 78, tier: '不堪一击', flag: '＋', category: '四项杂学' })
+    expectWritten(writes, 'skills', 'blade', { name: '基本刀法', level: 27, cap: 78, tier: '不堪一击', category: '七项基本功夫' })
+    expectWritten(writes, 'skills', 'taiji-quan', { name: '太极拳', level: 20.14, cap: 78, tier: '不堪一击', flag: '□', category: '七项基本功夫' })
+    expectWritten(writes, 'skills', 'tiyunzong', { name: '梯云纵', level: 4.4, cap: 78, tier: '不堪一击', category: '七项基本功夫' })
     expectWritten(writes, 'skills', '槽位', { used: 17.5, free: 12.5, capDelta: '-5.56%' })
+  })
+
+  it('缺等级 cell 的行不写不猜（表头行零写入）', () => {
+    const { tracker, writes } = harness()
+    for (const s of [
+      '┌───技能列表(共十四项)───────────┬──────┬───────┐',
+      '│技能                                          │描述        │级别/上限     │',
+      '└─────────────────────────────北大侠客行─────┘',
+    ]) tracker.observe(line(s))
+    expect(writes.filter(w => w.zone === 'skills')).toEqual([])
   })
 })
 
@@ -330,6 +351,43 @@ describe('id（items 别称表：lines 形状）', () => {
     tracker.observe(entry)
     expect(entry.kind).toBe(STATUS_KIND)
     expectWritten(writes, 'items', '青色道袍', ['pao', 'cloth', 'dao pao'])
+  })
+})
+
+describe('exp（character：级别/经验对照 + 连线时长；实录 2026-10-08）', () => {
+  it('exp 表实录回放：对照行合并为经验表数组 + 连线时长句原文', () => {
+    const { tracker, writes } = harness()
+    for (const s of [
+      '┌───武功级别和经验对照表───┬────────┬───┬────────┐',
+      '│级别  │所需经验        │级别  │所需经验        │级别  │所需经验        │',
+      '├───┼────────┼───┼────────┼───┼────────┤',
+      '│74    │48103           │77    │54193           │80    │60778           │',
+      '│75    │50079           │78    │56332           │81    │63085           │',
+      '│76    │52109           │79    │58527           │82    │65451           │',
+      '├───经验信息简述───┴───┴────────┴───┴────────┤',
+      '│你连线进入北侠已经有四十八分三十九秒了。                                    │',
+      '│本次连线，你的经验没有变化。                                                │',
+      '│本次连线，你的总经验没有变化。                                              │',
+      '└─────────────────────────────北大侠客行────┘',
+    ]) tracker.observe(line(s))
+    expectWritten(writes, 'character', '经验表', [
+      { level: 74, exp: 48103 }, { level: 77, exp: 54193 }, { level: 80, exp: 60778 },
+      { level: 75, exp: 50079 }, { level: 78, exp: 56332 }, { level: 81, exp: 63085 },
+      { level: 76, exp: 52109 }, { level: 79, exp: 58527 }, { level: 82, exp: 65451 },
+    ])
+    expectWritten(writes, 'character', '连线时长', '四十八分三十九秒')
+  })
+
+  it('exp 表头与表尾行零写入；块整体打标', () => {
+    const { tracker, writes } = harness()
+    const lines = [
+      '┌───武功级别和经验对照表───┬────────┬───┬────────┐',
+      '│级别  │所需经验        │级别  │所需经验        │级别  │所需经验        │',
+      '└─────────────────────────────北大侠客行────┘',
+    ].map(s => line(s))
+    for (const l of lines) tracker.observe(l)
+    expect(lines.every(l => l.kind === STATUS_KIND)).toBe(true)
+    expect(writes.filter(w => w.zone === 'character' && w.key === '经验表')).toEqual([])
   })
 })
 

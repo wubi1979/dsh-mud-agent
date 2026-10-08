@@ -1,13 +1,14 @@
 /**
  * dsh-mud-webui — sidebar replacement (client half, core3).
  *
- * 服务器/账号向导树（v1 呈现不改），新增：
- * - 用户行 ⋯ 菜单加「接入/停止接入」
- * - 添加用户弹窗加 preset 选择
- * 移除（core3 第一期不需要）：
- * - 权限档位（tier/capability）
- * - command/captcha
- * - mudSocket/GameView/LogView/Rail
+ * 服务器/账号向导树（v1 呈现不改），账号行状态钮常显（点击即切换）：
+ * - 接入钮（IconContextInjection）：已接入高亮绿，点击 接入/停止接入；
+ * - 战斗钮（IconShield）：刹车中琥珀警示，点击 开/关自主战斗；
+ * - 连接点（●）带 Tooltip：当前连接状态（已连接/探测中/连接中/未连接/失败）；
+ * - ⋯ 菜单只留「编辑 / 删除账号」。
+ * 移除：凭据文字徽标与「已接入」文字徽标（图标钮已表达）；权限档位；
+ * command/captcha；mudSocket/GameView/LogView/Rail（core3 第一期不需要）。
+ * 添加用户弹窗加 preset 选择。
  * @module @deepseek-ai/dsh-mud-webui/client/MudSidebar
  */
 
@@ -16,14 +17,14 @@ import clsx from 'clsx'
 import type { HostObservable, InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import {
   IconChevronDownOutlineRegular, IconChevronRightOutlineRegular,
-  IconEllipsisOutlineRegular, IconGlobeOutlineRegular, IconPanelLeftOutlineRegular, IconPlusOutlineRegular,
-  IconRefreshOutlineRegular, IconUserOutlineRegular, Menu, Tooltip,
+  IconContextInjectionOutlineRegular, IconEllipsisOutlineRegular, IconGlobeOutlineRegular,
+  IconPanelLeftOutlineRegular, IconPlusOutlineRegular, IconRefreshOutlineRegular,
+  IconShieldOutlineRegular, IconUserOutlineRegular, Menu, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   MudConnInfo, MudConnState, MudServer, MudServersSnapshot, MudUser,
   SessionStatusRow,
 } from './mud-state.ts'
-import type { MudCredentialInfo } from './mud-credentials.ts'
 import type { MudLogSnapshot } from './mud-log.ts'
 import type { MudRemoteController } from './mud-remote.ts'
 import { ServerDialog, UserDialog, MudCaptchaDialog } from './MudDialogs.tsx'
@@ -83,6 +84,17 @@ function dotClass(state: MudConnState): string {
   }
 }
 
+/** 连接点浮动提示：连接轴当前态（与接入轴正交：连接 + 未接入 = 录制模式）。 */
+function dotTooltip(state: MudConnState, user: MudUser): string {
+  switch (state) {
+    case 'connected': return `已接入 MUD 服务器：${user.name} 已连接`
+    case 'probing': return '静默探测中：连接保活检测'
+    case 'connecting': return '连接中…'
+    case 'error': return '连接失败（悬停账号名查看错误）'
+    default: return '未连接 MUD 服务器'
+  }
+}
+
 function connText(conn: MudConnInfo): string {
   switch (conn.state) {
     case 'connected': return `已连接: ${conn.label ?? ''}`
@@ -93,30 +105,13 @@ function connText(conn: MudConnInfo): string {
   }
 }
 
-function credBadge(passRef: string, status: MudCredentialInfo | undefined): { text: string; className: string } | null {
-  // 凭据正常（已配置）不再出徽标（v0.0.25 侧栏瘦身）；只保留异常态提醒：
-  // 无密码 / 未配置 / 只读——正常态在编辑弹窗可见，连接失败也会带引用名报错。
-  if (passRef === '') return { text: '无密码', className: css.credMissing ?? '' }
-  if (status === undefined) return null
-  if (!status.configured) return { text: '凭据未配置', className: css.credMissing ?? '' }
-  if (!status.writable) return { text: `只读 (${status.source ?? 'env'})`, className: css.credReadonly ?? '' }
-  return null
-}
-
-/** 接入状态徽标。 */
-function admitBadge(sessionStatus: Readonly<Record<string, SessionStatusRow>>, sessionId: string): string | null {
-  const row = sessionStatus[sessionId]
-  if (row === undefined) return null
-  return row.admitted ? '已接入' : null
-}
-
 export function MudSidebar({
   collapsed, useServers,
   addServer, removeServer, addUser, updateUser, removeUser,
   admit, stopAdmit, setCombatAuto, refreshStatus, startStatusWatch,
   openUserSession, toggleSidebar, remote,
 }: MudSidebarProps) {
-  const { servers, conn, sessionStatus, credentialStatus } = useServers(s => s)
+  const { servers, conn, sessionStatus } = useServers(s => s)
   const [serverDialogOpen, setServerDialogOpen] = useState(false)
   const [userDialogTarget, setUserDialogTarget] = useState<MudServer | null>(null)
   const [userEditTarget, setUserEditTarget] = useState<{ serverId: string; userId: string } | null>(null)
@@ -246,8 +241,6 @@ export function MudSidebar({
               </div>
               {expandedServers.has(server.id) && server.users.map((user) => {
                 const state = rowState(conn, sessionStatus, user)
-                const badge = credBadge(user.passRef, credentialStatus[user.passRef])
-                const admitted = admitBadge(sessionStatus, user.sessionId)
                 const isAdmitted = sessionStatus[user.sessionId]?.admitted === true
                 // 战斗刹车（T21.6）：combatAuto 缺省开；关 = 自主战斗挂起。
                 const combatAutoOn = sessionStatus[user.sessionId]?.combatAuto !== false
@@ -263,11 +256,42 @@ export function MudSidebar({
                       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openUserSession(server.id, user.id) }
                     }}
                   >
+                    {/* 连接状态点（连接轴）：行首常显（👤 图标之前），Tooltip 说明当前态；未连接灰 / 连接中琥珀 / 已连接绿 / 失败红。 */}
+                    <Tooltip label={dotTooltip(state, user)} delayMs={500}>
+                      <span className={clsx(css.stateDot, dotClass(state))} aria-label={`连接状态：${dotTooltip(state, user)}`} />
+                    </Tooltip>
                     <span className={css.userIcon}><IconUserOutlineRegular size={13} /></span>
                     <span className={css.userName}>{user.name}</span>
-                    {badge !== null && <span className={clsx(css.credBadge, badge.className)}>{badge.text}</span>}
-                    {admitted !== null && <span className={clsx(css.credBadge, css.credOk ?? '')}>{admitted}</span>}
-                    <span className={clsx(css.stateDot, dotClass(state))} aria-hidden="true" />
+                    {/* 状态钮常显（点击即切换，不随行 hover 隐藏）：
+                        接入（行流→agent 闸门）与战斗（自主战斗总开关）都是轴状态而非临时动作。 */}
+                    <Tooltip label={isAdmitted ? '已接入：点击停止接入' : '未接入：点击接入（任务书点火）'} delayMs={500}>
+                      <button type="button"
+                        className={clsx(css.iconButton, css.smallIcon, css.stateToggle, isAdmitted && css.toggleOn)}
+                        aria-label={`接入切换 — ${user.name}（当前${isAdmitted ? '已接入' : '未接入'}）`}
+                        aria-pressed={isAdmitted}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (user.sessionId === '') return
+                          void (isAdmitted ? stopAdmit(user.sessionId) : admit(user.sessionId))
+                        }}
+                      >
+                        <IconContextInjectionOutlineRegular size={14} />
+                      </button>
+                    </Tooltip>
+                    <Tooltip label={combatAutoOn ? '自主战斗中：点击战斗刹车（人接管）' : '战斗刹车中：点击恢复自主战斗'} delayMs={500}>
+                      <button type="button"
+                        className={clsx(css.iconButton, css.smallIcon, css.stateToggle, !combatAutoOn && css.toggleWarn)}
+                        aria-label={`自主战斗开关 — ${user.name}（当前${combatAutoOn ? '自主战斗中' : '战斗刹车中'}）`}
+                        aria-pressed={!combatAutoOn}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (user.sessionId === '') return
+                          void setCombatAuto(user.sessionId, !combatAutoOn)
+                        }}
+                      >
+                        <IconShieldOutlineRegular size={14} />
+                      </button>
+                    </Tooltip>
                     <Menu
                       open={userMenuFor?.serverId === server.id && userMenuFor?.userId === user.id}
                       onClose={() => { setUserMenuFor(null) }}
@@ -287,23 +311,11 @@ export function MudSidebar({
                       )}
                       items={[
                         { id: 'edit-user', label: '编辑' },
-                        // 接入/停止接入
-                        isAdmitted
-                          ? { id: 'stop-admit', label: '停止接入' }
-                          : { id: 'admit', label: '接入' },
-                        // 战斗刹车（T21.6）：关 = 人打断（立即释放并挂起）；开 = 恢复自主战斗
-                        combatAutoOn
-                          ? { id: 'combat-brake', label: '战斗刹车（停自主战斗）' }
-                          : { id: 'combat-resume', label: '恢复自主战斗' },
                         { id: 'delete-user', label: '删除账号' },
                       ]}
                       onSelect={(id) => {
                         if (id === 'edit-user') setUserEditTarget({ serverId: server.id, userId: user.id })
                         if (id === 'delete-user') removeUser(server.id, user.id)
-                        if (id === 'admit' && user.sessionId !== '') void admit(user.sessionId)
-                        if (id === 'stop-admit' && user.sessionId !== '') void stopAdmit(user.sessionId)
-                        if (id === 'combat-brake' && user.sessionId !== '') void setCombatAuto(user.sessionId, false)
-                        if (id === 'combat-resume' && user.sessionId !== '') void setCombatAuto(user.sessionId, true)
                         setUserMenuFor(null)
                       }}
                       portal align="start"

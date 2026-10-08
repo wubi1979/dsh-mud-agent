@@ -34,6 +34,7 @@ note: 计划起草区 + 待办池；不承载已落地事实（落地后同步�
 | **T9** | **宿主会话面缺口跟踪** | ① 插件拿不到 `AgentHandle.dispose`、`ctx.sessionController` 无 delete ⇒ 删账号后会话仍在宿主内（**已核实归档面可缓解但非删除**，跟踪宿主补删除面）；② **子会话无清退/归档面**：`ctx.subagents` 只有 `drainContinuableChildren` / `drainContinuableDescendants`（释放驻留 Activation）与 `listChildren` / `listDescendants`（列举），**没有删除会话或归档目录条目的动词** ⇒ 每次派发留下的子会话记录与父会话目录条目永久保留（本仓派发现已为一次性前台：只读留存、不再可续；目录读取成本随累计派发数线性增长）。跟踪宿主是否补面（会话删除 / 目录清退归档） | §2.4、§16.6 #8、§7.6 |
 | **T10** | **装配层加载冒烟可执行化** | **已落地工件面 e2e**（`test/plugin-load.e2e.ts`，加载 `lib/` 产物 + 断言 remote 命名空间在册，见 §16.1/§16.2）；**剩余** = 真宿主组合冒烟（Loader + `--patch` 启动 → 断言无 `1 entry did not activate` 且 `mud/*` 动词在册） | §16.1、§2.2 |
 | **T20** | **匹配编译入口单点化（候选改进，2026-10-06 讨论记录）** | 三处正则编译入口（`classify.ts` 规则编译 / `tools.ts` `compileRegexes` / `tracker.ts` 规则表内联）可合并为统一 `compilePattern`（非法正则 fail-loud 语义一致、正则字符串统一登记实录出处）；现状判定：重复不足 10 行，不为美感引机制；**触发例证** = 判据需 Config 化给部署方，或匹配面继续生长导致三处编译语义漂移 | §6.3、§8.7、§10.3 |
+| **T22** | **webui 底部状态栏聚焦修复（未实施，2026-10-08 讨论记录）** | 底部状态栏跟踪的「当前会话」只随手动连接（`connectUser`）设置 `conn.sessionId`：① agent 自动建连的会话（新账号接入路径）`conn.sessionId=null` ⇒ watchStatus 推帧 focus 落空、状态栏恒「未连接」且刷新救不回；② 点账号行 `openUserSession` 不调 `setActive`（该方法存在但从未被调用）⇒ 切换会话后状态栏挂旧会话状态。修复方向：底部状态栏语义钉死为「当前打开账号会话的连接态」——`openUserSession` 接线 `setActive` + `setActive` 同步 `conn.sessionId`（推帧即时更新，消除「已接入但状态栏未变」的滞后感） | `mud-webui/src/client/mud-state.ts`（`applyStatusRows` focus 回退 / `setActive`）、`index.ts`（`openUserSession`）；§9.4/§9.5（webui 状态呈现） |
 
 > - T1（T4b 实机验收）已于 2026-10-02 全项通过并从本表删除，结论见 §16.4。
 > - T4（C5.2 行打标与画面分屏）已于 2026-10-03 立项执行完毕并从本表删除，结论见 §17.4 与 `doc/likely/c5.2-line-tagging-split-screen.md`。
@@ -74,4 +75,3 @@ note: 计划起草区 + 待办池；不承载已落地事实（落地后同步�
 ```
 
 > AI生成
-

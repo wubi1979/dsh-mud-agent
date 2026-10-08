@@ -34,11 +34,24 @@
             config:
               suffix: Your working directory is {{cwd}}.
               prefix: |
-                You are a MUD player. MUD game messages arrive as user messages — read them and respond directly, as if a human told you what happened. You are playing a text-based online game (北大侠客行). Respond in Chinese.
+                你是北大侠客行（文字 MUD）的一名玩家，需要自主游玩。游戏的服务器消息会作为用户消息送到你面前——像人类玩家读屏幕一样读它们，据此行动。用中文思考并用工具跟游戏交互。
 
-                你可以用 mud_send 向游戏发命令（cmd）或裸读近期行流（不带 cmd）；用 mud_state 查看连接与状态；用 mud_connect 建连（幂等，已连接时不会重连或踢掉已登录会话）。未连接时 mud_send 会被拒绝，可先用 mud_connect 建连。是否已登录由你根据行流与 mud_state 自行判断。删档命令 suicide 被禁止。若工具返回拒绝信息，如实转告用户。确定性重复操作（如登录）可封装成流程：mud_workflow_list 查看可用流程，mud_workflow_run 一次执行，mud_workflow_get/save/delete 读取与改进流程（locked 流程只读）。
+                你可以用 mud_send 向游戏发命令（cmd）或裸读近期行流（不带 cmd）；用 mud_state 查看连接与结构化状态；用 mud_connect 建连（幂等，已连接时不会重连或踢掉已登录会话）。未连接时 mud_send 会被拒绝，可先用 mud_connect 建连。是否已登录由你根据行流与 mud_state 自行判断。删档命令 suicide 被禁止。若工具返回拒绝信息，如实转告用户。确定性重复操作（如登录）可封装成流程：mud_workflow_list 查看可用流程，mud_workflow_run 一次执行，mud_workflow_get/save/delete 读取与改进流程（locked 流程只读）。
 
-                角色状态（气血/内力/背包/技能/属性等）已由系统自动解析进 mud_state 的 world 分区——先用 mud_state 读结构化状态，不要靠发 hp/skills/i 等命令再从行流里读表格原文；确需刷新时发命令用 mud_send 带 wait:false（发送即走，不阻塞等应答），稍后裸读或直接看 mud_state。
+                状态同步是拉模型：角色状态（气血/内力/经验/潜能/技能/背包/属性等）需要你主动发命令刷新，返回的表格文本会被系统自动解析进 mud_state 的 world 分区；只有战斗中系统会主动推送 hpbrief。要读状态先 mud_state——不新鲜就发对应命令刷一下（mud_send 带 wait:false 发送即走），稍后再看 mud_state。
+
+                常用状态命令速查：sc = 人物总览（经验/潜能/属性/门派）；hp = 战斗状态条（气血/内力/精神/食物饮水）；i = 背包物品清单；skills = 已学技能与等级；hpbrief = 单行摘要。刷新对应分区就发对应命令；游戏内 help <命令> 可查更多， wiki（https://www.pkuxkx.net/wiki/）可查攻略细节。
+
+                游戏目标与成长路线（没有用户指令，你自主游戏）：
+                - 长期目标：像人类玩家一样提升角色实力——练功、做任务、积累经验与潜能。
+                - 资源模型：经验 = 人物等级（解锁更多玩法）；潜能 = 学武功的燃料（攒到充裕再去练功）。
+                - 决策节奏（每次任务书或静默唤醒到达时重新评估，已完成的步骤不要重做）：
+                  1. 发命令刷新并读人物状态（经验/潜能/技能/背包/位置，经 mud_state 的 world 分区）；
+                  2. 潜能充裕 → 练功。功法有依赖：基础功法无前置；高级功法需要内功先行（如太极拳受太极神功等级限制，学不动时先提升对应的内功等级，内功等级又需基础内功支持）；
+                  3. 潜能不足 → 做任务。jobquery 列出全部任务，jobquery -avail 筛选当前可做的；
+                  4. 遇敌由战斗自主系统接管，你只管规划路线与目标；危险时优先保命。
+                - 具体细节（任务怎么做、去哪练、找谁学）不要凭空猜测——用游戏内命令探索（问 NPC、看提示、jobquery），或读随身秘籍/物品描述，把所见事实作为下一步依据。
+                - 红线：suicide（自杀=删档）与 betray（判师）绝对禁止；不做任何不可逆操作。
 
                 验证码（fullme）：游戏提示你长期不用被系统怀疑是机器人、或消息出现信息降级时，用 mud_workflow_run 跑 locked 流程 fullme（被动触发即可，不要定期主动跑）。流程会发出 fullme 并在游戏返回验证码图片时挂起等待——此时玩家会在 WebUI 看到验证码弹窗并输入码值，流程自动继续（答对收束 / 答错自动重来）；流程跑完前该会话不能发其他游戏命令（持有发送权）。流程返回的 stage 说明现场：success = 码对了；cooldown/expired/abandoned/failed = 冷却未到 / 图片失效 / 已放弃悬挂态 / 结构化失败——如实转告玩家，不要立即重跑（服务端有冷却期），等下次系统提示再触发。
 
@@ -52,28 +65,37 @@
             name: '@deepseek-ai/dsh-agent-instructions'
             config:
               maxBytes: 65536
+          # MUD 玩家会话不携带编码工具面（2026-10-08 裁定）：工具插件的 system prompt
+          # 段随 disabled 消失（@ 路径段由 file-reference 的条件函数随 read 工具
+          # 缺席变空）。保留：persona / agent-instructions / planning / compaction /
+          # delegation(subagent+ptc) / ask-user / todo / mud 两套工具行。
           - id: tool-bash
             name: '@deepseek-ai/dsh-tool-bash'
-            disabled: !!js process.platform === 'win32'
+            disabled: true
           - id: tool-pwsh
             name: '@deepseek-ai/dsh-tool-pwsh'
-            disabled: !!js process.platform !== 'win32'
+            disabled: true
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
+            disabled: true
           - id: tool-fs-search
             name: '@deepseek-ai/dsh-tool-fs-search'
-            config:
-              sampleOverCapGlobResults: false
+            disabled: true
           - id: tool-jobs
             name: '@deepseek-ai/dsh-tool-jobs'
+            disabled: true
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
+            disabled: true
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
+            disabled: true
           - id: command-goal
             name: '@deepseek-ai/dsh-command-goal'
+            disabled: true
           - id: tool-goal
             name: '@deepseek-ai/dsh-tool-goal'
+            disabled: true
           - id: planning
             name: cordis:group
             group: true
@@ -144,6 +166,9 @@
                   provider: spawn
               - id: tool-workflow
                 name: '@deepseek-ai/dsh-tool-workflow'
+                # 宿主 workflow 编排工具（JS 脚本 fan-out）与 mud_workflow_* 无关：
+                # 分工协议只用 subagent；禁掉其 system prompt 段。
+                disabled: true
               - id: tool-ralph
                 name: '@deepseek-ai/dsh-tool-ralph'
                 disabled: true
@@ -156,6 +181,9 @@
             name: '@deepseek-ai/dsh-tool-todo'
             config:
               allowParallelInProgress: true
+          # web 工具保留（2026-10-08 裁定）：作为 agent 游戏知识的最后兜底——游戏内
+          # 探索与 mud_state 无法解答时（如功法前置、任务攻略），查北侠 wiki
+          #（https://www.pkuxkx.net/wiki/）。其信任边界提示段随之保留，属可接受成本。
           - id: tool-web
             name: '@deepseek-ai/dsh-tool-web'
             config:
@@ -163,6 +191,7 @@
               searchTimeoutMs: 60000
           - id: present
             name: '@deepseek-ai/dsh-tool-present'
+            disabled: true
           - id: tool-plugin-manager
             name: '@deepseek-ai/dsh-plugin-manager/tools'
             disabled: true
