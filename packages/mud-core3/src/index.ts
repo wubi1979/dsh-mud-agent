@@ -786,13 +786,33 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
   // 返回值，插件不查子级）。
   const wakes = new Map<string, Wake>()
 
-  // ── agent/created → 名册判定 → 登记会话 + 记录 agent 句柄 + 补投 ──
+  // ── agent/created → 名册判定 → 恢复时点遮蔽 + 登记会话 + 记录 agent 句柄 + 补投 ──
   // 归属 = sessionId ∈ accounts（名册判定，不按 preset 排除）。
+  const elisionDone = new Set<string>()
   ctx.on('agent/created', ({ agent }) => {
     const sessionId = String(agent.id)
     const account = store.account(sessionId)
     if (account === undefined) return // 不在名册 = 不是我们的会话
     const rt = service.register(sessionId, account.name)
+    // 恢复时点遮蔽（T18，方案 B 定稿 2026-10-08）：created 时点表面 = 上一进程恢复的全部
+    // 历史，遮蔽对象无需推断——register（日志器就绪）之后一次性遮蔽，再补投（kickoff /
+    // 行批次都发生在遮蔽之后，结构上不可能被吞——修掉 pre-step 逐步判定下「首步空表面
+    // skip、第二步误吞任务书」的缺陷）。spike 实证（spike/created-mask-probe.mjs）：created
+    // 缝 append 被宿主接受、同步完成于 create() 返回前；重放不 corrupt；遮蔽跨进程持久。
+    // announce 每会话每进程至多一次，进程中途 resume 重建的 agent 也经此缝 ⇒ 内存集合保证
+    // 「每进程首见才遮」。失败只记 error（fail-open：created 缝无 step 可 reject，取舍见 §11.2）。
+    const session = (agent as { readonly session?: HostSessionFace }).session
+    if (session !== undefined && !elisionDone.has(sessionId)) {
+      elisionDone.add(sessionId)
+      const outcome = applyElision(session, processEpoch())
+      if (outcome.kind === 'replaced') {
+        service.appendRuntimeLog(sessionId, 'info', `上下文收口：已遮蔽上一进程上下文（起点标记 seq=${outcome.seq}，遮蔽 ${outcome.shadowedSeqs.length} 个表面节点）`)
+      } else if (outcome.kind === 'failed') {
+        service.appendRuntimeLog(sessionId, 'error', `上下文收口：遮蔽失败，既有历史保留在模型上下文（${outcome.reason}）`)
+      } else {
+        service.appendRuntimeLog(sessionId, 'info', `上下文收口：跳过（原因：${outcome.reason}）`)
+      }
+    }
     // 战斗开关初始化（T21.6）：名册持久偏好（缺省/缺字段 = true）应用到控制器。
     service.setCombatAuto(sessionId, account.combatAuto !== false)
     // 记录 agent 句柄（投递用；agent 有 followup 方法）
@@ -842,51 +862,6 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     if (event.type === 'turn/start') service.turnStart(sessionId)
     else if (event.type === 'turn/end') service.turnEnd(sessionId)
     return undefined
-  }, { global: true })
-
-  // ── 会话上下文的进程级收口（T18.2，表面遮蔽）──────────────────
-  // 冷启动按 id 恢复的旧会话带着上一进程的上下文（行批次 / 任务书 / 委派收尾），成为过期断言。
-  // 在本进程第一次 model step 之前，把"本进程之前的全部表面节点"替换为一条进程起点标记
-  // （surfaceOp replace；判定与适配在纯层 elide.ts，宿主语义见 doc/likely/t18-surface-elision-spike.md）。
-  // 归属 = 根会话 + 名册账号会话（子会话是一次性 spawn，无跨进程历史）。
-  // 失败 ⇒ 返回 { kind:'reject' } **阻断本步**（裁决：宁可这一步不跑，也不把污上下文送进模型）；
-  // 预期 skip（表面未就绪 / 无历史 / 已遮蔽 / 日志含未解析 tool/call）⇒ 照常放行。
-  // 每会话每进程只记**首条决策**（成功 / skip 原因 / 失败）——否则 pre-step 每步都刷屏。
-  const elisionLogged = new Set<string>()
-  const elideStep = (rawAgent: unknown, signal: { readonly aborted?: boolean } | undefined): boolean => {
-    try {
-      const agent = rawAgent as { readonly id?: unknown; readonly session?: HostSessionFace } | undefined
-      const session = agent?.session
-      if (session === undefined) return false
-      if (session.header?.parentSession !== undefined) return false
-      const sessionId = String(agent?.id ?? '')
-      if (sessionId === '' || store.account(sessionId) === undefined) return false
-      if (signal?.aborted === true) return false
-      const outcome = applyElision(session, processEpoch())
-      if (outcome.kind === 'replaced') {
-        elisionLogged.add(sessionId)
-        service.appendRuntimeLog(sessionId, 'info', `上下文收口：已遮蔽上一进程上下文（起点标记 seq=${outcome.seq}，遮蔽 ${outcome.shadowedSeqs.length} 个表面节点）`)
-        return false
-      }
-      if (outcome.kind === 'failed') {
-        service.appendRuntimeLog(sessionId, 'error', `上下文收口：遮蔽失败，本步阻断（${outcome.reason}）`)
-        return true
-      }
-      // 预期 skip：每会话每进程只记一条（首次决策），否则 pre-step 会刷屏。
-      if (!elisionLogged.has(sessionId)) {
-        elisionLogged.add(sessionId)
-        service.appendRuntimeLog(sessionId, 'info', `上下文收口：跳过（原因：${outcome.reason}）`)
-      }
-      return false
-    } catch (error: unknown) {
-      ctx.logger.error(`mud-core3: 上下文遮蔽接线异常，本步阻断：${error instanceof Error ? error.message : String(error)}`)
-      return true
-    }
-  }
-  ctx.on('agent/pre-step', (payload, next) => {
-    const step = payload as unknown as { readonly agent?: unknown; readonly signal?: { readonly aborted?: boolean } }
-    if (elideStep(step.agent, step.signal)) return Promise.resolve({ kind: 'reject' as const })
-    return next()
   }, { global: true })
 
   // ── LLM 调用面闸门（llm/stream 瀑布终审，2026-10-02）──────────

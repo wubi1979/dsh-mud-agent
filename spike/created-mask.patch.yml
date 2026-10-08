@@ -1,0 +1,10 @@
+# 「恢复时点遮蔽」spike patch（只挂探针，不挂 mud-core3，避免其 pre-step 遮蔽干扰断言）。
+#
+# 运行（临时 DSH_HOME；三个 phase 依次各跑一次，探针自行 process.exit）：
+#   New-Item -ItemType Junction -Path D:\code\_spike\created-mask\dshhome\profiles\web\node_modules -Target "$env:USERPROFILE\.dsh\profiles\web\node_modules"
+#   $env:DSH_HOME='D:\code\_spike\created-mask\dshhome'
+#   $env:SMOKE_PHASE='1'   # 然后 '2'、'3'
+#   pnpm --dir D:/Code/deepseek-harness dsh web --patch D:/Code/dsh-mud-agent/spike/created-mask.patch.yml --port 3084 --no-open
+- insert:
+    - id: created-mask-probe
+      name: 'file:///D:/Code/dsh-mud-agent/spike/created-mask-probe.mjs'

@@ -608,4 +608,15 @@
 - **回归**：core3 402/402（30 文件）+ mud-workflow 77/77 + webui 7/7 全绿，全仓 `pnpm -r typecheck` 清零。
 - **待实测（真机冒烟）**：胜利/脱战/逃的行文、干预行文（perform/jiali/运功/药/halt/move）、敌方档位完整阶梯、忙位何时非 0、战后处置、多敌行文、未受伤拍是否也推 hpbrief（A.8.5 推断值清单）。
 
+## [v0.0.53]修复：T18 遮蔽时机改恢复时点——新账号接入的 kickoff 任务书被误吞 (2026-10-08)
+> 总结：用户实测发现新账号点击接入后，初始化任务书被「上一次进程的历史已失效」起点标记替换——agent 收不到任务书、不知道要连 MUD 登录。定稿方案 = 遮蔽时机从「本进程首次 model step 前（pre-step，逐步判定）」改为「会话登记（`agent/created`）时点一次性遮蔽」：created 时表面恰好就是上一进程恢复的全部历史，遮蔽对象无需推断；本进程投递（kickoff/补投）都发生在遮蔽之后，结构上不可能被吞。中途曾按 pre-step + priorSeq 边界实现一版（同日），经宿主源码静态分析 + 实机探针验证后整体废弃改线。
+
+- **根因**：pre-step 判定把「本进程首步之前的全部表面节点」当「上一进程历史」遮蔽；新账号时序下首步 pre-step 空表面 skip（不写标记）→ 任务书/工具结果落表面 → 第二步 pre-step 把它们连同本轮上下文一并误吞。
+- **验证路径（先证后改）**：①宿主源码静态分析——`agent/created` 由 `announce()` 串行发出、不在任何 append 发布期内，reentry 守卫不适用；发射源仅 create（startup）/resume；resume 理论可进程中途再触发 ⇒ 需「每进程首见才遮」内存守卫。②实机探针 `spike/created-mask-probe.mjs`（零依赖、三轮冷启动往返）：created 缝 replace 被接受且同步完成于 `create()` 返回前（A1）· 遮蔽后本进程新文本在场（A3）· 重放不 corrupt 且遮蔽跨进程持久（A2）· 下一进程把上一进程的标记与本轮文本一并再遮（A4，每进程一次语义天然成立）。
+- **实现变更**：`elide.ts` 恢复「给表面做一次 replace」的纯判定（删 `priorSeq` 参数与 `no-prior-history`，`no-history` 回归原语义；保留尾 SYS 保留规则、未解析 `tool/call` 保守 skip、`already-elided` 幂等双保险）；`index.ts` 删 `agent/pre-step` 挂钩与 `elisionBound`，遮蔽迁入 `agent/created`（register 之后、`flushPending` 之前；内存集合「首见才遮」）。
+- **失败处置变更**：created 缝无 step 可 reject ⇒ 由 pre-step 的 fail-closed（阻断本步）改为 **fail-open（记 error 日志放行，既有历史保留一次）**（§11.2 ④，随遮蔽时机一并裁定）。
+- **测试**：`elide.spec.ts` 24 用例（删 priorSeq 边界族 7 例，恢复时点语义由接线时机结构性保证；实机断言在探针）。
+- **文档**：§11.2（遮蔽时机/范围/失败处置/可见性）、§6.3、§7.4、§11.4（事件表）、§16.3 T18 行。
+- **回归**：core3 402/402（30 文件）全绿；lib 已重建。
+
 > AI生成

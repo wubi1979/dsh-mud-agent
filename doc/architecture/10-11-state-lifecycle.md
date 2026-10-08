@@ -107,15 +107,15 @@ world:     GMCP 事件与（后置的）行级规则驱动（§10.3）
 - **密码不经本插件**：页面写入宿主凭据域，`addAccount` 只收**引用名**（§11.6）。
 - **blank 语义**：建账号后会话保持 blank（会话体暂不渲染），**第一次接入**（onAdmit → kickoff 任务书真实回合）才翻——不伪造 `turn/start`（会污染回合计数与 replay）。
 - **重启恢复 = 冷启动**（2026-10-02 裁定）：宿主重启后历史会话**一律回到未接入**（Deliverer fresh，名册 `admitted` 不回读——仅作最近状态记录），人工点接入再点火；**冷启动不自动**（同 T5 自动重连纪律：重启后两轴全 unknown，自动点火 = agent 醒来即自主连游戏）。恢复期 LLM 调用面闸门 fail-closed 兜底（§7.4.1）。
-- **冷启动的上下文收口（T18，2026-10-06 落地）**：宿主按 id 恢复会话 ⇒ 上一进程的上下文（行批次 / 任务书 / 委派收尾）成为**过期断言**。运行时世界状态已是进程级（§4.5 断线整体复位 + 冷启动不回读），未收口的是**模型可见上下文**：在本进程**第一次 model step 之前**（`agent/pre-step`——宿主 compaction 的同一替换缝、**先于请求推导**），把 `node 0`（受保护 `system/message` head）之外的**全部表面节点**替换为一条**进程起点标记**（`surfaceOp:{op:'replace'}`；`source.kind='mud-epoch'`；正文含进程 epoch）。要点：
-  - ① 标记是**持久会话事件** ⇒ 下一进程重放（折叠）后旧节点仍不在表面；每进程每会话**恰好一次**（按 epoch 幂等，无需内存集合）；
+- **冷启动的上下文收口（T18，2026-10-06 落地；遮蔽时机改恢复时点 2026-10-08 定稿）**：宿主按 id 恢复会话 ⇒ 上一进程的上下文（行批次 / 任务书 / 委派收尾）成为**过期断言**。运行时世界状态已是进程级（§4.5 断线整体复位 + 冷启动不回读），未收口的是**模型可见上下文**：在会话登记（`agent/created`）时点——此时表面**恰好就是**上一进程恢复的全部历史，遮蔽对象无需推断——把 `node 0`（受保护 `system/message` head）之外的既有历史**一次性替换**为一条**进程起点标记**（`surfaceOp:{op:'replace'}`；`source.kind='mud-epoch'`；正文含进程 epoch），**之后**才补投（kickoff / 行批次都发生在遮蔽之后，结构上不可能被吞）。要点：
+  - ① 标记是**持久会话事件** ⇒ 下一进程重放（折叠）后旧节点仍不在表面；**每进程每会话恰好一次**（announce 每会话每进程至多一次 + 接线内存集合「首见才遮」；纯层保留 `already-elided` 幂等双保险）；
   - ② **会话 id / 账号 id / 名册零变化**（不换身份、不归档、无 schema 变更）；归属 = 根会话 + 名册账号会话（子会话是一次性 spawn）；
-  - ③ **遮蔽范围**：按 surface 顺序取 `node 1 … 末节点`；**尾节点是 `system/message` 时保留它**（其余后续 system 节点是普通历史，与 compaction 同样随历史遮蔽——本轮 assembly 的提示词规范化会把当前渲染提示词写回 head，故不丢提示词）。**预期 skip 照常放行**：表面未就绪（新会话 head 未就位）/ 无历史 / 本 epoch 已遮蔽 / **日志含未解析 `tool/call`**（`tool/call` 是 **log-only**、不是 surface 事件 ⇒ 工具配对判定必须看日志，不能看表面节点）；
-  - ④ **失败 ⇒ `{kind:'reject'}` 阻断本步**（判定抛错 / `append` 被拒 / 遮蔽后表面与预期不符）：回合记 `turn/end {reason:{kind:'blocked'}}`、无 `step/start`、无模型调用；该回合已 claim 的投递批次不入日志（fail-closed 的已知代价）；
+  - ③ **遮蔽范围**：surface 顺序 `node 1 … 末节点`；**表面末节点是 `system/message` 时保留它**（其余后续 system 节点是普通历史，与 compaction 同样随历史遮蔽——被新消息盖过的中段 system 节点不再保留；本轮 assembly 的提示词规范化会把当前渲染提示词写回 head，故不丢提示词）。**预期 skip 照常放行**：表面为空（新会话 created 时点的形态）/ node 0 非 head / 无可遮蔽历史 / 本 epoch 已遮蔽 / **日志含未解析 `tool/call`**（`tool/call` 是 **log-only**、不是 surface 事件 ⇒ 工具配对判定必须看日志，不能看表面节点）；
+  - ④ **失败 ⇒ 记 error 日志放行（fail-open）**（判定抛错 / `append` 被拒 / 遮蔽后表面与预期不符）：created 缝**无 step 可 reject**，既有历史保留在模型上下文一次——与原 pre-step 方案的 fail-closed 取舍已随遮蔽时机一并裁定（2026-10-08）；
   - ⑤ **旧事件仍在会话日志里**（§13.1），只是不进对话；`"旧历史不进模型"只对对话请求成立`——标题生成等**辅助调用从日志取料**，不受遮蔽保护；
   - ⑥ 只追加宿主**已知**事件类型（`user/message`）：新增事件类型会让未装本插件的读取器**拒绝重建整条日志**。
-  - ⑦ **可见性**：遮蔽成功 / 跳过原因 / 失败阻断各记一条**会话日志**（`runtime` 通道，前端「MUD 日志」tab 与落盘文件同源；失败为 `error`，SessionLog 自动镜像宿主 logger），每会话每进程只记首条决策（避免 pre-step 刷屏）。
-  - 实测证据与硬不变量（head 之前追加 message ⇒ 日志下一进程判 corrupt）见 `doc/likely/t18-surface-elision-spike.md`；纯层/接线/冒烟见 §16.2、§16.4 #8。
+  - ⑦ **可见性**：遮蔽成功 / 跳过原因 / 失败各记一条**会话日志**（`runtime` 通道，前端「MUD 日志」tab 与落盘文件同源；失败为 `error`，SessionLog 自动镜像宿主 logger）——created 每会话每进程只触发一次，天然不刷屏。
+  - 实测证据与硬不变量（head 之前追加 message ⇒ 日志下一进程判 corrupt）见 `doc/likely/t18-surface-elision-spike.md`；**恢复时点遮蔽的宿主缝语义**（created 缝 append 被接受、同步完成于 `create()` 返回前、重放不 corrupt、遮蔽跨进程持久、每进程一次语义）见探针 `spike/created-mask-probe.mjs`（2026-10-08 三轮冷启动往返全过）；纯层/接线/冒烟见 §16.2、§16.4 #8。
 - **会话销毁本期做不到**：插件拿不到 `AgentHandle.dispose`，`ctx.sessionController` 也没有 delete 动词（§2.4）——删账号后会话本身仍在宿主内。
 
 ## 11.3 连接生命周期
@@ -150,8 +150,7 @@ disconnected（runtime 保留；两轴复位 + world.clear + pending 清空 + �
 
 | 事件 | 动作 |
 |---|---|
-| `agent/pre-step`（T18） | 上下文收口：本进程首次 model step 前遮蔽上一进程上下文（按 epoch 幂等，§11.2）；失败 ⇒ `{kind:'reject'}` 阻断本步（回合 `blocked`、无模型调用） |
-| `agent/created` | roster 判定 → `service.register`（幂等）→ 记 agent 句柄 → 装 Wake → `flushPending` 补投 |
+| `agent/created` | roster 判定 → `service.register` → **恢复时点遮蔽**（一次性遮蔽上一进程恢复历史，之后才补投；§11.2）→ 记 agent 句柄 → 装 Wake → `flushPending` 补投 |
 | `agent/disposed` | 移除 agent 句柄；**runtime / deliverer / 连接 / Wake 保留**（冷会话语义） |
 | `session/disposed` | 拆 Wake → 断连 → 拆 runtime / deliverer / 日志 |
 | 插件卸载 | 拆全部 Wake + `disposeAll()` |

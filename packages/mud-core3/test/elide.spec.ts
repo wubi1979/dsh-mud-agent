@@ -1,7 +1,13 @@
 /**
- * elide 测试 — 会话上下文「进程级收口」的纯层判定（T18.1，冻结计划见 doc/PLAN.md 第三节）。
+ * elide 测试 — 会话上下文「进程级收口」的纯层判定（T18.1）。
  *
- * 只测判定与数据构造（宿主 append 接线在 T18.2，走实机重放级冒烟）。用例矩阵来自计划：
+ * **遮蔽时机 = 恢复时点（agent/created 缝，2026-10-08 spike 定稿）**：接线层在 created（登记）
+ * 时点对恢复表面一次性遮蔽——该时点表面恰好就是上一进程恢复的历史集合，**遮蔽对象无需推断**；
+ * 本进程投递（kickoff 任务书 / 补投批次）都发生在遮蔽之后，结构上不可能被吞。因此纯层不再有
+ * 「遮蔽边界 priorSeq」参数，也不再有边界用例（旧 ㉒–㉗ 已随 pre-step 方案删除）；「新账号任务书
+ * 不被误吞」由**接线时机**保证，实机断言见 `spike/created-mask-probe.mjs`（三轮冷启动往返）。
+ *
+ * 只测判定与数据构造（宿主 append 接线走实机重放级冒烟）。用例矩阵：
  *   1. 空表面 / 只有 head / node 0 非 head ⇒ 预期 skip；
  *   2. head + 历史 ⇒ 遮蔽 node1..last（surface 顺序、shadowed 全覆盖）；
  *   3. 幂等：已含本 epoch 标记 ⇒ skip；只含上一 epoch 标记 ⇒ 再遮蔽（旧标记本身也被遮蔽）；
@@ -13,9 +19,10 @@
  *   9. 标记形状冻结、正文含 epoch、无凭据面（P6 口径）；
  *  10. 进程 epoch 同进程稳定。
  *
- * 依据：spike 实测（doc/likely/t18-surface-elision-spike.md）+ 官方 reference/subsystems/session
- * （node 0 `system/message` 受保护、端点按 surface 位置而非数值区间）+ **真实会话离线折叠诊断**
- * （v0.0.47：surface 124 节点、`system/message`×3、`tool/result` 20 且 `tool/call` 全在日志侧）。
+ * 依据：spike 实测（doc/likely/t18-surface-elision-spike.md + spike/created-mask-probe.mjs）
+ * + 官方 reference/subsystems/session（node 0 `system/message` 受保护、端点按 surface 位置而非
+ * 数值区间）+ **真实会话离线折叠诊断**（v0.0.47：surface 124 节点、`system/message`×3、
+ * `tool/result` 20 且 `tool/call` 全在日志侧）。
  */
 
 import { describe, expect, it } from 'vitest'
@@ -66,12 +73,12 @@ const EPOCH = '1762300000000-deadbeef'
 // ── 用例 ──────────────────────────────────────────────────────
 
 describe('elisionPlan 预期 skip（不阻断回合）', () => {
-  it('① 空表面 ⇒ skip empty-surface', () => {
+  it('① 空表面 ⇒ skip empty-surface（新会话 created 时点的形态）', () => {
     expect(elisionPlan({ epoch: EPOCH, nodes: [], events: [] }))
       .toEqual({ kind: 'skip', reason: 'empty-surface' })
   })
 
-  it('② 只有 head ⇒ skip no-history', () => {
+  it('② 只有 head ⇒ skip no-history（head 之外无历史）', () => {
     const events = [ev(SYS, 0, { turn: 1, step: 1 })]
     expect(elisionPlan({ epoch: EPOCH, nodes: [0], events }))
       .toEqual({ kind: 'skip', reason: 'no-history' })
@@ -148,7 +155,7 @@ describe('elisionPlan 遮蔽计划', () => {
     expect(plan.marker).toEqual(epochMarker(EPOCH))
   })
 
-  it('⑨ 只含上一 epoch 标记 ⇒ 再遮蔽，旧标记节点也进被遮蔽集', () => {
+  it('⑨ 只含上一 epoch 标记 ⇒ 再遮蔽，旧标记节点也进被遮蔽集（每进程一次语义）', () => {
     const previous = epochMarker('1762299000000-cafe0123')
     const events = [ev(SYS, 0, { turn: 1, step: 1 }), ev(USER, 1, previous), ev(USER, 2, { id: 'u2' })]
     const plan = elisionPlan({ epoch: EPOCH, nodes: [0, 1, 2], events })
@@ -217,7 +224,7 @@ describe('epoch 与标记', () => {
   })
 })
 
-describe('applyElision 接线适配（append + 后置校验；失败即 failure，由接线层阻断本步）', () => {
+describe('applyElision 接线适配（append + 后置校验；失败即 failure，由接线层记 error 日志）', () => {
   /**
    * 会话窄面假实现：surface 可变，按宿主语义"替换 surface 位置闭区间为新节点"。
    * @param nodes - 初始表面节点。
@@ -274,7 +281,7 @@ describe('applyElision 接线适配（append + 后置校验；失败即 failure�
     expect(appends).toEqual([])
   })
 
-  it('⑱ append 被宿主拒绝 ⇒ failed（不抛穿，交接线层阻断本步）', () => {
+  it('⑱ append 被宿主拒绝 ⇒ failed（不抛穿，交接线层记 error 日志）', () => {
     const { nodes, events } = sessionWithHistory()
     const { face, appends } = fakeSession(nodes, events, { appendThrows: true })
     const outcome = applyElision(face, EPOCH)
@@ -300,7 +307,7 @@ describe('applyElision 接线适配（append + 后置校验；失败即 failure�
     expect(outcome.kind).toBe('failed')
   })
 
-  it('㉑ 快照与表面不一致 ⇒ failed（判定抛错被收成 failure，不中断回合）', () => {
+  it('㉑ 快照与表面不一致 ⇒ failed（判定抛错被收成 failure，不中断登记）', () => {
     const { events } = sessionWithHistory()
     const { face, appends } = fakeSession([0, 1, 2, 99], events)
     const outcome = applyElision(face, EPOCH)

@@ -3,8 +3,15 @@
  *
  * 解决的问题：`sessionId = accountId` 随名册持久，宿主冷启动按 id 恢复会话 ⇒ 上一进程的上下文
  * （行批次 / 任务书 / 委派收尾）成为过期断言污染新连接。运行时世界状态已是进程级（§4 断线硬收尾），
- * 本模块处理的是**模型可见上下文**：在本进程第一次 model step 之前，把"本进程之前的全部表面节点"
- * 一次性替换为一条**进程起点标记**。
+ * 本模块处理的是**模型可见上下文**：在本进程**首次看见该会话（agent/created 登记时点）**时，
+ * 把恢复表面的全部既有节点一次性替换为一条**进程起点标记**。
+ *
+ * **遮蔽时机 = 恢复时点（agent/created 缝，2026-10-08 spike 定稿）**：created 时点表面恰好就是
+ * 上一进程恢复的历史集合，**遮蔽对象不需要推断**——直接对当前表面做一次 replace 即可；本进程
+ * 后续投递（kickoff 任务书 / 补投批次）都发生在遮蔽**之后**，结构上不可能被吞（修掉「新账号
+ * kickoff 误吞」缺陷：pre-step 逐步判定下，首步空表面 skip、第二步把任务书连同本轮上下文误杀）。
+ * spike 实证（探针 `spike/created-mask-probe.mjs`，2026-10-08）：created 缝 append 被宿主接受、同步完成于
+ * `create()` 返回前、重放不 corrupt、遮蔽跨进程持久、每进程一次语义天然成立。
  *
  * 宿主侧语义（实证见 `doc/likely/t18-surface-elision-spike.md`，官方面见 reference/subsystems/session）：
  *   - `Session.surface.nodes` = 当前 model-visible 表面节点序，**node 0 是受保护的 `system/message` head**；
@@ -15,7 +22,8 @@
  *   - `sourceEventSeqs` 必须是"完整、非空"的被遮蔽节点集合。
  *
  * 纯度纪律：本模块零宿主依赖（只依赖 node 内建），只做判定与数据构造；真正的 `append` 在 index.ts 接线。
- * 设计归属：§11.2；冻结计划：doc/PLAN.md 第三节 T18。
+ * 「每进程一次」由接线层的会话集合守卫（created 每进程每会话至多 announce 一次 + 内存集合）承担，
+ * 纯层保留 `already-elided` 幂等检查作为双保险。设计归属：§11.2。
  */
 
 import { randomUUID } from 'node:crypto'
@@ -62,7 +70,7 @@ export type ElisionSkipReason =
    */
   | 'unresolved-tool-call'
 
-/** 遮蔽判定结果：`skip`（预期，放行本步）或 `replace`（执行一次遮蔽）。 */
+/** 遮蔽判定结果：`skip`（预期，放行登记）或 `replace`（执行一次遮蔽）。 */
 export type ElisionPlan =
   | { readonly kind: 'skip'; readonly reason: ElisionSkipReason }
   | {
@@ -104,7 +112,7 @@ export interface ElisionSession {
   ): { readonly seq: number }
 }
 
-/** 接线层要的结论：跳过（放行本步）/ 已遮蔽 / 失败（**接线层据此阻断本步**）。 */
+/** 接线层要的结论：跳过（放行登记）/ 已遮蔽 / 失败（**接线层记 error 日志**）。 */
 export type ElisionOutcome =
   | { readonly kind: 'skip'; readonly reason: ElisionSkipReason }
   | { readonly kind: 'replaced'; readonly seq: number; readonly shadowedSeqs: readonly number[] }
@@ -136,15 +144,15 @@ export function epochMarker(epoch: string): EpochMarker {
 }
 
 /**
- * 判定本步是否需要遮蔽，并给出替换计划（纯函数；宿主调用由接线层执行）。
+ * 判定本登记时点是否需要遮蔽，并给出替换计划（纯函数；宿主调用由接线层执行）。
  *
  * 遮蔽范围 = **surface 顺序**的 `node 1 … 末节点`，但**尾节点若是 `system/message` 则保留它**
  * （loop 的"最新系统节点"是有效提示词载体，保留它可避免与提示词规范化抢位；中段的后续
  * system 节点是普通历史，与 compaction 同样处理、随历史一起遮蔽）。
  *
  * 预期跳过（`skip`）绝不视为失败：新会话、无 head、无可遮蔽历史、本 epoch 已遮蔽、
- * 日志含未解析 `tool/call`，都照常放行本步。**快照与表面不一致**属失败，直接抛错
- * （接线层据此返回 `{ kind:'reject' }` 阻断本步，见 §11.2）。
+ * 日志含未解析 `tool/call`，都照常放行登记。**快照与表面不一致**属失败，直接抛错
+ * （接线层据此记 error 日志，见 §11.2）。
  *
  * @param input - epoch、表面节点序、日志快照。
  * @returns `skip`（含原因）或 `replace`（含端点、被遮蔽集与替换体）。
@@ -189,7 +197,8 @@ export function elisionPlan(input: ElisionInput): ElisionPlan {
  * 执行一次遮蔽（接线层调用）：判定 → append → **后置校验**。
  *
  * 失败（判定抛错 / append 被拒 / 遮蔽后表面与预期不符）一律收成 `failed` 并附可读原因，
- * **不向调用方抛错**——接线层据此返回 `{ kind:'reject' }` 阻断本步（不阻断则会把污上下文送进模型）。
+ * **不向调用方抛错**——接线层据此记 error 日志（created 缝无 step 可 reject，接受 fail-open：
+ * 既有历史保留在模型上下文一次；与 pre-step 方案的 fail-closed 取舍见 §11.2）。
  * 后置校验刻意不苛求表面长度（容忍同一步内其它生产者的追加），只要求：替换体在表面、
  * 且全部被遮蔽节点已不在表面。
  *
