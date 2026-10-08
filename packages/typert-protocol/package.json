@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-typert-protocol",
-  "description": "镜像自 deepseek-harness packages/typert/protocol (v0.1.6-alpha.1)。typert 生成器要求协议包真实存在于本工作区 packages/ 内 (realPath 判定, 链接/装挂会被还原成仓库外路径而失效); 上游升版时重新拷贝 src/ 并同步 version。",
-  "version": "0.1.6-alpha.1",
+  "description": "镜像自 deepseek-harness packages/typert/protocol (v0.2.0-rc.2)。typert 生成器要求协议包真实存在于本工作区 packages/ 内 (realPath 判定, 链接/装挂会被还原成仓库外路径而失效); 上游升版时重新拷贝 src/ 并同步 version。",
+  "version": "0.2.0-rc.2",
   "type": "module",
   "main": "lib/types/index.js",
   "types": "lib/types/index.d.ts",
@@ -28,6 +28,7 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/dsh-brand": "0.2.0-rc.2",
     "typescript": "^5.9.3"
   },
   "scripts": {

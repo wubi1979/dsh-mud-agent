@@ -636,3 +636,16 @@
 - **回归**：core3 405/405（30 文件）+ webui 7/7 全绿；lib 与 dist 均已重建。
 
 > AI生成
+
+## [v0.0.56]上游 deepseek-harness 0.2.0-rc.2 对齐升级 (2026-10-08)
+> 总结：上游 master 快进 551 提交（0.1.7-rc.2 → 0.2.0-rc.2+），全仓依赖与镜像对齐 RC 列车，invariants 伴生插件按上游方向退役。
+
+- **上游拉取**：deepseek-harness 快进合并 21638c5631 → da00f7f535（4740 文件，9-27 → 10-03）；四份官方升级指南（subpath display manifest / remove runtime invariants / schedule bundle retired / account sign-in errors）逐一核对，前三项涉及本仓。
+- **invariants 退役（mud-webui）**：上游 master 已删除 `@deepseek-ai/dsh-invariants` 与各包 `./invariant` 伴生插件（f028f25667，将落在 0.2.0-rc.2 下一版本；npm 0.2.0-rc.2 列车内该包仍在、属发布时点差异）。本仓删 `src/invariant.ts`（空注册伴生，patch 从未挂载，运行时零影响）、package.json 删 `./invariant` 子路径导出与 peer/dev 两处依赖行；陈旧 dist（含引用已退役 dsh-mud-core 的 mud-socket.d.ts/Rail.d.ts 等遗留产物）clean 重建清除。
+- **typert-protocol 镜像同步**：按包内既定纪律重新拷贝上游 `packages/typert/protocol/src`（+254 行：新 json-value.ts / owned-value.ts，类型新增 PeerId/PeerScope/RemoteInvocation/RemoteStream/RemoteStreamHandle 与 ctx.invocation 语境），version 0.1.6-alpha.1 → 0.2.0-rc.2；新增 devDep `@deepseek-ai/dsh-brand@0.2.0-rc.2`（新 types.ts 的 Branded 类型导入）。RC 发布后协议包仅剩 companion 移除一处提交，镜像内容 ≈ 0.2.0-rc.2，无漂移。
+- **依赖列车对齐 0.1.7-rc.2 → 0.2.0-rc.2**：mud-core3（peer+dev：dsh-agent/dsh-llm/dsh-tools；dev：typert-generator 0.1.6-alpha.2 → 0.2.0-rc.2）、mud-webui（依赖+peer+dev 全套 client-ui-*/api-controller/session/util-crypto/client-store，剔除 invariants 行）、mud-workflow（dev：dsh-tools）。**不追 0.2.1-alpha.1**（其 peer 要求 cordis ~4.0.5-alpha.1，与本地 master vendor cordis 4.0.4 不符）。cordis 保持 4.0.4 与上游 vendor 一致。
+- **根 workspace 调整**：override `dsh-sandbox` 0.1.5-rc.2 → 0.2.0-rc.2；新增 override `cordis-plugin-include: 1.0.9`（0.2.0-rc.2 发布包携带 include@1.0.7 精确依赖而 cordis@4.0.4 peer 要 ~1.0.9，上游 master 自身 vendor 1.0.9 运行，对齐后 peer 全绿）；minimumReleaseAgeExclude 删两行 dsh-invariants 死条目（该清单在 minimumReleaseAge:0 下本就惰性，其余保留）。
+- **验证**：`pnpm install` peer 零告警；typecheck 两包通过；core3 405/405 + workflow 77/77 + webui 7/7 全绿；gen:typert 工件重建（typert.host.js 27KB）；两个 cordis.patch.yml 经宿主 master 同款解析路径（js-yaml load + entryListSchema，自 app-boot 上下文解析）校验通过——preset-mud-player / mud-core3 / mud-workflow / mud-webui 四行 insert 完好。
+- **待实测（重启宿主后）**：① `<profile>/node_modules/mud-core3` junction 的 peer 拦截在新 plugin-manager 解析逻辑下是否仍生效（上游本轮修过 3 个相关缺陷）；② WebUI 侧栏将多出「自动化任务」页（Schedule 并入 Web 组合，属预期）；③ sidebar Session Tab 生命周期修复或顺带改善 T22 切会话挂旧问题；④ 新建账号向导走一遍确认草稿初始化变更无碍。未来切换 `dsh plugin add` 流程时须补 locale meta + icon（子路径展示元数据新规）。
+
+> AI生成
