@@ -273,6 +273,16 @@ export class SessionRuntime {
     this.onWorldChange?.()
   }
 
+  /**
+   * 导航服务写入口（T23.10b，用户裁定新增 `kind:'nav'`）：导航侧的**推断**事实
+   *（如 `location.出发点就绪 = false`——服务知道"这次是行走且未被受理"，
+   * 而行文本身与 `-c` 查询同句、判不出来）。会话相关、随 §10.4 断线整体复位。
+   */
+  writeNavWorld(zone: string, key: string, value: unknown): void {
+    this.worldState.set(zone, key, value, 'measured', { kind: 'nav', time: Date.now() })
+    this.onWorldChange?.()
+  }
+
   /** 画面通道（remote.mud.follow 经 service.screenOf 取用）。 */
   get view(): GameScreen {
     return this.screen

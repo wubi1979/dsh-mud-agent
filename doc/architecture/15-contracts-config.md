@@ -47,7 +47,7 @@ interface MudCore3Service extends MudCore3Handle {
   connect(sessionId): Promise<{ state }>            // mud_connect 的落点（幂等）
   workflowIoFor(sessionId, holder): Promise<WorkflowIoHandle<MudLine>>  // §8.14 缝合点；端口类型 = 契约层单点（§8.8，A1），io 原语 awaitCaptcha(url)（§8.17）
   stateOf(sessionId): { connState, loggedIn, admitted, world, recording, dropped }
-  defaults: { sendTimeoutMs, sendMaxLines }         // 工具缺省参数
+  defaults: { sendTimeoutMs, sendMaxLines, staminaFloorPct }  // 工具缺省参数
   builtinFlows: readonly WorkflowRecord[]           // 流程实体（login 等），交 mud-workflow 注册表
 }
 ```
@@ -56,6 +56,21 @@ interface MudCore3Service extends MudCore3Handle {
 - **窄结构代位**：`ctx.get('agents')` 的品牌化 `SessionId` 类型定义在宿主 `@deepseek-ai/dsh-session` 内，pnpm 严格链接下不可直连 import ⇒ 用**最小结构断言**读 `agents.get(id)?.session?.header?.parentSession`（§2.1 事实 9）。
 - **取用走 `ctx.get`（不写进 `inject`）**：`agents` 是**可选依赖**——缺席/提供方 fiber 未 ACTIVE ⇒ `undefined` ⇒ 上溯终止（§2.3）；且必须在**调用期**解析（apply 期未必就绪，与 `storageDomain` 同一课，§14.3）。写成 `ctx.agents` 会因未声明 inject 直接抛错并使 `apply` 整体失败 ⇒ `remote.mud` 全动词 404。
 - `MudService`（内部服务面）：`register` / `connect` / `disconnect` / `admit` / `stop` / `status` / `statuses` / `subscribeStatus` / `watchStatusStream` / `subscribeCaptcha` / `watchCaptchaStream` / `captchaAnswer` / `captchaAbort` / `captchaRefresh` / `get` / `getDeliverer` / `screenOf` / `logOf` / `flushPending` / `turnStart` / `turnEnd` / `dispose` / `disposeAll`（§11.4、§11.7、§8.17）。
+
+**`ctx.provide('mudNav')` 行走知识服务（T23.10b）**
+
+```
+ctx.provide('mudNav', NavService)      // 插件级单例（知识图全局；重启即空）
+  record({ region?, lines })           // 记录一段行走行文：路径表 ⇒ 边（region+pinyin 后到覆盖）、`-q` ⇒ 参考链（按 to 去重）
+  suggest(from, to)                    // 下一跳建议（Edge = {dest, pinyin, steps}）；无解 ⇒ null（不猜）
+  hintOf(lines)                        // 解析 `-q` 参考链 {to, via}（只有参考意义）
+  snapshot()                           // { nodes[{region, edges, updatedAt}], hints[] }
+```
+
+- **定位**：记录 agent 走出来的 `walk` 节点（初始为空），回答"当前区域到 X 的下一跳"；**不持有分段进度**（"每到一个新地点重新查询"，会话状态仍在 World）。
+- **取用**：工具面经 `MudToolDeps.nav`（`preset.ts` 里 `ctx.get('mudNav')`）；**缺席 ⇒ 不记录、不给建议**，工具行为退回本期之前（可选依赖，§2.3 同款纪律）。
+- **持久化（用户裁定 2026-10-08："先使用 json 数据持久化，后期再考虑优化"）**：**JSON 文件** `<logDir>/nav-graph.json`（与会话日志同目录，复用既有 `logDir` 配置、不新增 Config 键）；构造时加载、每次有增量记录后落盘；**fail-soft**——读坏/缺文件 ⇒ 空图并 `warn` 一条，写失败只 `warn`（知识是增益不是前置）；`logDir` 未配置 ⇒ 纯内存。快照形状 = `{ nodes:[{region, edges, updatedAt}], hints:[{to, via}] }`，人可读、可手工清理。
+- **负判断写入**：行走结果 `unaccepted` 时落 `location.出发点就绪 = false`（World `kind:'nav'`，经 `runtime.writeNavWorld`，§10.3）。
 
 ## 15.3 preset 行清单
 
@@ -121,8 +136,9 @@ interface MudCore3Service extends MudCore3Handle {
 | 25 | `sendTimeoutMs` | 15000 | `mud_send` 缺省总超时（工具侧钳制 ≤ 60000） | §8.7 |
 | 26 | `sendMaxLines` | 50 | 裸读尾部 / 兜底行数 | §8.7 |
 | 27 | `captchaTimeoutMs` | 180_000 | 验证码挂起预算（**独立预算**，不受 MAX_TIMEOUT_MS/silenceMs 校验约束；**正整数 fail-loud**） | §8.17 |
+| 28 | `staminaFloorPct` | 0.2 | **精力闸比值**（T23.10 D16）：`精力/最大精力` 低于此值不发 `walk`；战斗规则（收加力）**共用同一键**；须为 `(0,1]` 的比值，fail-loud | §8.7、§10.3 |
 
-> 上表与 `packages/mud-core3/src/index.ts` 的 `MudCore3Config` 一一对应（**26 项现役 + 1 已退役**）。探活三项 + `silenceMs` 受启动期校验式约束（`probeStartMs + probeMaxAttempts × probeRetryMs ≤ silenceMs`，fail-loud，§3.2）。变更 Config 必须同时改本表与 §0.1 版本号语义（Y/Z 级）。
+> 上表与 `packages/mud-core3/src/index.ts` 的 `MudCore3Config` 一一对应（**27 项现役 + 1 已退役**）。探活三项 + `silenceMs` 受启动期校验式约束（`probeStartMs + probeMaxAttempts × probeRetryMs ≤ silenceMs`，fail-loud，§3.2）。变更 Config 必须同时改本表与 §0.1 版本号语义（Y/Z 级）。
 
 ### 硬编码项（**不进 Config**，附理由）
 

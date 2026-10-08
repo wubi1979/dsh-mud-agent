@@ -286,19 +286,80 @@ describe('sc（character：八维 + 存款/杀气/门派/上榜差经验 分批�
   })
 })
 
-describe('i（inventory：件数/负重/财物）', () => {
-  it('背包片段回放：中文数字存原文 + 财物结构化', () => {
+describe('i（inventory：件数/负重/负重比/财物 + 装备/饰品/其它分区；实录 A.7.4 2026-10-08）', () => {
+  /** 实录 A.7.4（2026-10-08 会话日志 seq 1090–1108，脱敏缩排）。 */
+  const I_CAPTURE = [
+    '┌──────────────────────────────────────┐',
+    '│你共携带八件器物，负重约二十七斤，接近一成。                                │',
+    '├─────────────────[装  备]─────────────────┤',
+    '│                       -- [帽子]   ▄▄▄   [副兵] --                       │',
+    '│                       -- [护面]    ··    [护腕] --                       │',
+    '│                       -- [披风]   ▂﹀▂ ▌[手套] --                       │',
+    '│                       -- [护肩] ▅      █ [铠甲] --                       │',
+    '│          青色道袍   (+2) [衣服] █      ▄ [护肩] --                       │',
+    '│                       -- [腰带] ▌         [盾牌] --                       │',
+    '│                       -- [主兵]            [护腿] --                       │',
+    '│                       -- [护腿] ▄▄  ▄▄ [鞋子] 麻鞋                     │',
+    '├─────────────────[饰  品]─────□腰挂一个锦囊□────┤',
+    '│ [项链]--                                                          --[护心] │',
+    '│ [戒指]--                                                          --[戒指] │',
+    '├─────────────────[财  宝]─────────────────┤',
+    '│黄金×2                  白银×88                 铜板×81                  │',
+    '├─────────────────[其  它]─────────────────┤',
+    '│北侠战甲(Pkuxkx zhanjia) 青锋剑(Qingfeng sword)                             │',
+    '└─────────────────────────────北大侠客行────┘',
+  ]
+
+  it('实录回放：汇总行 + 装备/饰品非空槽 + 其它物品（块收口统一写）', () => {
+    const { tracker, writes } = harness()
+    for (const s of I_CAPTURE) tracker.observe(line(s))
+    expectWritten(writes, 'inventory', '件数', '八')
+    expectWritten(writes, 'inventory', '负重', '约二十七斤')
+    expectWritten(writes, 'inventory', '负重比', '接近一成')
+    expectWritten(writes, 'inventory', '财物', { gold: 2, silver: 88, copper: 81 })
+    // 装备：只写非空槽（青色道袍在标签前、麻鞋在标签后；画框/-- 空槽不写）。
+    expectWritten(writes, 'inventory', '装备', { 衣服: '青色道袍(+2)', 鞋子: '麻鞋' })
+    // 饰品：实录全空 ⇒ 不写该键。
+    expect(writes.find(w => w.key === '饰品')).toBeUndefined()
+    // 其它：中文名 + 英文 id 对。
+    expectWritten(writes, 'inventory', '其它', [
+      { name: '北侠战甲', id: 'Pkuxkx zhanjia' },
+      { name: '青锋剑', id: 'Qingfeng sword' },
+    ])
+    // 块收口统一写：全部 6 键各恰好一次。
+    const invKeys = writes.filter(w => w.zone === 'inventory').map(w => w.key)
+    expect(invKeys.sort()).toEqual(['件数', '其它', '装备', '负重', '负重比', '财物'])
+  })
+
+  it('多行其它跨行追加；饰品有物则写槽位（推断布局 [项链]珍珠 兼容）', () => {
     const { tracker, writes } = harness()
     for (const s of [
       '┌────┐',
-      '│你共携带六件器物│',
-      '│负重：约十斤│',
-      '│ 黄金×4 白银×70 铜板×81 │',
+      '├────[饰  品]────┤',
+      '│ [项链]珍珠   --[护心] │',
+      '├────[其  它]────┤',
+      '│烧饼(shao bing) 干粮(gan liang)│',
+      '│水囊(water bag)│',
       '└────┘',
     ]) tracker.observe(line(s))
-    expectWritten(writes, 'inventory', '件数', '六')
-    expectWritten(writes, 'inventory', '负重', '约十斤')
-    expectWritten(writes, 'inventory', '财物', { gold: 4, silver: 70, copper: 81 })
+    expectWritten(writes, 'inventory', '饰品', { 项链: '珍珠' })
+    expectWritten(writes, 'inventory', '其它', [
+      { name: '烧饼', id: 'shao bing' },
+      { name: '干粮', id: 'gan liang' },
+      { name: '水囊', id: 'water bag' },
+    ])
+  })
+
+  it('skills 的 中文(id) 行不被 i 规则抢走（分区门控）', () => {
+    const { tracker, writes } = harness()
+    for (const s of [
+      '┌───技能列表───┬──────┐',
+      '├───[ 基本功夫 ]───┼──────┤',
+      '│＋医道(medicine)      │不堪一击      │16.00/78│',
+      '└──────────────┘',
+    ]) tracker.observe(line(s))
+    expect(writes.find(w => w.zone === 'inventory')).toBeUndefined()
+    expect(writes.find(w => w.zone === 'skills')).toBeDefined()
   })
 })
 
@@ -489,5 +550,41 @@ describe('runtime 行路径接线（D1）', () => {
     } finally {
       await server.close()
     }
+  })
+})
+
+// ── 位置感知（T23.6，A.9 结论 5/6）──────────────────────────────────
+
+describe('位置感知 location（T23.6，A.9）', () => {
+  /** A.9 路线表（荆州府出发点房间内 `walk` 无参）。 */
+  const WALK_TABLE = [
+    '┌───荆州府─────────────┬────────────┬─────┐',
+    '│目的地                │拼音名称                │步数      │',
+    '├───────────────────┼────────────┼─────┤',
+    '│汉口镇  ◇ 汉水西岸                   │hankou                  │14        │',
+    '└─────────────────────────────国庆节祝福────┘',
+  ]
+  /** A.9 结论 5 未受理两行（`-c` 答复同族）。 */
+  const WALK_DEPARTURES = [
+    '当前区域的系统内建路径出发点在：中央广场、土地庙，请查询localmaps获得具体方位。',
+    '当前区域共有5处内建玩家路径起点，分别在当铺、中央广场、客店、土地庙、醉仙楼二楼。',
+  ]
+
+  it('walk 路线表 ⇒ location.区域 = 块开行的区域名', () => {
+    const { tracker, writes } = harness()
+    for (const l of WALK_TABLE) tracker.observe(line(l))
+    expectWritten(writes, 'location', '区域', '荆州府')
+  })
+
+  it('出发点答复 ⇒ location.出发点 = 本区域起点列表（未受理与 -c 同族，事实一致）', () => {
+    const { tracker, writes } = harness()
+    for (const l of WALK_DEPARTURES) tracker.observe(line(l))
+    expectWritten(writes, 'location', '出发点', ['当铺', '中央广场', '客店', '土地庙', '醉仙楼二楼'])
+  })
+
+  it('受理行 ⇒ location.出发点就绪 = true（正向证据；负判断走反证，见 tools 面）', () => {
+    const { tracker, writes } = harness()
+    tracker.observe(line('你决定开始前往襄阳方向走去……'))
+    expectWritten(writes, 'location', '出发点就绪', true)
   })
 })

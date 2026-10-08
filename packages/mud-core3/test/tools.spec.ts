@@ -16,9 +16,11 @@ import {
   registerMudTools, denyMatch, commandTokens, compileListen,
   CORE_ABSENT_ERROR, NOT_BOUND_ERROR, NOT_CONNECTED_ERROR, HOLDER_BUSY_ERROR,
   MAX_TIMEOUT_MS,
-  type MudToolDefinition, type ToolRegistrar, type MudCore3Handle,
+  type MudToolDefinition, type ToolRegistrar, type MudCore3Handle, type MudToolDeps,
 } from '../src/tools.ts'
+import { NavService } from '../src/nav/service.ts'
 import type { SessionRuntime } from '../src/runtime.ts'
+import { World } from '../src/world.ts'
 import type { ReadOpts, ReadResult } from '../src/read.ts'
 import { MudService } from '../src/service.ts'
 import type {
@@ -80,6 +82,8 @@ function stubRuntime(overrides: Partial<Record<string, unknown>> = {}): SessionR
     send: () => true,
     recentLines: () => [],
     read: async () => ({ lines: [], reason: 'quiet' }),
+    worldEntry: () => undefined, // T23.10 精力闸 / departures 读 World（真实 runtime 亦然）
+    writeNavWorld: () => {}, // T23.10b 未受理时服务侧写 location.出发点就绪=false
     ...overrides,
   } as unknown as SessionRuntime
 }
@@ -90,7 +94,11 @@ interface CapturedRead { opts: ReadOpts; initial: readonly MudLine[] }
  * 组装：注册三工具 + 可编程 handle。
  * runtimeOverrides 未给 read 时，自动接入 read 捕获（captured.opts/initial）。
  */
-function setup(handleOverrides: Partial<MudCore3Handle> = {}, runtimeOverrides: Partial<Record<string, unknown>> = {}) {
+function setup(
+  handleOverrides: Partial<MudCore3Handle> = {},
+  runtimeOverrides: Partial<Record<string, unknown>> = {},
+  depsOverrides: Partial<MudToolDeps> = {},
+) {
   const captured: CapturedRead = { opts: {} as ReadOpts, initial: [] }
   const rt = stubRuntime({
     ...(Object.prototype.hasOwnProperty.call(runtimeOverrides, 'read')
@@ -111,7 +119,7 @@ function setup(handleOverrides: Partial<MudCore3Handle> = {}, runtimeOverrides: 
     stateOf: () => ({
       connState: 'connected', loggedIn: 'unknown', admitted: false, world: {}, recording: 0, dropped: 0,
     }),
-    defaults: { sendTimeoutMs: 15000, sendMaxLines: 50 },
+    defaults: { sendTimeoutMs: 15000, sendMaxLines: 50, staminaFloorPct: 0.2 },
     ...handleOverrides,
   }
   const defs = new Map<string, MudToolDefinition>()
@@ -121,7 +129,7 @@ function setup(handleOverrides: Partial<MudCore3Handle> = {}, runtimeOverrides: 
       return () => {}
     },
   }
-  registerMudTools(registrar, { core: () => handle })
+  registerMudTools(registrar, { core: () => handle, ...depsOverrides })
   const call = (name: string, args: unknown, agentId = 'acc-1') =>
     defs.get(name)!.execute(args, { signal: new AbortController().signal, agent: { id: agentId } })
   const readCapture = (): CapturedRead => captured
@@ -129,15 +137,15 @@ function setup(handleOverrides: Partial<MudCore3Handle> = {}, runtimeOverrides: 
 }
 
 describe('mud_send 拒绝序（stub）', () => {
-  it('注册完整性：三工具全部过 registrar', () => {
+  it('注册完整性：四工具全部过 registrar', () => {
     const { defs } = setup()
-    expect([...defs.keys()].sort()).toEqual(['mud_connect', 'mud_send', 'mud_state'])
+    expect([...defs.keys()].sort()).toEqual(['mud_connect', 'mud_send', 'mud_state', 'mud_walk'])
   })
 
-  it('引擎缺席：三工具都给可读拒绝（注册照常）', async () => {
+  it('引擎缺席：四工具都给可读拒绝（注册照常）', async () => {
     const defs = new Map<string, MudToolDefinition>()
     registerMudTools({ register: def => { defs.set(def.name, def); return () => {} } }, { core: () => null })
-    for (const name of ['mud_connect', 'mud_send', 'mud_state']) {
+    for (const name of ['mud_connect', 'mud_send', 'mud_state', 'mud_walk']) {
       const r = await defs.get(name)!.execute({}, { signal: new AbortController().signal, agent: { id: 'x' } })
       expect(r).toEqual({ ok: false, error: CORE_ABSENT_ERROR })
     }
@@ -295,6 +303,307 @@ describe('mud_send 判据与 initial（stub）', () => {
   })
 })
 
+describe('mud_walk 判据预设特化（T23，stub）', () => {
+  it('缺省 args：发裸 walk，静默窗收束（无 gaCount），超时下限 30s', async () => {
+    const sent: string[] = []
+    const { call, readCapture } = setup({}, { send: (cmd: string) => { sent.push(cmd); return true } })
+    await expect(call('mud_walk', {})).resolves.toMatchObject({ ok: true, reason: 'quiet' })
+    expect(sent).toEqual(['walk'])
+    expect(readCapture().initial).toEqual([])
+    expect(readCapture().opts.quietMs).toBe(1500) // WALK_QUIET_MS：静默收「走完了」
+    expect(readCapture().opts.gaCount).toBeUndefined() // 每步都出提示符，GA 会第一步关窗
+    expect(readCapture().opts.maxLines).toBe(50)
+    expect(readCapture().opts.timeoutMs).toBe(30000) // max(15000, WALK_MIN_TIMEOUT_MS)
+  })
+
+  it('args 透传：拼音名 / -c / -q 区域 / -p 各发一条 walk 命令', async () => {
+    const sent: string[] = []
+    const { call } = setup({}, { send: (cmd: string) => { sent.push(cmd); return true } })
+    await call('mud_walk', { args: 'xiangyang' })
+    await call('mud_walk', { args: ' -c ' })
+    await call('mud_walk', { args: '-q 扬州' })
+    await call('mud_walk', { args: '-p' })
+    expect(sent).toEqual(['walk xiangyang', 'walk -c', 'walk -q 扬州', 'walk -p'])
+  })
+
+  it('拼接注入拒绝：分号/换行不行，60 字上限', async () => {
+    const sent: string[] = []
+    const { call } = setup({}, { send: (cmd: string) => { sent.push(cmd); return true } })
+    await expect(call('mud_walk', { args: '-q 扬州;suicide' })).resolves.toMatchObject({
+      ok: false, error: /单条 walk 参数/,
+    })
+    await expect(call('mud_walk', { args: 'a\nb' })).resolves.toMatchObject({ ok: false })
+    await expect(call('mud_walk', { args: 'x'.repeat(61) })).resolves.toMatchObject({ ok: false })
+    expect(sent).toEqual([]) // 全部拒在 send 之前
+  })
+
+  it('timeoutMs 钳制：缺省下限 30s、显式值上限 60s、非正整数拒绝', async () => {
+    const { call, readCapture } = setup()
+    await expect(call('mud_walk', { timeoutMs: 0 })).resolves.toMatchObject({ ok: false })
+    await call('mud_walk', { timeoutMs: 999_999 })
+    expect(readCapture().opts.timeoutMs).toBe(MAX_TIMEOUT_MS)
+  })
+
+  it('拒绝序同 mud_send：未归属 / 未连接 / 持有者冲突', async () => {
+    const unbound = setup({ toolContextFor: () => null })
+    await expect(unbound.call('mud_walk', {})).resolves.toEqual({ ok: false, error: NOT_BOUND_ERROR })
+    const disconnected = setup({}, { connState: 'disconnected' })
+    await expect(disconnected.call('mud_walk', {})).resolves.toEqual({ ok: false, error: NOT_CONNECTED_ERROR })
+    const busy = setup({}, { acquireSend: () => false })
+    await expect(busy.call('mud_walk', {})).resolves.toEqual({ ok: false, error: HOLDER_BUSY_ERROR })
+  })
+
+  it('行原文返回 + 收束后释放持有者', async () => {
+    let released = false
+    const { call } = setup({}, {
+      releaseSend: () => { released = true },
+      read: async () => ({
+        lines: [
+          { text: '你要往哪里走？', raw: '', style: [], abs: 1, time: 0, isPrompt: false, kind: null },
+        ],
+        reason: 'quiet',
+      }),
+    })
+    await expect(call('mud_walk', { args: 'jiming' })).resolves.toEqual({
+      ok: true, reason: 'quiet', outcome: 'unaccepted', lines: ['你要往哪里走？'],
+    })
+    expect(released).toBe(true)
+  })
+
+  it('T23.5 行走判据注入：到达 ⇒ until、软阻断/未受理 ⇒ failOn（A.9 结论 5）', async () => {
+    const { call, readCapture } = setup()
+    await call('mud_walk', { args: 'xiangyang' })
+    const until = readCapture().opts.until ?? []
+    const failOn = readCapture().opts.failOn ?? []
+    expect(until.some(re => re.test('你到达了荆州府。'))).toBe(true)
+    expect(failOn).toHaveLength(1)
+    expect(failOn[0]!.test('你因为种种原因停了下来，可以用walk继续进行。')).toBe(true)
+    // 缺省 args（恢复行走）同属"行走类"，同样注入判据
+    await call('mud_walk', {})
+    expect((readCapture().opts.until ?? []).length).toBeGreaterThan(0)
+  })
+
+  it('T23.5 查询类参数（-c / -q）不注入行走判据——其答复含"未受理"同族句', async () => {
+    const { call, readCapture } = setup()
+    await call('mud_walk', { args: '-c' })
+    expect(readCapture().opts.until).toBeUndefined()
+    expect(readCapture().opts.failOn).toBeUndefined()
+    expect(readCapture().opts.quietMs).toBe(1500)
+    await call('mud_walk', { args: '-q 扬州' })
+    expect(readCapture().opts.until).toBeUndefined()
+    expect(readCapture().opts.failOn).toBeUndefined()
+  })
+
+  it('T23.5 结果分类：到达 / 软阻断 / 未判定（未受理由反证给，见 T23.10b 用例）', async () => {
+    const mk = (reason: string) => setup({}, { read: async () => ({ lines: [], reason }) })
+    await expect(mk('until').call('mud_walk', {}))
+      .resolves.toMatchObject({ ok: true, outcome: 'arrived' })
+    await expect(mk('failOn').call('mud_walk', {}))
+      .resolves.toMatchObject({ ok: true, outcome: 'soft-stop' })
+    // 有受理行 ⇒ 在出发点，静默收束即"未判定"（不被反证误判为 unaccepted）
+    const started = setup({}, {
+      read: async () => ({
+        lines: [{ text: '你决定开始前往襄阳方向走去……', raw: '', style: [], abs: 1, time: 0, isPrompt: false, kind: null }],
+        reason: 'quiet',
+      }),
+    })
+    await expect(started.call('mud_walk', {})).resolves.toMatchObject({ ok: true, outcome: 'incomplete' })
+  })
+
+  it('T23.9 意图式工具面：缺省 action = walk，向后兼容 {args}', async () => {
+    const sent: string[] = []
+    const { call } = setup({}, { send: (cmd: string) => { sent.push(cmd); return true } })
+    await call('mud_walk', {})
+    await call('mud_walk', { action: 'walk', args: 'xiangyang' })
+    await call('mud_walk', { args: '-q 扬州' })
+    expect(sent).toEqual(['walk', 'walk xiangyang', 'walk -q 扬州'])
+  })
+
+  it('T23.9 action:speed ⇒ set walk_speed <值>；值域 -1..3，缺值/越界/未知动作拒', async () => {
+    const sent: string[] = []
+    const { call } = setup({}, { send: (cmd: string) => { sent.push(cmd); return true } })
+    await call('mud_walk', { action: 'speed', value: '2' })
+    await call('mud_walk', { action: 'speed', value: '-1' })
+    expect(sent).toEqual(['set walk_speed 2', 'set walk_speed -1'])
+    await expect(call('mud_walk', { action: 'speed' })).resolves.toMatchObject({ ok: false, error: /需要 value/ })
+    await expect(call('mud_walk', { action: 'speed', value: '9' })).resolves.toMatchObject({ ok: false, error: /取值须在/ })
+    await expect(call('mud_walk', { action: 'speed', value: 'x' })).resolves.toMatchObject({ ok: false })
+    await expect(call('mud_walk', { action: 'nope' })).resolves.toMatchObject({ ok: false, error: /未知 action/ })
+  })
+
+  it('T23.9 node 三动词只留槽位：执行可读拒绝，且不出现在工具描述里', async () => {
+    const { defs, call } = setup()
+    await expect(call('mud_walk', { action: 'node' })).resolves.toMatchObject({ ok: false, error: /本期未实现/ })
+    await expect(call('mud_walk', { action: 'node-get', name: 'kd_wd' })).resolves.toMatchObject({ ok: false, error: /本期未实现/ })
+    await expect(call('mud_walk', { action: 'node-walk', name: 'kd_wd' })).resolves.toMatchObject({ ok: false, error: /本期未实现/ })
+    expect(defs.get('mud_walk')!.description).not.toMatch(/node/)
+  })
+
+  it('T23.10b 记录与建议：走出来的节点入图，`-q` 回 hint/suggest/region（不加动词）', async () => {
+    const w = new World()
+    w.set('location', '区域', '荆州府')
+    const navFace = new NavService()
+    const worldEntry = (zone: string, key: string) => w.get(zone, key)
+    const mkLine = (text: string): MudLine => ({ text, raw: text, style: [], abs: 1, time: 0, isPrompt: false, kind: null })
+    // ① 首次行走读到本区域路径表（A.9 路线表）⇒ 边入图
+    const table = setup({}, {
+      worldEntry,
+      read: async () => ({ lines: [
+        mkLine('┌───荆州府─────────────┬────────────┬─────┐'),
+        mkLine('│目的地                │拼音名称                │步数      │'),
+        mkLine('│襄阳  ◇ 城中心                       │xiangyang               │15        │'),
+        mkLine('└─────────────────────────────国庆节祝福────┘'),
+      ], reason: 'quiet' }),
+    }, { nav: () => navFace })
+    const first = await table.call('mud_walk', { args: 'xiangyang' })
+    expect(first).toMatchObject({ ok: true, region: '荆州府' })
+    expect(navFace.snapshot().nodes[0]).toMatchObject({ region: '荆州府' })
+    expect(navFace.snapshot().nodes[0]!.edges[0]).toMatchObject({ pinyin: 'xiangyang', steps: 15 })
+    // ② 再查 `-q 武当山`：参考链只有参考意义 ⇒ 用已记录的边给出**下一跳建议**
+    const query = setup({}, {
+      worldEntry,
+      read: async () => ({ lines: [mkLine('从这里到武当山途径襄阳、武当山。')], reason: 'quiet' }),
+    }, { nav: () => navFace })
+    await expect(query.call('mud_walk', { args: '-q 武当山' })).resolves.toMatchObject({
+      ok: true,
+      region: '荆州府',
+      hint: { to: '武当山', via: ['襄阳', '武当山'] },
+      suggest: { dest: '襄阳  ◇ 城中心', pinyin: 'xiangyang', steps: 15 },
+    })
+    // ③ 无 nav 服务 ⇒ 不记录、不给建议，行为退回本期之前（不报错）
+    const noNav = setup({}, { worldEntry, read: async () => ({ lines: [mkLine('从这里到武当山途径襄阳、武当山。')], reason: 'quiet' }) })
+    const bare = await noNav.call('mud_walk', { args: '-q 武当山' })
+    expect(bare).toMatchObject({ ok: true })
+    expect((bare as { suggest?: unknown }).suggest).toBeUndefined()
+    expect((bare as { hint?: unknown }).hint).toBeUndefined()
+  })
+
+  it('T23.10b 在出发点判定用**反证**（用户裁定）：表类无表 ⇒ false、有表 ⇒ true、`-q` 不判定', async () => {
+    const writes: unknown[][] = []
+    const writeNavWorld = (zone: string, key: string, value: unknown) => { writes.push([zone, key, value]) }
+    /** 只看 location 面（nav.* 的阻断计数另有断言）。 */
+    const locWrites = (): unknown[][] => writes.filter(w => w[0] === 'location')
+    const mkLine = (text: string): MudLine => ({ text, raw: text, style: [], abs: 1, time: 0, isPrompt: false, kind: null })
+    // 表类（无参 walk / -c）：**没出表** ⇒ 不在出发点（不依赖"拒绝行文"单行判据）
+    const bare = setup({}, {
+      writeNavWorld,
+      read: async () => ({ lines: [mkLine('你现在无法恢复使用内建路径。')], reason: 'quiet' }),
+    })
+    await bare.call('mud_walk', { args: '-c' })
+    expect(locWrites()).toEqual([['location', '出发点就绪', false]])
+    // 有表 ⇒ 在出发点（正向证据：块开行 + 表行）
+    const tabled = setup({}, {
+      writeNavWorld,
+      read: async () => ({ lines: [
+        mkLine('┌───扬州──────────────┬────────────┬─────┐'),
+        mkLine('│信阳  ◇ 小广场                       │xinyang                 │10        │'),
+      ], reason: 'quiet' }),
+    })
+    await tabled.call('mud_walk', { args: '-c' })
+    expect(locWrites()[1]).toEqual(['location', '出发点就绪', true])
+    // `-q`（区域链与出发点无关）⇒ 不参与判定
+    await tabled.call('mud_walk', { args: '-q 襄阳' })
+    expect(locWrites()).toHaveLength(2)
+  })
+
+  it('T23.10b 行走类静默且无受理行 ⇒ **反证**为 unaccepted + 就绪 false', async () => {
+    const writes: unknown[][] = []
+    const { call } = setup({}, {
+      writeNavWorld: (zone: string, key: string, value: unknown) => { writes.push([zone, key, value]) },
+      read: async () => ({ lines: [], reason: 'quiet' }),
+    })
+    await expect(call('mud_walk', { args: 'xiangyang' })).resolves.toMatchObject({ ok: true, outcome: 'unaccepted' })
+    expect(writes.filter(w => w[0] === 'location')).toEqual([['location', '出发点就绪', false]])
+  })
+
+  it('T23.10b `walk -c <拼音名>` ⇒ 附 path.directions（可执行方向序列）', async () => {
+    const mkLine = (text: string): MudLine => ({ text, raw: text, style: [], abs: 1, time: 0, isPrompt: false, kind: null })
+    const { call } = setup({}, {
+      read: async () => ({ lines: [
+        mkLine('信阳 长版本：west,west,west,west,northwest,west,west,west,west,west'),
+        mkLine('     短版本：#4 w,nw,#5 w'),
+      ], reason: 'quiet' }),
+    })
+    await expect(call('mud_walk', { args: '-c xinyang' })).resolves.toMatchObject({
+      ok: true,
+      path: { to: '信阳', short: '#4 w,nw,#5 w', directions: ['west', 'west', 'west', 'west', 'northwest', 'west', 'west', 'west', 'west', 'west'] },
+    })
+  })
+
+  it('T23.11 阻断档案：同位置连续两次软阻断 ⇒ hard-stop（回 agent 停手，不硬重试）', async () => {
+    const w = new World()
+    w.set('location', '区域', '襄阳')
+    const worldEntry = (zone: string, key: string) => w.get(zone, key)
+    const writeNavWorld = (zone: string, key: string, value: unknown) => { w.set(zone, key, value, 'measured', { kind: 'nav', time: 0 }) }
+    const mkLine = (text: string): MudLine => ({ text, raw: text, style: [], abs: 1, time: 0, isPrompt: false, kind: null })
+    const softStop = {
+      worldEntry, writeNavWorld,
+      read: async () => ({
+        lines: [
+          mkLine('你决定开始前往襄阳方向走去……'), // 有受理行 ⇒ 在出发点（不被反证误判）
+          mkLine('你因为种种原因停了下来，可以用walk继续进行。'),
+        ],
+        reason: 'failOn',
+      }),
+    }
+    await expect(setup({}, softStop).call('mud_walk', { args: 'xiangyang' })).resolves.toMatchObject({
+      ok: true, outcome: 'soft-stop', blocked: { attempts: 1, hard: false, at: '襄阳' },
+    })
+    await expect(setup({}, softStop).call('mud_walk', { args: 'xiangyang' })).resolves.toMatchObject({
+      ok: true, outcome: 'hard-stop', blocked: { attempts: 2, hard: true, at: '襄阳' },
+    })
+    // 档案落 World（kind='nav'）
+    expect(w.get('nav', '软阻断连击')?.value).toBe(2)
+    expect(w.get('nav', '硬阻断')?.value).toBe(true)
+    expect(w.get('nav', '硬阻断')?.source.kind).toBe('nav')
+    // 到达 ⇒ 清零
+    const arrived = setup({}, {
+      worldEntry, writeNavWorld,
+      read: async () => ({ lines: [mkLine('你到达了襄阳。')], reason: 'until' }),
+    })
+    await arrived.call('mud_walk', { args: 'xiangyang' })
+    expect(w.get('nav', '软阻断连击')?.value).toBe(0)
+    expect(w.get('nav', '硬阻断')?.value).toBe(false)
+  })
+
+  it('T23.10 精力闸：<20% 拒（不发命令），充足/未知放行；查询与 speed 不受闸门', async () => {
+    const mkEntry = (cur: number, max: number) => {
+      const w = new World()
+      w.set('vitals', '精力', cur)
+      w.set('vitals', '最大精力', max)
+      return (zone: string, key: string) => w.get(zone, key)
+    }
+    const sent: string[] = []
+    const low = setup({}, { worldEntry: mkEntry(10, 100), send: (cmd: string) => { sent.push(cmd); return true } })
+    await expect(low.call('mud_walk', { args: 'xiangyang' })).resolves.toMatchObject({ ok: false, error: /精力不足/ })
+    expect(sent).toEqual([]) // 拒在 send 之前
+    // 查询类不受闸门（答复不是行动）
+    await low.call('mud_walk', { args: '-c' })
+    await low.call('mud_walk', { action: 'speed', value: '1' })
+    expect(sent).toEqual(['walk -c', 'set walk_speed 1'])
+    // 充足（精力可为上限的 200%）与未知（World 尚未写入）都放行
+    const rich = setup({}, { worldEntry: mkEntry(150, 100), send: (cmd: string) => { sent.push(cmd); return true } })
+    await rich.call('mud_walk', { args: 'xiangyang' })
+    const unknown = setup({}, { send: (cmd: string) => { sent.push(cmd); return true } })
+    await unknown.call('mud_walk', { args: 'xiangyang' })
+    expect(sent).toEqual(['walk -c', 'set walk_speed 1', 'walk xiangyang', 'walk xiangyang'])
+  })
+
+  it('T23.10 unaccepted（反证）结果附 departures（World location.出发点）；到达不带', async () => {
+    const w = new World()
+    w.set('location', '出发点', ['当铺', '中央广场', '客店', '土地庙', '醉仙楼二楼'])
+    const worldEntry = (zone: string, key: string) => w.get(zone, key)
+    // 行走类静默且无受理行 ⇒ 反证为 unaccepted ⇒ 附本区域起点
+    const unaccepted = setup({}, { worldEntry, read: async () => ({ lines: [], reason: 'quiet' }) })
+    await expect(unaccepted.call('mud_walk', { args: 'xiangyang' }))
+      .resolves.toMatchObject({ ok: true, outcome: 'unaccepted', departures: ['当铺', '中央广场', '客店', '土地庙', '醉仙楼二楼'] })
+    const arrived = setup({}, { worldEntry, read: async () => ({ lines: [], reason: 'until' }) })
+    const res = await arrived.call('mud_walk', { args: 'xiangyang' })
+    expect(res).toMatchObject({ ok: true, outcome: 'arrived' })
+    expect((res as { departures?: unknown }).departures).toBeUndefined()
+  })
+})
+
 // ── 集成：真实 TCP + 真实 MudService + parentLookup ──────────────────
 
 interface MockServer {
@@ -384,7 +693,7 @@ async function setupIntegration() {
         recording: rt?.pendingLineCount ?? 0, dropped: rt?.droppedLineCount ?? 0,
       }
     },
-    defaults: { sendTimeoutMs: 15000, sendMaxLines: 50 },
+    defaults: { sendTimeoutMs: 15000, sendMaxLines: 50, staminaFloorPct: 0.2 },
   }
   const defs = new Map<string, MudToolDefinition>()
   registerMudTools({ register: def => { defs.set(def.name, def); return () => {} } }, { core: () => handle })

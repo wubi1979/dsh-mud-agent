@@ -649,3 +649,49 @@
 - **待实测（重启宿主后）**：① `<profile>/node_modules/mud-core3` junction 的 peer 拦截在新 plugin-manager 解析逻辑下是否仍生效（上游本轮修过 3 个相关缺陷）；② WebUI 侧栏将多出「自动化任务」页（Schedule 并入 Web 组合，属预期）；③ sidebar Session Tab 生命周期修复或顺带改善 T22 切会话挂旧问题；④ 新建账号向导走一遍确认草稿初始化变更无碍。未来切换 `dsh plugin add` 流程时须补 locale meta + icon（子路径展示元数据新规）。
 
 > AI生成
+## [v0.0.57]i 判据实录校准：背包四分区解析（装备/饰品/其它） (2026-10-08)
+> 总结：T19 i 表判据按 2026-10-08 会话实录校准定稿，背包物品全量入 World；mud_walk 导航工具立项草案入 PLAN
+
+- **i 表实录（A.7.4 新章，seq 1090–1108）**：四分区框线表（汇总/[装备]/[饰品]/[财宝]/[其它]）——旧判据只抓汇总行，装备穿戴与背包物品全部漏抓（用户例证「背包还有其他物品没有抓取到」）
+- **节标题提取修正（tracker.ts `sectionOf`）**：`i` 表节标题在方括号内且词内带空格（`[装  备]`），旧 `≥2` 连串判据提不到、且 `[饰  品]` 行内装饰文（`□腰挂一个锦囊□`）会被误提为节标题——改为方括号优先（剥空白）+ 连串回退；skills 的 `[ 基本功夫 ]` 语义不变
+- **inventoryRow 扩展**：新增 `负重比`（`接近一成`，句尾锚定）；**装备/饰品**按 section 门控解析槽位对——段认领模型（每段只归一个槽，左列物品在标签前、右列在后，`--`/画框 = 空槽不写；`iSlotRow`）；**其它**解析 `中文名(英文id)` 对 → `inventory.其它 = [{name,id},…]`（`iOtherItems`）；同名牌槽位（护肩×2 等）后写覆盖（已知限制，A.7.4 结论 3）
+- **块收口统一写**：i 表分区行块内积攒（装备/饰品按键合并、其它跨行追加，`BlockState.inv` + `mergeInvEntries`），`└` 收口统一写——沿用 exp 对照行积攒模式；汇总键（件数/负重/负重比/财物）同路
+- **声明序门控防抢行**：`i` 规则先于 `skills` 声明且技能行同为 `中文(id)` 形态 ⇒ 分区解析按 section 门控（技能表 section 为 `基本功夫` 等，永不误抢）
+- **测试**：tracker i 表 3 用例（实录整表回放 6 键 + 多行其它/饰品满布局推断兼容 + skills 行防抢行），先红后绿
+- **回归**：core3 407/407（30 文件）全绿
+- **PLAN.md**：T23 mud_walk 导航工具草案登记（动机 = agent 全日志零次 walk；前置未决 = help walk 与实机 walk 实录）
+
+> AI生成
+
+## [v0.0.58]T23 mud_walk 导航工具：四工具面 + walk 实录登记 (2026-10-08)
+> 总结：walk 命令实录（A.9）到位后 mud_walk 定稿并实施——mud_send 判据预设特化，agent 获得内建路径导航能力；工具面三工具升四工具
+
+- **walk 实录（A.9 新章）**：`help walk` 要点 + 荆州府路线表（目的地/拼音名/步数）+ `walk -c` 实答——`walk [拼音名]` 走内建路径（须出发点标记房间）、`-c` 查出发点/具体路径、`-q` 查跨区路径、`-p` 中途停（频繁影响任务奖励）、`walk_speed` 0.2–0.8s/步、`node` 玩家自建路径
+- **mud_walk 工具（tools.ts）**：`{args?, timeoutMs?}`——发 `walk`/`walk <args>` + **静默窗收束**（`quietMs: 1500`，不用 gaCount：行走每步出提示符，GA 计数第一步即关窗）+ 超时下限 30s（15 步 × 0.8s ≈ 12s+）；`args` 拒分号/换行（walk 前缀使 deny 全段扫描失效，显式堵拼接注入）；拒绝序/持有者/独占/render 全同 mud_send；到达/失败行文判据待实录（A.9 结论 1）
+- **注册完整性自检**：三工具升**四工具**（mud_connect/mud_send/mud_walk/mud_state，缺一 fail-loud）
+- **§8 设计登记**：§8.3 工具清单加 mud_walk 行（判据预设特化，非新持有者/新闸门）、§8.7 加 mud_walk 参数与判据预设表、§8.2 并发谓词清单更新；§0.3 章节地图同步（四工具）
+- **任务书面（cordis.patch.yml prefix）**：补 mud_walk 导航指引——已知目的地优先、args 用法、出发点标记房间约束
+- **测试**：tools.spec 新增 mud_walk describe 6 用例（缺省静默窗/args 透传/拼接注入拒绝/timeout 钳制/拒绝序/原文返回+释放持有者），注册完整性断言同步四工具
+- **PLAN.md**：T23 草案转定稿记录（遗留：walk 遇敌中断语义待行文判据实录后议）
+- **回归**：core3 测试全绿（tools 35/35）
+
+> AI生成
+
+## [v0.0.59]T23 mud_walk 导航整体完成：判据 / 位置感知 / 服务化 / 持久化 / 阻断档案 (2026-10-08)
+> 总结：walk 从"发命令等静默"长成一条完整的导航链——判据分三态、位置写进 World、行走知识图由 agent 走出来并 JSON 持久化、阻断按行为性判定；工具面只表达意图（不加动词）
+
+- **行走判据（T23.5/T23.8）**：行走类注入 `until: ^你到达了`（可加 `failOn: 你因为种种原因停了下来` ⇒ `soft-stop`）；结果 `outcome` = `arrived` / `soft-stop` / `hard-stop` / `unaccepted` / `incomplete`；`-c <拼音名>` 的方向序列（长版本 + 短版本 `#N` 展开）⇒ `path:{to,directions[],short?}`
+- **"不在出发点"用反证（用户裁定 2026-10-08）**：表类（无参 `walk` / `-c`）**没出路径表**、行走类**没出受理行** ⇒ 不在出发点（`outcome:'unaccepted'` + 落 `location.出发点就绪=false`，附 `departures` 本区域起点）；**不用单行"拒绝行文"判据**（上下文相关的事实靠单行判据脆弱）
+- **位置感知（T23.6）**：`location.区域`（walk 路线表**块开行** ⇒ 纯层新增 `RowContext.blockHeader` 通道）/ `location.出发点` / `location.出发点就绪`（正向由 tracker 的受理行写）
+- **意图式工具面（T23.9）**：`mud_walk { action?: 'walk' | 'speed', args?, value?, timeoutMs? }`（缺省 `walk`，向后兼容 `{args}`）；`speed` ⇒ `set walk_speed <值>`（域 -1..3）；`node` 家族三动词**只留槽位**（不进描述、执行可读拒绝）；命令字符串归层内拼装
+- **精力闸（T23.10a）**：`vitals.精力/最大精力 < staminaFloorPct`（**新 Config #28，缺省 0.2**，与 T21 战斗规则共用）⇒ 行走类可读拒绝且不发命令（**未知即放行**；查询与 `speed` 不受闸门）；纯层 `nav/stamina.ts`
+- **行走知识图与服务化（T23.10b）**：`ctx.provide('mudNav')` 插件级单例——`nav/route`（路径表行 / `-q` 参考链 / 方向序列）+ `nav/graph`（初始为空、同键后到覆盖、`suggest` 下一跳）+ `nav/service`（记录 / 建议）；**不加动词**：每次 `mud_walk` 记录并入图并回 `region` / `hint` / `suggest`，每到一个新地点由 agent 重新查询（服务不存分段进度）
+- **JSON 持久化（用户裁定"先 json，后期再优化"）**：`nav/json-store` 落 `<logDir>/nav-graph.json`，构造加载 + 有增量即落盘，**fail-soft**（读坏 ⇒ 空图 + warn；写失败只 warn；无 `logDir` ⇒ 纯内存）
+- **World `kind:'nav'`**：`WorldSource.kind` 联合新增 `nav` + `runtime.writeNavWorld`（导航侧推断，如"未受理 ⇒ 不在出发点"）
+- **遇敌中断（T23.7）**：`reason:'danger'` 收束 + **假设可恢复**口径（用户裁定；战斗结束后无参 `walk` 继续）；持有者互锁专项用例（`stealSend` 后被抢者的 `finally` 释放是 **no-op**，战斗持有不丢）
+- **阻断档案（T23.11）**：**硬阻断 = 同位置软阻断连击 ≥2**（A.9 结论 12：**没有专有行文**，行为性判定）⇒ `blocked:{attempts,hard,at}`，档案落 World `nav.*`（断线复位），处置 = **回 agent 并停手**；`-p` 节流**不做**（用户裁定：交 agent 纪律）
+- **测试**：新增 `nav.spec` / `nav-route.spec` / `nav-graph.spec` / `nav-store.spec` / `nav-blocker.spec` 与 tools/tracker/runtime 各面用例；先红后绿
+- **回归**：core3 457/457（35 文件）+ workflow 77/77 + webui 7/7；`pnpm typecheck` 两包零错
+- **文档**：附录 **A.9**（walk 实录 A.9.1–A.9.12：路线表 / `-q` 参考链 / 非 walk 节点行文 / 方向序列 / 硬阻断行为性定义）· §8.3/§8.6/§8.7（工具语义、持有者互锁、判据与 `path`/`blocked`）· §10.3（`location.*` 与 `nav.*`、`kind:'nav'`）· §15.2/§15.5（`mudNav` 服务面与 Config #28）· §16.2/§16.5 · PLAN 清空本计划
+
+> AI生成

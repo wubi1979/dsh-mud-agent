@@ -21,7 +21,7 @@ export interface WorldSource {
    * track = 状态追踪解析写入（游戏原文的判据解析，T19；置信度恒 measured）；
    * combat = 战斗模块写入的计数（拍数/干预/最后动作/规则命中，T21 D8）。
    */
-  readonly kind: 'gmcp' | 'system' | 'track' | 'combat'
+  readonly kind: 'gmcp' | 'system' | 'track' | 'combat' | 'nav'
   /** 写入时刻（Date.now()）。 */
   readonly time: number
 }

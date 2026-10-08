@@ -161,3 +161,27 @@ describe('SessionRuntime 录制缓冲', () => {
     await new Promise<void>(resolve => server.close(() => resolve()))
   })
 })
+
+// ── 持有者互锁（T23.7 W11）：被战斗抢占后，walk 的 finally 不得释放别人的持有 ──
+
+describe('行流持有者与危险抢占的互锁（T23.7）', () => {
+  it('walk 在途被 stealSend 后收束，其 finally releaseSend 是 no-op（战斗持有不被误释放）', () => {
+    const rt = new SessionRuntime('walk-1')
+    // ① 工具（如 mud_walk）拿到持有
+    expect(rt.acquireSend('tool')).toBe(true)
+    expect(rt.sendHolderId).toBe('tool')
+    // ② 危险通道抢占（T21 D5）
+    rt.stealSend('combat')
+    expect(rt.sendHolderId).toBe('combat')
+    // ③ 在途 read 已因 abortWait 以 reason:'danger' 收束 ⇒ 工具的 finally 照常释放"自己"
+    rt.releaseSend('tool')
+    expect(rt.sendHolderId).toBe('combat') // 关键：战斗的持有仍在（不劈半、无残留）
+    // ④ 战斗收尾释放自己 ⇒ 空闲
+    rt.releaseSend('combat')
+    expect(rt.sendHolderId).toBeNull()
+    // 旁证：同 holder 重入成功（同执行体串行调用不自我冲突）
+    expect(rt.acquireSend('tool')).toBe(true)
+    expect(rt.acquireSend('other')).toBe(false)
+    rt.dispose()
+  })
+})

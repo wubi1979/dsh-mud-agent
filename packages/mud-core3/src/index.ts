@@ -59,6 +59,9 @@ import {
 // T18.2：会话上下文的进程级收口（表面遮蔽）。判定/适配在纯层 elide.ts，这里只做归属与阻断接线。
 import { applyElision, processEpoch } from './elide.ts'
 import type { ElisionSession } from './elide.ts'
+import { DEFAULT_STAMINA_FLOOR_PCT } from './nav/stamina.ts'
+import { NavService } from './nav/service.ts'
+import { createJsonNavStore } from './nav/json-store.ts'
 
 /** 插件名。 */
 export const name = 'mud-core3'
@@ -134,6 +137,11 @@ export interface MudCore3Config {
   sendTimeoutMs?: number
   /** mud_send 裸读尾部/兜底行数。缺省 50。 */
   sendMaxLines?: number
+  /**
+   * 精力闸比值（T23.10 D16，用户裁定 2026-10-08）：精力 / 最大精力低于此值**不发 walk**
+   * （战斗规则收加力共用同一键）。须为 (0,1] 的比值，fail-loud。缺省 0.2。
+   */
+  staminaFloorPct?: number
   /**
    * 验证码挂起预算毫秒（T13 D4/B4：**独立预算**，不受 MAX_TIMEOUT_MS/silenceMs
    * 校验约束；fail-loud 正整数）。缺省 180_000 = URL 有效期 3 分钟。
@@ -547,6 +555,11 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
   positiveInt(config.probeMaxAttempts, 'probeMaxAttempts')
   positiveInt(config.reconnectMaxAttempts, 'reconnectMaxAttempts')
   positiveInt(config.reconnectIntervalMs, 'reconnectIntervalMs')
+  // 精力闸比值（T23.10 D16）：(0,1] 的比值，fail-loud（0 会闸死一切、>1 无意义）。
+  if (config.staminaFloorPct !== undefined
+    && (!(config.staminaFloorPct > 0) || config.staminaFloorPct > 1)) {
+    throw new Error(`mud-core3 配置 staminaFloorPct 必须为 (0,1] 的比值，got ${String(config.staminaFloorPct)}`)
+  }
   // 验证码挂起预算（T13 D4/B4）：独立预算，只查正整数——不并入 MAX_TIMEOUT_MS/
   // silenceMs 校验（挂起等人工与投递/探活预算分立，两预算先后串行不竞争）。
   positiveInt(config.captchaTimeoutMs, 'captchaTimeoutMs')
@@ -880,10 +893,23 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     return vetoStopStream()
   })
 
+  // ── 行走知识服务（T23.10b）：插件级单例（知识图全局）──
+  // 记录 agent 走出来的 walk 节点（路径表 ⇒ 边、`-q` ⇒ 参考链）并回答下一跳建议；
+  // 由工具面经 `ctx.get('mudNav')` 取用（§8.7、§15.2）。
+  // 持久化（用户裁定 2026-10-08）：**JSON 文件**，落点与会话日志同目录；读坏即空图（fail-soft）。
+  // 未落盘（`logDir` 未配置）⇒ 纯内存（不另找目录乱写）。
+  const navFile = logOptions.logDir === undefined ? null : join(logOptions.logDir, 'nav-graph.json')
+  const navService = new NavService(navFile === null ? null : createJsonNavStore(
+    navFile,
+    message => ctx.logger.warn(`mud-core3: ${message}`),
+  ))
+  ctx.provide('mudNav', navService)
+
   // ── 引擎窄面（工具面，T2b）：归属解析 / 建连 / 状态快照 / 缺省参数 ──
   const toolDefaults = {
     sendTimeoutMs: config.sendTimeoutMs ?? 15000,
     sendMaxLines: config.sendMaxLines ?? 50,
+    staminaFloorPct: config.staminaFloorPct ?? DEFAULT_STAMINA_FLOOR_PCT,
   }
   ctx.provide('mudCore3', {
     runtimeFor: (agent: { id: unknown }) => service.get(String(agent.id)),

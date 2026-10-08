@@ -35,7 +35,7 @@ note: 入口文件：只承载文档规则与导航，不承载设计事实
 | §1–§2 | [architecture/01-02-overview-host.md](architecture/01-02-overview-host.md) | **系统总览与总体架构**（定位与上下文、目标与非目标、设计原则与现役不变量、核心领域模型、**分层模型 L1–L7 + L0 宿主**、包与模块地图、状态载体与单一真相、端到端数据流、术语表）· **L0 宿主平台与集成**（宿主事实、加载与模块解析、依赖面、能力缺口、整批复核） |
 | §3–§5 | [architecture/03-05-runtime.md](architecture/03-05-runtime.md) | **L1 接入层**（连接管理、telnet/GMCP、行化与 `MudLine`、语料）· **L2 行流层**（`SessionRuntime`、环形录制、**双水位线 `seen`**、事件分发、断线复位）· **L3 消费层**（`ReadMachine`、`GameScreen`、`Deliverer`、消费者水位契约） |
 | §6–§7 | [architecture/06-07-channels-agent.md](architecture/06-07-channels-agent.md) | **L4 通路层**（三条通道：MUD→agent 投递 / MUD→人 显示 / agent→MUD 发送；**接入闸门**；正交性表）· **L5 agent 层**（preset 装配与 persona、回合节拍、会话接线、**任务书面 kickoff**、**静默唤醒 Wake**、**分工模型**） |
-| §8 | [architecture/08-execution.md](architecture/08-execution.md) | **L6 执行层（单章，不拆）**：工具面（注册承载、三工具、拒绝序、归属上溯、行流持有者、参数）+ 流程面（`mud-workflow` 包、声明式流程本体与词汇表、注册表与进化闭环、凭据红线、解释器、五工具、`workflowIoFor` 缝、login 实体） |
+| §8 | [architecture/08-execution.md](architecture/08-execution.md) | **L6 执行层（单章，不拆）**：工具面（注册承载、四工具含 mud_walk、拒绝序、归属上溯、行流持有者、参数）+ 流程面（`mud-workflow` 包、声明式流程本体与词汇表、注册表与进化闭环、凭据红线、解释器、五工具、`workflowIoFor` 缝、login 实体） |
 | §9 | [architecture/09-webui.md](architecture/09-webui.md) | **L7 呈现层**（`mud-webui`：呈现不改与接线替换、服务器/账号管理面、MUD 日志 tab、游戏画面 tab、状态推送、凭据接线与客户端缓存） |
 | §10–§11 | [architecture/10-11-state-lifecycle.md](architecture/10-11-state-lifecycle.md) | **状态面**（两轴 `conn`/`loggedIn`、GMCP 权威信号、World 分区与置信度、断线整体复位、状态出口）· **生命周期与状态机**（服务器、账号、连接、会话与 agent、流程实例、凭据；全系统迁移总图） |
 | §12–§14 | [architecture/12-14-security-observability-resilience.md](architecture/12-14-security-observability-resilience.md) | **安全设计**（威胁模型、凭据零泄露三道闸、禁发表、归属与越权、闸门、回流唯一通道、不拦项）· **观测与诊断**（`SessionLog`、诊断动词、降级告警点、语料回放）· **错误处理与降级**（可读拒绝 vs throw、失败不丢行、宿主缺面降级、结构化失败、已知限制） |
@@ -60,7 +60,8 @@ note: 入口文件：只承载文档规则与导航，不承载设计事实
 | 工具读应答 / 裸读 / 画面 / 聚合投递 | §5 |
 | 通道与闸门（接入 admit / 停止 / 未接入语义） | §6 |
 | preset 与 persona、回合节拍、自主行为（任务书 / 唤醒 / 分工） | §7 |
-| 工具（`mud_send`/`mud_state`/`mud_connect`）、拒绝序、归属上溯、持有者、禁发表 | §8 |
+| 工具（`mud_send`/`mud_state`/`mud_connect`/`mud_walk`）、拒绝序、归属上溯、持有者、禁发表 | §8 |
+| 导航（walk 判据与结果分类 / 位置感知 `location.*` / 行走知识图与 `mudNav` 服务 / 阻断档案） | §8.6–§8.7 + §10.3 + §15.2 + [appendices/A-capture-facts.md](appendices/A-capture-facts.md)（A.9） |
 | 流程（声明表 / 词汇表 / 注册表 / 解释器 / 七工具 / login / fullme） | §8 + [flows/login.md](flows/login.md) + [flows/fullme.md](flows/fullme.md) |
 | 管理面（名册 UI / 日志 tab / 画面 tab / 状态推送） | §9 |
 | 状态（两轴 / GMCP / World / 复位 / 状态出口） | §10 |

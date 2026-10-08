@@ -32,7 +32,7 @@ L6 是 agent **能动**的唯一出口——把"想做什么"变成"MUD 上发�
 - **工具定义在纯层 `src/tools.ts`**（零宿主 import，可单测）；`preset.ts` 只做 `defineTool` 适配。
 - **注册完整性自检**：期望的工具集缺失即 **fail-loud**（防"preset 行漏挂导致静默少工具"）。
 - **preset 决定能力面**：选 `standard` 的账号**没有** mud 工具（§7.1）。
-- 并发声明是**谓词函数**（宿主 `isConcurrencySafe?(args) => boolean`，只有恰好返回 `true` 才算并行）：`mud_send` 与 `mud_workflow_run` 恒返回 `false`（独占）；`mud_state` 等零发送只读工具可并发。
+- 并发声明是**谓词函数**（宿主 `isConcurrencySafe?(args) => boolean`，只有恰好返回 `true` 才算并行）：`mud_send`、`mud_walk` 与 `mud_workflow_run` 恒返回 `false`（独占）；`mud_state` 等零发送只读工具可并发。
 - **宿主协议漂移由编译期断言钉住（T17）**：接线层（`src/preset.ts`）导出 `AssertTrue<...>` 形式的断言，钉住两处曾漂移、又被 `as unknown as ToolRegistrar` 吃掉的成员——`isConcurrencySafe` 必须是**谓词**（曾经是 boolean 属性：写 `false` 只因宿主 fail-closed 恰好得到独占，写 `true` 会被静默吞成独占）、`render` 必须返回**可变**数组（宿主 `ContentBlock[]`）。纯层保持零宿主 import，接线层是唯一允许认识宿主的地方；`output.schema` 逐工具补齐真实字段（宿主对成功返回值强制校验该 JSON Schema）。
 - **工件面加载冒烟**：`packages/mud-workflow/test/plugin-load.e2e.ts` 导入构建产物断言插件面与七工具注册（含谓词与 `output.schema` 面），与 core3 同款纪律（§16.1/§16.2）。
 
@@ -41,6 +41,7 @@ L6 是 agent **能动**的唯一出口——把"想做什么"变成"MUD 上发�
 | 工具 | 语义 | 约束 |
 |---|---|---|
 | **`mud_send`** | 发命令 + **判据驱动等应答**；**不带 `cmd` = 裸读近况**；**`wait: false` = 发送即走**（T19 D11：只 send 不 read、不设超时、不判成败——分页/save 等"发了就行"的动作；返回 `reason:'sent'`，仍过持有者与拒绝序） | 不受接入闸门；**只拒未连接**；独占（`isConcurrencySafe: false`）；应答原文返回调用方 |
+| **`mud_walk`** | **内建路径自动行走 + 导航动作**（T23；`mud_send` 的判据预设特化，非新持有者/新闸门）：`action` 缺省 `walk`（发 `walk` 家族命令：拼音名 / `-c` / `-q` / `-p` / 缺省恢复）、`action: 'speed'`（`set walk_speed <值>`）；判据已落地（`until` 到达 + `failOn` 软阻断/未受理 ⇒ `outcome`，T23.5）；`node` 家族（玩家自建路径）**只留槽位、本期不实现**（A.9 结论 9） | 同 `mud_send` 约束（只拒未连接、独占、持有者、可读拒绝）；`args` 拒分号/换行（walk 前缀使 deny 扫描失效，显式堵拼接）；预留动作执行返回可读拒绝 |
 | **`mud_state`** | **状态自述**（两轴 + World 合并快照，§10.5） | **不受闸门 / 不受连接约束，只过归属** |
 | **`mud_connect`** | **建连**（幂等：已连接不重连、不踢已登录会话） | 三期把"连接是手工动词"升格为工具，模型可自行调用 |
 | `mud_workflow_run` + `mud_workflow_list/get/save/delete/history/rollback` | 流程执行与管理七工具 | 归 `mud-workflow` 包（§8.14） |
@@ -78,6 +79,7 @@ L6 是 agent **能动**的唯一出口——把"想做什么"变成"MUD 上发�
 - **同一时刻只允许一个执行体在 send+read**——根与在途子 agent 会"争半截应答"。
 - 实现 = **会话级唯一持有者**（`acquireSend(holder)` / `releaseSend`）：冲突 ⇒ **可读拒绝**；**应答不劈半**。
 - **抢占动词 `stealSend(holder)`**（T21.5）：清掉任何现持有者并归属调用方——供战斗危险通道与"待接管转正式接管"使用，不等锁（D5：危险不能等在途）；被抢者已因 `abortWait` 收束（§5.2），走既有 `finally` 释放。
+- **互锁安全性（T23.7）**：`releaseSend(holder)` **按 holder 比对**（只解除自己的持有）⇒ 被抢者（如 `mud_walk`）的 `finally` 在抢占后是 **no-op**，战斗持有不被误释放、无残留（W11；`test/runtime.spec.ts` 有专项用例）。**遇敌中断口径**：`walk` 以 `reason:'danger'` 收束，**用户裁定 2026-10-08 先假设可恢复**（战斗结束后用无参 `walk` 继续），实测发现不能恢复再改。
 - 持有者也是 Wake 第三守卫的判据（§7.5 ③）与流程独占的依据（§8.14）。
 
 ## 8.7 工具面：参数与缺省
@@ -100,6 +102,32 @@ mud_send {
 | 兜底行数 | Config 缺省 `sendMaxLines` 50 |
 | `render` | `ok: true` ⇒ 行原文 `join('\n')`（`reason:'sent'` ⇒ 发送即走说明文案）；拒/错 ⇒ 可读文本 |
 | **硬编码项** | 禁词表最小集（§12.3）与裸读 `quietMs = 300`：**无例证不进 Config** |
+
+**`mud_walk` 参数与判据预设（T23，A.9）**
+
+```ts
+mud_walk {
+  action?: 'walk' | 'speed'   // 缺省 'walk'；'node' | 'node-get' | 'node-walk' = 预留槽位（不进描述、执行可读拒绝）
+  args?: string               // action:'walk' 参数：拼音名 / -c / -c 拼音名 / -q 区域中文名 / -p；缺省 = 恢复行走
+  value?: string              // action:'speed' 值：-1 奔跑 / 1 正常 / 2 慢行 / 3 缓步
+  timeoutMs?: number
+}
+```
+
+| 项 | 规则 |
+|---|---|
+| 发送 | `action:'walk'`（缺省）⇒ `walk`（args 缺省）或 `walk <args>`（trim 后透传，单条）；`action:'speed'` ⇒ `set walk_speed <值>`（值须为整数、域 `-1..3`，非整数/越界可读拒）；**预留槽位**（`node` / `node-get` / `node-walk`）⇒ 可读拒绝"本期未实现"；未知 `action` ⇒ 可读拒绝（**命令字符串归本层拼装**，T23.9） |
+| `args` 校验 | 禁 `;`/换行、长度 ≤ 60（walk 前缀使 deny 全段扫描失效，显式堵 `walk -q 扬州;suicide` 类拼接） |
+| 判据预设 | **行走类**（`action:'walk'` 且非查询）：`until: ['^你到达了']` + `failOn: ['你因为种种原因停了下来']`（**只有软阻断一项**）+ `quietMs: 1500` + `maxLines` 兜底，**无 `gaCount`**（每步都出提示符，GA 第一步就关窗；静默 1.5s = 走完）。**查询类**（`-c` / `-q`，`/^-(c\|q)(\s\|$)/`）与 **`speed`** **不注入** until/failOn（查询答复含与未受理同族的句子，注入会误判）。判据出处 = A.9 结论 5 |
+| **在出发点判定（反证，T23.10b）** | 看本次调用有没有**正向证据**：表类（无参 `walk` / `-c`）**出路径表**、行走类（`walk <拼音名>` / `-p`）**出受理行** ⇒ 写 `location.出发点就绪 = true`（`kind:'nav'`）；**正向证据缺失 ⇒ 写 `false`**，并把"静默收束且无证据"的行走类结果判为 `outcome:'unaccepted'`（未受理时附 `departures`）。`-q` 与 `-c <拼音名>` 的输出与出发点无关 ⇒ **不参与判定**。**不用单行"拒绝行文"判据**（用户裁定 2026-10-08） |
+| `outcome` | 读窗 `reason` ⇒ 结果分类：`until` ⇒ `arrived`；`failOn` ⇒ `soft-stop`（可用无参 `walk` 继续）；其余 ⇒ `incomplete`。**`unaccepted`（不在出发点）由反证给出**（见上一行；静默收束且无正向证据时改写为 `unaccepted`）。**仅 `action:'walk'` 带 `outcome`**；返回形态 = `{ok, reason, outcome?, departures?, region?, hint?, suggest?, path?, lines}` |
+| **精力闸**（T23.10 D16） | **行走类**（`action:'walk'` 且非查询）发送前先看 **`vitals.精力 / 最大精力`**：低于 `staminaFloorPct`（缺省 0.2，§15 #28）⇒ **可读拒绝、不发命令**（"精力不足以行动"是游戏事实，频繁动用另有惩罚）。口径：判据是**百分比**（`精力` 可为上限的 **200%**，A.7.1 结论 4）；**未知即放行**（`vitals` 未写入时不因"不知道"卡死导航）；**查询类与 `speed` 不受闸门**（不是行动）。阈值 = 用户裁定 20%，键由本切片引入，**T21 战斗规则（收加力）待接同一键** |
+| `departures` | 行走结果 `unaccepted` 时，顺手把 World `location.出发点`（T23.6）**结构化回给 agent**（`string[]`），免得它再发一条 `-c`；负判断（`location.出发点就绪 = false`）留给**导航服务侧**写，工具只做门面 |
+| `region` / `hint` / `suggest`（T23.10b） | 每次 `mud_walk` 返回都**把本次行文并入行走知识图**（`mudNav.record`：路径表 ⇒ 边、`-q` ⇒ 参考链；找不到东西就不记），并回给 agent：`region`（World `location.区域`，我在哪）、`hint`（`-q` 参考链 `{to, via}`，**只有参考意义**）、`suggest`（用已记录边算的**下一跳建议** `{dest, pinyin, steps}`，无解则不带）。**不加动词**（用户裁定）：每到一个新地点由 agent 自己再查一次，服务**不存分段进度**；`mudNav` 缺席时三者都不出现，行为退回本期之前 |
+| `timeoutMs` | 显式值钳制 ≤ 60000；缺省 = **max(`sendTimeoutMs`, 30000)**（长路线 15+ 步 × 慢速档 ≈ 12s+） |
+| **阻断档案（T23.11）** | **硬阻断没有专有行文**（A.9 结论 12）⇒ 判定是**行为性**的：**同位置软阻断连击 ≥ 2**（阈值 = `HARD_STOP_ATTEMPTS`，出自用户定义"连续两次 walk 都无法继续"）。计数落 World `nav.*`（`软阻断连击` / `软阻断位置` / `硬阻断`，`kind:'nav'`、会话相关、断线随 §10.4 复位），结果 `outcome` 升为 `hard-stop` 并附 `blocked:{attempts,hard,at}`。处置沿 D19 = **回给 agent 并停手**（不重试、不自动换路；"通过手段"字段留位待实录）。`arrived` / `unaccepted` ⇒ 清零 |
+| `path`（T23.10b） | `walk -c <拼音名>` 的区域内**方向序列**（A.9 结论 11）：返回 `{to, directions[], short?}`——`directions` 取**长版本**原文（可执行），只有短版本时按 `expandShortPath` 展开（`#4 w,nw,#5 w` ⇒ `west×4, northwest, west×5`；词表外 token 原样保留）。**与 `-q` 的"区域名链只有参考意义"对照：这是可执行的最后一程** |
+| 其余 | 拒绝序、持有者、独占、render 全同 `mud_send` send+read 路径 |
 
 ## 8.8 流程面：包结构与纯度裁定
 

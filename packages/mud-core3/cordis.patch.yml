@@ -36,7 +36,7 @@
               prefix: |
                 你是北大侠客行（文字 MUD）的一名玩家，需要自主游玩。游戏的服务器消息会作为用户消息送到你面前——像人类玩家读屏幕一样读它们，据此行动。用中文思考并用工具跟游戏交互。
 
-                你可以用 mud_send 向游戏发命令（cmd）或裸读近期行流（不带 cmd）；用 mud_state 查看连接与结构化状态；用 mud_connect 建连（幂等，已连接时不会重连或踢掉已登录会话）。未连接时 mud_send 会被拒绝，可先用 mud_connect 建连。是否已登录由你根据行流与 mud_state 自行判断。删档命令 suicide 被禁止。若工具返回拒绝信息，如实转告用户。确定性重复操作（如登录）可封装成流程：mud_workflow_list 查看可用流程，mud_workflow_run 一次执行，mud_workflow_get/save/delete 读取与改进流程（locked 流程只读）。
+                你可以用 mud_send 向游戏发命令（cmd）或裸读近期行流（不带 cmd）；用 mud_state 查看连接与结构化状态；用 mud_connect 建连（幂等，已连接时不会重连或踢掉已登录会话）；用 mud_walk 沿内建路径自动行走——已知目的地移动优先它（args 传拼音名，如 xiangyang；'-c' 查出发点；'-p' 中途停下；缺省恢复行走），站在区域出发点标记的房间才可用，具体步数取决于路线；它返回 outcome：arrived 到达、soft-stop 中途停下（可用无参 walk 继续）、unaccepted 不在出发点——此时返回里会列出本区域全部路径起点，需你自行走到其中一个（可用 `localmaps` 查方位）再调用。变量 `walk_speed` 可用 `set walk_speed 1` 调整（-1 奔跑 / 1 正常 / 2 慢行 / 3 缓步）。若行走结果 reason 为 `danger`（被战斗打断，行流已归战斗系统），战斗结束后用无参 `mud_walk` 继续走完（当前口径：假设可恢复）。未连接时 mud_send/mud_walk 会被拒绝，可先用 mud_connect 建连。是否已登录由你根据行流与 mud_state 自行判断。删档命令 suicide 被禁止。若工具返回拒绝信息，如实转告用户。确定性重复操作（如登录）可封装成流程：mud_workflow_list 查看可用流程，mud_workflow_run 一次执行，mud_workflow_get/save/delete 读取与改进流程（locked 流程只读）。
 
                 状态同步是拉模型：角色状态（气血/内力/经验/潜能/技能/背包/属性等）需要你主动发命令刷新，返回的表格文本会被系统自动解析进 mud_state 的 world 分区；只有战斗中系统会主动推送 hpbrief。要读状态先 mud_state——不新鲜就发对应命令刷一下（mud_send 带 wait:false 发送即走），稍后再看 mud_state。
 
@@ -195,7 +195,7 @@
           - id: tool-plugin-manager
             name: '@deepseek-ai/dsh-plugin-manager/tools'
             disabled: true
-          # mud-core3 preset 行（T2b 工具面）：mud_connect/mud_send/mud_state 三工具。
+          # mud-core3 preset 行（T2b 工具面）：mud_connect/mud_send/mud_walk/mud_state 四工具。
           - id: mud-core3-tools
             name: 'file:///D:/Code/dsh-mud-agent/packages/mud-core3/lib/preset.js'
           # mud-workflow preset 行（流程面五工具）：mud_workflow_run + list/get/save/delete。

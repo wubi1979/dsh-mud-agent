@@ -46,6 +46,8 @@ export interface RowContext {
   readonly cells: readonly string[]
   readonly raw: string
   readonly section?: string
+  /** 块开行（`┌…`）携带的事实（T23.6：walk 路线表表头即区域名）。 */
+  readonly blockHeader?: string
   readonly index: number
 }
 
@@ -92,8 +94,50 @@ const TABLE_OPEN_RE = /^┌/
 const TABLE_ROW_RE = /^│/
 const TABLE_BORDER_RE = /^├/
 const TABLE_CLOSE_RE = /^└/
-/** 节标题提取：边框行（├…┤）内首个 ≥2 字的中文连串（如 基本功夫/特殊功夫/杂学）。 */
+/** 节标题提取：优先方括号内文本（`[装  备]` 内空格剥离；实录 A.7.4），
+ *  否则首个 ≥2 字的中文连串（如 四项杂学/基本功夫）。 */
 const SECTION_CJK_RE = /[\u4e00-\u9fff]{2,}/
+const SECTION_BRACKET_RE = /\[([^\[\]]*)\]/
+
+function sectionOf(text: string): string | undefined {
+  const b = SECTION_BRACKET_RE.exec(text)?.[1]
+  if (b !== undefined) {
+    const t = b.replace(/\s+/g, '')
+    if (/^[\u4e00-\u9fff]{2,}$/.test(t)) return t
+  }
+  return SECTION_CJK_RE.exec(text)?.[0]
+}
+
+// ── 位置感知判据（T23.6；出处 = 附录 A.9 结论 4/5/6）──────────────────
+
+/** 路线表表头行（`│目的地 … │拼音名称 … │步数 … │`）：区域名取自块开行。 */
+const WALK_TABLE_HEADER_RE = /拼音名称/
+const WALK_TABLE_STEPS_RE = /步数/
+
+/** 出发点列表行（未受理答复与 `-c` 答复同族）：`当前区域共有N处内建玩家路径起点，分别在A、B、C。` */
+const WALK_DEPARTURES_RE = /当前区域共有\d+处内建玩家路径起点，分别在(.+?)。/
+
+/** 受理确认行（A.9 结论 4）：`你决定开始前往…方向走去……`。 */
+const WALK_STARTED_RE = /^你决定开始前往/
+
+/** walk 路线表 ⇒ `location.区域`（块开行的中文串，实录 `┌───荆州府──…`）。 */
+function walkRegionRow(row: RowContext): TrackEntry[] | undefined {
+  if (!row.cells.some(c => WALK_TABLE_HEADER_RE.test(c)) || !row.cells.some(c => WALK_TABLE_STEPS_RE.test(c))) return undefined
+  return row.blockHeader !== undefined ? [{ key: '区域', value: row.blockHeader }] : undefined
+}
+
+/** 出发点答复 ⇒ `location.出发点`（本区域起点列表；未受理与 `-c` 同族，事实一致）。 */
+function walkDepartureRow(row: RowContext): TrackEntry[] | undefined {
+  const m = WALK_DEPARTURES_RE.exec(row.raw)
+  if (m === null) return undefined
+  const list = (m[1] ?? '').split('、').map(s => s.trim()).filter(s => s !== '')
+  return list.length > 0 ? [{ key: '出发点', value: list }] : undefined
+}
+
+/** 受理行 ⇒ `location.出发点就绪` = true（正向证据；**负判断走反证**：见工具面"没出表/没出受理行"）。 */
+function walkStartedRow(row: RowContext): TrackEntry[] | undefined {
+  return WALK_STARTED_RE.test(row.raw) ? [{ key: '出发点就绪', value: true }] : undefined
+}
 
 /** 表格块行数护栏：超限视为失控块（无 └ 收尾），强制闭块止损。 */
 const MAX_TABLE_LINES = 120
@@ -247,16 +291,108 @@ function scRow(row: RowContext): TrackEntry[] | undefined {
   return out.length > 0 ? out : undefined
 }
 
-// ── i（inventory，§2.4；待实录校准）────────────────────────────────
+// ── i（inventory，§10.3；实录校准 2026-10-08，A.7.4：四分区框线表）──
 
 /** 携带件数：中文数字先不解析（存原文，PLAN 未决 3）。 */
 const I_CARRY_RE = /你共携带(.+?)件器物/
 /** 负重：原文（约十斤）。 */
 const I_BURDEN_RE = /(?:总负重|负重)[:：]?\s*(约?[一二三四五六七八九十百千零\d]+斤)/
+/** 负重比：`接近一成`（原句尾锚定，堵正文误配；原文存档）。 */
+const I_BURDEN_RATIO_RE = /(?:接近|超过|已达)?\s*[一二三四五六七八九十百零\d]+成[。，]?\s*$/
 /** 财物：黄金×4 白银×70 铜板×81 → { gold, silver, copper }。 */
 const I_GOLD_RE = /黄金[×x*]\s*(\d+)/
 const I_SILVER_RE = /白银[×x*]\s*(\d+)/
 const I_COPPER_RE = /铜板[×x*]\s*(\d+)/
+
+/** 装备/饰品槽位标签：`[帽子]`（1–6 字非方括号文本）。 */
+const I_SLOT_RE = /\[([^\[\]]{1,6})\]/g
+/** 背包物品：`北侠战甲(Pkuxkx zhanjia)` → {name, id}（实录 A.7.4）。 */
+const I_ITEM_RE = /([\u4e00-\u9fff]{1,12})\(([a-z][a-z0-9' -]*)\)/gi
+/** 槽位段含物品判据：段内有中文即视为物品名（画框字符 `▄▅█` 与 `--` 均非中文）。 */
+const I_HAS_CJK_RE = /[\u4e00-\u9fff]/
+
+/** 槽位段净化：先剥 `--` 空槽记号，再判中文（无中文 = 空槽不写；有中文收空白，
+ *  `青色道袍   (+2)` → `青色道袍(+2)`，`珍珠   --` → `珍珠`）。 */
+function iSlotItem(segment: string): string | undefined {
+  const s = segment.replace(/-{2,}/g, ' ').trim()
+  if (s === '' || !I_HAS_CJK_RE.test(s)) return undefined
+  return s.replace(/\s+/g, '')
+}
+
+/**
+ * 装备/饰品行（实录 A.7.4）：槽位标签成对（左右两列镜像）。行切成段
+ * （S0=首 tag 前、Si=tag 间、Sn=末 tag 后），**每段只能被一个槽认领**：
+ * 左列槽（偶位）物品优先前段、右列槽（奇位）优先后段，本位段无中文再取
+ * 中间段（兼容 `[项链]珍珠` 布局）；段内无中文（`--`/画框）= 空槽不写。
+ */
+function iSlotRow(cells: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const cell of cells) {
+    const tags: { name: string; start: number; end: number }[] = []
+    I_SLOT_RE.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = I_SLOT_RE.exec(cell)) !== null) {
+      tags.push({ name: m[1] ?? '', start: m.index, end: m.index + m[0].length })
+    }
+    if (tags.length === 0) continue
+    // 段切分：segs[i] = tag i 的前段（i=0 即行首），segs[n] = 末 tag 后段。
+    const segs = tags.map((t, i) => cell.slice(i === 0 ? 0 : tags[i - 1]!.end, t.start))
+    segs.push(cell.slice(tags[tags.length - 1]!.end))
+    const used = new Set<number>()
+    for (let i = 0; i < tags.length; i++) {
+      const own = i % 2 === 0 ? i : i + 1
+      const fallback = i % 2 === 0 ? i + 1 : i
+      let claimed = -1
+      let item: string | undefined
+      if (!used.has(own)) {
+        item = iSlotItem(segs[own] ?? '')
+        if (item !== undefined) claimed = own
+      }
+      if (item === undefined && !used.has(fallback)) {
+        item = iSlotItem(segs[fallback] ?? '')
+        if (item !== undefined) claimed = fallback
+      }
+      if (item !== undefined && claimed >= 0) {
+        out[tags[i]!.name] = item
+        used.add(claimed)
+      }
+    }
+  }
+  return out
+}
+
+/** 其它（背包）行：中文名(英文id) 对列表（一行可多件）。 */
+function iOtherItems(cells: readonly string[]): { name: string; id: string }[] {
+  const out: { name: string; id: string }[] = []
+  for (const c of cells) {
+    I_ITEM_RE.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = I_ITEM_RE.exec(c)) !== null) {
+      out.push({ name: m[1] ?? '', id: m[2] ?? '' })
+    }
+  }
+  return out
+}
+
+/** i 表分区积攒合并：数组（其它）按序追加、对象（装备/饰品/财物）按键合并、标量覆盖。 */
+function mergeInvEntries(
+  acc: Record<string, unknown> | undefined,
+  entries: readonly TrackEntry[],
+): Record<string, unknown> {
+  const out = { ...(acc ?? {}) }
+  for (const e of entries) {
+    const prev = out[e.key]
+    if (Array.isArray(prev) && Array.isArray(e.value)) {
+      out[e.key] = [...prev, ...e.value]
+    } else if (prev !== undefined && prev !== null && typeof prev === 'object'
+      && e.value !== null && typeof e.value === 'object') {
+      out[e.key] = { ...(prev as object), ...(e.value as object) }
+    } else {
+      out[e.key] = e.value
+    }
+  }
+  return out
+}
 
 function inventoryRow(row: RowContext): TrackEntry[] | undefined {
   const out: TrackEntry[] = []
@@ -264,6 +400,8 @@ function inventoryRow(row: RowContext): TrackEntry[] | undefined {
   if (carry !== null) out.push({ key: '件数', value: carry[1] ?? '' })
   const burden = I_BURDEN_RE.exec(row.raw)
   if (burden !== null) out.push({ key: '负重', value: burden[1] ?? '' })
+  const ratio = row.cells.map(c => I_BURDEN_RATIO_RE.exec(c)).find(m => m !== null)?.[0]
+  if (ratio !== undefined) out.push({ key: '负重比', value: ratio.replace(/[。，\s]/g, '') })
   const gold = I_GOLD_RE.exec(row.raw)?.[1]
   const silver = I_SILVER_RE.exec(row.raw)?.[1]
   const copper = I_COPPER_RE.exec(row.raw)?.[1]
@@ -273,6 +411,15 @@ function inventoryRow(row: RowContext): TrackEntry[] | undefined {
       ...(silver !== undefined ? { silver: Number.parseInt(silver, 10) } : {}),
       ...(copper !== undefined ? { copper: Number.parseInt(copper, 10) } : {}),
     } })
+  }
+  // 分区行按 section 门控（堵 skills 的 中文(id) 行被本规则抢走——i 先于 skills 声明）。
+  if (row.section === '装备' || row.section === '饰品') {
+    const slots = iSlotRow(row.cells)
+    if (Object.keys(slots).length > 0) out.push({ key: row.section, value: slots })
+  }
+  if (row.section === '其它') {
+    const items = iOtherItems(row.cells)
+    if (items.length > 0) out.push({ key: '其它', value: items })
   }
   return out.length > 0 ? out : undefined
 }
@@ -448,6 +595,7 @@ function combatRow(row: RowContext): TrackEntry[] | undefined {
  * sc/i/skills/id 规则**待实录校准**（片段先行），按 §2.4 逐块补入。
  */
 export const DEFAULT_TRACK_RULES: readonly AnyTrackRule[] = [
+  { id: 'walk-region', shape: 'table', zone: 'location', match: walkRegionRow },
   { id: 'hpbrief', shape: 'sequence', zone: 'vitals', head: /^#/, length: 3, match: hpbriefRow },
   { id: 'hp', shape: 'table', zone: 'vitals', match: hpRow },
   { id: 'sc', shape: 'table', zone: 'character', match: scRow },
@@ -457,6 +605,8 @@ export const DEFAULT_TRACK_RULES: readonly AnyTrackRule[] = [
   { id: 'id-header', shape: 'lines', zone: 'items', match: (row) => (ALIAS_HEADER_RE.test(row.raw) ? [] : undefined) },
   { id: 'id', shape: 'lines', zone: 'items', match: aliasRow },
   { id: 'combat', shape: 'lines', zone: 'combat', match: combatRow },
+  { id: 'walk-departure', shape: 'lines', zone: 'location', match: walkDepartureRow },
+  { id: 'walk-started', shape: 'lines', zone: 'location', match: walkStartedRow },
 ]
 
 /** 缺省 clear 规则（D9；按例证逐条加）。 */
@@ -476,8 +626,12 @@ export const DEFAULT_TRACK_SPEC: TrackSpec = {
 interface BlockState {
   section?: string
   rows: number
+  /** 块开行（`┌…`）的中文串（T23.6：walk 路线表开行即区域名；hp 等无中文开行为空）。 */
+  header?: string
   /** exp 表对照对积攒（行序追加；块收口时整体写一次 `character.经验表`）。 */
   expPairs?: { level: number; exp: number }[]
+  /** i 表分区积攒（装备/饰品按槽位合并、其它按序追加、汇总覆盖；块收口统一写，A.7.4）。 */
+  inv?: Record<string, unknown>
 }
 
 /** 序列状态：所属规则 + 已攒行（打标随到随打，写入等凑齐全量校验）。 */
@@ -515,7 +669,8 @@ export class StateTracker {
 
     // 表格块边界（D8）：┌ 开块即整块打标（框线/节标题/表头/页脚祝福语全部行）。
     if (TABLE_OPEN_RE.test(text)) {
-      this.block = { rows: 0 }
+      const header = sectionOf(text)
+      this.block = { rows: 0, ...(header !== undefined ? { header } : {}) }
       this.tag(line)
       return
     }
@@ -532,7 +687,7 @@ export class StateTracker {
           this.block = null
         }
       } else if (TABLE_BORDER_RE.test(text)) {
-        const section = SECTION_CJK_RE.exec(text)?.[0]
+        const section = sectionOf(text)
         if (section !== undefined) this.block.section = section
       }
       return
@@ -596,7 +751,11 @@ export class StateTracker {
     const cells = splitRowCells(text)
     for (const r of this.spec.rules) {
       if (r.shape !== 'table') continue
-      const ctx: RowContext = { cells, raw: text, index: block.rows, ...(block.section !== undefined ? { section: block.section } : {}) }
+      const ctx: RowContext = {
+        cells, raw: text, index: block.rows,
+        ...(block.section !== undefined ? { section: block.section } : {}),
+        ...(block.header !== undefined ? { blockHeader: block.header } : {}),
+      }
       const entries = r.match(ctx)
       if (entries !== undefined) {
         if (r.id === 'exp' && entries.length === 0) {
@@ -606,6 +765,9 @@ export class StateTracker {
           if (EXP_NUM_RE.test(first)) {
             block.expPairs = [...(block.expPairs ?? []), ...expPairsOf(cells)]
           }
+        } else if (r.id === 'i') {
+          // i 表分区行：块内积攒（装备/饰品跨行合并、其它跨行追加），块收口统一写。
+          block.inv = mergeInvEntries(block.inv, entries)
         } else {
           this.write(entries, r.zone)
         }
@@ -614,12 +776,17 @@ export class StateTracker {
     }
   }
 
-  /** 表格块收口（└ 或失控止损）：exp 对照对积攒非空 ⇒ 整体写一次经验表。 */
+  /** 表格块收口（└ 或失控止损）：exp 对照对 / i 表分区积攒非空 ⇒ 统一写。 */
   private finishTableBlock(): void {
     const block = this.block
     if (block === null) return
     if (block.expPairs !== undefined && block.expPairs.length > 0) {
       this.deps.onWrite('character', '经验表', block.expPairs)
+    }
+    if (block.inv !== undefined) {
+      for (const [key, value] of Object.entries(block.inv)) {
+        this.deps.onWrite('inventory', key, value)
+      }
     }
   }
 

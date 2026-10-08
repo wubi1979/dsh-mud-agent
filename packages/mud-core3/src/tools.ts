@@ -1,8 +1,9 @@
 /**
- * tools — 工具面纯层：mud_connect / mud_send / mud_state（三期 T2b）。
+ * tools — 工具面纯层：mud_connect / mud_send / mud_walk / mud_state（三期 T2b；T23 walk）。
  *
- * 三工具一个原则：**原文返回、模型自决**——mud_send 返回应答行原文（过程即
- * 结果）；mud_connect 只建连（登录归流程面）；mud_state 返回插件状态 + world
+ * 工具一个原则：**原文返回、模型自决**——mud_send 返回应答行原文（过程即
+ * 结果）；mud_connect 只建连（登录归流程面）；mud_walk 是 mud_send 的判据
+ * 预设特化（walk 家族 + 行走静默窗）；mud_state 返回插件状态 + world
  * 合并快照。mud_workflow_run 及流程管理工具在 mud-workflow 子包（独立 preset
  * 行），本包只通过引擎窄面 workflowIoFor 提供流程 IO 缝。
  *
@@ -29,6 +30,12 @@ import type { ReadOpts } from './read.ts'
 import type { ConnState } from './roster.ts'
 import type { LoggedInState, WorldSnapshot } from './world.ts'
 import type { MudLine } from './link/line.ts'
+import {
+  belowStaminaFloor, STAMINA_CUR_KEY, STAMINA_MAX_KEY, STAMINA_ZONE,
+} from './nav/stamina.ts'
+import type { MudNavFace } from './nav/service.ts'
+import { parseDirectionPath, parseWalkTable } from './nav/route.ts'
+import { nextBlocker } from './nav/blocker.ts'
 import type { WorkflowIoSeam } from 'mud-workflow/contract'
 
 /**
@@ -94,13 +101,18 @@ export interface MudCore3Handle extends WorkflowIoSeam<MudLine> {
   /** 状态快照（插件状态 + world 合并）。 */
   stateOf(sessionId: string): MudStateSnapshot
   /** mud_send 缺省参数。 */
-  readonly defaults: { readonly sendTimeoutMs: number; readonly sendMaxLines: number }
+  readonly defaults: { readonly sendTimeoutMs: number; readonly sendMaxLines: number; readonly staminaFloorPct: number }
 }
 
 /** 工具依赖（preset 行一次注入；执行期解析引擎窄面）。 */
 export interface MudToolDeps {
   /** 引擎窄面解析（执行期调用；null = 引擎缺席 ⇒ 可读拒绝，注册不受影响）。 */
   core: () => MudCore3Handle | null
+  /**
+   * `mudNav` 服务面解析（T23.10b；缺省 ⇒ 不记录、不给建议，工具行为退回本期之前）。
+   * 服务是**插件级单例**（知识图全局），会话相关事实仍在 World（§10.3）。
+   */
+  nav?: () => MudNavFace | null
 }
 
 // ── 禁发表（最小集 + 全段扫描，§12.3）──────────────────────────
@@ -172,6 +184,58 @@ export const MAX_TIMEOUT_MS = 60000
 /** 裸读短静默窗口毫秒（收正在到达的尾巴；硬编码，无例证不进 Config）。 */
 const BARE_READ_QUIET_MS = 300
 
+/**
+ * mud_walk 行走静默窗毫秒（收「走完了」）：walk 逐步输出（walk_speed 0/1 =
+ * 0.2s/步，3 = 0.8s/步），步间隔远小于 1.5s ⇒ 连续输出不断流；到达后输出停
+ * ⇒ 静默 1.5s 即收束。不能用 gaCount（每步都出提示符，GA 计数会第一步就关窗）。
+ * 行文判据（A.9 结论 5，2026-10-08 实机）：到达 `你到达了荆州府。` ⇒ until；
+ * 软阻断 `你因为种种原因停了下来，可以用walk继续进行。`（下标 0）与未受理
+ * `当前区域的系统内建路径出发点在：…`（下标 1）⇒ failOn，**下标即 outcome 分类**。
+ * 查询类参数（`-c` / `-q`）**不注入**行走判据——其答复本身含"未受理"同族句。
+ * 交战中：战斗接管（§8.6 持有者 + 危险抢占）会以 `reason:'danger'` 打断本读窗 ⇒
+ * walk 以中断收束；**用户裁定 2026-10-08：先假设可恢复**（战斗结束后用无参 `walk`
+ * 继续走完），实测发现不能恢复再改口径。被抢占时持有者已归战斗，本工具的
+ * `finally releaseSend` 只解除自己的持有（runtime 按 holder 比对）⇒ 战斗持有不受影响。
+ */
+const WALK_QUIET_MS = 1500
+
+/** 到达判据（A.9 结论 5）：完整句 `你到达了荆州府。`。 */
+const WALK_UNTIL: readonly string[] = ['^你到达了']
+
+/** 失败判据（A.9 结论 5）：**只有软阻断**（下标 0，无参 `walk` 可继续）。 */
+const WALK_FAILON: readonly string[] = [
+  '你因为种种原因停了下来',
+]
+
+/**
+ * "在出发点"的**正向证据**（反证口径，用户裁定 2026-10-08）：
+ *   - **表类调用**（无参 `walk` / `-c`）：出路径表 ⇒ 在出发点；**没出表 ⇒ 不在**；
+ *   - **行走类调用**（`walk <拼音名>` / `-p`）：出受理行（`你决定开始前往…`）⇒ 在出发点；没出 ⇒ 不在。
+ * 判据**不用单行"拒绝行文"**（那句与 `-c` 同族、易误判）；`-q` 与 `-c <拼音名>` 的输出与
+ * 出发点无关 ⇒ **不参与判定**。
+ */
+const WALK_STARTED_RE = /^你决定开始前往/
+
+/** 查询类参数（`-c` / `-q`）：答复是"查询结果"，不按行走判据分类。 */
+const WALK_QUERY_RE = /^-(c|q)(\s|$)/
+
+/** mud_walk 动作（T23.9，D14）：本期实现 `walk` / `speed`，`node` 家族只留槽位。 */
+export type MudWalkAction = 'walk' | 'node' | 'node-get' | 'node-walk' | 'speed'
+
+/** 本期实现、进工具描述的动作。 */
+const WALK_ACTIONS: readonly MudWalkAction[] = ['walk', 'speed']
+
+/** 预留槽位（不进描述；执行返回可读拒绝——node 不保证成功，A.9 结论 9）。 */
+const WALK_RESERVED_ACTIONS: readonly MudWalkAction[] = ['node', 'node-get', 'node-walk']
+
+/** `set walk_speed` 值域（A.9 结论 7：-1 奔跑 / 0·1 正常 / 2 慢行 / 3 缓步）。 */
+const WALK_SPEED_MIN = -1
+const WALK_SPEED_MAX = 3
+const WALK_SPEED_RE = /^-?\d+$/
+
+/** mud_walk 总超时下限毫秒（长路线 15+ 步 × 慢速档 ≈ 12s+；低于此值用下限）。 */
+const WALK_MIN_TIMEOUT_MS = 30000
+
 /** 引擎缺席时的可读拒绝（I9：不是必然失败的桩，注册照常、执行明确说明）。 */
 export const CORE_ABSENT_ERROR = '已拒绝：mud-core3 引擎服务缺席（ctx.mudCore3 未装配），工具仅注册未接线'
 
@@ -193,6 +257,48 @@ export type MudConnectResult =
 export type MudSendResult =
   | { ok: false; error: string }
   | { ok: true; reason: string; lines: string[] }
+/** mud_walk 行走结果分类（T23.5/T23.11，D13）：软/硬阻断与"没站在出发点"处置不同。 */
+export type MudWalkOutcome = 'arrived' | 'soft-stop' | 'hard-stop' | 'unaccepted' | 'incomplete'
+
+/** mud_walk 返回形态 = mud_send 同款 + `outcome`（行走结果分类；speed 等非行走动作不带）+ `departures`（未受理时的本区域起点）+ `region`/`hint`/`suggest`（T23.10b 记录与建议）。 */
+export type MudWalkResult =
+  | { ok: false; error: string }
+  | {
+    ok: true
+    reason: string
+    outcome?: MudWalkOutcome
+    departures?: string[]
+    blocked?: { attempts: number; hard: boolean; at: string | null }
+    region?: string
+    hint?: { to: string; via: string[] }
+    suggest?: { dest: string; pinyin: string; steps: number }
+    path?: { to: string; directions: string[]; short?: string }
+    lines: string[]
+  }
+
+/** World 里的数值（非有限数 ⇒ undefined）。 */
+function numberValue(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined
+}
+
+/** World 里的字符串值（非字符串 ⇒ undefined）。 */
+function stringValue(v: unknown): string | undefined {
+  return typeof v === 'string' && v !== '' ? v : undefined
+}
+
+/** World 里的字符串数组（非数组 / 空 ⇒ undefined）。 */
+function stringArray(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined
+  const out = v.filter((x): x is string => typeof x === 'string')
+  return out.length > 0 ? out : undefined
+}
+
+/** 收束原因 ⇒ 行走结果（`failOn` 当前只有软阻断一项；未受理走**反证**，见调用点）。 */
+function walkOutcome(reason: string): MudWalkOutcome {
+  if (reason === 'until') return 'arrived'
+  if (reason === 'failOn') return 'soft-stop'
+  return 'incomplete'
+}
 export type MudStateResult =
   | { ok: false; error: string }
   | { ok: true; state: MudStateSnapshot }
@@ -205,7 +311,7 @@ function reject(error: string): { ok: false; error: string } {
 // ── 工具注册 ────────────────────────────────────────────────────────
 
 /**
- * 构建并注册三个 mud 工具（preset 行在 preset 作用域调用一次；注册期不依赖
+ * 构建并注册四个 mud 工具（preset 行在 preset 作用域调用一次；注册期不依赖
  * 引擎，执行期经 deps.core() 解析引擎窄面）。
  *
  * 注册完整性自检：登记本层经 registrar 实际注册的工具名，缺一即 fail-loud。
@@ -216,6 +322,7 @@ export function registerMudTools(
   deps: MudToolDeps,
 ): Array<() => void> {
   const core = (): MudCore3Handle | null => deps.core()
+  const nav = (): MudNavFace | null => deps.nav?.() ?? null
 
   const mudConnect: MudToolDefinition = {
     name: 'mud_connect',
@@ -392,6 +499,211 @@ export function registerMudTools(
     },
   }
 
+  const mudWalk: MudToolDefinition = {
+    name: 'mud_walk',
+    description:
+      '沿内建路径自动行走（T23；须站在带出发点标记的房间）。已知目的地优先用它，'
+      + '比逐步发方向命令高效且不绕路。action 缺省 walk——args 传：'
+      + '"<拼音名>" 走到目标区域（如 xiangyang，区域列表见出发房间的 walk 表）；'
+      + '"-c" 查当前区域的内建路径出发点；"-c <拼音名>" 查具体地点路径；'
+      + '"-q <区域中文名>" 查当前区域到其他区域的路径；'
+      + '"-p" 行走中途停下（频繁使用影响任务奖励，慎用）；'
+      + '缺省 = 恢复中途停下的行走。action: "speed" + value = 调整行走速度（-1 奔跑 / 1 正常 / 2 慢行 / 3 缓步）。'
+      + '行走是多步连续输出，工具等行走静默后一次性返回全程行文原文，'
+      + '并在 outcome 给出结果分类：arrived 到达 / soft-stop 中途停下（可用无参 walk 继续）/ '
+      + 'hard-stop 同位置连续两次停下（**停手**：换路或查通过手段，别硬重试）/ '
+      + 'unaccepted 不在出发点（返回里列出本区域全部起点，需自己走过去，可用 localmaps 查方位）/ '
+      + 'incomplete 未判定。若 reason 为 "danger"（被战斗打断），战斗结束后可用无参 walk 继续走完。',
+    isConcurrencySafe: () => false, // walk 是多步 send 的组合，独占（谓词恒 false）
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['walk', 'speed'], description: "动作；缺省 'walk'（沿内建路径行走）· 'speed' 调行走速度（配 value）" },
+        args: { type: 'string', description: 'action:walk 的参数（拼音名 / -c / -c 拼音名 / -q 区域中文名 / -p）；缺省 = 恢复行走' },
+        value: { type: 'string', description: "action:speed 的速度值：-1 奔跑 / 1 正常 / 2 慢行 / 3 缓步" },
+        timeoutMs: { type: 'integer', minimum: 1, description: '总超时毫秒；缺省取 max(sendTimeout, 30s)（长路线需时更久）' },
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        properties: {
+          ok: { type: 'boolean' },
+          reason: { type: 'string' },
+          outcome: { type: 'string', description: '行走结果分类（T23.5）：arrived / soft-stop / unaccepted / incomplete' },
+          departures: { type: 'array', items: { type: 'string' }, description: 'unaccepted 时本区域的路径起点列表（需自己走过去；可用 localmaps 查方位）' },
+          blocked: { type: 'object', description: '阻断档案（T23.11）：{attempts, hard, at}——同位置软阻断连击 ≥2 判 hard（outcome=hard-stop），此时**停手**：换路或查通过手段' },
+          region: { type: 'string', description: '当前区域（World location.区域；未知则不带）' },
+          hint: { type: 'object', description: '`-q` 参考链解析：{to, via}（只有参考意义，不是可执行序列）' },
+          suggest: { type: 'object', description: '用已记录的行走知识给出的下一跳建议：{dest, pinyin, steps}；无解则不带' },
+          path: { type: 'object', description: '`walk -c <拼音名>` 的区域内方向序列：{to, directions[], short?}（**可执行**的最后一程）' },
+          lines: { type: 'array', items: { type: 'string' } },
+          error: { type: 'string' },
+        },
+        required: ['ok'],
+      },
+      render: (_args, value) => {
+        const v = value as MudWalkResult
+        if (!v.ok) return [{ type: 'text', text: v.error }]
+        return [{ type: 'text', text: v.lines.join('\n') }]
+      },
+    },
+    async execute(rawArgs, exec) {
+      const args = rawArgs as { action?: string; args?: string; value?: string; timeoutMs?: number }
+      const c = core()
+      if (c === null) return reject(CORE_ABSENT_ERROR)
+      const tc = c.toolContextFor(exec.agent as ToolAgent | undefined)
+      if (tc === null) return reject(NOT_BOUND_ERROR)
+      if (tc.runtime.connState !== 'connected') return reject(NOT_CONNECTED_ERROR)
+
+      // action 分派（T23.9）：未知动作拒；预留槽位拒（node 家族本期不实现，A.9 结论 9）。
+      const action = args.action ?? 'walk'
+      const known = [...WALK_ACTIONS, ...WALK_RESERVED_ACTIONS] as readonly string[]
+      if (!known.includes(action)) {
+        return reject(`已拒绝：未知 action '${action}'（可用：${WALK_ACTIONS.join(' / ')}）`)
+      }
+      if ((WALK_RESERVED_ACTIONS as readonly string[]).includes(action)) {
+        return reject(`已拒绝：action '${action}' 本期未实现（玩家自建路径不保证成功），跨区域行动请用 action:'walk'`)
+      }
+
+      // 命令拼装：命令字符串归本层（D17）——walk 族与 speed 各自成句。
+      let cmd: string
+      let walkArgs = ''
+      if (action === 'speed') {
+        const v = (args.value ?? '').trim()
+        if (!WALK_SPEED_RE.test(v)) {
+          return reject(`已拒绝：action:'speed' 需要 value（整数 ${WALK_SPEED_MIN}..${WALK_SPEED_MAX}，即 set walk_speed <值>）`)
+        }
+        const n = Number.parseInt(v, 10)
+        if (n < WALK_SPEED_MIN || n > WALK_SPEED_MAX) {
+          return reject(`已拒绝：walk_speed 取值须在 ${WALK_SPEED_MIN}..${WALK_SPEED_MAX}`)
+        }
+        cmd = `set walk_speed ${n}`
+      } else {
+        // 参数面：args 只允许单条 walk 参数（堵 "扬州;suicide" 类拼接——walk 前缀
+        // 使 deny 扫描失效，故在此显式堵拼接符）。
+        if (args.args !== undefined) {
+          walkArgs = args.args.trim()
+          if (/[;\n\r]/.test(walkArgs) || walkArgs.length > 60) {
+            return reject('已拒绝：args 必须是单条 walk 参数（拼音名 / -c / -q 区域 / -p），禁止分号或换行')
+          }
+        }
+        cmd = walkArgs === '' ? 'walk' : `walk ${walkArgs}`
+      }
+
+      // 行走类 / 查询类分派（判据注入与精力闸共用同一判定）。
+      const isWalkAction = action === 'walk'
+      const isQuery = isWalkAction && WALK_QUERY_RE.test(walkArgs)
+
+      // 精力闸（T23.10 D16，判据出处 A.9 结论 7 + 用户裁定）：行走前看
+      // `vitals.精力 / 最大精力`（百分比判据；精力可为上限的 200%）。未知 ⇒ 放行
+      // （`vitals` 尚未写入时不因"不知道"卡死导航）。查询与 speed 不是行动，不受闸门。
+      if (isWalkAction && !isQuery) {
+        const below = belowStaminaFloor(
+          tc.runtime.worldEntry(STAMINA_ZONE, STAMINA_CUR_KEY)?.value,
+          tc.runtime.worldEntry(STAMINA_ZONE, STAMINA_MAX_KEY)?.value,
+          c.defaults.staminaFloorPct,
+        )
+        if (below === true) {
+          return reject(`已拒绝：精力不足（低于 ${Math.round(c.defaults.staminaFloorPct * 100)}%），暂不行走——先恢复精力再试`)
+        }
+      }
+
+      // timeoutMs：缺省 = max(sendTimeout, WALK_MIN_TIMEOUT_MS)，上限同 mud_send。
+      let timeoutMs: number
+      if (args.timeoutMs !== undefined) {
+        if (!Number.isInteger(args.timeoutMs) || args.timeoutMs <= 0) {
+          return reject('已拒绝：timeoutMs 必须为正整数')
+        }
+        timeoutMs = Math.min(args.timeoutMs, MAX_TIMEOUT_MS)
+      } else {
+        timeoutMs = Math.min(Math.max(c.defaults.sendTimeoutMs, WALK_MIN_TIMEOUT_MS), MAX_TIMEOUT_MS)
+      }
+
+      // 持有者/发送/读序与 mud_send 的 send+read 路径一致（独占、可读拒绝不劈半）。
+      const holder = String((exec.agent as ToolAgent | undefined)?.id ?? '')
+      if (!tc.runtime.acquireSend(holder)) {
+        return reject(tc.runtime.sendHolderId === 'combat' ? COMBAT_HOLDING_ERROR : HOLDER_BUSY_ERROR)
+      }
+      try {
+        if (!tc.runtime.send(cmd)) {
+          return reject('已拒绝：发送失败（连接可能已断开）')
+        }
+        // 判据预设（§8.7）：行走类注入到达/失败判据；查询类（-c/-q）与 speed 只静默窗
+        // ——查询答复含"未受理"同族句，注入会把正常查询误判为 unaccepted。
+        const listen = compileListen({
+          ...(isWalkAction && !isQuery ? { until: [...WALK_UNTIL], failOn: [...WALK_FAILON] } : {}),
+          quietMs: WALK_QUIET_MS,
+          maxLines: c.defaults.sendMaxLines,
+        })
+        const r = await tc.runtime.read({ ...listen, timeoutMs, signal: exec.signal }, [])
+        let outcome = isWalkAction ? walkOutcome(r.reason) : undefined
+        const lines = r.lines.map(l => l.text)
+        const region = stringValue(tc.runtime.worldEntry('location', '区域')?.value)
+        // 「在出发点」判定（**反证**，用户裁定 2026-10-08）：看本次调用有没有**正向证据**——
+        //   表类（无参 `walk` / `-c`）出路径表；行走类（`walk <拼音名>` / `-p`）出受理行。
+        //   没有正向证据 ⇒ 不在出发点（写 `出发点就绪=false`）；`-q` / `-c <拼音名>` 与出发点无关 ⇒ 不判定。
+        //   不用单行"拒绝行文"判据（与 `-c` 同族、易误判）。
+        const table = parseWalkTable(lines)
+        const started = lines.some(l => WALK_STARTED_RE.test(l))
+        const judgesDeparture = isWalkAction
+          && (walkArgs === '' || walkArgs === '-c' || !isQuery)
+        if (judgesDeparture) {
+          // 正向证据两类取并：出路径表（表类）或出受理/继续行（行走类、无参恢复）。
+          const atDeparture = table.edges.length > 0 || started
+          tc.runtime.writeNavWorld('location', '出发点就绪', atDeparture)
+          // 行走类且"既没受理也没到达也没软阻断" ⇒ 静默收束其实是"没走出去"
+          if (!atDeparture && outcome === 'incomplete' && r.reason === 'quiet') outcome = 'unaccepted'
+        }
+        // 未受理 ⇒ 顺手把本区域起点结构化回给 agent（World `location.出发点`，T23.6）。
+        const departures = outcome === 'unaccepted'
+          ? stringArray(tc.runtime.worldEntry('location', '出发点')?.value)
+          : undefined
+        // 阻断档案（T23.11，A.9 结论 12）：**硬阻断没有专有行文**——用户定义是
+        // "同位置连续两次 walk 都无法继续前进" ⇒ 判定 = 同位置软阻断连击 ≥ 2。
+        // 计数是会话相关的（"我在这儿连着没走成"）⇒ 落 World `nav.*`（kind:'nav'，断线复位）；
+        // 处置 = **回给 agent 并停手**（不重试、不换路），"通过手段"逐步积累（字段留位）。
+        let blocked: { attempts: number; hard: boolean; at: string | null } | undefined
+        if (isWalkAction) {
+          const verdict = nextBlocker({
+            attempts: numberValue(tc.runtime.worldEntry('nav', '软阻断连击')?.value) ?? 0,
+            at: stringValue(tc.runtime.worldEntry('nav', '软阻断位置')?.value) ?? null,
+          }, region, outcome)
+          tc.runtime.writeNavWorld('nav', '软阻断连击', verdict.attempts)
+          if (verdict.at !== null) tc.runtime.writeNavWorld('nav', '软阻断位置', verdict.at)
+          tc.runtime.writeNavWorld('nav', '硬阻断', verdict.hard)
+          if (verdict.hard && outcome === 'soft-stop') outcome = 'hard-stop'
+          if (verdict.attempts > 0) blocked = { attempts: verdict.attempts, hard: verdict.hard, at: verdict.at }
+        }
+        // 记录 + 建议（T23.10b，用户裁定"不加动词"）：把本次行文并入行走知识图
+        // （路径表 ⇒ 边、`-q` ⇒ 参考链；找不到东西就什么都不记），并把
+        // **我在哪（region）/ 参考链（hint）/ 下一跳建议（suggest）** 结构化回给 agent
+        // ——每到一个新地点由 agent 自己再查一次，服务不存分段进度。
+        const navFace = nav()
+        if (navFace !== null) navFace.record({ ...(region !== undefined ? { region } : {}), lines })
+        const hint = navFace !== null ? navFace.hintOf(lines) : null
+        const suggest = navFace !== null && hint !== null ? navFace.suggest(region, hint.to) : null
+        // `walk -c <拼音名>` ⇒ 区域内方向序列（**可执行**的最后一程，A.9 结论 11）。
+        const path = parseDirectionPath(lines)
+        return {
+          ok: true, reason: r.reason,
+          ...(outcome !== undefined ? { outcome } : {}),
+          ...(departures !== undefined ? { departures } : {}),
+          ...(blocked !== undefined ? { blocked } : {}),
+          ...(region !== undefined ? { region } : {}),
+          ...(hint !== null ? { hint } : {}),
+          ...(suggest !== null ? { suggest } : {}),
+          ...(path !== null
+            ? { path: { to: path.to, directions: [...path.directions], ...(path.short !== undefined ? { short: path.short } : {}) } }
+            : {}),
+          lines,
+        }
+      } finally {
+        tc.runtime.releaseSend(holder)
+      }
+    },
+  }
+
   const mudState: MudToolDefinition = {
     name: 'mud_state',
     description:
@@ -423,7 +735,7 @@ export function registerMudTools(
     },
   }
 
-  // 注册完整性自检：登记实际注册的工具名，注册后断言三工具全部过 registrar。
+  // 注册完整性自检：登记实际注册的工具名，注册后断言四工具全部过 registrar。
   const registered = new Set<string>()
   const recording: ToolRegistrar = {
     register: def => {
@@ -431,8 +743,8 @@ export function registerMudTools(
       return registrar.register(def)
     },
   }
-  const disposers = [mudConnect, mudSend, mudState].map(def => recording.register(def))
-  const missing = ['mud_connect', 'mud_send', 'mud_state'].filter(n => !registered.has(n))
+  const disposers = [mudConnect, mudSend, mudWalk, mudState].map(def => recording.register(def))
+  const missing = ['mud_connect', 'mud_send', 'mud_walk', 'mud_state'].filter(n => !registered.has(n))
   if (missing.length > 0) throw new Error(`mud-core3 注册完整性自检失败：本层未注册 ${missing.join('/')}`)
   return disposers
 }
