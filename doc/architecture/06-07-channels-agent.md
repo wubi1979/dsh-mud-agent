@@ -143,8 +143,8 @@ session/event   → turn/start 抑制 / turn/end 冲刷（§7.2）
 
 - **正文 = 状态驱动**：服务器/账号事实 + 两轴实时状态 + 目标 + **优先目标节选（T24）**——**只给事实与目标，不写指令序列**（根醒来读状态自行规划，已完成的步骤不要重做）。
 - **模板 = Config `taskBrief`**：占位符 `{{serverName}}` / `{{endpoint}}` / `{{account}}` / `{{conn}}` / `{{loggedIn}}` / `{{goal}}`（T24 优先目标节选），投递时以**实时状态**填充；缺省内置 `DEFAULT_TASK_BRIEF`，部署可覆盖（未写 `{{goal}}` 的自定义模板零影响）。
-- **goal 节选与源分派（T24）**：投递前读 `ctx.get('goals')`（可选服务，缺席/未就绪 ⇒ 无 goal）——`goalBriefText`（无 goal / paused / complete ⇒ 「无」；active ⇒ objective；blocked ⇒ objective + 阻塞说明）与 `goalRoundSource`（active/blocked ⇒ goal-round 源）均在纯层 wake.ts。
-- **署名分派（T24 D8）**：有 active/blocked goal ⇒ 源用宿主原生 `GoalMessageSource`（`{ kind:'goal', goalId, revision, round }`，三元组与视图精确匹配——解锁 tool-goal 的 `completionAuthority`，complete/blocked 时自动注入 wrapup 收尾指令）；其余保持 `'mud-wake'`（声明合并自扩），与行批次 `'mud'` 区分。无 goal-round-driver ⇒ `roundsStarted` 恒 0、round 恒 0（`isMatchingGoalRound` 只做 `===`）。
+- **goal 节选与源分派（T24；2026-10-09 回流）**：投递前读 `ctx.get('goals')`（可选服务，缺席/未就绪 ⇒ 无 goal）——`goalBriefText`（无 goal / paused / complete ⇒ 「无」；active ⇒ objective；blocked ⇒ objective + 阻塞说明）在纯层 wake.ts。
+- **署名 = 恒 `'mud-wake'`（T24 D8 回流裁定）**：原设计（active/blocked goal ⇒ 宿主原生 `GoalMessageSource`，round = `view.roundsStarted`）**已废**——上游 goal 严格回放收严后，goal 源的用户消息必须是**受理轮**（`round = roundsStarted + 1 ≥ 1`，fold.ts 硬校验），kickoff / 静默唤醒不是受理主体、带源必毒（实测 seq 177 round 0 事件炸掉 goal 回放，服务拒一切读写）。round 受理归 base 全局挂载的 goal-round-driver；completionAuthority 在 kickoff 回合收窄到人类回合 / driver 轮（接受项）。
 - **不该触发的情形**：admit 之前的**手工「连接」不触发规划**（手动连接 = 调试用途）；已接入场景下断线后的补登录由**静默唤醒兜底**（`mud_connect` 幂等，不负责重连）。
 - 投递失败**不影响账号落库**（账号注册与开场消息解耦）。
 - **与进程起点标记的分工（T18）**：冷启动会话登记（`agent/created`）时会追一条 `'mud-epoch'` 署名的**进程起点标记**（§11.2），它只声明"上一进程的历史已失效"，**不代替任务书**——事实与目标仍由任务书给；三触发点（接入 / 静默唤醒 / goal 变更）一律不变。

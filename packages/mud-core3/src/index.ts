@@ -56,7 +56,7 @@ import type {
   CredentialResolver, ResolvedCredentials, RosterStore,
 } from './roster.ts'
 import { MemoryRosterStore, openDomainRosterStore, type HostStorageDomain } from './store.ts'
-import { Wake, DEFAULT_TASK_BRIEF, fillTaskBrief, goalBriefText, goalRoundSource, shouldKickoffOnGoalChange } from './wake.ts'
+import { Wake, DEFAULT_TASK_BRIEF, fillTaskBrief, goalBriefText, goalBriefSource, shouldKickoffOnGoalChange } from './wake.ts'
 import { shouldVeto, vetoStopStream } from './llm-gate.ts'
 import {
   addAccount as writeAccount, addServer as writeServer, removeAccount as dropAccount,
@@ -834,10 +834,10 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
       loggedIn: status.loggedIn,
       goal: goalBriefText(goalView),
     })
-    // T24 D8 源分派：goalRoundSource 出 goal 源（active/blocked），否则回
-    // mud-wake 署名（无 goal 时语义与既有一致）。
-    const source = goalRoundSource(goalView)
-      ?? { kind: 'mud-wake', plugin: 'mud-core3' } as const
+    // 署名恒 mud-wake（T24 D8 回流，2026-10-09）：goal 源的用户消息必须是上游
+    // 严格回放的「受理轮」（round = roundsStarted + 1 ≥ 1），kickoff 不是受理
+    // 主体、带源必毒——受理归 goal-round-driver（详见 wake.ts goalBriefSource）。
+    const source = goalBriefSource()
     try {
       agent.followup(createUserMessage({
         content: [{ type: 'text', text }],

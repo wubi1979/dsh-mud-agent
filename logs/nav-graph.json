@@ -1,0 +1,56 @@
+{
+  "nodes": [
+    {
+      "region": "扬州",
+      "edges": [
+        {
+          "dest": "六合丁家  ◇ 庄门",
+          "pinyin": "dingjia",
+          "steps": 11
+        },
+        {
+          "dest": "丐帮分舵  ◇ 土地庙",
+          "pinyin": "gaibang",
+          "steps": 13
+        },
+        {
+          "dest": "濠州府  ◇ 广场",
+          "pinyin": "haozhou",
+          "steps": 11
+        },
+        {
+          "dest": "建康府  ◇ 长江渡口",
+          "pinyin": "jiankang",
+          "steps": 12
+        },
+        {
+          "dest": "庐州  ◇ 石板桥",
+          "pinyin": "luzhou",
+          "steps": 11
+        },
+        {
+          "dest": "往生堂  ◇ 往生堂广场",
+          "pinyin": "shashou",
+          "steps": 14
+        },
+        {
+          "dest": "信阳  ◇ 小广场",
+          "pinyin": "xinyang",
+          "steps": 10
+        },
+        {
+          "dest": "徐州  ◇ 戏马台",
+          "pinyin": "xuzhou",
+          "steps": 14
+        },
+        {
+          "dest": "镇江  ◇ 扬子津",
+          "pinyin": "zhenjiang",
+          "steps": 8
+        }
+      ],
+      "updatedAt": 1791560809833
+    }
+  ],
+  "hints": []
+}

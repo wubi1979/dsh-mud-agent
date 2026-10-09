@@ -16,7 +16,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   Wake, DEFAULT_TASK_BRIEF, fillTaskBrief,
-  goalBriefText, goalRoundSource, shouldKickoffOnGoalChange,
+  goalBriefText, goalBriefSource, shouldKickoffOnGoalChange,
 } from '../src/wake.ts'
 import type { GoalView } from '@deepseek-ai/dsh-goal'
 
@@ -176,20 +176,8 @@ describe('goal 节选与源分派（T24）', () => {
     expect(goalBriefText(makeGoal({ phase: 'blocked' }))).toBe('把太极拳练到 30 级')
   })
 
-  it('goalRoundSource：active/blocked ⇒ goal 源（三元组与视图精确匹配）', () => {
-    expect(goalRoundSource(makeGoal())).toEqual({
-      kind: 'goal', goalId: 'goal-1', revision: 3, round: 0,
-    })
-    expect(goalRoundSource(makeGoal({
-      phase: 'blocked', revision: 7, roundsStarted: 0,
-      blockedReason: { code: 'model-reported', message: 'x' },
-    }))).toEqual({ kind: 'goal', goalId: 'goal-1', revision: 7, round: 0 })
-  })
-
-  it('goalRoundSource：无 goal / paused / complete ⇒ undefined（源回 mud-wake）', () => {
-    expect(goalRoundSource(undefined)).toBeUndefined()
-    expect(goalRoundSource(makeGoal({ phase: 'paused' }))).toBeUndefined()
-    expect(goalRoundSource(makeGoal({ phase: 'complete' }))).toBeUndefined()
+  it('goalBriefSource：恒 mud-wake（2026-10-09 回流——goal 源消息必须是上游严格回放的受理轮，kickoff 带源必毒）', () => {
+    expect(goalBriefSource()).toEqual({ kind: 'mud-wake', plugin: 'mud-core3' })
   })
 
   it('shouldKickoffOnGoalChange：create/edit/resume 触发，pause/complete/clear/block 不触发', () => {

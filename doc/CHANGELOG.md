@@ -736,3 +736,13 @@
 - **回归**：零逻辑改动（参数 description + persona 文本），lib 无需重建（已核对 lib/tools.js 含新 description）；patch 宿主同款解析校验通过（core3 + webui 两文件，core3 insert 五行不变）。
 
 > AI生成
+## [v0.0.63]goal 回放毒事件修复 + T24 署名回流 (2026-10-09)
+> 总结：kickoff 任务书带 goal 源（round 0）炸掉上游收严后的 goal 严格回放（服务拒一切读写）——修复现会话日志 + 署名恒 mud-wake 回流，goal 服务改用 dsh-base 全局提供。
+
+- **根因**：上游 goal fold 收严后，goal 源的用户消息必须是受理轮（round = roundsStarted + 1 ≥ 1，fold.ts 硬校验）；mud-core3 kickoff（T24 D8 源分派）带 `{kind:'goal', round: view.roundsStarted}`，goal 刚 create 时 roundsStarted = 0 ⇒ 必毒。实测：seq 177 round 0 事件 → `goal replay failed at session event 177`，GoalService 保留首个失败并拒一切访问（/goal 写删全挂）。
+- **连带事实**：上游 dsh-base 组合包已全局挂载 dsh-goal + goal-round-driver（本仓 patch 再插 dsh-goal 行 = 重复注册 goals 服务 fail-loud "1 entry did not activate"）——cordis.patch.yml 删自挂行（消费件 command-goal/tool-goal 保留）。
+- **日志修复**：`~/.dsh/sessions/--D-Mud--/session-e37e3325-…` seq 177 的 source 改写为 `{kind:'mud-wake', plugin:'mud-core3'}`（只重压该帧，其余帧字节原样；原文件留 .bak-177 备份）；全库扫描确认仅此一条毒事件。
+- **生产端回流（T24 D8 改版）**：wake.ts `goalRoundSource` 删，新 `goalBriefSource` 恒返回 mud-wake 署名；index.ts kickoff 调用点同步；设计章节 §7.3 署名分派段改版。completionAuthority 在 kickoff 回合收窄到人类回合 / driver 轮（接受项）；round 受理归 goal-round-driver，与静默唤醒的双驱动关系留待观察（patch tool-goal 注释已记）。
+- **回归**：wake.spec 署名用例改版；typecheck + test 全绿；lib 重建后生效。
+
+> AI生成

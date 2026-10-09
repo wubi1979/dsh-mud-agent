@@ -22,10 +22,10 @@
  *
  * 纯度：本文件零宿主**运行时**依赖——守卫与投递经注入窄接口（任务书正文组装
  * 归装配层）；T24 起引入 dsh-goal 的 type-only 类型面（GoalView/
- * GoalMessageSource/GoalOperation，编译期擦除，运行时零导入）。
+ * GoalOperation，编译期擦除，运行时零导入）。
  */
 
-import type { GoalMessageSource, GoalOperation, GoalView } from '@deepseek-ai/dsh-goal'
+import type { GoalOperation, GoalView } from '@deepseek-ai/dsh-goal'
 
 /** 到期守卫（三条件注入；任一 false = 只 re-arm 不唤醒）。 */
 export interface WakeGuards {
@@ -183,17 +183,18 @@ export function goalBriefText(view: GoalView | undefined): string {
 }
 
 /**
- * goal 视图 → goal-round 消息源（T24 D8 源分派）。
- * active/blocked ⇒ goal 源（goalId/revision/round 与视图三元组精确匹配——
- * 解锁 tool-goal 的 `completionAuthority`，complete/blocked 时自动注入 wrapup
- * 收尾指令）；其余（无 goal / paused / complete）⇒ undefined，调用方回退
- * mud-wake 署名。无 goal-round-driver ⇒ `roundsStarted` 恒 0，round 恒 0
- * （`isMatchingGoalRound` 只做 `===`，与视图匹配）。
+ * goal 视图 → 任务书署名（T24 D8，2026-10-09 回流改版）。
+ *
+ * **恒 `mud-wake`**——原 D8 设计（active/blocked ⇒ goal 源，
+ * round = `view.roundsStarted`）与上游收严后的严格回放冲突：goal 源的用户
+ * 消息必须是**受理轮**（`round = roundsStarted + 1 ≥ 1`，fold.ts 硬校验），
+ * kickoff / 静默唤醒不是受理主体，带源必毒（实测 seq 177 round 0 事件炸掉
+ * 整个 goal 回放，服务拒一切读写）。round 的受理归 base 全局挂载的
+ * goal-round-driver；本插件不再代开轮。完成权限（completionAuthority）在
+ * kickoff 回合随之收窄到人类回合 / driver 轮——接受的取舍。
  */
-export function goalRoundSource(view: GoalView | undefined): GoalMessageSource | undefined {
-  if (view === undefined) return undefined
-  if (view.phase !== 'active' && view.phase !== 'blocked') return undefined
-  return { kind: 'goal', goalId: view.id, revision: view.revision, round: view.roundsStarted }
+export function goalBriefSource(): { readonly kind: 'mud-wake'; readonly plugin: 'mud-core3' } {
+  return { kind: 'mud-wake', plugin: 'mud-core3' } as const
 }
 
 /**
