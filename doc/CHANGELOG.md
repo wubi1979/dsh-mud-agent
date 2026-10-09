@@ -727,3 +727,12 @@
 - **待实测（重启宿主后）**：① 目录注入可见（`<available_skills>` 含 191 条）；② 首步加载 mud-basics 后按知识行动；③ 任务攻略按需加载（如问"公孙止怎么做"→ wiki-task-gongsun）；④ 子级可达性（根委派的子 agent 能否取知识——机制推理成立，实测确认；若不可达回退 v2 方案：根在要点里点名技能名）；⑤ chokidar 热更在 Windows 上的生效性（改 knowledge/ 文件 → 目录自动重发）。
 
 > AI生成
+
+## [v0.0.62]行为引导微调：命令大小写提示 + hpbrief 优先级 (2026-10-09)
+> 总结：两条 agent 行为引导落位——命令大小写规则写进 mud_send 参数 description（每次调用可见），战斗状态刷新一律优先轻量 hpbrief、hp 降为"hpbrief 满足不了才用"（用户反馈 hp 不宜频繁使用）。
+
+- **命令大小写（tools.ts mud_send `cmd` 参数 description）**：追加"命令一律小写；命令参数（人名/物品名等英文 id）先用全小写尝试，游戏不认（提示找不到/没这个东西）时再试大小写混合原样拼写"——参数规则写在参数上是宿主 skill 体系纪律（工具 schema 每次调用可见，覆盖所有命令入口）。
+- **hpbrief 优先级（cordis.patch.yml persona 速查段）**：速查段重排——hpbrief 提为战斗状态刷新首选（轻量可常刷；18 键含气血/内力/精神/精力/真气/战意/食物饮水/经验潜能），hp 标注"内容与 hpbrief 基本相同（多状态描述/加成等细节）——不要频繁使用，仅当需要 hpbrief 没有的信息时才发"。措辞按 tracker 实录判据校准（`hpbriefRow` 定稿 18 位表 / `HP_PATTERNS` hp 独有项 = 加成、最大食物/最大饮水、状态描述文本）；修正旧 persona 认知"hp 独有食物饮水"（hpbrief 实含食物/饮水当前值）。mud-basics 无 hp 用法内容，落点唯一。
+- **回归**：零逻辑改动（参数 description + persona 文本），lib 无需重建（已核对 lib/tools.js 含新 description）；patch 宿主同款解析校验通过（core3 + webui 两文件，core3 insert 五行不变）。
+
+> AI生成

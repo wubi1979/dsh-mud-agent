@@ -368,7 +368,12 @@ export function registerMudTools(
     parameters: {
       type: 'object',
       properties: {
-        cmd: { type: 'string', description: '要发送的命令；缺省 = 裸读（不发命令，读近期行流）' },
+        cmd: {
+          type: 'string',
+          description: '要发送的命令；缺省 = 裸读（不发命令，读近期行流）。'
+            + '命令一律小写；命令参数（人名/物品名等英文 id）先用全小写尝试，'
+            + '游戏不认（提示找不到/没这个东西）时再试大小写混合原样拼写',
+        },
         wait: {
           type: 'boolean',
           description: '缺省 true = 发送并等待应答；false = 发送即走（只发不等，不判成败）',
