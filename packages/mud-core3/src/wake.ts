@@ -20,8 +20,12 @@
  * subagent 工具返回值（一次性前台，§7.6），插件不查子级；冗余唤醒无害
  * （根的决策输入是唤醒正文，不是唤醒次数）。
  *
- * 纯度：本文件零宿主依赖——守卫与投递经注入窄接口（任务书正文组装归装配层）。
+ * 纯度：本文件零宿主**运行时**依赖——守卫与投递经注入窄接口（任务书正文组装
+ * 归装配层）；T24 起引入 dsh-goal 的 type-only 类型面（GoalView/
+ * GoalMessageSource/GoalOperation，编译期擦除，运行时零导入）。
  */
+
+import type { GoalMessageSource, GoalOperation, GoalView } from '@deepseek-ai/dsh-goal'
 
 /** 到期守卫（三条件注入；任一 false = 只 re-arm 不唤醒）。 */
 export interface WakeGuards {
@@ -129,17 +133,21 @@ export interface TaskBriefFacts {
   readonly conn: string
   /** 登录轴实时值（unknown | in-game）。 */
   readonly loggedIn: string
+  /** T24：goal 节选文本（`goalBriefText` 产出；无/暂停/完成 ⇒ 「无」）。 */
+  readonly goal: string
 }
 
 /**
  * 缺省任务书模板（2026-10-01 裁定：bootstrap.ts 退役、模板走 Config `taskBrief`，
  * 缺省内置；2026-10-08 修订：目标行状态驱动——登录完成后不收尾，转按 persona
- * 的游戏目标继续自主游戏）。状态驱动：只给事实与目标，不写指令序列。
+ * 的游戏目标继续自主游戏；2026-10-09 T24：追加优先目标行）。状态驱动：只给
+ * 事实与目标，不写指令序列。
  */
 export const DEFAULT_TASK_BRIEF = [
   '（MUD 任务书）服务器 {{serverName}}（{{endpoint}}），账号 {{account}}。',
   '当前状态：连接 = {{conn}}，登录 = {{loggedIn}}。',
   '目标：确保本账号已连接并已登录游戏；已登录后，按 persona 中的游戏目标与成长路线继续自主游戏（重新评估当前状态与资源，决定下一步）。已完成的步骤不要重做。',
+  '当前优先目标：{{goal}}。',
 ].join('\n')
 
 /**
@@ -153,4 +161,46 @@ export function fillTaskBrief(template: string, facts: TaskBriefFacts): string {
     .replaceAll('{{account}}', facts.account)
     .replaceAll('{{conn}}', facts.conn)
     .replaceAll('{{loggedIn}}', facts.loggedIn)
+    .replaceAll('{{goal}}', facts.goal)
+}
+
+// ── goal 节选与源分派（T24，纯层；宿主服务读取在 index.ts）────────
+
+/**
+ * goal 视图 → 任务书「当前优先目标」节选文本。
+ * 无 goal / paused / complete（或已 clear）⇒ '无'——目标生命周期外的任务书
+ * 回默认节奏；active ⇒ objective 原文；blocked ⇒ objective + 阻塞说明
+ * （agent 需看到卡点才能向玩家如实报告）。
+ */
+export function goalBriefText(view: GoalView | undefined): string {
+  if (view === undefined) return '无'
+  if (view.phase === 'active') return view.objective
+  if (view.phase === 'blocked') {
+    const reason = view.blockedReason
+    return reason === undefined ? view.objective : `${view.objective}（被阻塞：${reason.message}）`
+  }
+  return '无' // paused / complete：生命周期暂停或已收尾，不作为优先目标
+}
+
+/**
+ * goal 视图 → goal-round 消息源（T24 D8 源分派）。
+ * active/blocked ⇒ goal 源（goalId/revision/round 与视图三元组精确匹配——
+ * 解锁 tool-goal 的 `completionAuthority`，complete/blocked 时自动注入 wrapup
+ * 收尾指令）；其余（无 goal / paused / complete）⇒ undefined，调用方回退
+ * mud-wake 署名。无 goal-round-driver ⇒ `roundsStarted` 恒 0，round 恒 0
+ * （`isMatchingGoalRound` 只做 `===`，与视图匹配）。
+ */
+export function goalRoundSource(view: GoalView | undefined): GoalMessageSource | undefined {
+  if (view === undefined) return undefined
+  if (view.phase !== 'active' && view.phase !== 'blocked') return undefined
+  return { kind: 'goal', goalId: view.id, revision: view.revision, round: view.roundsStarted }
+}
+
+/**
+ * goal 变更中需要立即投任务书的操作（T24.3 事件分派）：设/改/恢复 = 有新工作
+ * 要让 agent 感知；pause/complete/clear/block 无新工作（后续静默唤醒按新
+ * 状态走默认节奏，blocked 表示玩家已知卡点）。
+ */
+export function shouldKickoffOnGoalChange(operation: GoalOperation): boolean {
+  return operation === 'create' || operation === 'edit' || operation === 'resume'
 }

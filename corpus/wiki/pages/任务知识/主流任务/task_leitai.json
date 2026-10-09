@@ -1,0 +1,134 @@
+{
+  "id": "467c104ea3100369",
+  "type": "page",
+  "text": "蒙古人的擂台\n\n相关链接：https://pkuxkx.net/forum/thread-49359-1-1.html\n\n任务要求：完成1000次韩世忠和1000次香闺怨\n\n任务模式：按要求去对应地点的蒙古擂台打擂\n\n任务时间：5分钟\n\n任务奖励：经验、潜能、声望、翠玉石\n\n任务流程\n\n1、处州总兵接任务\n\n2、类似胡一刀的替代遍历\n\n3、到地方以后的提示\n\n4、钻进去\n\n5、要求比武就比武，求锤得锤\n\n6、打完第一波就可以去完成了，奖励略低，一共可以有3次比武，每次都比上次难度略高，假死任务\n\n7、离开回去交任务\n\n8、有概率接到后续（不是每次都有\n\n9、找到人了\n\n10、砍翻\n\n翠玉石是龙泉祭剑的道具，是掉落在房间地上且可被别人拾取，建议不要乱捡别人的，已经有大佬开过杀戒了\n\n龙泉祭剑\n\n简介：又一个微略增强玩家的小任务，可以用其他国家的技能了nice！不过暂时有不少BUG，慎用，有些可以quit消除，比如狂暴的自身永久封魔。\n\n流程：去龙泉镇剑池找剑痴杨嘉\n\n给他10颗翠玉石，他那石头可以寄存计数的，就是说你以一次性给他100个都行，然后每次祭剑自动消耗10个，直到这100个消耗完。\n\n增加的特技就是国家特技，随机四个国家所有特技的某个特技，可以附在武器上，武器必须得disload才能祭剑，（武器可转让），一把武器祭炼一次，同一把武器不能重复祭炼，ws就是weapon_stunt的alias。特技是武器在手才有效果，武器一放下技能效果就立刻消失。",
+  "structured_content": [
+    {
+      "path": "蒙古人的擂台",
+      "content": "相关链接：https://pkuxkx.net/forum/thread-49359-1-1.html\n\n任务要求：完成1000次韩世忠和1000次香闺怨\n\n任务模式：按要求去对应地点的蒙古擂台打擂\n\n任务时间：5分钟\n\n任务奖励：经验、潜能、声望、翠玉石",
+      "level": 2
+    },
+    {
+      "path": "蒙古人的擂台 > 任务流程",
+      "content": "1、处州总兵接任务\n\n2、类似胡一刀的替代遍历\n\n3、到地方以后的提示\n\n4、钻进去\n\n5、要求比武就比武，求锤得锤\n\n6、打完第一波就可以去完成了，奖励略低，一共可以有3次比武，每次都比上次难度略高，假死任务\n\n7、离开回去交任务\n\n8、有概率接到后续（不是每次都有\n\n9、找到人了\n\n10、砍翻\n\n翠玉石是龙泉祭剑的道具，是掉落在房间地上且可被别人拾取，建议不要乱捡别人的，已经有大佬开过杀戒了",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240821-100108.png",
+          "alt": "",
+          "title": "",
+          "position": 973
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240821-100145.png",
+          "alt": "",
+          "title": "",
+          "position": 1214
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240821-100156.png",
+          "alt": "",
+          "title": "",
+          "position": 1424
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240821-100218.png",
+          "alt": "",
+          "title": "",
+          "position": 1663
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240821-100233.png",
+          "alt": "",
+          "title": "",
+          "position": 1897
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240821-100302.png",
+          "alt": "",
+          "title": "",
+          "position": 2140
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240821-100440.png",
+          "alt": "",
+          "title": "",
+          "position": 2350
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240821-100513.png",
+          "alt": "",
+          "title": "",
+          "position": 2624
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240821-100537.png",
+          "alt": "",
+          "title": "",
+          "position": 2862
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240821-100603.png",
+          "alt": "",
+          "title": "",
+          "position": 3107
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240821-100626.png",
+          "alt": "",
+          "title": "",
+          "position": 3342
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240821-100648.png",
+          "alt": "",
+          "title": "",
+          "position": 3576
+        }
+      ]
+    },
+    {
+      "path": "龙泉祭剑",
+      "content": "简介：又一个微略增强玩家的小任务，可以用其他国家的技能了nice！不过暂时有不少BUG，慎用，有些可以quit消除，比如狂暴的自身永久封魔。\n\n流程：去龙泉镇剑池找剑痴杨嘉\n\n给他10颗翠玉石，他那石头可以寄存计数的，就是说你以一次性给他100个都行，然后每次祭剑自动消耗10个，直到这100个消耗完。\n\n增加的特技就是国家特技，随机四个国家所有特技的某个特技，可以附在武器上，武器必须得disload才能祭剑，（武器可转让），一把武器祭炼一次，同一把武器不能重复祭炼，ws就是weapon_stunt的alias。特技是武器在手才有效果，武器一放下技能效果就立刻消失。",
+      "level": 2,
+      "images": [
+        {
+          "src": "/wiki/_media/task/%E9%BE%99%E6%B3%89%E7%A5%AD%E5%89%911.png?w=1000&tok=47cd8f",
+          "alt": "",
+          "title": "",
+          "position": 4133
+        },
+        {
+          "src": "/wiki/_media/task/%E9%BE%99%E6%B3%89%E7%A5%AD%E5%89%912.png?w=1000&tok=7148e1",
+          "alt": "",
+          "title": "",
+          "position": 4464
+        },
+        {
+          "src": "/wiki/_media/task/%E9%BE%99%E6%B3%89%E7%A5%AD%E5%89%913.png?w=1000&tok=90838e",
+          "alt": "",
+          "title": "",
+          "position": 4722
+        },
+        {
+          "src": "/wiki/_media/task/%E9%BE%99%E6%B3%89%E7%A5%AD%E5%89%914.png?w=400&tok=fef2c2",
+          "alt": "",
+          "title": "",
+          "position": 5131
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "title": "task:leitai",
+    "url": "https://www.pkuxkx.net/wiki/task/leitai",
+    "category": "任务知识/主流任务",
+    "tags": [
+      "任务知识/主流任务"
+    ],
+    "chunk_index": 0,
+    "total_chunks": 1,
+    "scraped_at": "2026-01-12 11:33:55",
+    "content_hash": "ade46bfccaa39ca7"
+  }
+}

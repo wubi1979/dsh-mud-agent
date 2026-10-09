@@ -1,0 +1,38 @@
+{
+  "id": "a1081564b75b1dff",
+  "type": "page",
+  "text": "后起之秀\n\n简介：在信阳小广场这里有一座扶摇录，上面实时更新着每个门派的后起之秀字之名，记录当周400M以下各个门派exp 增量最大的玩家，这些后起之秀中会有新的五绝肝神出现么，让我们拭目以待。\n\n另外top 门派，例如top 华山派也可以看到这个门派的后起之秀是谁\n\n作用：后起之秀效果主流任务的声望部分奖励+15%，每派后起之秀，每周的前三次门忠（只要不是伪造），就会额外获得类似日活算法的奖励（奖励区间偏上）。",
+  "structured_content": [
+    {
+      "path": "后起之秀",
+      "content": "简介：在信阳小广场这里有一座扶摇录，上面实时更新着每个门派的后起之秀字之名，记录当周400M以下各个门派exp 增量最大的玩家，这些后起之秀中会有新的五绝肝神出现么，让我们拭目以待。\n\n另外top 门派，例如top 华山派也可以看到这个门派的后起之秀是谁\n\n作用：后起之秀效果主流任务的声望部分奖励+15%，每派后起之秀，每周的前三次门忠（只要不是伪造），就会额外获得类似日活算法的奖励（奖励区间偏上）。",
+      "level": 1,
+      "images": [
+        {
+          "src": "/wiki/_media/jiemi/zone/%E6%89%B6%E6%91%87%E5%BD%95.png?w=1000&tok=678faa",
+          "alt": "",
+          "title": "",
+          "position": 402
+        },
+        {
+          "src": "/wiki/_media/newbie/%E5%90%8E%E8%B5%B7%E4%B9%8B%E7%A7%801.png?w=1000&tok=e03cad",
+          "alt": "",
+          "title": "",
+          "position": 706
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "title": "newbie:houqzx",
+    "url": "https://www.pkuxkx.net/wiki/newbie/houqzx",
+    "category": "门派知识/门派通用",
+    "tags": [
+      "门派知识/门派通用"
+    ],
+    "chunk_index": 0,
+    "total_chunks": 1,
+    "scraped_at": "2026-01-12 11:31:52",
+    "content_hash": "a26bbaaa8bd040a8"
+  }
+}

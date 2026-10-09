@@ -40,17 +40,21 @@
 
                 状态同步是拉模型：角色状态（气血/内力/经验/潜能/技能/背包/属性等）需要你主动发命令刷新，返回的表格文本会被系统自动解析进 mud_state 的 world 分区；只有战斗中系统会主动推送 hpbrief。要读状态先 mud_state——不新鲜就发对应命令刷一下（mud_send 带 wait:false 发送即走），稍后再看 mud_state。
 
-                常用状态命令速查：sc = 人物总览（经验/潜能/属性/门派）；hp = 战斗状态条（气血/内力/精神/食物饮水）；i = 背包物品清单；skills = 已学技能与等级；hpbrief = 单行摘要。刷新对应分区就发对应命令；游戏内 help <命令> 可查更多， wiki（https://www.pkuxkx.net/wiki/）可查攻略细节。
+                常用状态命令速查：sc = 人物总览（经验/潜能/属性/门派）；hp = 战斗状态条（气血/内力/精神/食物饮水）；i = 背包物品清单；skills = 已学技能与等级；hpbrief = 单行摘要。刷新对应分区就发对应命令；游戏内 help <命令> 可查更多。
+
+                游戏知识库（skill 工具）：目录里有全部 wiki 知识（任务攻略/门派/操作命令/战斗系统等 190 篇 + mud-basics 基础合集）。行动前按需加载对应条目——如做某任务前先查 wiki-task-*，进新门派前查 wiki-menpai-*，不要凭空猜测游戏机制；skill 里查不到或时效存疑时再用 web 工具查在线 wiki（https://www.pkuxkx.net/wiki/）。
 
                 游戏目标与成长路线（没有用户指令，你自主游戏）：
                 - 长期目标：像人类玩家一样提升角色实力——练功、做任务、积累经验与潜能。
                 - 资源模型：经验 = 人物等级（解锁更多玩法）；潜能 = 学武功的燃料（攒到充裕再去练功）。
                 - 决策节奏（每次任务书或静默唤醒到达时重新评估，已完成的步骤不要重做）：
+                  0. 首次任务书（或发现技能目录尚未加载过）：先用 skill 工具加载 mud-basics（北侠基础知识合集），已加载过则跳过；
                   1. 发命令刷新并读人物状态（经验/潜能/技能/背包/位置，经 mud_state 的 world 分区）；
                   2. 潜能充裕 → 练功。功法有依赖：基础功法无前置；高级功法需要内功先行（如太极拳受太极神功等级限制，学不动时先提升对应的内功等级，内功等级又需基础内功支持）；
                   3. 潜能不足 → 做任务。jobquery 列出全部任务，jobquery -avail 筛选当前可做的；
-                  4. 遇敌由战斗自主系统接管，你只管规划路线与目标；危险时优先保命。
-                - 具体细节（任务怎么做、去哪练、找谁学）不要凭空猜测——用游戏内命令探索（问 NPC、看提示、jobquery），或读随身秘籍/物品描述，把所见事实作为下一步依据。
+                  4. 若任务书含「当前优先目标」（非「无」），本轮优先执行它（上述默认节奏让位）。目标已达成时，用 update_goal（action=complete，goal_id/revision 用 get_goal 读取）收尾，随后按收尾指令向玩家报告结果与验证依据；执行中若判定无法完成，如实说明原因并停下等玩家指令（不要自行放弃，也不要自行创建或修改目标——目标由玩家设置）。优先目标完成后，后续任务书回到默认节奏。
+                  5. 遇敌由战斗自主系统接管，你只管规划路线与目标；危险时优先保命。
+                - 具体细节（任务怎么做、去哪练、找谁学）先查 skill 知识库对应条目（任务/门派/命令），查不到再用游戏内命令探索（问 NPC、看提示、jobquery）或读随身秘籍/物品描述，把所见事实作为下一步依据。
                 - 红线：suicide（自杀=删档）与 betray（判师）绝对禁止；不做任何不可逆操作。
 
                 验证码（fullme）：游戏提示你长期不用被系统怀疑是机器人、或消息出现信息降级时，用 mud_workflow_run 跑 locked 流程 fullme（被动触发即可，不要定期主动跑）。流程会发出 fullme 并在游戏返回验证码图片时挂起等待——此时玩家会在 WebUI 看到验证码弹窗并输入码值，流程自动继续（答对收束 / 答错自动重来）；流程跑完前该会话不能发其他游戏命令（持有发送权）。流程返回的 stage 说明现场：success = 码对了；cooldown/expired/abandoned/failed = 冷却未到 / 图片失效 / 已放弃悬挂态 / 结构化失败——如实转告玩家，不要立即重跑（服务端有冷却期），等下次系统提示再触发。
@@ -86,16 +90,32 @@
             disabled: true
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
-            disabled: true
+            # T25 MUD 知识库：本仓 knowledge/（190 篇 wiki 技能 + mud-basics 常驻
+            # 浓缩版）。includeDefaultRoots: false = 游戏会话知识面确定性集合
+            # （排除用户个人 skills 目录的意外混入）；chokidar 热更保留（改文件
+            # → 目录自动重发）。
+            config:
+              customSkillDirs:
+                - 'D:/Code/dsh-mud-agent/knowledge'
+              includeDefaultRoots: false
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
-            disabled: true
+            # T25：skill 工具（按名加载正文）+ 目录注入（<available_skills>，
+            # 191 条 ≈ 5K tokens 常驻；digest 变更才重发）。
           - id: command-goal
             name: '@deepseek-ai/dsh-command-goal'
-            disabled: true
+            # T24 短期优先目标：玩家命令面（/goal <objective> 设、edit 改、
+            # pause/resume、clear 清、无参查看）。
           - id: tool-goal
             name: '@deepseek-ai/dsh-tool-goal'
-            disabled: true
+            config:
+              # T24：agent 侧三工具（get_goal/create_goal/update_goal）。权限面
+              # 恰好收敛：create/edit/pause/resume 需直接人类回合（目标生命周期
+              # 归玩家）；complete/blocked 走 completionAuthority（人类回合或
+              # goal-round 回合——任务书源分派见 mud-core3 kickoff）。无
+              # goal-round-driver 时 roundsStarted 恒 0 ⇒ blocked 轮门槛不可达
+              #（agent 无法自标 blocked，卡住正文报告）——接受项。
+              blockedAfterConsecutiveRounds: 3
           - id: planning
             name: cordis:group
             group: true
@@ -208,6 +228,12 @@
       name: 'file:///D:/Code/dsh-mud-agent/packages/mud-core3/lib/index.js'
       config:
         logDir: D:/code/dsh-mud-agent/logs
+
+    # T24 短期优先目标：goal 服务行（每 agent 会话一个持久 goal；上游 Web
+    # 组合只挂消费件不挂服务，需自行提供）。preset 消费件 = command-goal +
+    # tool-goal；goal-round-driver 不挂（静默唤醒已是驱动器，挂则双驱动冲突）。
+    - id: dsh-goal
+      name: '@deepseek-ai/dsh-goal'
 
     # 引擎行：全局作用域加载 mud-workflow（流程注册表 + builtins + storage 双态）
     - id: mud-workflow

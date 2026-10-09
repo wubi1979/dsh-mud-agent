@@ -1,0 +1,62 @@
+{
+  "id": "1755d628bfa370cc",
+  "type": "page",
+  "text": "门规系统\n\n由来：因有不少玩家不小心触犯expell条件，被门派开除找到icer要求恢复。如果求情就恢复数据，那还要这个设定干吗？不过的确出现开除的情况，实际造成的惩罚比死多少次，灰名单什么更加严重。练大一个号也不容易，因此zine做了个门规惩戒系统。\n\n流程：如果触发开除条件，惩戒就是不能用门派名义（title永远是xxx弃徒）行走江湖，最大的惩罚应该是只允许门派使用的pfm暂时用不了需要完成N点门忠任务才会重归门墙(rejoin)\n\n不享受门忠double之类buff，完成点数就降低一点重归要求\n\n在惩戒状态下，接到门忠的描述会略有不同，但完成流程是一样的。到彻底清空要求就有重归提示了\n\n这时候在师父面前rejoin，就一切回到以前状态。\n\n开除是以前最严重的门规惩罚，将不再存在，第一次门忠要求1000点，第二次2000，第三次4000这样翻着往上。以后可能会加一些小的门规，惩罚几十到几百点不等。另外也可能围绕门忠，继续扩展玩法。",
+  "structured_content": [
+    {
+      "path": "门规系统",
+      "content": "由来：因有不少玩家不小心触犯expell条件，被门派开除找到icer要求恢复。如果求情就恢复数据，那还要这个设定干吗？不过的确出现开除的情况，实际造成的惩罚比死多少次，灰名单什么更加严重。练大一个号也不容易，因此zine做了个门规惩戒系统。\n\n流程：如果触发开除条件，惩戒就是不能用门派名义（title永远是xxx弃徒）行走江湖，最大的惩罚应该是只允许门派使用的pfm暂时用不了需要完成N点门忠任务才会重归门墙(rejoin)\n\n不享受门忠double之类buff，完成点数就降低一点重归要求\n\n在惩戒状态下，接到门忠的描述会略有不同，但完成流程是一样的。到彻底清空要求就有重归提示了\n\n这时候在师父面前rejoin，就一切回到以前状态。\n\n开除是以前最严重的门规惩罚，将不再存在，第一次门忠要求1000点，第二次2000，第三次4000这样翻着往上。以后可能会加一些小的门规，惩罚几十到几百点不等。另外也可能围绕门忠，继续扩展玩法。",
+      "level": 1,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/%E9%97%A8%E8%A7%84%E7%B3%BB%E7%BB%9F1.png?w=800&tok=1fb925",
+          "alt": "",
+          "title": "",
+          "position": 589
+        },
+        {
+          "src": "/wiki/_media/baodian/%E9%97%A8%E8%A7%84%E7%B3%BB%E7%BB%9F2.png?w=800&tok=9de4ea",
+          "alt": "",
+          "title": "",
+          "position": 898
+        },
+        {
+          "src": "/wiki/_media/baodian/%E9%97%A8%E8%A7%84%E7%B3%BB%E7%BB%9F3.png?w=800&tok=0a51d8",
+          "alt": "",
+          "title": "",
+          "position": 1220
+        },
+        {
+          "src": "/wiki/_media/baodian/%E9%97%A8%E8%A7%84%E7%B3%BB%E7%BB%9F4.png?w=800&tok=b5d3ff",
+          "alt": "",
+          "title": "",
+          "position": 1523
+        },
+        {
+          "src": "/wiki/_media/baodian/%E9%97%A8%E8%A7%84%E7%B3%BB%E7%BB%9F5.png?w=800&tok=97a947",
+          "alt": "",
+          "title": "",
+          "position": 1897
+        },
+        {
+          "src": "/wiki/_media/baodian/%E9%97%A8%E8%A7%84%E7%B3%BB%E7%BB%9F6.png?w=800&tok=7eae61",
+          "alt": "",
+          "title": "",
+          "position": 2165
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "title": "baodian:mengui",
+    "url": "https://www.pkuxkx.net/wiki/baodian/mengui",
+    "category": "门派知识/门派通用",
+    "tags": [
+      "门派知识/门派通用"
+    ],
+    "chunk_index": 0,
+    "total_chunks": 1,
+    "scraped_at": "2026-01-12 11:31:43",
+    "content_hash": "27e0818f09af5195"
+  }
+}

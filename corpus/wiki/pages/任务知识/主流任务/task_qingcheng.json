@@ -1,0 +1,60 @@
+{
+  "id": "deb7e1eec83a56c6",
+  "type": "page",
+  "text": "青城山任务\n\n青城山中的主流任务共享特殊周。\n\n青城山采药\n\n相关链接：https://pkuxkx.net/forum/thread-48225-3-1.html\n\n任务要求：人物等级达到32级，使用UTF-8编码进入游戏\n\n任务简介：在迷宫中寻找蓝天和所需的药材，打败前来抢夺药材的敌人\n\n任务CD：\n\n任务奖励：经验、潜能、声望\n\n青城派追查\n\n相关链接：https://pkuxkx.net/forum/thread-48225-4-1.html\n\n任务要求：经验达到30M\n\n任务简介：按贾人达的要求去坟地完成任务\n\n任务CD：\n\n任务奖励：经验、潜能、声望\n\n第一步,贾人达告诉你其他发现线索的弟子\n\n第二步，走到对应的地方找人打听,如果人不在当前房间，可能在附近三格内\n\n第三步，去成都或者渝州的坟地找到对应的坟墓\n\n第四步，找到对应的坟墓后直接scoop开挖，会有乌鸦跳出来叫杀，砍了就行,挖到正确的会有提示,\n\nPS：坟没有唯一性，因此你可以挖到别人的坟，自己的坟也会被别人挖到，后果就是某个人卡主了做不下去，只能回去放弃\n\n第五步，到对应的地方把人砍了就行",
+  "structured_content": [
+    {
+      "path": "青城山任务",
+      "content": "青城山中的主流任务共享特殊周。",
+      "level": 1
+    },
+    {
+      "path": "青城山任务 > 青城山采药",
+      "content": "相关链接：https://pkuxkx.net/forum/thread-48225-3-1.html\n\n任务要求：人物等级达到32级，使用UTF-8编码进入游戏\n\n任务简介：在迷宫中寻找蓝天和所需的药材，打败前来抢夺药材的敌人\n\n任务CD：\n\n任务奖励：经验、潜能、声望",
+      "level": 2
+    },
+    {
+      "path": "青城山任务 > 青城派追查",
+      "content": "相关链接：https://pkuxkx.net/forum/thread-48225-4-1.html\n\n任务要求：经验达到30M\n\n任务简介：按贾人达的要求去坟地完成任务\n\n任务CD：\n\n任务奖励：经验、潜能、声望\n\n第一步,贾人达告诉你其他发现线索的弟子\n\n第二步，走到对应的地方找人打听,如果人不在当前房间，可能在附近三格内\n\n第三步，去成都或者渝州的坟地找到对应的坟墓\n\n第四步，找到对应的坟墓后直接scoop开挖，会有乌鸦跳出来叫杀，砍了就行,挖到正确的会有提示,\n\nPS：坟没有唯一性，因此你可以挖到别人的坟，自己的坟也会被别人挖到，后果就是某个人卡主了做不下去，只能回去放弃\n\n第五步，到对应的地方把人砍了就行",
+      "level": 2,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240406-183632.png",
+          "alt": "",
+          "title": "",
+          "position": 1904
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240406-183707.png",
+          "alt": "",
+          "title": "",
+          "position": 2248
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240406-183733.png",
+          "alt": "",
+          "title": "",
+          "position": 2579
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240406-183944.png",
+          "alt": "",
+          "title": "",
+          "position": 3040
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "title": "task:qingcheng",
+    "url": "https://www.pkuxkx.net/wiki/task/qingcheng",
+    "category": "任务知识/主流任务",
+    "tags": [
+      "任务知识/主流任务"
+    ],
+    "chunk_index": 0,
+    "total_chunks": 1,
+    "scraped_at": "2026-01-12 11:33:53",
+    "content_hash": "9029413a155265fd"
+  }
+}

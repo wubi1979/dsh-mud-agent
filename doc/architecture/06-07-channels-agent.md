@@ -95,12 +95,14 @@ MUD 行流 → 聚合（静默窗口，§5.4）→ 一条用户消息投递进�
 
 ## 7.1 preset 装配与 persona
 
-- **能力面由 preset 决定**：`mud-player` preset 行 = 宿主 `standard` 的插件面 + MUD persona + **本包 preset 行**（引擎 `mud-core3`）+ **`mud-workflow` 行**（流程七工具）。**建账号时显式传 `agentPreset`**，**不覆盖** registry 默认。
+- **能力面由 preset 决定**：`mud-player` preset 行 = 宿主 `standard` 的插件面 + MUD persona + **本包 preset 行**（引擎 `mud-core3`）+ **`mud-workflow` 行**（流程七工具）+ **知识库两行**（T25：`skill-filesystem` 本地知识提供方 + `tool-skill` 目录注入与加载工具）。**建账号时显式传 `agentPreset`**，**不覆盖** registry 默认。
 - 账号可选 `standard`/`mud-player`：**选 `standard` 的账号没有 MUD 工具**（agent 只能接消息、不能发命令）——这是使用者的显式选择，不是缺陷；归属不按 preset 排除（§1.4）。
-- **persona 是书写约定、无代码解析**，包含三块：
+- **MUD 知识库（T25）**：`knowledge/`（仓库内，git 版本化）= **190 篇 wiki 技能**（`wiki-<title>` 命名，北侠 wiki 全量转换，源数据在 `corpus/wiki/`）+ **`mud-basics` 常驻浓缩版**（基础知识 11 篇重新归纳，~5K chars）。token 模型 = 目录常驻（191 条 ≈ 5K tokens，仅 name+description，digest 变更才重发）+ 正文按需 `skill` 工具加载（compaction 可回收后重载）；persona 决策节奏第 0 步开局引导加载 mud-basics。`customSkillDirs` 指向本仓 knowledge、`includeDefaultRoots: false`（游戏会话知识面确定性集合）；chokidar 热更保留（改文件 → 目录自动重发）。知识时效：抓取于 2026-01-12，每篇头部标注来源 URL 与日期，**实机行为为准，wiki 是参考不是权威**。生成器 `scripts/build-wiki-skills.mjs`（幂等重跑，自校验红门）。
+- **persona 是书写约定、无代码解析**，包含四块：
   1. **玩家身份**与最小行为纪律；
-  2. **工具说明**（`mud_connect`/`mud_send`/`mud_state`/流程工具）与"**MUD 消息以用户消息到达，直接回答**";
-  3. **分工协议五条**（根/子同读、按角色行事，§7.6）。
+  2. **工具说明**（`mud_connect`/`mud_send`/`mud_state`/流程工具）与"**MUD 消息以用户消息到达，直接回答**"；
+  3. **知识库使用指引**（行动前查对应 wiki 技能，不凭空猜测；查不到再 web 查在线 wiki）；
+  4. **分工协议五条**（根/子同读、按角色行事，§7.6）。
 - 工具挂 **preset 作用域**：注册期不依赖引擎，执行期 `ctx.get('mudCore3')` 解析引擎窄面；注册完整性自检 fail-loud（§8.1）。
 
 ## 7.2 回合节拍与投递时机
@@ -131,19 +133,21 @@ session/event   → turn/start 抑制 / turn/end 冲刷（§7.2）
 
 ## 7.4 任务书面（kickoff）
 
-**两触发点共用同一 `kickoff(sessionId)` 与同一模板**（建账号触发点已退役，2026-10-02 裁定：建账号 = 纯登记，**不投任务书**、会话保持 blank、agent 零行动；接入 = 唯一任务书点火点）：
+**三触发点共用同一 `kickoff(sessionId)` 与同一模板**（建账号触发点已退役，2026-10-02 裁定：建账号 = 纯登记，**不投任务书**、会话保持 blank、agent 零行动；接入 = 唯一任务书点火点；goal 变更为 T24 新增触发点）：
 
 | 触发点 | 语义 |
 |---|---|
 | ① **admit** | 经 `MudServiceDeps.onAdmit` 回调注入：**开闸门并投一条状态任务书触发规划**，两动作合一；同步先置 `admitted` 再点火，LLM 闸门时序上必放行 |
 | ② **静默唤醒到期** | Wake 命中后投状态任务书（§7.5；守卫 ① 已含「已接入」） |
+| ③ **goal 变更**（T24） | 监听宿主 `goal/changed`：已接入账号的 `create`/`edit`/`resume`（玩家 /goal 设/改/恢复）⇒ 立即投任务书；`pause`/`complete`/`clear`/`block` 无新工作不触发。**守卫差异于 Wake 三守卫（D4）**：只查「已接入」（闸门语义前置），不做非回合中/持有者空闲守卫——玩家设目标属人工指令级优先，设完即该醒；回合中到达经 followup 排队语义等下一回合消费 |
 
-- **正文 = 状态驱动**：服务器/账号事实 + 两轴实时状态 + 目标——**只给事实与目标，不写指令序列**（根醒来读状态自行规划，已完成的步骤不重做）。
-- **模板 = Config `taskBrief`**：占位符 `{{serverName}}` / `{{endpoint}}` / `{{account}}` / `{{conn}}` / `{{loggedIn}}`，投递时以**实时状态**填充；缺省内置 `DEFAULT_TASK_BRIEF`，部署可覆盖。
-- **署名 `'mud-wake'`**（声明合并自扩），与行批次 `'mud'` 区分。
+- **正文 = 状态驱动**：服务器/账号事实 + 两轴实时状态 + 目标 + **优先目标节选（T24）**——**只给事实与目标，不写指令序列**（根醒来读状态自行规划，已完成的步骤不要重做）。
+- **模板 = Config `taskBrief`**：占位符 `{{serverName}}` / `{{endpoint}}` / `{{account}}` / `{{conn}}` / `{{loggedIn}}` / `{{goal}}`（T24 优先目标节选），投递时以**实时状态**填充；缺省内置 `DEFAULT_TASK_BRIEF`，部署可覆盖（未写 `{{goal}}` 的自定义模板零影响）。
+- **goal 节选与源分派（T24）**：投递前读 `ctx.get('goals')`（可选服务，缺席/未就绪 ⇒ 无 goal）——`goalBriefText`（无 goal / paused / complete ⇒ 「无」；active ⇒ objective；blocked ⇒ objective + 阻塞说明）与 `goalRoundSource`（active/blocked ⇒ goal-round 源）均在纯层 wake.ts。
+- **署名分派（T24 D8）**：有 active/blocked goal ⇒ 源用宿主原生 `GoalMessageSource`（`{ kind:'goal', goalId, revision, round }`，三元组与视图精确匹配——解锁 tool-goal 的 `completionAuthority`，complete/blocked 时自动注入 wrapup 收尾指令）；其余保持 `'mud-wake'`（声明合并自扩），与行批次 `'mud'` 区分。无 goal-round-driver ⇒ `roundsStarted` 恒 0、round 恒 0（`isMatchingGoalRound` 只做 `===`）。
 - **不该触发的情形**：admit 之前的**手工「连接」不触发规划**（手动连接 = 调试用途）；已接入场景下断线后的补登录由**静默唤醒兜底**（`mud_connect` 幂等，不负责重连）。
 - 投递失败**不影响账号落库**（账号注册与开场消息解耦）。
-- **与进程起点标记的分工（T18）**：冷启动会话登记（`agent/created`）时会追一条 `'mud-epoch'` 署名的**进程起点标记**（§11.2），它只声明"上一进程的历史已失效"，**不代替任务书**——事实与目标仍由任务书给；两触发点（接入 / 静默唤醒）一律不变。
+- **与进程起点标记的分工（T18）**：冷启动会话登记（`agent/created`）时会追一条 `'mud-epoch'` 署名的**进程起点标记**（§11.2），它只声明"上一进程的历史已失效"，**不代替任务书**——事实与目标仍由任务书给；三触发点（接入 / 静默唤醒 / goal 变更）一律不变。
 
 ## 7.4.1 LLM 调用面闸门（`llm/stream` 瀑布终审）
 

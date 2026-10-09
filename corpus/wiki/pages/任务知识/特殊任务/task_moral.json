@@ -1,0 +1,18 @@
+{
+  "id": "777b45fc588349bc",
+  "type": "page",
+  "text": "风起云涌，正邪对抗。\n\n正义：峨嵋，丐帮 ，华山，全真，少林寺，天地会，天龙寺，武当\n\n邪恶：白驼，大轮寺 ，日月，神龙，星宿\n\n中立：凌霄，朝廷，古墓，灵鹫，明教，慕容，桃花，，无门派，绝情谷\n\n正派和邪派弟子在经验大于等于35M后可以做道德任务来增加道德值（也称为正负神）。\n\n任务流程如下：\n\n1. 去各自门派npc面前quest，以下为正派和邪派的npc列表，中立门派无此任务。\n\n少林 净慈\n\n星宿 狮吼子\n\n峨嵋 静闲师太\n\n白驼 教头\n\n全真 程遥伽\n\n华山 梁发\n\n丐帮 梁长老\n\n天龙 本相大师\n\n武当 俞莲舟\n\n天地会 徐天川\n\n日月神教 上官云\n\n神龙教 陆高轩\n\n大轮寺 灵智上人\n\n以下以华山为例。\n\n后花园  这里明显的出口是 south、north、east 和 west。\n\n华山派剑侠 梁发(Liang fa)\n\nquest\n\n近日天降暴雨，黄河大水，冲毁无数民房。听闻江左盟正在收集资材重建民房，\n\n我们乃名门正派，理应响应。这份清单记载资材的地点，你可前去收集并送给江左盟。\n\n你获得了一张清单。\n\nl qingdan\n\n清单(Qing dan)\n\n这是一张记录任务的清单，你可以阅读(bhread)它的任务。\n\nbhread\n\n鸣沙山\n\n这里明显的出口是 northeast 和 west。\n\n沙虫(Sha chong)\n\nbhfind\n\n你现在搜索的位置似乎有些帮派资材，可以用bhgather命令采集。\n\nbhgather\n\n你发现了二千五百五十三份帮派资材，并运送回了江左盟。\n\n玩家可以bhmove south/north/east/west/southwest/southeast/northwest/northeast来移动到资材所在的位置。到了位置bhgather收集。 然后继续bhread去新的地点收集资材。一天大约能收集10次。",
+  "structured_content": [],
+  "metadata": {
+    "title": "task:moral",
+    "url": "https://www.pkuxkx.net/wiki/task/moral",
+    "category": "任务知识/特殊任务",
+    "tags": [
+      "任务知识/特殊任务"
+    ],
+    "chunk_index": 0,
+    "total_chunks": 1,
+    "scraped_at": "2026-01-12 11:34:18",
+    "content_hash": "a273bde9c6908c1a"
+  }
+}

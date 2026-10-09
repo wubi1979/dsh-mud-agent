@@ -1,0 +1,544 @@
+{
+  "id": "7f818e4a4c70ae89",
+  "type": "page",
+  "text": "轻功汇总\n\n本页最初由天山童姥 花酱 编辑：\n\n所有门派轻功buff汇总\n\n所有轻功分为传说，绝学，上乘，普通四个级别。\n\n名词解释\n\n轻功评价\n\n根据轻功的质量，分为普通、上乘、绝学和传说四个级别。\n\n普通和上乘练习只消耗气血，绝学和传说级别还会消耗内力。因此越强的轻功越难练。\n\n修炼难度\n\n影响练习特殊轻功的效率。比如难度增加5%，就是假如正常传说级别练习一次消耗100点气血，这里要消耗105点。\n\n躲闪效果\n\n提高受到攻击后成功躲掉的概率。\n\n攻速效果\n\n提高攻击速度 。\n\n契合度\n\n提高对应武功的命中，例如剑法契合度是10%，那么用剑时，激发该轻功获得额外10%的命中加成。\n\n暴击躲闪\n\n对手暴击时，躲闪的概率。当暴击躲闪大于5%时，暴击躲闪的一半为一招晕躲闪概率。\n\n二次躲闪\n\n第一次轻功躲避不成功时，自动激活再次躲避的概率。\n\n限制条件\n\n优势内功\n\n激发轻功对应的优势内功时，可获得全额的躲闪效果。\n\n例如，辟邪剑法躲闪效果为15%，激发葵花神功时，就是115%的躲闪。\n\n如果没有激发优势内功，则扣掉5%，115%*95%=109%的躲闪效果。\n\n内力、精力需求\n\n必须当前内力或精力高于这个两个数值时，才有全额的攻速效果，否则扣掉10%。\n\n辟邪剑法为例，攻速为125%*90%=112.5%的攻速。\n\n内力、精力需求后面的括号是内力、精力消耗，就是每次成功躲闪之后扣掉的内力、精力。\n\n为避免新手的困难，内力需求，精力需求和消耗只在20M以后生效。\n\n属性生效\n\n基础属性中若有X符号，意味着你不满足激活此轻功该项基础buff的条件。\n\n激活条件可能是quest mark也可能是门派记号（例如是否在某门派学艺过）。\n\n如果满足激活条件则没有后面的X符号。\n\n轻功一览\n\n图片中的属性可能过时，以游戏内verify的最新数据为准。\n\n传说轻功\n\n日月神教 辟邪剑法\n\n凌波微步\n\n绝学轻功\n\n古墓派 纤云步法\n\n全真派 金雁功\n\n武当派 梯云纵\n\n桃花岛 落英身法\n\n螺旋九影 (曾经的九阴轻功）\n\n上乘轻功\n\n步步莲\n\n初始\n\n完成大量海棠任务后\n\n华山派 华山身法(需要解quest)\n\n灵鹫宫 月影舞步\n\n明教 大腾挪步法\n\n丐帮 逍遥游\n\n峨嵋派 诸天化身法\n\n雪山派 雁翼身法\n\n姑苏慕容 燕灵身法\n\n大轮寺 御雪遁形\n\n神行百变\n\n绝情谷 登萍渡水\n\n星宿派 摘星功\n\n图中的麻痹buff改名为暗伤。暗伤只有在战斗中发作，并无治疗办法，发作到一定次数后自动痊愈。\n\n天地会 零丁飘洋\n\n白驼山 瞬息千里\n\n青城派 无影幻腿\n\n田伯光 倒踩三叠云\n\n何足道 弱水九重\n\n普通轻功\n\n朝廷 龙凤双翔\n\n朝廷 太祖盘龙棍\n\n神龙岛 意形步法\n\n日月神教 飞天身法\n\n太乙神游\n\n飒沓身法\n\n五毒教 金蛇游身掌\n\n少林派 少林身法\n\n胡一刀 四象步",
+  "structured_content": [
+    {
+      "path": "轻功汇总",
+      "content": "本页最初由天山童姥 花酱 编辑：\n\n所有门派轻功buff汇总\n\n所有轻功分为传说，绝学，上乘，普通四个级别。",
+      "level": 1
+    },
+    {
+      "path": "轻功汇总 > 名词解释",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "轻功汇总 > 名词解释 > 轻功评价",
+      "content": "根据轻功的质量，分为普通、上乘、绝学和传说四个级别。\n\n普通和上乘练习只消耗气血，绝学和传说级别还会消耗内力。因此越强的轻功越难练。",
+      "level": 3
+    },
+    {
+      "path": "轻功汇总 > 名词解释 > 修炼难度",
+      "content": "影响练习特殊轻功的效率。比如难度增加5%，就是假如正常传说级别练习一次消耗100点气血，这里要消耗105点。",
+      "level": 3
+    },
+    {
+      "path": "轻功汇总 > 名词解释 > 躲闪效果",
+      "content": "提高受到攻击后成功躲掉的概率。",
+      "level": 3
+    },
+    {
+      "path": "轻功汇总 > 名词解释 > 攻速效果",
+      "content": "提高攻击速度 。",
+      "level": 3
+    },
+    {
+      "path": "轻功汇总 > 名词解释 > 契合度",
+      "content": "提高对应武功的命中，例如剑法契合度是10%，那么用剑时，激发该轻功获得额外10%的命中加成。",
+      "level": 3
+    },
+    {
+      "path": "轻功汇总 > 名词解释 > 暴击躲闪",
+      "content": "对手暴击时，躲闪的概率。当暴击躲闪大于5%时，暴击躲闪的一半为一招晕躲闪概率。",
+      "level": 3
+    },
+    {
+      "path": "轻功汇总 > 名词解释 > 二次躲闪",
+      "content": "第一次轻功躲避不成功时，自动激活再次躲避的概率。",
+      "level": 3
+    },
+    {
+      "path": "轻功汇总 > 限制条件",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "轻功汇总 > 限制条件 > 优势内功",
+      "content": "激发轻功对应的优势内功时，可获得全额的躲闪效果。\n\n例如，辟邪剑法躲闪效果为15%，激发葵花神功时，就是115%的躲闪。\n\n如果没有激发优势内功，则扣掉5%，115%*95%=109%的躲闪效果。",
+      "level": 3
+    },
+    {
+      "path": "轻功汇总 > 限制条件 > 内力、精力需求",
+      "content": "必须当前内力或精力高于这个两个数值时，才有全额的攻速效果，否则扣掉10%。\n\n辟邪剑法为例，攻速为125%*90%=112.5%的攻速。\n\n内力、精力需求后面的括号是内力、精力消耗，就是每次成功躲闪之后扣掉的内力、精力。\n\n为避免新手的困难，内力需求，精力需求和消耗只在20M以后生效。",
+      "level": 3
+    },
+    {
+      "path": "轻功汇总 > 限制条件 > 属性生效",
+      "content": "基础属性中若有X符号，意味着你不满足激活此轻功该项基础buff的条件。\n\n激活条件可能是quest mark也可能是门派记号（例如是否在某门派学艺过）。\n\n如果满足激活条件则没有后面的X符号。",
+      "level": 3
+    },
+    {
+      "path": "轻功汇总 > 轻功一览",
+      "content": "图片中的属性可能过时，以游戏内verify的最新数据为准。",
+      "level": 2
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 传说轻功",
+      "content": "",
+      "level": 3
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 传说轻功 > 日月神教 辟邪剑法",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-140806.png",
+          "alt": "",
+          "title": "",
+          "position": 2636
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 传说轻功 > 凌波微步",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-140826.png",
+          "alt": "",
+          "title": "",
+          "position": 2921
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 绝学轻功",
+      "content": "",
+      "level": 3
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 绝学轻功 > 古墓派 纤云步法",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-140719.png",
+          "alt": "",
+          "title": "",
+          "position": 3288
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 绝学轻功 > 全真派 金雁功",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-141018.png",
+          "alt": "",
+          "title": "",
+          "position": 3579
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 绝学轻功 > 武当派 梯云纵",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-141110.png",
+          "alt": "",
+          "title": "",
+          "position": 3870
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 绝学轻功 > 桃花岛 落英身法",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-141156.png",
+          "alt": "",
+          "title": "",
+          "position": 4163
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 绝学轻功 > 螺旋九影 (曾经的九阴轻功）",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-141413.png",
+          "alt": "",
+          "title": "",
+          "position": 4466
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 上乘轻功",
+      "content": "",
+      "level": 3
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 上乘轻功 > 步步莲",
+      "content": "初始\n\n完成大量海棠任务后",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/task/%E6%AD%A5%E6%AD%A5%E8%8E%B21.png?w=800&tok=4b5f68",
+          "alt": "",
+          "title": "",
+          "position": 4837
+        },
+        {
+          "src": "/wiki/_media/task/%E6%AD%A5%E6%AD%A5%E8%8E%B23.png?w=800&tok=cf2b3b",
+          "alt": "",
+          "title": "",
+          "position": 5130
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 上乘轻功 > 华山派 华山身法(需要解quest)",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-141747.png",
+          "alt": "",
+          "title": "",
+          "position": 5478
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 上乘轻功 > 灵鹫宫 月影舞步",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-141810.png",
+          "alt": "",
+          "title": "",
+          "position": 5771
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 上乘轻功 > 明教 大腾挪步法",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-141828.png",
+          "alt": "",
+          "title": "",
+          "position": 6064
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 上乘轻功 > 丐帮 逍遥游",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-141941.png",
+          "alt": "",
+          "title": "",
+          "position": 6353
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 上乘轻功 > 峨嵋派 诸天化身法",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-142022.png",
+          "alt": "",
+          "title": "",
+          "position": 6648
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 上乘轻功 > 雪山派 雁翼身法",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-142053.png",
+          "alt": "",
+          "title": "",
+          "position": 6941
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 上乘轻功 > 姑苏慕容 燕灵身法",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-142116.png",
+          "alt": "",
+          "title": "",
+          "position": 7236
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 上乘轻功 > 大轮寺 御雪遁形",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-142135.png",
+          "alt": "",
+          "title": "",
+          "position": 7529
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 上乘轻功 > 神行百变",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-142144.png",
+          "alt": "",
+          "title": "",
+          "position": 7814
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 上乘轻功 > 绝情谷 登萍渡水",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-142219.png",
+          "alt": "",
+          "title": "",
+          "position": 8107
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 上乘轻功 > 星宿派 摘星功",
+      "content": "图中的麻痹buff改名为暗伤。暗伤只有在战斗中发作，并无治疗办法，发作到一定次数后自动痊愈。",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-142245.png",
+          "alt": "",
+          "title": "",
+          "position": 8457
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 上乘轻功 > 天地会 零丁飘洋",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-142442.png",
+          "alt": "",
+          "title": "",
+          "position": 8750
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 上乘轻功 > 白驼山 瞬息千里",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231018-193131.png",
+          "alt": "",
+          "title": "",
+          "position": 9043
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 上乘轻功 > 青城派 无影幻腿",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231022-122508.png",
+          "alt": "",
+          "title": "",
+          "position": 9336
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 上乘轻功 > 田伯光 倒踩三叠云",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231022-122415.png",
+          "alt": "",
+          "title": "",
+          "position": 9631
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 上乘轻功 > 何足道 弱水九重",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231022-122619.png",
+          "alt": "",
+          "title": "",
+          "position": 9924
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 普通轻功",
+      "content": "",
+      "level": 3
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 普通轻功 > 朝廷 龙凤双翔",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-142635.png",
+          "alt": "",
+          "title": "",
+          "position": 10289
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 普通轻功 > 朝廷 太祖盘龙棍",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-142650.png",
+          "alt": "",
+          "title": "",
+          "position": 10582
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 普通轻功 > 神龙岛 意形步法",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-142756.png",
+          "alt": "",
+          "title": "",
+          "position": 10875
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 普通轻功 > 日月神教 飞天身法",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-142817.png",
+          "alt": "",
+          "title": "",
+          "position": 11170
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 普通轻功 > 太乙神游",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-142829.png",
+          "alt": "",
+          "title": "",
+          "position": 11455
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 普通轻功 > 飒沓身法",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-142717.png",
+          "alt": "",
+          "title": "",
+          "position": 11740
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 普通轻功 > 五毒教 金蛇游身掌",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-142625.png",
+          "alt": "",
+          "title": "",
+          "position": 12035
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 普通轻功 > 少林派 少林身法",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231017-142844.png",
+          "alt": "",
+          "title": "",
+          "position": 12328
+        }
+      ]
+    },
+    {
+      "path": "轻功汇总 > 轻功一览 > 普通轻功 > 胡一刀 四象步",
+      "content": "",
+      "level": 4,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/pasted/20231022-122749.png",
+          "alt": "",
+          "title": "",
+          "position": 12619
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "title": "baodian:qinggong",
+    "url": "https://www.pkuxkx.net/wiki/baodian/qinggong",
+    "category": "门派知识/门派通用",
+    "tags": [
+      "门派知识/门派通用"
+    ],
+    "chunk_index": 0,
+    "total_chunks": 1,
+    "scraped_at": "2026-01-12 11:31:56",
+    "content_hash": "ee962ce4ad341630"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "id": "5704f170b62001e7",
+  "type": "page",
+  "text": "破解武功\n\n相关链接：https://pkuxkx.net/forum/thread-48355-1-1.html\n\n任务要求：60级，完成职业一阶升职任务\n\n任务模式：给出两种武功描述，分辨出需要破解的武功描述后在四个地点中找到对应npc\n\n任务CD：3分30秒\n\n任务奖励：经验潜能声望\n\n任务流程",
+  "structured_content": [
+    {
+      "path": "破解武功",
+      "content": "相关链接：https://pkuxkx.net/forum/thread-48355-1-1.html\n\n任务要求：60级，完成职业一阶升职任务\n\n任务模式：给出两种武功描述，分辨出需要破解的武功描述后在四个地点中找到对应npc\n\n任务CD：3分30秒\n\n任务奖励：经验潜能声望",
+      "level": 2
+    },
+    {
+      "path": "破解武功 > 任务流程",
+      "content": "",
+      "level": 3
+    }
+  ],
+  "metadata": {
+    "title": "task:pojiewugong",
+    "url": "https://www.pkuxkx.net/wiki/task/pojiewugong",
+    "category": "任务知识/主流任务",
+    "tags": [
+      "任务知识/主流任务"
+    ],
+    "chunk_index": 0,
+    "total_chunks": 1,
+    "scraped_at": "2026-01-12 11:33:50",
+    "content_hash": "75bb03742013155d"
+  }
+}

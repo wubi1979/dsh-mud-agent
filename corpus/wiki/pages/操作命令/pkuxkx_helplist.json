@@ -1,0 +1,59 @@
+{
+  "id": "93c58c3edb8f738f",
+  "type": "page",
+  "text": "侠客行之帮助主题列表\n\nfaq             ：一些常见问题\n\nnewbie          ：新手提示\n\nintro           ：北大侠客行游戏介绍\n\nhistory         ：北大侠客行历史\n\nboard           ：留言板使用指南\n\nchannel         ：各种频道说明\n\n玩家相关(user)\n\ncmds            ：命令说明\n\nuserlife        ：生活相关提示，买房、结婚、拍卖、宠物、礼物、定兵器等\n\nrules           ：必须遵守的游戏规则\n\nsettings        ：游戏参数等的设定\n\nbusiness        ：商业系统\n\nsuicong         ：随从\n\n任务(tasks)\n\ntask-menpai     ：门派独特任务\n\ntask-newbie     ：新手任务，适合新手做，一般有经验限制\n\nnewbie-xingxiu   ：\t星宿新手任务\n\nnewbie-shaolin   ：\t少林新手任务\n\nnewbie-wudang\t   ：\t武当新手任务\n\nnewbie-mingjiao  ：\t明教新手任务\n\nnewbie-huashan   ：\t华山新手任务\n\nnewbie-emei\t    ：\t峨嵋新手任务\n\nnewbie-taohua\t    ：\t桃花新手任务\n\nnewbie-riyuejiao ：\t日月新手任务\n\nnewbie-gumu\t    ：\t古墓新手任务\n\nnewbie-tianlong  ：\t天龙新手任务\n\nnewbie-quanzhen  ：\t全真新手任务\n\nnewbie-gaibang     ：\t丐帮新手任务\n\ntask-public     ：公共任务，中后期成长的主要途径\n\ntask-bxs   \t\t：百晓生\n\ntask-baowei\t\t：保卫襄阳\n\ntask-cjg\t\t：藏经阁\n\ntask-haizhan\t\t：甲午海战\n\ntask-han\t\t：韩元外复仇\n\ntask-hubiao\t\t：护镖\n\ntask-husong\t\t：护送\n\ntask-huwei\t\t：护卫\n\ntask-huyidao\t\t：胡一刀\n\ntask-jiaofei\t\t：剿匪\n\ntask-mpbiwu   \t：门派比武\n\ntask-murong\t\t：慕容信件\n\ntask-piaoliu\t\t：鄱阳湖漂流\n\ntask-shenni\t\t：神尼\n\ntask-skf\t\t：史可法\n\ntask-songxin\t\t：华山送信\n\ntask-task\t\t：task任务\n\ntask-tqt\t\t：铜雀台\n\ntask-tmz\t\t：投名状\n\ntask-wananta\t\t：万安塔\n\ntask-xbh\t\t：萧半和鸳鸯刀\n\ntask-xiaofeng\t\t：萧峰\n\n武功相关(kungfu)\n\nkungfu-book         ：读书指南\n\nkungfu-force        ：内功介绍\n\nkungfu-level        ：级别介绍\n\nkungfu-public       ：公共武功\n\nkungfu-selfcreate   ：自创武功\n\nkungfu-special   ：特殊技能\n\n秘密提示(mimi)\n\nmimi-bhd        ：冰火岛\n\nmimi-book42     ：鹿鼎山\n\nmimi-chushi     ：出师\n\nmimi-equip      ：随机装备\n\nmimi-gem        ：宝石系统\n\nmimi-pker       ：杀手帮\n\nmimi-qilincun   ：麒麟村\n\nmimi-xkd        ：侠客岛\n\nmimi-ywm        ：岳王墓\n\nmimi-yideng     ：一灯大师\n\nmimi-gaojibingqi：高级兵器\n\nmimi-hubo       ：左右互搏\n\nmimi-bazhen     ：江南八镇\n\nmimi-yaopu      ：晋阳药铺\n\nmimi-youfang    ：游方和尚\n\n门派列表(menpai)\n\nmenpai-baituo       ：白驼\n\nmenpai-chaoting     ：朝廷\n\nmenpai-dalunsi      ：大轮寺\n\nmenpai-emei         ：峨嵋\n\nmenpai-gaibang      ：丐帮\n\nmenpai-gumu         ：古墓\n\nmenpai-huashan      ：华山\n\nmenpai-lingjiu      ：灵鹫\n\nmenpai-lingxiao     ：凌霄城（雪山）\n\nmenpai-mingjiao     ：明教\n\nmenpai-murong       ：慕容\n\nmenpai-quanzhen     ：全真\n\nmenpai-riyuejiao    ：日月教\n\nmenpai-shaolin      ：少林\n\nmenpai-shenlongjiao ：神龙教\n\nmenpai-taohuadao    ：桃花岛\n\nmenpai-tianlongsi   ：天龙\n\nmenpai-tiandihui    ：天地会\n\nmenpai-wudang       ：武当\n\nmenpai-xingxiu      ：星宿\n\n地图列表(maps)\n\nmap-pkuxkx        : 北大侠客行总图\n\nmap-baituo\t\t：白驼\n\nmap-beijing\t\t：北京\n\nmap-beijing\t\t：朝廷\n\nmap-bhd\t\t\t：冰火岛\n\nmap-changan\t\t：长安\n\nmap-changbai\t\t：关外\n\nmap-changjiang\t\t：长江\n\nmap-changjiangnorth\t：长江北岸\n\nmap-chengdu\t\t：成都\n\nmap-dalicheng\t\t：大理\n\nmap-dalunsi\t\t：大轮寺\n\nmap-dyd\t\t\t：钓鱼岛\n\nmap-emei\t\t：峨嵋\n\nmap-fuzhou\t\t：福州\n\nmap-gaibang\t\t：丐帮\n\nmap-guiyun\t\t：归云庄\n\nmap-gumu\t\t：古墓\n\nmap-hangzhou\t\t：杭州\n\nmap-huanghe\t\t：黄河\n\nmap-huanghenorth\t：黄河北岸\n\nmap-huashan\t\t：华山\n\nmap-jiangzhou\t\t：江州\n\nmap-jiaofei\t\t：铁掌峰\n\nmap-jiaxing\t\t：嘉兴\n\nmap-kangqin\t\t：康亲王府\n\nmap-kunming\t\t：昆明\n\nmap-lingjiu\t\t：灵鹫\n\nmap-lingxiao\t\t：凌霄城\n\nmap-lingzhou\t\t：灵州\n\nmap-lingzhou\t\t：灵州\n\nmap-luoyang\t\t：洛阳\n\nmap-meizhuang\t\t：江南梅庄\n\nmap-mingjiao\t\t：明教\n\nmap-murong\t\t：慕容\n\nmap-nanchang\t\t：南昌\n\nmap-pingxi\t\t：平西王府\n\nmap-pker\t\t：杀手帮\n\nmap-quanzhen\t\t：全真\n\nmap-quanzhou\t\t：泉州\n\nmap-qufu\t\t：曲阜\n\nmap-riyuejiao\t\t：日月教\n\nmap-saiwai\t\t：张家口\n\nmap-shaolin\t\t：少林\n\nmap-shenlongdao\t\t：神龙岛\n\nmap-suzhou\t\t：苏州\n\nmap-taishan\t\t：泰山\n\nmap-taohuadao\t\t：桃花\n\nmap-tiandihui\t\t：天地会\n\nmap-tianlong\t\t：天龙寺\n\nmap-tiantan\t\t：天坛\n\nmap-wudang\t\t：武当\n\nmap-xiangyang\t\t：襄阳\n\nmap-xiaocun\t\t：华山村\n\nmap-xingxiu\t\t：星宿\n\nmap-xinyang\t\t：信阳\n\nmap-xkd\t\t\t：侠客岛\n\nmap-yangzhou\t\t：扬州\n\nmap-yashan\t\t：牙山\n\nmap-yideng\t\t：桃源\n\nmap-yingtianfu\t\t：应天府\n\nmap-yueyang\t\t：岳阳\n\nmap-ywm\t\t\t：岳王墓\n\nmap-zhenjiang\t\t：镇江\n\nmap-zhongyuan\t\t：中原\n\nmap-zijin\t\t：紫禁城\n\n巫师相关(wiz)\n\nwiz-apply           ：巫师申请\n\nwiz-cmds            ：巫师命令\n\nwiz-progrule        ：编程规则\n\nwiz-rules           ：巫师规则\n\nwiz-settings        ：巫师设定",
+  "structured_content": [
+    {
+      "path": "侠客行之帮助主题列表",
+      "content": "faq             ：一些常见问题\n\nnewbie          ：新手提示\n\nintro           ：北大侠客行游戏介绍\n\nhistory         ：北大侠客行历史\n\nboard           ：留言板使用指南\n\nchannel         ：各种频道说明",
+      "level": 2
+    },
+    {
+      "path": "玩家相关(user)",
+      "content": "cmds            ：命令说明\n\nuserlife        ：生活相关提示，买房、结婚、拍卖、宠物、礼物、定兵器等\n\nrules           ：必须遵守的游戏规则\n\nsettings        ：游戏参数等的设定\n\nbusiness        ：商业系统\n\nsuicong         ：随从",
+      "level": 2
+    },
+    {
+      "path": "任务(tasks)",
+      "content": "task-menpai     ：门派独特任务\n\ntask-newbie     ：新手任务，适合新手做，一般有经验限制\n\nnewbie-xingxiu   ：\t星宿新手任务\n\nnewbie-shaolin   ：\t少林新手任务\n\nnewbie-wudang\t   ：\t武当新手任务\n\nnewbie-mingjiao  ：\t明教新手任务\n\nnewbie-huashan   ：\t华山新手任务\n\nnewbie-emei\t    ：\t峨嵋新手任务\n\nnewbie-taohua\t    ：\t桃花新手任务\n\nnewbie-riyuejiao ：\t日月新手任务\n\nnewbie-gumu\t    ：\t古墓新手任务\n\nnewbie-tianlong  ：\t天龙新手任务\n\nnewbie-quanzhen  ：\t全真新手任务\n\nnewbie-gaibang     ：\t丐帮新手任务\n\ntask-public     ：公共任务，中后期成长的主要途径\n\ntask-bxs   \t\t：百晓生\n\ntask-baowei\t\t：保卫襄阳\n\ntask-cjg\t\t：藏经阁\n\ntask-haizhan\t\t：甲午海战\n\ntask-han\t\t：韩元外复仇\n\ntask-hubiao\t\t：护镖\n\ntask-husong\t\t：护送\n\ntask-huwei\t\t：护卫\n\ntask-huyidao\t\t：胡一刀\n\ntask-jiaofei\t\t：剿匪\n\ntask-mpbiwu   \t：门派比武\n\ntask-murong\t\t：慕容信件\n\ntask-piaoliu\t\t：鄱阳湖漂流\n\ntask-shenni\t\t：神尼\n\ntask-skf\t\t：史可法\n\ntask-songxin\t\t：华山送信\n\ntask-task\t\t：task任务\n\ntask-tqt\t\t：铜雀台\n\ntask-tmz\t\t：投名状\n\ntask-wananta\t\t：万安塔\n\ntask-xbh\t\t：萧半和鸳鸯刀\n\ntask-xiaofeng\t\t：萧峰",
+      "level": 2
+    },
+    {
+      "path": "武功相关(kungfu)",
+      "content": "kungfu-book         ：读书指南\n\nkungfu-force        ：内功介绍\n\nkungfu-level        ：级别介绍\n\nkungfu-public       ：公共武功\n\nkungfu-selfcreate   ：自创武功\n\nkungfu-special   ：特殊技能",
+      "level": 2
+    },
+    {
+      "path": "秘密提示(mimi)",
+      "content": "mimi-bhd        ：冰火岛\n\nmimi-book42     ：鹿鼎山\n\nmimi-chushi     ：出师\n\nmimi-equip      ：随机装备\n\nmimi-gem        ：宝石系统\n\nmimi-pker       ：杀手帮\n\nmimi-qilincun   ：麒麟村\n\nmimi-xkd        ：侠客岛\n\nmimi-ywm        ：岳王墓\n\nmimi-yideng     ：一灯大师\n\nmimi-gaojibingqi：高级兵器\n\nmimi-hubo       ：左右互搏\n\nmimi-bazhen     ：江南八镇\n\nmimi-yaopu      ：晋阳药铺\n\nmimi-youfang    ：游方和尚",
+      "level": 2
+    },
+    {
+      "path": "门派列表(menpai)",
+      "content": "menpai-baituo       ：白驼\n\nmenpai-chaoting     ：朝廷\n\nmenpai-dalunsi      ：大轮寺\n\nmenpai-emei         ：峨嵋\n\nmenpai-gaibang      ：丐帮\n\nmenpai-gumu         ：古墓\n\nmenpai-huashan      ：华山\n\nmenpai-lingjiu      ：灵鹫\n\nmenpai-lingxiao     ：凌霄城（雪山）\n\nmenpai-mingjiao     ：明教\n\nmenpai-murong       ：慕容\n\nmenpai-quanzhen     ：全真\n\nmenpai-riyuejiao    ：日月教\n\nmenpai-shaolin      ：少林\n\nmenpai-shenlongjiao ：神龙教\n\nmenpai-taohuadao    ：桃花岛\n\nmenpai-tianlongsi   ：天龙\n\nmenpai-tiandihui    ：天地会\n\nmenpai-wudang       ：武当\n\nmenpai-xingxiu      ：星宿",
+      "level": 2
+    },
+    {
+      "path": "地图列表(maps)",
+      "content": "map-pkuxkx        : 北大侠客行总图\n\nmap-baituo\t\t：白驼\n\nmap-beijing\t\t：北京\n\nmap-beijing\t\t：朝廷\n\nmap-bhd\t\t\t：冰火岛\n\nmap-changan\t\t：长安\n\nmap-changbai\t\t：关外\n\nmap-changjiang\t\t：长江\n\nmap-changjiangnorth\t：长江北岸\n\nmap-chengdu\t\t：成都\n\nmap-dalicheng\t\t：大理\n\nmap-dalunsi\t\t：大轮寺\n\nmap-dyd\t\t\t：钓鱼岛\n\nmap-emei\t\t：峨嵋\n\nmap-fuzhou\t\t：福州\n\nmap-gaibang\t\t：丐帮\n\nmap-guiyun\t\t：归云庄\n\nmap-gumu\t\t：古墓\n\nmap-hangzhou\t\t：杭州\n\nmap-huanghe\t\t：黄河\n\nmap-huanghenorth\t：黄河北岸\n\nmap-huashan\t\t：华山\n\nmap-jiangzhou\t\t：江州\n\nmap-jiaofei\t\t：铁掌峰\n\nmap-jiaxing\t\t：嘉兴\n\nmap-kangqin\t\t：康亲王府\n\nmap-kunming\t\t：昆明\n\nmap-lingjiu\t\t：灵鹫\n\nmap-lingxiao\t\t：凌霄城\n\nmap-lingzhou\t\t：灵州\n\nmap-lingzhou\t\t：灵州\n\nmap-luoyang\t\t：洛阳\n\nmap-meizhuang\t\t：江南梅庄\n\nmap-mingjiao\t\t：明教\n\nmap-murong\t\t：慕容\n\nmap-nanchang\t\t：南昌\n\nmap-pingxi\t\t：平西王府\n\nmap-pker\t\t：杀手帮\n\nmap-quanzhen\t\t：全真\n\nmap-quanzhou\t\t：泉州\n\nmap-qufu\t\t：曲阜\n\nmap-riyuejiao\t\t：日月教\n\nmap-saiwai\t\t：张家口\n\nmap-shaolin\t\t：少林\n\nmap-shenlongdao\t\t：神龙岛\n\nmap-suzhou\t\t：苏州\n\nmap-taishan\t\t：泰山\n\nmap-taohuadao\t\t：桃花\n\nmap-tiandihui\t\t：天地会\n\nmap-tianlong\t\t：天龙寺\n\nmap-tiantan\t\t：天坛\n\nmap-wudang\t\t：武当\n\nmap-xiangyang\t\t：襄阳\n\nmap-xiaocun\t\t：华山村\n\nmap-xingxiu\t\t：星宿\n\nmap-xinyang\t\t：信阳\n\nmap-xkd\t\t\t：侠客岛\n\nmap-yangzhou\t\t：扬州\n\nmap-yashan\t\t：牙山\n\nmap-yideng\t\t：桃源\n\nmap-yingtianfu\t\t：应天府\n\nmap-yueyang\t\t：岳阳\n\nmap-ywm\t\t\t：岳王墓\n\nmap-zhenjiang\t\t：镇江\n\nmap-zhongyuan\t\t：中原\n\nmap-zijin\t\t：紫禁城",
+      "level": 2
+    },
+    {
+      "path": "巫师相关(wiz)",
+      "content": "wiz-apply           ：巫师申请\n\nwiz-cmds            ：巫师命令\n\nwiz-progrule        ：编程规则\n\nwiz-rules           ：巫师规则\n\nwiz-settings        ：巫师设定",
+      "level": 2
+    }
+  ],
+  "metadata": {
+    "title": "pkuxkx:helplist",
+    "url": "https://www.pkuxkx.net/wiki/pkuxkx/helplist",
+    "category": "操作命令",
+    "tags": [
+      "操作命令"
+    ],
+    "chunk_index": 0,
+    "total_chunks": 1,
+    "scraped_at": "2026-01-12 11:31:02",
+    "content_hash": "d5674a5a22056714"
+  }
+}

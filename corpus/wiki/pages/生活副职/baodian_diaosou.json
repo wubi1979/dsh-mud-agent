@@ -1,0 +1,85 @@
+{
+  "id": "dcddca4b70b6562f",
+  "type": "page",
+  "text": "烟波钓叟\n\n简介：烟波钓叟，出自金庸所著武侠小说《神雕侠侣》，在书中没有直接出场，通过黄药师的口述，证明是个很厉害的角色，而北侠这里纯指在雾霭沉沉江波上钓鱼的玩家。\n\n钓叟：这是烹饪的一个spin off，首先目前有72种鱼类（不算观赏鱼），不同区域钓出来的是不同的，有些稀有鱼类更需要高级别fishing 技能才能钓，discern技能主要功能就是找鱼，10级以上比别人看的东西更多一点\n\n而背景高亮底色，则是观赏鱼可能出现的地点。系统大约12小时刷新一次，3个地点。\n\n观赏鱼可以钓到放养（fangyang）到帮派鱼池，功能：暂无。\n\n油壶不能放，只是示范时候丢进去忘记捞出来了\n\n钓鱼的所有命令没有变化，还是gua er，diao yu，跟新手钓鱼一样，把鱼钩变成鱼竿，感觉没杆子扔个钩子出去那不是钓鱼，是海盗。\n\n鱼饵look可以实时显示多少个，当然这很鸡肋，因为i里直接有数字显示\n\n在钓鱼点 look [钓鱼点]会返回这个位置可能钓到的所有鱼类\n\n钓鱼代码本身做了优化，修正一部分不太规范的写法，修正代码的目的是，可以通过物理属性实时生成一些鱼饵（比如撕碎的肉），也可以把玩家的staff或者spear这种长兵器赋与钓竿的功能。\n\n顺便说一下，鱼这种食材不属于系统固定的食材，属于玩家发现的食材。比如鲤鱼，这次重启有人钓着了，定义食谱时候可以用这个作为主料做成比如红烧鱼，但是下次重启玩家定义时候不一定能看到鲤鱼这个食材。定义保存的菜谱倒不会变化，再次抓到鲤鱼就可以做。另外钓鱼还有个姜太公钓鱼的任务，任务很简单就不多说了。\n\n钓鱼比赛\n\n北侠首届钓鱼比赛：https://www.pkuxkx.net/forum/forum.php?mod=viewthread&tid=46592&highlight=%E9%92%93%E9%B1%BC",
+  "structured_content": [
+    {
+      "path": "烟波钓叟",
+      "content": "简介：烟波钓叟，出自金庸所著武侠小说《神雕侠侣》，在书中没有直接出场，通过黄药师的口述，证明是个很厉害的角色，而北侠这里纯指在雾霭沉沉江波上钓鱼的玩家。\n\n钓叟：这是烹饪的一个spin off，首先目前有72种鱼类（不算观赏鱼），不同区域钓出来的是不同的，有些稀有鱼类更需要高级别fishing 技能才能钓，discern技能主要功能就是找鱼，10级以上比别人看的东西更多一点\n\n而背景高亮底色，则是观赏鱼可能出现的地点。系统大约12小时刷新一次，3个地点。\n\n观赏鱼可以钓到放养（fangyang）到帮派鱼池，功能：暂无。\n\n油壶不能放，只是示范时候丢进去忘记捞出来了\n\n钓鱼的所有命令没有变化，还是gua er，diao yu，跟新手钓鱼一样，把鱼钩变成鱼竿，感觉没杆子扔个钩子出去那不是钓鱼，是海盗。\n\n鱼饵look可以实时显示多少个，当然这很鸡肋，因为i里直接有数字显示\n\n在钓鱼点 look [钓鱼点]会返回这个位置可能钓到的所有鱼类\n\n钓鱼代码本身做了优化，修正一部分不太规范的写法，修正代码的目的是，可以通过物理属性实时生成一些鱼饵（比如撕碎的肉），也可以把玩家的staff或者spear这种长兵器赋与钓竿的功能。\n\n顺便说一下，鱼这种食材不属于系统固定的食材，属于玩家发现的食材。比如鲤鱼，这次重启有人钓着了，定义食谱时候可以用这个作为主料做成比如红烧鱼，但是下次重启玩家定义时候不一定能看到鲤鱼这个食材。定义保存的菜谱倒不会变化，再次抓到鲤鱼就可以做。另外钓鱼还有个姜太公钓鱼的任务，任务很简单就不多说了。",
+      "level": 1,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/%E7%83%9F%E6%B3%A2%E9%92%93%E5%8F%9F1.jpg?w=800&tok=1d59a8",
+          "alt": "",
+          "title": "",
+          "position": 395
+        },
+        {
+          "src": "/wiki/_media/baodian/%E7%83%9F%E6%B3%A2%E9%92%93%E5%8F%9F2.png?w=800&tok=af52f0",
+          "alt": "",
+          "title": "",
+          "position": 842
+        },
+        {
+          "src": "/wiki/_media/baodian/%E7%83%9F%E6%B3%A2%E9%92%93%E5%8F%9F3.png?w=800&tok=12c954",
+          "alt": "",
+          "title": "",
+          "position": 1160
+        },
+        {
+          "src": "/wiki/_media/baodian/%E7%83%9F%E6%B3%A2%E9%92%93%E5%8F%9F4.png?w=800&tok=974bfd",
+          "alt": "",
+          "title": "",
+          "position": 1470
+        },
+        {
+          "src": "/wiki/_media/baodian/%E7%83%9F%E6%B3%A2%E9%92%93%E5%8F%9F5.png?w=800&tok=4882a7",
+          "alt": "",
+          "title": "",
+          "position": 1770
+        },
+        {
+          "src": "/wiki/_media/baodian/%E7%83%9F%E6%B3%A2%E9%92%93%E5%8F%9F6.png?w=800&tok=68182b",
+          "alt": "",
+          "title": "",
+          "position": 2115
+        },
+        {
+          "src": "/wiki/_media/baodian/%E7%83%9F%E6%B3%A2%E9%92%93%E5%8F%9F7.png?w=800&tok=adc8e7",
+          "alt": "",
+          "title": "",
+          "position": 2428
+        },
+        {
+          "src": "/wiki/_media/baodian/%E7%83%9F%E6%B3%A2%E9%92%93%E5%8F%9F8.png?w=800&tok=0772b3",
+          "alt": "",
+          "title": "",
+          "position": 2738
+        },
+        {
+          "src": "/wiki/_media/baodian/%E7%83%9F%E6%B3%A2%E9%92%93%E5%8F%9F9.png?w=800&tok=e0ffac",
+          "alt": "",
+          "title": "",
+          "position": 3107
+        }
+      ]
+    },
+    {
+      "path": "钓鱼比赛",
+      "content": "北侠首届钓鱼比赛：https://www.pkuxkx.net/forum/forum.php?mod=viewthread&tid=46592&highlight=%E9%92%93%E9%B1%BC",
+      "level": 1
+    }
+  ],
+  "metadata": {
+    "title": "baodian:diaosou",
+    "url": "https://www.pkuxkx.net/wiki/baodian/diaosou",
+    "category": "生活副职",
+    "tags": [
+      "生活副职"
+    ],
+    "chunk_index": 0,
+    "total_chunks": 1,
+    "scraped_at": "2026-01-12 11:36:22",
+    "content_hash": "0178f1fda92126da"
+  }
+}

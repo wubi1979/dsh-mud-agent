@@ -12,6 +12,9 @@
  *   - session/disposed → service.dispose（断连 + 拆 runtime + 拆 deliverer + 拆日志）
  *   - llm/stream 瀑布终审：未接入账号会话的模型调用拦成空 stop 流（llm-gate.ts）
  *   - 投递回调：deliver(sessionId, text) → agent.followup(createUserMessage(...))
+ *   - T24 短期优先目标：kickoff 读 goal 视图做节选与源分派（active/blocked ⇒
+ *     goal-round 源，解锁 tool-goal 的 completionAuthority）；goal/changed 的
+ *     create/edit/resume 对已接入账号触发 kickoff
  *   - ctx.provide('mudCore3', { runtimeFor })；插件卸载 → service.disposeAll
  *
  * 加载：宿主 overlay patch 按 plain Node ESM 加载本包构建产物 lib/index.js。
@@ -24,6 +27,9 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 // 宿主事件类型增强（agent/created、session/disposed、llm/stream 等）。
 import type {} from '@deepseek-ai/dsh-agent'
+// T24：goal 类型面（GoalView + Context.goals/Events 'goal/changed'/
+// MessageSourceMap 'goal' 声明合并；type-only 编译期擦除，运行时零导入）。
+import type { GoalView } from '@deepseek-ai/dsh-goal'
 import type {} from '@deepseek-ai/dsh-llm'
 import { join } from 'node:path'
 
@@ -50,7 +56,7 @@ import type {
   CredentialResolver, ResolvedCredentials, RosterStore,
 } from './roster.ts'
 import { MemoryRosterStore, openDomainRosterStore, type HostStorageDomain } from './store.ts'
-import { Wake, DEFAULT_TASK_BRIEF, fillTaskBrief } from './wake.ts'
+import { Wake, DEFAULT_TASK_BRIEF, fillTaskBrief, goalBriefText, goalRoundSource, shouldKickoffOnGoalChange } from './wake.ts'
 import { shouldVeto, vetoStopStream } from './llm-gate.ts'
 import {
   addAccount as writeAccount, addServer as writeServer, removeAccount as dropAccount,
@@ -113,9 +119,10 @@ export interface MudCore3Config {
   /** 是否把名册挂到宿主 storage 域（缺省 true；域不可用时自动降级内存并告警）。 */
   rosterStorage?: boolean
   /**
-   * 任务书模板（admit/静默唤醒两触发点共用；状态驱动——根醒来
+   * 任务书模板（admit/静默唤醒/goal 变更三触发点共用；状态驱动——根醒来
    * 读状态自行规划，不写指令序列）。占位符 {{serverName}}/{{endpoint}}/{{account}}/
-   * {{conn}}/{{loggedIn}} 在投递时以实时状态填充；缺省取 DEFAULT_TASK_BRIEF。
+   * {{conn}}/{{loggedIn}}/{{goal}}（T24 优先目标节选）在投递时以实时状态填充；
+   * 缺省取 DEFAULT_TASK_BRIEF。
    */
   taskBrief?: string
   /** 静默唤醒时长毫秒（正整数；行到达即重置，到期且守卫全过才投任务书）。缺省 120_000。 */
@@ -212,6 +219,31 @@ type HostSessionFace = ElisionSession & { readonly header?: { readonly parentSes
  */
 interface AgentsLive {
   get(id: string): { session?: HostSessionFace } | undefined
+}
+
+/**
+ * 宿主 goal 服务的最小结构面（`ctx.get('goals')`，T24；可选服务——不写进
+ * inject，调用期解析：缺席/未就绪 ⇒ undefined ⇒ 任务书 goal 节选「无」、
+ * 源保持 mud-wake。与 agentsLive/storageDomain 同一课，§14.3）。
+ * 形参 unknown：goal 服务按身份断言 live（assertLive），实参必须是官方注册表
+ * 的 live agent 对象（agentsLive()?.get 的运行时真身）。
+ */
+interface GoalsLive {
+  /** 读当前 goal 视图；无 goal ⇒ undefined，非 live agent 抛 GoalError。 */
+  get(agent: unknown): GoalView | undefined
+}
+
+/**
+ * 从 ctx 取宿主 goal 服务；面不存在/形状不符返回 undefined。
+ * @param ctx - 插件上下文。
+ * @returns 可用的 goal 服务窄面，或 undefined。
+ */
+function hostGoals(ctx: Context): GoalsLive | undefined {
+  const candidate: unknown = ctx.get('goals')
+  if (typeof candidate !== 'object' || candidate === null) return undefined
+  const get = (candidate as { get?: unknown }).get
+  if (typeof get !== 'function') return undefined
+  return candidate as GoalsLive
 }
 
 /** 唤醒署名：MUD 消息以用户消息到达，署名 'mud' 以区分人工提问。 */
@@ -758,11 +790,31 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
   })
 
   // ── 任务书投递面（kickoff）────────────────────────────────────
-  // admit（开闸门点火）/静默唤醒两触发点共用：正文 = 服务器/账号事实 + 两轴
-  // 实时状态 + 目标（状态驱动，模板 Config.taskBrief ?? 缺省）。署名 'mud-wake'
-  // （与 MUD 行批次 'mud' 区分）；真发一条用户消息 → 一次真实回合 → `turn/start`
-  // → 会话脱离 blank。建账号不再触发（2026-10-02 裁定：纯登记，blank 保持）；
-  // 未接入时本调用触发的模型步被 llm/stream 闸门拦成空回合（agent 零行动）。
+  // admit（开闸门点火）/静默唤醒/goal 变更三触发点共用：正文 = 服务器/账号
+  // 事实 + 两轴实时状态 + 目标 + 优先目标节选（T24，状态驱动，模板
+  // Config.taskBrief ?? 缺省）。署名分派（T24 D8）：有 active/blocked goal ⇒
+  // goal-round 源（goalId/revision/round 与视图三元组精确匹配——解锁 tool-goal
+  // 的 completionAuthority，complete/blocked 时自动注入 wrapup 收尾指令）；
+  // 否则 'mud-wake'（与 MUD 行批次 'mud' 区分）。真发一条用户消息 → 一次真实
+  // 回合 → `turn/start` → 会话脱离 blank。建账号不再触发（2026-10-02 裁定：
+  // 纯登记，blank 保持）；未接入时本调用触发的模型步被 llm/stream 闸门拦成
+  // 空回合（agent 零行动）。
+
+  // T24：goal 视图读取（kickoff 的 goal 节选与源分派共用）。agent 取官方
+  // 注册表的 live 对象（goal 服务按身份断言 live）；assertLive 竞态缝
+  // （created/disposed 间）按无 goal 处理（不 fail 整个投递）。
+  const readGoal = (sessionId: string): GoalView | undefined => {
+    const goals = hostGoals(ctx)
+    if (goals === undefined) return undefined
+    const agent = agentsLive()?.get(sessionId)
+    if (agent === undefined) return undefined
+    try {
+      return goals.get(agent)
+    } catch {
+      return undefined
+    }
+  }
+
   const kickoff = (sessionId: string): void => {
     const agent = agentMap.get(sessionId)
     if (agent === undefined) {
@@ -773,19 +825,25 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     if (account === undefined) return // 不在名册 = 不是我们的会话
     const server = store.server(account.serverId)
     const status = service.status(sessionId)
+    const goalView = readGoal(sessionId)
     const text = fillTaskBrief(config.taskBrief ?? DEFAULT_TASK_BRIEF, {
       serverName: server?.name ?? account.serverId,
       endpoint: server === undefined ? '未登记' : `${server.host}:${server.port}`,
       account: account.name,
       conn: status.state,
       loggedIn: status.loggedIn,
+      goal: goalBriefText(goalView),
     })
+    // T24 D8 源分派：goalRoundSource 出 goal 源（active/blocked），否则回
+    // mud-wake 署名（无 goal 时语义与既有一致）。
+    const source = goalRoundSource(goalView)
+      ?? { kind: 'mud-wake', plugin: 'mud-core3' } as const
     try {
       agent.followup(createUserMessage({
         content: [{ type: 'text', text }],
-        source: { kind: 'mud-wake', plugin: 'mud-core3' },
+        source,
       }))
-      ctx.logger.info(`mud-core3: 会话 ${sessionId} 已投递任务书（conn=${status.state}，loggedIn=${status.loggedIn}）`)
+      ctx.logger.info(`mud-core3: 会话 ${sessionId} 已投递任务书（conn=${status.state}，loggedIn=${status.loggedIn}，source=${source.kind}）`)
     } catch (error: unknown) {
       ctx.logger.warn(`mud-core3: 会话 ${sessionId} 任务书投递失败: ${String(error)}`)
     }
@@ -853,6 +911,22 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
   // ── agent/disposed → 移除 agent 句柄（runtime/deliverer 保留）──
   ctx.on('agent/disposed', ({ agent }) => {
     agentMap.delete(String(agent.id))
+    return undefined
+  })
+
+  // ── goal/changed → 已接入账号的任务书触发（T24.3）─────────────
+  // 玩家经 /goal 设/改/恢复目标（create/edit/resume）⇒ 立即投任务书让 agent
+  // 感知（正文含 goal 节选、源按 D8 分派）。pause/complete/clear/block 无新
+  // 工作不触发（后续静默唤醒按新状态走默认节奏，blocked 表示玩家已知卡点）。
+  // 守卫差异于 Wake 三守卫（D4 裁定）：只查「已接入」（闸门语义前置），不做
+  // 非回合中/持有者空闲守卫——玩家设目标属人工指令级优先，设完即该醒；回合
+  // 中到达经 followup 排队语义等下一回合消费（goal 源消息落在开回合内，
+  // completionAuthority 照常成立）。分派谓词在纯层 wake.ts（七 operation 单测）。
+  ctx.on('goal/changed', ({ agent, change }) => {
+    const sessionId = String(agent.id)
+    if (store.account(sessionId) === undefined) return // 不在名册 = 不是我们的会话
+    if (service.getDeliverer(sessionId)?.isAdmitted !== true) return // 未接入 = 惰性
+    if (shouldKickoffOnGoalChange(change.operation)) kickoff(sessionId)
     return undefined
   })
 

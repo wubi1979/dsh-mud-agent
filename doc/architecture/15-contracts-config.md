@@ -78,13 +78,16 @@ ctx.provide('mudNav', NavService)      // 插件级单例（知识图全局；�
 
 | 行 | 作用 |
 |---|---|
-| 宿主 `standard` 插件面 | 基础能力（**不覆盖** registry 的 `default`；建账号时显式选 preset） |
+| 宿主 `standard` 插件面 | 基础能力（**不覆盖** registry 的 `default`；建账号时显式选 preset）；含 T24 启用的 `command-goal`（玩家 /goal 命令面）与 `tool-goal`（agent 侧 get_goal/create_goal/update_goal，blockedAfterConsecutiveRounds=3）；含 T25 启用的 `skill-filesystem`（customSkillDirs → 本仓 knowledge、includeDefaultRoots: false）与 `tool-skill`（目录注入 + skill 加载工具） |
+| **`dsh-goal` 服务行**（T24） | goal 服务（每 agent 会话一个持久 goal；上游 Web 组合只挂消费件不挂服务，需自行提供）。goal-round-driver 不挂：静默唤醒已是驱动器，挂则双驱动冲突 |
 | **引擎行** | `mud-core3`（`lib/index.js`）：名册 / 连接 / 投递 / 服务面 / 流程实体 |
 | **preset 行**（`src/preset.ts` → `lib/preset.js`） | 工具注册（preset 作用域，执行期解析引擎窄面，§8.1–§8.2） |
 | **`mud-workflow` 行** | 流程注册表 + 七工具（§8.14） |
-| persona | 玩家身份 + 工具说明 + **分工协议五条**（§7.1、§7.6） |
+| persona | 玩家身份 + 工具说明 + **知识库使用指引**（T25）+ **分工协议五条**（§7.1、§7.6）+ 优先目标决策节奏（T24） |
 
-- **声明合并自扩**：`MessageSourceMap` 增加 `'mud'`（行批次）与 `'mud-wake'`（任务书/唤醒）两种 kind（§6.2、§7.4）。
+- **T24 权限面收敛**：tool-goal 的 create/edit/pause/resume 需直接人类回合（目标生命周期归玩家）；complete/blocked 走 `completionAuthority`（人类回合或 goal-round 回合——任务书源分派见 §7.4）。无 driver ⇒ `roundsStarted` 恒 0 ⇒ blocked 轮门槛不可达（agent 无法自标 blocked，卡住正文报告）——接受项，升级路径见 §17.3。
+- **T25 知识库资产面**：`corpus/wiki/`（源数据：201 篇 JSON + 索引，只读）与 `knowledge/`（生成物：190 篇 `wiki-<title>` + `mud-basics`，入库）均随 git 版本化；生成器 `scripts/build-wiki-skills.mjs` 幂等重跑（源数据更新后重跑即刷新，自校验红门：数量对账/frontmatter/kebab-case/正文完整性）。
+- **声明合并自扩**：`MessageSourceMap` 增加 `'mud'`（行批次）与 `'mud-wake'`（任务书/唤醒）两种 kind（§6.2、§7.4）；`'goal'` kind 由宿主 dsh-goal 声明（非本仓）。
 - 加载形态：patch 的 `name` 指向构建产物；`headless` 屏 cols 等视图参数成组（§15.5）。
 - **启动链**（根 `package.json`）：build `mud-workflow`（契约产物——core3 类型面依赖它）→ `gen:typert` → build `mud-core3` → build `mud-webui` → `dsh web --patch <patch>`（§2.2、§8.8）。
 
@@ -126,7 +129,7 @@ ctx.provide('mudNav', NavService)      // 插件级单例（知识图全局；�
 | 15 | `logBufferMax` | 2000 | 日志内存环上限（`logs` 的可读窗口） | §13.1 |
 | 16 | `rosterStorage` | `true` | 是否挂宿主 storage 域（`false` = 强制内存） | §14.3 |
 | 17 | ~~`bootstrapOnCreate`~~ | — | **已退役**（2026-10-02）：建账号 = 纯登记不投任务书，接入 = 唯一点火点（§7.4、§7.4.1） | §11.2、§7.4 |
-| 18 | `taskBrief` | `DEFAULT_TASK_BRIEF` | 任务书模板（占位符 `{{serverName}}`/`{{endpoint}}`/`{{account}}`/`{{conn}}`/`{{loggedIn}}`） | §7.4 |
+| 18 | `taskBrief` | `DEFAULT_TASK_BRIEF` | 任务书模板（占位符 `{{serverName}}`/`{{endpoint}}`/`{{account}}`/`{{conn}}`/`{{loggedIn}}`/`{{goal}}`——T24 优先目标节选） | §7.4 |
 | 19 | `silenceMs` | 120_000 | 静默唤醒时长（**正整数 fail-loud**） | §7.5 |
 | 20 | `probeStartMs` | 90_000 | 探活静默首发延迟（自**最后数据到达**起；T12 link 层静默伴随自驱） | §3.2 |
 | 21 | `probeRetryMs` | 9_000 | 探活无应答重发间隔 | §3.2 |

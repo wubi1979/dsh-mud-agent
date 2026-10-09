@@ -1,0 +1,24 @@
+{
+  "id": "c9c0db887101fc8b",
+  "type": "page",
+  "text": "百晓生任务\n\n任务地点：\n\n扬州醉仙楼二楼\n\n任务npc：\n\n百晓生(Bai xiaosheng)\n\n任务方式：\n\n护镖（限制为普通镖，不能推新手镖，所以必须推完新手镖才能做）。\n\n慕容仆人任务。\n\n胡一刀任务。\n\n萧峰任务或者韩世忠任务，各完成一次，每项任务经验正增长，胡一刀任务必须交完整宝图但不必寻宝，任务时限在12分钟之间随机。\n\n万安塔、破阵都可做时，额外要求进行其中一项，（有时候百晓生会要求做一次公孙止任务）总时间+2min\n\n任务奖励：\n\n鉴定术2级，风以上宝石一颗。若超过时限但在15分钟内完成则没有宝石奖励，只奖励鉴定术熟练度。\n\n注意事项：\n\n此任务是目前得到高级宝石几率最大的任务，但武当等高气血门派不适合做此任务（护镖匪多）。\n\n参考：https://pkuxkx.net/forum/forum.php?mod=viewthread&tid=38412&highlight=%E7%99%BE%E6%99%93%E7%94%9F",
+  "structured_content": [
+    {
+      "path": "百晓生任务",
+      "content": "任务地点：\n\n扬州醉仙楼二楼\n\n任务npc：\n\n百晓生(Bai xiaosheng)\n\n任务方式：\n\n护镖（限制为普通镖，不能推新手镖，所以必须推完新手镖才能做）。\n\n慕容仆人任务。\n\n胡一刀任务。\n\n萧峰任务或者韩世忠任务，各完成一次，每项任务经验正增长，胡一刀任务必须交完整宝图但不必寻宝，任务时限在12分钟之间随机。\n\n万安塔、破阵都可做时，额外要求进行其中一项，（有时候百晓生会要求做一次公孙止任务）总时间+2min\n\n任务奖励：\n\n鉴定术2级，风以上宝石一颗。若超过时限但在15分钟内完成则没有宝石奖励，只奖励鉴定术熟练度。\n\n注意事项：\n\n此任务是目前得到高级宝石几率最大的任务，但武当等高气血门派不适合做此任务（护镖匪多）。\n\n参考：https://pkuxkx.net/forum/forum.php?mod=viewthread&tid=38412&highlight=%E7%99%BE%E6%99%93%E7%94%9F",
+      "level": 1
+    }
+  ],
+  "metadata": {
+    "title": "task:baixiaosheng",
+    "url": "https://www.pkuxkx.net/wiki/task/baixiaosheng",
+    "category": "任务知识/特殊任务",
+    "tags": [
+      "任务知识/特殊任务"
+    ],
+    "chunk_index": 0,
+    "total_chunks": 1,
+    "scraped_at": "2026-01-12 11:34:13",
+    "content_hash": "f01ad508623bbd66"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "id": "ed344ec1607e8f63",
+  "type": "page",
+  "text": "书籍一览及技能提升地点\n\n本页面列出所有的可读书籍，以及大量可以提升技能的地点。\n\n不少书籍各大当铺可能会有存货，不妨一试。\n\n江湖秘籍：|知识秘籍|\n\n江湖秘籍：|基本功夫|\n\n江湖秘籍：|特殊功夫|\n\n江湖秘籍：|其他秘籍|",
+  "structured_content": [
+    {
+      "path": "书籍一览及技能提升地点",
+      "content": "本页面列出所有的可读书籍，以及大量可以提升技能的地点。\n\n不少书籍各大当铺可能会有存货，不妨一试。\n\n江湖秘籍：|知识秘籍|\n\n江湖秘籍：|基本功夫|\n\n江湖秘籍：|特殊功夫|\n\n江湖秘籍：|其他秘籍|",
+      "level": 1
+    }
+  ],
+  "metadata": {
+    "title": "baodian:shuji",
+    "url": "https://www.pkuxkx.net/wiki/baodian/shuji",
+    "category": "基础知识",
+    "tags": [
+      "基础知识"
+    ],
+    "chunk_index": 0,
+    "total_chunks": 1,
+    "scraped_at": "2026-01-12 11:30:43",
+    "content_hash": "b2db7870f45579be"
+  }
+}

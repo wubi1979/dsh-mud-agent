@@ -1,0 +1,68 @@
+{
+  "id": "1e51d66ba5715363",
+  "type": "page",
+  "text": "NPC状态\n\n简介：先介绍下NPC，NPC就是非玩家控制角色”即NPC（Non Player Character）。这个概念最早起源于单机版游戏，逐渐延伸到整个游戏领域，举个最简单的例子，您在买卖物品的时候需要点击的那个商人就是NPC，还有做任务时需要对话的人物或者互动的一些动物等等都属于NPC。这里主要说说最近比较令玩家头疼的拦路NPC和一些比较特殊的NPC。\n\n拦路NPC：以前这类NPC大多数玩家一般都是暴力通过，直接剁了NPC，但是现在行不通啦，有些NPC剁了就会被通缉了，被通缉就会被城市守门的NPC齐刷刷剁你，你把他们全剁了就会是个死循环通缉时间成倍增长，做任务就会超级不方便。对于这种状况除了50天宝石的变脸和长袖3外还有另一种办法就是投NPC所好，如果你看到这样亮黄色描述的npc，开头仔细守在xxx前，就一定是拦路npc了。不同npc有不同喜好，喜欢交友就是不拦长袖（需要级别可能不同），爱和人较量就是接受jiaoliang，打赢之后一段时间不拦。\n\n喜欢垂钓类的东西，就是给他这类型的东西不拦，list杂货铺可以看见分类\n\n贪财就更好理解了，所有满足任一条件，统一都是3小时之内不会再拦人。另外有这样亮黄色条目介绍的打晕之后肯定不会拦人，注意是打晕哦\n\n还有些拦路NPC看演练不拦路，且加亲密度，亲密度到一定程度也不拦\n\n带职业头衔的NPC：这里拿张三丰岳不群和宁中则举例子，有头衔带职业的NPC都是经WIZ强化过的NPC，这类NPCskills基本都是上千的，新手玩家一定要小心不要随便hit，如下图张三丰和岳不群就是带职业和人物头衔的NPC，而宁中则则是一般普通NPC skills不是很高",
+  "structured_content": [
+    {
+      "path": "NPC状态",
+      "content": "简介：先介绍下NPC，NPC就是非玩家控制角色”即NPC（Non Player Character）。这个概念最早起源于单机版游戏，逐渐延伸到整个游戏领域，举个最简单的例子，您在买卖物品的时候需要点击的那个商人就是NPC，还有做任务时需要对话的人物或者互动的一些动物等等都属于NPC。这里主要说说最近比较令玩家头疼的拦路NPC和一些比较特殊的NPC。\n\n拦路NPC：以前这类NPC大多数玩家一般都是暴力通过，直接剁了NPC，但是现在行不通啦，有些NPC剁了就会被通缉了，被通缉就会被城市守门的NPC齐刷刷剁你，你把他们全剁了就会是个死循环通缉时间成倍增长，做任务就会超级不方便。对于这种状况除了50天宝石的变脸和长袖3外还有另一种办法就是投NPC所好，如果你看到这样亮黄色描述的npc，开头仔细守在xxx前，就一定是拦路npc了。不同npc有不同喜好，喜欢交友就是不拦长袖（需要级别可能不同），爱和人较量就是接受jiaoliang，打赢之后一段时间不拦。\n\n喜欢垂钓类的东西，就是给他这类型的东西不拦，list杂货铺可以看见分类\n\n贪财就更好理解了，所有满足任一条件，统一都是3小时之内不会再拦人。另外有这样亮黄色条目介绍的打晕之后肯定不会拦人，注意是打晕哦\n\n还有些拦路NPC看演练不拦路，且加亲密度，亲密度到一定程度也不拦\n\n带职业头衔的NPC：这里拿张三丰岳不群和宁中则举例子，有头衔带职业的NPC都是经WIZ强化过的NPC，这类NPCskills基本都是上千的，新手玩家一定要小心不要随便hit，如下图张三丰和岳不群就是带职业和人物头衔的NPC，而宁中则则是一般普通NPC skills不是很高",
+      "level": 1,
+      "images": [
+        {
+          "src": "/wiki/_media/newbie/%E6%8B%A6%E8%B7%AFnpc1.png?w=1000&tok=5db2fc",
+          "alt": "",
+          "title": "",
+          "position": 791
+        },
+        {
+          "src": "/wiki/_media/newbie/%E6%8B%A6%E8%B7%AFnpc2.png?w=1000&tok=4ee184",
+          "alt": "",
+          "title": "",
+          "position": 1076
+        },
+        {
+          "src": "/wiki/_media/newbie/%E6%8B%A6%E8%B7%AFnpc3.png?w=1000&tok=ae48ea",
+          "alt": "",
+          "title": "",
+          "position": 1389
+        },
+        {
+          "src": "/wiki/_media/newbie/%E6%8B%A6%E8%B7%AFnpc4.png?w=1000&tok=b95b91",
+          "alt": "",
+          "title": "",
+          "position": 1671
+        },
+        {
+          "src": "/wiki/_media/newbie/%E6%8B%A6%E8%B7%AFnpc5.png?w=1000&tok=480b1c",
+          "alt": "",
+          "title": "",
+          "position": 1911
+        },
+        {
+          "src": "/wiki/_media/newbie/%E7%89%B9%E6%AE%8Anpc1.png?w=1000&tok=ea86e2",
+          "alt": "",
+          "title": "",
+          "position": 2355
+        },
+        {
+          "src": "/wiki/_media/newbie/%E7%89%B9%E6%AE%8Anpc2.png?w=1000&tok=ff1ea2",
+          "alt": "",
+          "title": "",
+          "position": 2595
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "title": "newbie:npcstatus",
+    "url": "https://www.pkuxkx.net/wiki/newbie/npcstatus",
+    "category": "人物状态",
+    "tags": [
+      "人物状态"
+    ],
+    "chunk_index": 0,
+    "total_chunks": 1,
+    "scraped_at": "2026-01-12 11:31:22",
+    "content_hash": "7b11334b3b6136f3"
+  }
+}

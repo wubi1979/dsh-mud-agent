@@ -695,3 +695,35 @@
 - **文档**：附录 **A.9**（walk 实录 A.9.1–A.9.12：路线表 / `-q` 参考链 / 非 walk 节点行文 / 方向序列 / 硬阻断行为性定义）· §8.3/§8.6/§8.7（工具语义、持有者互锁、判据与 `path`/`blocked`）· §10.3（`location.*` 与 `nav.*`、`kind:'nav'`）· §15.2/§15.5（`mudNav` 服务面与 Config #28）· §16.2/§16.5 · PLAN 清空本计划
 
 > AI生成
+
+## [v0.0.60]T24 短期优先目标：DSH goal 接入（服务行 + 命令面 + 工具面 + 任务书节选与源分派）(2026-10-09)
+> 总结：玩家可给已接入账号设短期优先目标——/goal 命令即设即生效，agent 在任务书中看到并优先执行，完成后 update_goal(complete) 自动收尾报告；goal 生命周期归玩家独占（权限面由宿主 authority 精确收敛）。
+
+- **功能考古（上游 goal 组四件套取舍）**：✅ `dsh-goal` 服务（每 agent 会话一个持久 goal，跨重启/fork 存续）+ `command-goal`（/goal 命令面）+ `tool-goal`（agent 三工具，用户裁定挂载）；❌ `goal-round-driver`（静默唤醒已是驱动器，挂则双驱动冲突——但**复用其源形态**）。
+- **关键考古发现（决定源分派）**：tool-goal 的 `completionAuthority` 要求回合内含「直接人类输入」或「精确匹配的 goal-round 消息」（`{kind:'goal', goalId, revision, round}` 三元组与视图 `===`）——我们任务书源 `mud-wake` 两者皆非，**不改源则 agent 的 complete 永远被拒**。goal-round 源是宿主为该场景定义的原生形态；无 driver ⇒ `roundsStarted` 恒 0 ⇒ `round: 0` 精确匹配（session 事件校验不校验 source 字段，已静态核实）。
+- **装配（cordis.patch.yml）**：顶层增 `dsh-goal` 服务行（上游 Web 组合只挂消费件不挂服务，需自行提供）；preset 的 `command-goal`/`tool-goal` 由 disabled 改 enabled（tool-goal `blockedAfterConsecutiveRounds: 3`）；persona 决策节奏新增优先目标步（优先执行 + update_goal complete 收尾 + 不自行创建/修改目标——目标由玩家设置）。
+- **kickoff（§7.4 三触发点）**：`TaskBriefFacts` 增 `goal` 节选（`goalBriefText`：无/paused/complete ⇒ 「无」，active ⇒ objective，blocked ⇒ +阻塞说明）+ `DEFAULT_TASK_BRIEF` 增「当前优先目标：{{goal}}。」行 + **源分派 D8**（`goalRoundSource`：active/blocked ⇒ goal-round 源解锁 completionAuthority 与 wrapup 收尾注入，其余保持 mud-wake）。goal 服务经 `hostGoals` 形状检查窄面读取（可选服务，缺席 ⇒ 无 goal，同 agentsLive 课）；agent 取官方注册表 live 对象，assertLive 竞态缝按无 goal 处理。
+- **事件接线（触发点③）**：`ctx.on('goal/changed')`——名册判定 + 已接入 + create/edit/resume ⇒ kickoff（分派谓词 `shouldKickoffOnGoalChange` 纯层）；pause/complete/clear/block 不触发；守卫差异于 Wake 三守卫（只查「已接入」，玩家指令级优先，回合中经 followup 排队）。
+- **wrapup 红利**：goal-round 权威下的 complete/blocked 自动注入收尾指令（上游 `renderWrapupContext`）——"报告"半边被机制化，无需 persona 另行约束。
+- **已知限制（接受项，升级路径 §17.3）**：① 无 driver ⇒ blocked 轮门槛不可达（agent 无法自标 blocked，卡住正文报告）；② goal 源任务书在服务日志 `sk` 记 'goal' 而非 'mud-wake'。
+- **测试（先红后绿）**：wake.spec 新增 T24 describe 5 用例（节选五情形 / 源分派五情形 / 七 operation 分派 / 模板渲染 / 占位符），红 7 → 绿；既有用例 facts 补 goal 字段。core3 462/462（35 文件）+ workflow 77/77 + webui 7/7；typecheck 两包零错；`pnpm install` peer 零告警；patch 宿主同款解析校验通过（insert 五行：preset-mud-player / mud-core3 / dsh-goal / mud-workflow / mud-webui）。
+- **文档**：§7.4（三触发点表 + goal 节选与源分派 + 署名分派）· §15.3（preset 行清单：dsh-goal 服务行 + 权限面收敛）· §15.5（Config #18 `{{goal}}`）· §16.2（462 例 + wake 条目注记）· §16.5（T24 行）· §17.3（goal blocked 自标通道后置项）· mud-core3 devDep `@deepseek-ai/dsh-goal@^0.2.0-rc.2`（type-only）· PLAN 清空本计划。
+- **待实测（重启宿主后）**：/goal 设目标 → 任务书含优先目标且源为 goal-round → agent 优先执行 → update_goal(complete) + wrapup 收尾报告 → /goal 查看 complete → 后续任务书回默认节奏；goal 触发与在飞回合的交互（D4 无守卫设计的实测验证）；blocked 相位任务书呈现（若造出 blocked goal）。
+
+> AI生成
+
+## [v0.0.61]T25 MUD 知识库：wiki 全量接入 skill 体系 (2026-10-09)
+> 总结：agent 获得北侠 wiki 全量知识——190 篇按需加载技能 + mud-basics 常驻浓缩版；宿主 skill 子系统全白拿（目录常驻 ≈5K tokens + 正文按需），零自建机制。
+
+- **机制考古（上游知识注入 6 通道对照）**：skill / persona / agent-instructions / time-context / MCP 资源 / taskBrief——skill 是"大体积、可路由、静态"知识的唯一匹配通道（目录仅 name+description 常驻、digest 变更才重发；正文仅 `skill` 工具调用时加载、compaction 回收后可重载）。`dsh-skill` 服务 base 组合已挂；本仓 preset 的 `skill-filesystem`/`tool-skill` 由 disabled 改 enabled（2026-10-08"编码工具面"裁定时误伤——skill 是知识注入机制非编码工具）。
+- **数据归置**：本地 wiki（201 篇 4.7MB 纯文本，15 类目含子目录；title 即 wiki 命名空间 id 全局唯一已验证）拷入 `corpus/wiki/`（只读源数据，git 版本化）；`url_details.json` 202 条 URL→中文标题映射；抓取于 2026-01-12（每篇头部时效标注，实机行为为准）。
+- **转换生成器**：`scripts/build-wiki-skills.mjs`（node ESM，幂等重跑）——190 篇 `knowledge/wiki-<title>/SKILL.md`（title `:`→`-`，如 `wiki-task-ansha`；description = 中文标题（类目[/子类]）；正文 = 时效标注 + 原文）；基础知识 11 篇排除不转单篇（归 mud-basics）。自校验红门：数量对账（190+11）/ name 冲突 fail-loud / frontmatter 合法 / kebab-case / 正文完整性（尾 40 字符比对）。
+- **mud-basics 常驻浓缩版（用户裁定重新归纳）**：11 篇原文 42K 有重复混乱 → 手工编撰六节 ~4.9K chars（1/8）：角色机制（属性/有效等级公式/技能上限公式）/ 技能提升全途径（learn/study/practice/lingwu/xiulian/演练 + 过阵流程表）/ 生存常识（吃喝/买药+假药警告/储物/行旅通/打钱模式）/ 新手福利与经验时间线（一次性福利/幸运值/双倍体系/任务解锁节点）/ 环境规则（通缉/密探/刷新/ct 惯用）/ 帮派社交一页纸。剔除：人类客户端安装指南、帮派建帮/帮战/库房细节、宠物系统、武林盟主（agent 边缘，原文在 corpus 可查）。
+- **装配**：preset `skill-filesystem`（`customSkillDirs: [D:/Code/dsh-mud-agent/knowledge]`，`includeDefaultRoots: false`——游戏会话知识面确定性集合，排除用户个人 skills 混入）+ `tool-skill`（缺省配置，目录注入 + 加载工具）；chokidar 热更保留（改文件 → 目录自动重发）。
+- **persona**：决策节奏加第 0 步（首次任务书先 `skill` 加载 mud-basics，已加载跳过）+ 知识库使用指引段（行动前按需查对应 wiki 技能——任务查 wiki-task-*、门派查 wiki-menpai-*，不凭空猜测游戏机制；skill 查不到或时效存疑再 web 查在线 wiki 兜底）+ 细节探索顺序改写（先查 skill 知识库，再游戏内探索）。
+- **目录成本实测**：191 条（190 单篇 + mud-basics）name+description 共 7626 chars ≈ **5.1K tokens** 常驻（D6 预算 6-9K 内）；正文按需（wiki 篇均 5-10K chars，mud-basics 4.9K）。
+- **回归**：core3 462/462（35 文件）+ workflow 77/77 + webui 7/7 + typecheck 两包零错 + patch 宿主同款解析校验通过（insert 五行不变）；skill-filesystem peer（cordis/dsh-fs/dsh-skill/dsh-home-paths 0.2.0-rc.2）由宿主组合满足，本仓零新增依赖。
+- **文档**：§7.1（知识库资产面 + persona 四块）· §15.3（preset 行 + T25 资产面）· §16.5（T25 行）· §17.3（知识库增补机制后置项：增量再抓取/探索写回/C 档候选/目录裁剪）· PLAN 清空本计划。
+- **待实测（重启宿主后）**：① 目录注入可见（`<available_skills>` 含 191 条）；② 首步加载 mud-basics 后按知识行动；③ 任务攻略按需加载（如问"公孙止怎么做"→ wiki-task-gongsun）；④ 子级可达性（根委派的子 agent 能否取知识——机制推理成立，实测确认；若不可达回退 v2 方案：根在要点里点名技能名）；⑤ chokidar 热更在 Windows 上的生效性（改 knowledge/ 文件 → 目录自动重发）。
+
+> AI生成

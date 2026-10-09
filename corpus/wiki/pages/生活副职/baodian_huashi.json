@@ -1,0 +1,122 @@
+{
+  "id": "9edf5853c6d23e0d",
+  "type": "page",
+  "text": "丹青画师\n\n简介：“青绿”是绘画的用色，色彩是绘画作为视觉艺术不可或缺的组成部分。绘画一词实际上包含了造型与色彩两层含义，《说文解字》云：“画，界也，象田四界，聿所以画之。绘，会五采绣也。”由此可知，绘画中的“画”意为描画形体，而“绘”最初指彩绣，后来有涂绘色彩之意。鉴于色彩在绘画中的重要作用，古人也以色彩的名称来指代绘画，称之为“丹青”。丹与青是古代画作中两种常用的色彩，“丹”意为红色，也指一种鲜艳的红色颜料——朱砂；“青”意为青色，也指一种蓝色颜料——石青。而以绘画为终身职业的艺术人们，古代民间称“丹青师傅”，亦是丹青画师。\n\n丹青之道：画师的技能是丹青之术,最初10级，必须通过各地的画师完成任务提升，一次一级非常快\n\n任务就是他给你一个画好的东西，你要一行一行复制到空白画纸上，copy+paste\n\n这里需要注意的是有些特殊字符需要特殊处理，完整空行，你需要输入draw SPACE，而字符中含有\\（escape）的情况你需要替换成“\\\\”\n\n否则就会出现乱掉的情况\n\n正确路数，\n\n样就获得了一级提升\n\n前10级很快就完成了。\n\n画错就是失败了，需要等完cd继续。\n\n弄完这10级就可以挂机提高了\n\n尝试画超越级别的东西会出现提示。\n\n随便临摹任何物品，但是只有同一种物品前5次可以提升。\n\n画人物\n\n成品，基本可以摆摊卖艺了\n\n画风景\n\n画画50级以上可以做另一个job，加速技能提升，顺便赚点经验潜能\n\n开动脑筋，想出地点去draw就自动完成了\n\n然后把这幅画给任意一个画师，就完成任务了。\n\n因为涉及加经验，也受到fullme影响，太长时间不fullme做了经验很低，也不会加丹青之术。\n\n命令相对简化\n\n比如物品和人物都是draw\n\n房间是draw here\n\n特殊用途的draw SPACE之前提过\n\n也可以用复杂命令draw with <笔> at <纸>，不过100级以前暂时用不到，这里是指定特殊墨水和特殊纸张来弄。\n\n对着已经画好的画继续画，无限套娃",
+  "structured_content": [
+    {
+      "path": "丹青画师",
+      "content": "简介：“青绿”是绘画的用色，色彩是绘画作为视觉艺术不可或缺的组成部分。绘画一词实际上包含了造型与色彩两层含义，《说文解字》云：“画，界也，象田四界，聿所以画之。绘，会五采绣也。”由此可知，绘画中的“画”意为描画形体，而“绘”最初指彩绣，后来有涂绘色彩之意。鉴于色彩在绘画中的重要作用，古人也以色彩的名称来指代绘画，称之为“丹青”。丹与青是古代画作中两种常用的色彩，“丹”意为红色，也指一种鲜艳的红色颜料——朱砂；“青”意为青色，也指一种蓝色颜料——石青。而以绘画为终身职业的艺术人们，古代民间称“丹青师傅”，亦是丹青画师。\n\n丹青之道：画师的技能是丹青之术,最初10级，必须通过各地的画师完成任务提升，一次一级非常快\n\n任务就是他给你一个画好的东西，你要一行一行复制到空白画纸上，copy+paste\n\n这里需要注意的是有些特殊字符需要特殊处理，完整空行，你需要输入draw SPACE，而字符中含有\\（escape）的情况你需要替换成“\\\\”\n\n否则就会出现乱掉的情况\n\n正确路数，\n\n样就获得了一级提升\n\n前10级很快就完成了。\n\n画错就是失败了，需要等完cd继续。\n\n弄完这10级就可以挂机提高了\n\n尝试画超越级别的东西会出现提示。\n\n随便临摹任何物品，但是只有同一种物品前5次可以提升。\n\n画人物\n\n成品，基本可以摆摊卖艺了\n\n画风景\n\n画画50级以上可以做另一个job，加速技能提升，顺便赚点经验潜能\n\n开动脑筋，想出地点去draw就自动完成了\n\n然后把这幅画给任意一个画师，就完成任务了。\n\n因为涉及加经验，也受到fullme影响，太长时间不fullme做了经验很低，也不会加丹青之术。\n\n命令相对简化\n\n比如物品和人物都是draw\n\n房间是draw here\n\n特殊用途的draw SPACE之前提过\n\n也可以用复杂命令draw with <笔> at <纸>，不过100级以前暂时用不到，这里是指定特殊墨水和特殊纸张来弄。\n\n对着已经画好的画继续画，无限套娃",
+      "level": 1,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/%E4%B8%B9%E9%9D%92%E5%8D%8E%E5%B1%B1.jpg?w=800&tok=bcebc1",
+          "alt": "",
+          "title": "",
+          "position": 577
+        },
+        {
+          "src": "/wiki/_media/baodian/%E4%B8%B9%E9%9D%92%E7%94%BB%E5%B8%881.png?w=800&tok=af4427",
+          "alt": "",
+          "title": "",
+          "position": 968
+        },
+        {
+          "src": "/wiki/_media/baodian/%E4%B8%B9%E9%9D%92%E7%94%BB%E5%B8%882.png?w=800&tok=893ef6",
+          "alt": "",
+          "title": "",
+          "position": 1387
+        },
+        {
+          "src": "/wiki/_media/baodian/%E4%B8%B9%E9%9D%92%E7%94%BB%E5%B8%883.png?w=800&tok=be1e9d",
+          "alt": "",
+          "title": "",
+          "position": 1679
+        },
+        {
+          "src": "/wiki/_media/baodian/%E4%B8%B9%E9%9D%92%E7%94%BB%E5%B8%884.png?w=800&tok=68e9e9",
+          "alt": "",
+          "title": "",
+          "position": 1975
+        },
+        {
+          "src": "/wiki/_media/baodian/%E4%B8%B9%E9%9D%92%E7%94%BB%E5%B8%885.png?w=800&tok=575200",
+          "alt": "",
+          "title": "",
+          "position": 2324
+        },
+        {
+          "src": "/wiki/_media/baodian/%E4%B8%B9%E9%9D%92%E7%94%BB%E5%B8%886.png?w=800&tok=6723be",
+          "alt": "",
+          "title": "",
+          "position": 2627
+        },
+        {
+          "src": "/wiki/_media/baodian/%E4%B8%B9%E9%9D%92%E7%94%BB%E5%B8%887.png?w=800&tok=65ee8d",
+          "alt": "",
+          "title": "",
+          "position": 2953
+        },
+        {
+          "src": "/wiki/_media/baodian/%E4%B8%B9%E9%9D%92%E7%94%BB%E5%B8%888.png?w=800&tok=7a9734",
+          "alt": "",
+          "title": "",
+          "position": 3252
+        },
+        {
+          "src": "/wiki/_media/baodian/%E4%B8%B9%E9%9D%92%E7%94%BB%E5%B8%889.png?w=800&tok=494636",
+          "alt": "",
+          "title": "",
+          "position": 3542
+        },
+        {
+          "src": "/wiki/_media/baodian/%E4%B8%B9%E9%9D%92%E7%94%BB%E5%B8%8810.png?w=800&tok=f8a188",
+          "alt": "",
+          "title": "",
+          "position": 3821
+        },
+        {
+          "src": "/wiki/_media/baodian/%E4%B8%B9%E9%9D%92%E7%94%BB%E5%B8%8811.png?w=800&tok=cb075f",
+          "alt": "",
+          "title": "",
+          "position": 4143
+        },
+        {
+          "src": "/wiki/_media/baodian/%E4%B8%B9%E9%9D%92%E7%94%BB%E5%B8%8812.png?w=800&tok=8f7e80",
+          "alt": "",
+          "title": "",
+          "position": 4453
+        },
+        {
+          "src": "/wiki/_media/baodian/%E4%B8%B9%E9%9D%92%E7%94%BB%E5%B8%8813.png?w=800&tok=eb1bd3",
+          "alt": "",
+          "title": "",
+          "position": 4974
+        },
+        {
+          "src": "/wiki/_media/baodian/%E4%B8%B9%E9%9D%92%E7%94%BB%E5%B8%8814.png?w=800&tok=67fb32",
+          "alt": "",
+          "title": "",
+          "position": 5254
+        },
+        {
+          "src": "/wiki/_media/baodian/%E4%B8%B9%E9%9D%92%E7%94%BB%E5%B8%8815.png?w=800&tok=44ef11",
+          "alt": "",
+          "title": "",
+          "position": 5560
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "title": "baodian:huashi",
+    "url": "https://www.pkuxkx.net/wiki/baodian/huashi",
+    "category": "生活副职",
+    "tags": [
+      "生活副职"
+    ],
+    "chunk_index": 0,
+    "total_chunks": 1,
+    "scraped_at": "2026-01-12 11:36:20",
+    "content_hash": "6932ab37721ba822"
+  }
+}

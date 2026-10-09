@@ -1,0 +1,48 @@
+{
+  "id": "1682afa421fe0888",
+  "type": "page",
+  "text": "前言\n\n好基友一被子，好闺蜜来喝姜撞奶。\n\n北侠好友系统\n\n不需要组队，但是需要站在同一个房间，输入friend -a xxx(你要结交的ID），对方就会显示\n\n输入friend accept你俩就成为好友啦，成为好友后输入friend -l就会出现如下显示，\n\n注意事项：\n\n1、好友亲密度在好友组队做任务的时候会增加，不过能增加好友亲密度的是除襄阳保卫、剿匪以外的能增加愿望点的任务（漂流、藏经阁、神尼、鸡笼山副本）\n\n2、friend -d <id>是和好友绝交，输入help friend能看到所有好友指令\n\n3、好友系统是为以后准备的一个小功能，待更新。\n\n北侠朋友圈\n\nfriend 是朋友圈的主命令，friend add 加好友，friend accept 接受。friend share 发动态，所有chat可以parse都可以用，比如chick ,哈哈等等，支持颜色。friend moments 或者简写 moments 查看动态，moments 查看具体玩家动态，friend hongbao -a -p ，只有朋友圈内接受信息，可以抢红包。",
+  "structured_content": [
+    {
+      "path": "前言",
+      "content": "好基友一被子，好闺蜜来喝姜撞奶。",
+      "level": 2
+    },
+    {
+      "path": "北侠好友系统",
+      "content": "不需要组队，但是需要站在同一个房间，输入friend -a xxx(你要结交的ID），对方就会显示\n\n输入friend accept你俩就成为好友啦，成为好友后输入friend -l就会出现如下显示，\n\n注意事项：\n\n1、好友亲密度在好友组队做任务的时候会增加，不过能增加好友亲密度的是除襄阳保卫、剿匪以外的能增加愿望点的任务（漂流、藏经阁、神尼、鸡笼山副本）\n\n2、friend -d <id>是和好友绝交，输入help friend能看到所有好友指令\n\n3、好友系统是为以后准备的一个小功能，待更新。",
+      "level": 2,
+      "images": [
+        {
+          "src": "/wiki/_media/newbie/%E5%A5%BD%E5%8F%8B.png?w=600&tok=328eec",
+          "alt": "",
+          "title": "",
+          "position": 534
+        },
+        {
+          "src": "/wiki/_media/newbie/%E5%A5%BD%E5%8F%8B1.png?w=600&tok=0b7564",
+          "alt": "",
+          "title": "",
+          "position": 877
+        }
+      ]
+    },
+    {
+      "path": "北侠朋友圈",
+      "content": "friend 是朋友圈的主命令，friend add 加好友，friend accept 接受。friend share 发动态，所有chat可以parse都可以用，比如chick ,哈哈等等，支持颜色。friend moments 或者简写 moments 查看动态，moments 查看具体玩家动态，friend hongbao -a -p ，只有朋友圈内接受信息，可以抢红包。",
+      "level": 2
+    }
+  ],
+  "metadata": {
+    "title": "newbie:haoyou",
+    "url": "https://www.pkuxkx.net/wiki/newbie/haoyou",
+    "category": "人物状态",
+    "tags": [
+      "人物状态"
+    ],
+    "chunk_index": 0,
+    "total_chunks": 1,
+    "scraped_at": "2026-01-12 11:31:37",
+    "content_hash": "760578354881e6e3"
+  }
+}

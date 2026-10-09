@@ -1,0 +1,79 @@
+{
+  "id": "f04dfd3036eab298",
+  "type": "page",
+  "text": "前言警言\n\n大赌伤肝，小赌怡情。\n\n装备商店\n\n地点：临安城下瓦子，生成的装备，如果你有职业则生成你的，如果没有职业则随机，级别需求看你的级别。\n\n没给钱进不去，给了钱才能进去，入门费1000GOLD\n\n进去可以拿5件（看脸）（看人品）\n\n如果进去看见商店里没有货物不要着急，每两小时道具商店上货一次\n\n每个玩家每2小时才可以给一次钱进去",
+  "structured_content": [
+    {
+      "path": "前言警言",
+      "content": "大赌伤肝，小赌怡情。",
+      "level": 3
+    },
+    {
+      "path": "装备商店",
+      "content": "地点：临安城下瓦子，生成的装备，如果你有职业则生成你的，如果没有职业则随机，级别需求看你的级别。\n\n没给钱进不去，给了钱才能进去，入门费1000GOLD\n\n进去可以拿5件（看脸）（看人品）\n\n如果进去看见商店里没有货物不要着急，每两小时道具商店上货一次\n\n每个玩家每2小时才可以给一次钱进去",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/baodian/%E8%A3%85%E5%A4%87%E5%95%86%E5%BA%971.png?w=600&tok=c40361",
+          "alt": "",
+          "title": "",
+          "position": 517
+        },
+        {
+          "src": "/wiki/_media/baodian/%E8%A3%85%E5%A4%87%E5%95%86%E5%BA%972.png?w=600&tok=456a55",
+          "alt": "",
+          "title": "",
+          "position": 833
+        },
+        {
+          "src": "/wiki/_media/baodian/%E8%A3%85%E5%A4%87%E5%95%86%E5%BA%973.png?w=600&tok=c21dce",
+          "alt": "",
+          "title": "",
+          "position": 1113
+        },
+        {
+          "src": "/wiki/_media/baodian/%E8%A3%85%E5%A4%87%E5%95%86%E5%BA%974.png?w=800&tok=d71fcc",
+          "alt": "",
+          "title": "",
+          "position": 1393
+        },
+        {
+          "src": "/wiki/_media/baodian/%E8%A3%85%E5%A4%87%E5%95%86%E5%BA%977.png?w=600&tok=d015fe",
+          "alt": "",
+          "title": "",
+          "position": 1699
+        },
+        {
+          "src": "/wiki/_media/baodian/%E8%A3%85%E5%A4%87%E5%95%86%E5%BA%975.png?w=600&tok=ca8685",
+          "alt": "",
+          "title": "",
+          "position": 2019
+        },
+        {
+          "src": "/wiki/_media/baodian/%E8%A3%85%E5%A4%87%E5%95%86%E5%BA%976.png?w=600&tok=643581",
+          "alt": "",
+          "title": "",
+          "position": 2299
+        },
+        {
+          "src": "/wiki/_media/baodian/%E8%A3%85%E5%A4%87%E5%95%86%E5%BA%978.png?w=600&tok=c60066",
+          "alt": "",
+          "title": "",
+          "position": 2606
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "title": "baodian:shangdian",
+    "url": "https://www.pkuxkx.net/wiki/baodian/shangdian",
+    "category": "神兵宝甲",
+    "tags": [
+      "神兵宝甲"
+    ],
+    "chunk_index": 0,
+    "total_chunks": 1,
+    "scraped_at": "2026-01-12 11:36:07",
+    "content_hash": "adbaa2bf1ca95339"
+  }
+}

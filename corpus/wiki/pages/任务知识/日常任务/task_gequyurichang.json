@@ -1,0 +1,2179 @@
+{
+  "id": "6c68c36fff80df4e",
+  "type": "page",
+  "text": "区域日常任务\n\nMMORPG最经典的日常任务，大侠们记得做完了给个好评哦！\n\nPS：每个日常奖励和日常答题答对一道题的奖励差不多,和等级挂钩——dddr\n\nPPS：有些日常任务对玩家exp会有要求，具体多少我也不知道——dddr\n\n北方区域\n\n大同\n\n五虎断门刀\n\n任务接取地点：大同院落 姚伯当\n\n敌人等级：15级\n\n任务流程：\n\n直接向姚伯当打听残招，会告诉一个人名和地点，过去直接砍死就行\n\n额外的，会五虎断门刀的玩家连续完成100天后，五虎断门刀会解锁新pfm，可以试用一定时间\n\n代州\n\n代州地宫\n\n任务接取地点：代州阿育王塔内\n\n任务流程：\n\n先来到阿育王塔内，往箱子里丢七银，一次丢一银。\n\n会刷出来一个洞口，直接down下去，进入地宫。\n\n地宫内会有一个佛像，直接look佛像。\n\nlook以后会得到以下信息\n\n这个是某个房间描述的乱序排序，是你需要找到的房间。同时还有一行信息\n\n这个是暗号\n\n根据描述走到对应的房间后，直接输入暗号，会捡到一个香囊\n\n接着回到地宫内部，把香囊丢下，会刷新异兽。\n\nid here查看异兽的名称，直接开砍\n\n砍死后获得经验\n\n河北\n\n河北比武\n\n任务接取地点：河北卫州 徐冲霄\n\n任务流程：\n\n找徐冲霄打听job，会让你去河北找某人较量\n\n过去找到这个人后开始较量\n\n开砍！\n\n打完收工\n\nPS：丐帮有概率多要到1次，且丐帮做到一定次数会获得pfm通臂拳奖励，降龙掌底子+20%速度，-20%威力\n\n击退辽兵打草谷\n\n任务接取地点：河北雄州\n\n任务流程：\n\n江湖频道会提示有辽兵南下打草谷(5小时一刷新)，说明怪刷了，直接去该地点就能看见，5个左右NPC\n\n直接killall开杀\n\n打完收工\n\n河北拦截\n\n任务接取地点：河北 清风店\n\n任务流程：\n\n直接去清风店，等一会提示有人进来，yield yes进战斗拖住他，拖到他的仇家来后yield no下kill参与击杀就OK\n\n随世界时间刷新机制，两次刷新间隔20分钟左右（左右浮动5分钟），去到等一会等不到很正常。\n\n恒山\n\n恒山刻经\n\n任务接取地点：恒山纯阳宫\n\n任务流程：\n\n在恒山纯阳宫处look jing\n\n会看见一句经文和要目标地点\n\n走到目标地点，一字一字的把经文刻下来，标点符号也要刻\n\n全部完整的刻完后获得奖励\n\n额外的，有道家养生术的完成后会加半级到一级\n\n云冈石窟\n\n云冈石窟悟禅\n\n任务接取地点：云冈石窟第一窟 需要学会禅宗心法\n\n任务流程:\n\n在云冈石窟第一窟look fudiao，找到土黄色方框下面绿色方框中的描述所对应的房间（注意不是在第一窟直接linghui,而是根据描述找到对应的窟去linghui），linghui即可\n\n奖励禅宗心法加半级到一级\n\n晋阳\n\n风陵夜话\n\n任务接取地点：晋阳安渡老店 章舞戟\n\n任务流程：\n\n找章舞戟打听风陵夜话\n\n这个时候和谍报输口令一样，输入非正确答案自动失败且当天不可再完成\n\n会提示你输入任何一个相关人物的ID，推荐用小号who玩家查询玩家ID，像我这个就不一定叫hei yiren。\n\n用小号查到玩家ID\n\n正确输入后获取奖励\n\n中原区域\n\n泰安\n\n泰安找画\n\n任务接取地点：泰安东院 单伯山\n\n任务流程：\n\n向单伯山打听散佚的画卷，他会告诉你一个地点\n\n在这里\n\n钻进去会自动拾取画卷\n\n一直使用look hua juan可以依次查看画卷\n\n画卷里多副画，正确的会出现ascii两次，一个是长描述，一个是题诗（词？）——zine原话\n\n几幅画里面有一幅画是诗词的，记住旁边的表情，在剩下的画中找一样表情的，然后看地点描述是啥，去对应的房间找，一般有1-2个地方——dddr\n\n这时候有2个选项:1.直接把画卷给单伯山（如果觉得地点不好找）2.或者去找，到地点用bizhao命令，最多错2次，再多就bizhao不了了\n\n找对了会被炸飞\n\n然后直接回去找单伯山算账。\n\n砍人的收益更高，但是要打架，直接给画卷不用打架。\n\n濠州府\n\n濠州送快递\n\n任务接取地点：濠州府五湖门 桑飞虹 要求人物等级30级且门派是正派\n\n任务流程：\n\n找桑飞虹接任务\n\n到地方把快递一送\n\n回去找桑飞虹，回到后自动获得奖励\n\n全真教\n\n枣核乾坤\n\n任务接取地点：全真教 水塘\n\n任务流程：\n\n枣核丢出去后可以捡回来\n\n灵台照煞\n\n任务接取地点：全真教 升仙坊\n\n任务流程：\n\n进献一个红片开始日常（捏天珠产出）\n\n然后会告诉你几个地方，去把自己的邪念杀了\n\n长这样\n\nNPC纯copy你，玄武直接打到大道磨灭\n\n其中一个会把红片掉回来\n\n速度捡回来，别被人偷了\n\n全部杀完获得奖励\n\n襄阳\n\n郭靖邀请赵爵爷\n\n去襄阳的帅府大厅，ask guo about 送英雄帖\n\n去信阳北市，ask zhao xiaosan about 拜访赵家，根据反馈w一步后kou n,pai n，到达大厅，give tie to zhao\n\n一步步走去襄阳帅府大厅，每步间隔最少5秒以上。\n\n途中会有刺客过来杀，杀完后再走\n\n到达帅府大厅后自动获得奖励，完成任务，刺客越多奖励越高\n\n烧毁辎重\n\n任务接取地点：襄阳帅府大厅 郭靖\n\n任务流程：\n\n需要至少两个人才能完成，单人无法完成\n\nA角色先到南阳辎重营待命\n\nB角色在外面捡瓦罐，然后扔过来把守军勾引走\n\nB角色在外面拖住，不要killall\n\nA角色在里面点火\n\n烧完后跳奖励\n\nB角色killall，然后撤离\n\n如果在A角色没烧毁前，B角色杀了守军，辎重营会立马刷新守军且守军被勾引出去马上就会返回，一直持续到重启才会重置这个行为模式\n\n扬州\n\n蜡像馆日常\n\n任务开启地点：扬州蜡像馆 需要拥有自己的蜡像\n\n任务开启流程：详见https://pkuxkx.net/wiki/pkuxkx/laxiangguan#%E8%9C%A1%E5%83%8F%E9%A6%86%E6%97%A5%E5%B8%B8\n\n潼关\n\n搜寻鹅卵石\n\n任务接取地点：潼关华阴 夜月寒\n\n任务流程：\n\n去潼关镇买紫色粉末,至少买20个\n\n去潼关乱石滩挖石头\n\n挖出来后撒上粉末\n\n极大概率是普通石头\n\n独特的石头不能再撒，再撒会自动丢掉，注意\n\n挖够3个回去交任务\n\n后续：看来不少人要感谢这个骗粉的家伙，任务到好友度离友好不远后\n\n入幽谷进正屋，找到读书人，问何以解忧，这是武学家梦寐以求的功能消武学障。(只有前十名进入的有）\n\n南阳\n\n采集蛇莓\n\n任务接取地点：南阳学堂 古德\n\n任务前置流程：\n\nlook一下学童，按照提示问一下\n\n去九龙镇会刷新一个妇人\n\n然后去医馆\n\n把东西搞到手\n\n任务流程：\n\n打听帮助\n\n挖10个蛇莓送去福胜寺僧人即可完成,必须要接到任务后挖的才要，提前存的是不要的\n\n在某次挖蛇莓的时候会突然出现提示，做完后续父子相认，再把他老爸的前置任务做完，就给你救济贫民的任务了\n\n救济贫民\n\n任务接取地点：南阳学堂 古济和\n\n任务前置流程：\n\n解锁古德日活，将古德好感度刷到知己，并且完成古敬和的心事\n\n任务流程：\n\n古敬和心事\n\n任务接取地点：南阳大堂古敬和，ask gu about 心事会让你帮他做两件事\n\n先去集市货郎处买香\n\n买完去灵山道观上香给一次友好度\n\n再去乱石岗剿灭乱军拿点钢枪\n\n拿到后给古敬和点钢枪又是一次友好度\n\n两次任务古敬和的友好度就到知己了\n\n卢氏县\n\n意难平\n\n任务接取地点：卢氏县 枯草领木屋（必须学会上清快剑才能接）\n\n任务前置流程：\n\n先进一遍木屋\n\n被踢出来后会提示你去搞画\n\n去找盲画师画一副石清的画\n\n再回来进去后马上给，不然还会被踢出去\n\n直接较量是不行的，剑法skills不足700也是不行的\n\n换上清快剑就可以了\n\n任务流程：\n\n解锁前置后，每天回来切上清快剑出来直接较量就行\n\n修缮佛像\n\n任务接取地点：卢氏县 大雄殿\n\n任务流程：\n\n在大雄殿look一下佛像会提示需要修缮（NPC说需要修缮才算接到任务）\n\n去卢氏县找铁匠\n\n如果没有小锤记得买一个\n\n然后回去直接修缮\n\n有可能修的时候有恶霸来骚扰，直接送他归西\n\n修完就OK\n\n商州\n\n种核桃树\n\n任务接取地点：商州 大殿\n\n任务前置：\n\n在铁鹿禅师附近晃荡时，听到禅师说想吃家乡的核桃解锁前置\n\n去卢氏县小贩那买一个核桃回来给禅师，会加好感度（每日一次）\n\n好感度刷到友好以上后，ask all会发现解锁晨钟暮鼓选项，ask后解锁晨钟暮鼓进度\n\n在早晨和晌午这两个时间段都可以敲钟，在下午和傍晚这两个时间段都可以击鼓，每日一次\n\n敲钟\\击鼓之后不要长时间在房间内停留，房间有人的时候其他人无法敲钟\\击鼓\n\n没解锁晨钟暮鼓的话也可以敲钟击鼓，但是不计次数\n\n累积敲钟约100次左右，击鼓约100次左右后完成（运气好几十次就行，运气不好需要100多次）\n\n同时解锁种核桃树日活\n\n任务流程：\n\nlook种子可以看见要去哪里种，种多深\n\n像这个就要去卢氏县杂货铺，挖三次后种下\n\n种完就算成功\n\n泰山\n\n五色土祭天地\n\n任务接取地点：泰山 岱宗坊\n\n任务前置流程：\n\n在曲阜少昊陵捡到五色土\n\n然后去曲阜孔府，把无色土给衍圣公孔璠\n\n任务流程：\n\n分别去泰山（青色土）、恒山（黑色土）、嵩山(黄色土）、华山（红色土）、衡山(白色土)\n\n嵩山的可以在这里挖\n\n在岱宗坊南一步小贩那里买酒醴\n\n按以下顺序摆放\n\nbaifang qingse tu in east\n\n* baifang heise tu in north\n\n* baifang huangse tu in middle\n\n* baifang hongse tu in west\n\n* baifang baise tu in south</del>\n\n你将青色土放在正东方位。 baifang qingse tu in east\n\n你将黄色土放在正中方位。 baifang huangse tu in middle\n\n你将白色土放在正西方位。 baifang baise tu in west\n\n你将红色土放在正南方位。 baifang hongse tu in south\n\n你将黑色土放在正北方位。 baifang heise tu in north\n\n如果身上没有唯一性武功，邪派内功，可以学会正气拳经。正气拳经：300级以后可lian show。每日一次的lian show结束之后，当前激发的特殊内功（如果该内功wudao时能提升）就会提升当前级别小点的20%-45%，如果身上有毒，全解。(补: 需要lian到500级后, lian show才有附加的功能)\n\n中原\n\n柳家恩怨\n\n任务接取地点：中原 西厅\n\n任务前置流程：\n\n在南阳迎宾楼，找柳二打听name\n\n去中原鲁山，会发现多了一个enter的路径\n\n找柳重水打听柳二\n\n做一次宋远桥，会额外得到一个伤药\n\n回去给柳重川\n\n然后打听柳二\n\n任务流程：\n\nask 田庄纠纷\n\n得知任务地点\n\n到地点后会发现多一个随机NPC\n\n田契一给了事\n\n盟主任务(魏无双)\n\n任务接取地点：泰山 封禅台\n\n*  https://www.pkuxkx.net/wiki/pkuxkx/wulinmengzhu\n\n大别山猛兽\n\n江南区域\n\n建康府南城\n\n江南访友\n\n任务接取地点：建康南城绛云楼里面荷花池 焦公礼\n\n任务流程：\n\n找焦公礼问访友，会告诉你一个地点\n\n跟着提示一通走后会刷新太白三英\n\n三英会时聚时散，id会不一样\n\n随便一个打听访友，等一会三英就会叫杀（你确定是访友？不是讨债？）\n\n三英合体的时候是打不死的，等分开的时候才会受到伤害\n\n打完收工\n\n长沙府\n\n禹王祭拜\n\n任务开启地点：长沙禹王碑\n\n任务前置流程：\n\n找长沙文星桥老者打听帮助,有几种任务需要你帮忙\n\n第一种，失物寻找\n\n会告诉你一个地点和丢失的物品\n\n丢失的物品会在地点附近四格内的房间，到处走走\n\n第二种,找吃的\n\n想办法给他整回来，在长沙府 橘子园\n\n第三种，帮忙祭拜，在长沙府 禹王碑\n\n任务全部走完后，每天可以回来baiji\n\n任务流程：\n\n直接拜祭\n\n九龙门挖宝\n\n任务开启地点：长沙九龙派 易吉\n\n任务前置流程：\n\n需先完成禹王拜祭，获得以下消息：朱凯说道：「我听人说长沙司狱府中关押着九龙派的好汉。」\n\n直接杀到黑狱\n\n除老者外全部砍翻，战斗难度介于谍报和韩世忠之间\n\n砍翻后直接走\n\n直接去外面九龙派\n\n以后记得每天回来PY一下\n\n该任务与长沙平叛互斥，救了就不能平叛\n\n任务流程:\n\n需营救易吉且好感度达到一定程度\n\n每天过去贴贴的时候易吉会告诉你一个信息\n\n直接去对应地点按照顺序挖，最后加个scoop back就可以把宝箱挖出来\n\n多个地点同名字的话，只有一个地点会出，挖不到会提示宝箱早就被挖走了，换下一个\n\n开宝箱会得一些小奖励\n\n长沙比武\n\n任务开启地点：长沙翊武亭 周亮\n\n任务开启流程：\n\n开砍！\n\n打完收工\n\n传道授业\n\n任务开启地点：长沙爱晚亭 朱熹\n\n任务开启流程：\n\n1000级微言大义开启\n\n镇江\n\n镇江当保镖\n\n任务开启地点：镇江正殿 天虚道人\n\n敌人等级:玩家等级-12级\n\n任务开启流程：\n\n这个就是我们要保护的NPC\n\n找城内的NPC打听，不一定是哪个的\n\n不能找王老汉本人打听\n\n每个人问两遍\n\n打听到一些信息后就可以去找王老汉了\n\n开片，guard有效但不多，NPC还是能越过你打死老王\n\n保护不了也无所谓，片完回去找道长\n\n如果成功保护王老汉\n\n嘉兴\n\n韩宝驹牵马\n\n任务开启地点：嘉兴 人物exp 100K以上\n\n任务流程：同公共任务韩宝驹，详见https://pkuxkx.net/wiki/task/public#%E9%9F%A9%E5%AE%9D%E9%A9%B9\n\n衢州\n\n龙德邻包船\n\n任务开启地点：衢州码头 龙德邻\n\n任务流程：\n\n打听完会自动上船\n\n路上会有江匪打劫，全杀了\n\n到地点OUT一下自动领取奖励,如果龙德邻死了，什么奖励都没有\n\n梅岭\n\n梅岭筑城\n\n任务开启地点：梅岭古道 横浦关 副将\n\n任务前置流程：\n\n准备以下物品：80本史书（洛阳望星楼三楼、岳阳楼、扬州书肆等），80金，铁锅5个（杂货铺买），8把200+伤害的武器（数量是按修满关系算，解锁任务只需要一点点）\n\n找副将打听筑城，会要求找4个人作保，分别是\n\n望梅阁驿卒，要钱（1次给1G,80G到生死之交，某海王给cash巨亏4000G）\n\n红梅铺周大处，要书（80本到生死之交）\n\n梅岭古道范常鹊，要武器（8个武器到生死之交）\n\n禅院大观禅师，要铁锅（5个到生死之交）\n\n给完后ask作保，如果不肯就接着给东西刷好感\n\n4个人都作保后回去问副将筑城\n\n任务流程：\n\nask副将筑城\n\n在这个地点\n\n捡地上的斧锤wield上，然后zao，会掉下来花岗石，要中等大小的，能get起来，而get不起来的则是很大块的不用管\n\n回到横浦关drop下去，这里最好身上带15块左右石头，因为有些规格的不行\n\n任务后续：\n\n筑城完成10-12次后副将会告诉你将军的猫不见了\n\n然后up上楼去找将军凌寒ask 找猫，看名字还养猫，开始以为是个漂亮英姿飒爽军娘，没想到look是个大汉。。,并且这个大汉你要是没完成前置跑来找他会好感度降低，降得极低，传说有某耍剑的把凌寒打晕背到人口密集地方导致N多玩家凌寒的好感度极低。\n\n按提示去找老范问问，他会告诉你去哪找猫并且让你买猫最喜欢吃的小鱼干去引她出来\n\n这两地方看大侠你2分之1的脸黑不了，我就比较黑不是第一个地方出来。。。\n\n把猫带给凌寒任务就结束了，一次成功好感度就到生死之交了，这猫是凌寒将军的命根啊。。。。~~~~这个任务是南雄王宫的前置任务，需要凌寒好感度到生死之交才能接到，但是南雄王宫任务暂时还没开放\n\n建宁府\n\n造船\n\n建宁府的船厂，ask gongtou about 造船，会给你提示：\n\nget zaozi;get mucai;look mu cai\n\n根据工头的形状需求凿掉对应的数字\n\n完成后give mucai to gongtou\n\n别忘了drop zao zi\n\n温州府\n\n守擂\n\n任务开启地点：温州府擂台\n\n任务前置流程：\n\n在大雄宝殿处会有锦囊，捡起来交还施主就行\n\n锦囊会累积在一起，大概半小时一刷新。（目前有大米蹲着一直捡——2024.08.25）\n\n有壮士反映，昧了太多失物后直接BUSY，15分钟啥都干不了，quit都不行，有昧了一千多个的烈士被BUSY了8小时还在busy，死了才解脱–2024.09.15\n\nlook可以看见是谁丢的，直接还给施主就行\n\n还够10个解锁头衔\n\n找知府解锁任务\n\n任务流程：\n\n直接去擂台处shoulei\n\nready就开打\n\n打完可以ready继续打，NPC会越来越强\n\n差不多就下来领奖了\n\n最多守10轮\n\n晚上是不给打的，要游戏时间白天\n\n衡州\n\n金盆洗手\n\n任务开启地点：衡州后堂 刘正风\n\n任务流程：\n\n找刘府找刘正风打听\n\n然后去衡州城里找百姓要盆\n\n如果没有再找另一个百姓要\n\n在刘府大门时会有一大堆嵩山弟子埋伏\n\n全部杀掉\n\n如果不杀掉回去交盆会不收\n\n杀完后交盆\n\n铜官山\n\n营救张无忌\n\n任务开启地点：铜官山 江边 码头\n\n任务流程：\n\n路过铜官山江边时如果有提示，说明任务触发\n\n可以看见多了一个matou方向，直接进入就会触发\n\n会告诉你出现什么颜色的字时jing一下（每天任务颜色不一样），照做后即可完成\n\n袁州\n\n周子旺造反\n\n任务开启地点：袁州 周家\n\n任务流程：\n\n先在袁州干坏事，被袁州通缉\n\n然后就可以做日常了\n\n说一个人会提示要东西，找小贩买了给他\n\n无锡\n\n申息之师\n\n任务开启地点：无锡 春申密室\n\n任务前置：\n\nask 樵夫 rumors获得信息\n\n提示你look rock时如果时间不对时没有反应的，要晚上\n\n时间对了会有提示\n\n然后回去找玄云大师，按照提示做获得日晷\n\n去常州找小贩买龙衔烛\n\n晚上带齐两个物品去春申涧，照提示一步步做就可以进去春申密室\n\nlook bihua获得信息，然后回去找玄云大师解惑后开启日常\n\n任务流程：\n\n在春申密室look bihua\n\n春申涧有人的时候是不给进密室的\n\n然后会看见无锡的局部地图，有一个房间是高亮的\n\n去到那个房间huajie，把阴兵杀完，出来就完成\n\n建康府北城\n\n经幢棋局\n\n任务开启地点：建康府北城 鸡鸣寺\n\n任务流程：\n\n找知远和尚打听经幢棋局\n\n然后到石刻经幢下五子棋\n\n天台山\n\n晨行录\n\n任务开启地点：天台山 客房\n\n凌晨时刻在客房睡醒，别卡凌晨尾巴去，醒来不是凌晨就寄了\n\n回答一个克制的武功\n\n金剋木，木剋土，土剋水，水剋火，火剋金\n\n金 辟邪剑法\n\n木 太极拳\n\n水 太极拳\n\n火 降龙十八掌\n\n土 乾坤大挪移\n\n然后去始丰溪北岸采气\n\n要采很多次，一直到提示\n\n回去东大街较量冯遮西结束\n\n市口聆书\n\n任务开启地点：天台山 市口\n\n给柳快嘴一银，listen xxx听书，可听的有三段：“柳快嘴小声道：就不能听点常见的？我只知道许逊斩蛟、寒山拾得、济公斗蟋蟀。”\n\n泉州\n\n曾宅闹鬼\n\n任务开启地点：泉州 曾宅\n\n每日首次到达曾宅，曾从龙会问你\n\n去杂货铺买鸡血回来洒上去\n\n然后在泉州山门的狻猊嘴里把纸拿出来（如果没有劈碎了等刷新）\n\n去枕云亭看看桃木剑刷新没，要主动look，路过是看不见的\n\n跳起来把桃木剑拿了\n\n回去quxie会进入枯井，把鬼杀完\n\n出来自动获取奖励\n\n西北区域\n\n凉州\n\n将军心事\n\n任务接取地点：凉州将军府 徐晓\n\n任务前置:\n\n去金塔寺到处走走，找到佛像\n\n我是在这里找到的，找到后还给将军\n\n还完后将军开始装傻，我们需要再问一遍\n\n任务流程：\n\n去给定的地方，找到房间数佛像，要look一下房间才有提示，路过是没有的，有多个房间名字一样时，只算提示的房间\n\n塔尔寺\n\n发展信徒\n\n任务接取地点：塔尔寺小金瓦殿 根敦.朱巴 敌人等级:24级\n\n任务流程：\n\n找根敦朱巴打听\n\n然后去湟中找百姓布道，一定要有百姓头衔的人\n\n往死里布道\n\n一直到有人出来挑事\n\n砍翻\n\n湟中\n\n解蝎毒\n\n任务接取地点：湟中青唐小吃 度吐迷\n\n任务流程：\n\n不建议血少的人做，容易真死\n\n打听\n\n到塔尔寺的僧舍去\n\n到了以后直接sleep\n\n然后自己就会中蝎毒\n\n接着去藏医馆就会得到解药\n\n拿回去给渡吐迷就行\n\n丝绸之路\n\n夜盗密咒壁画\n\n任务接取地点：丝绸之路 双塔堡\n\n任务流程：\n\n去敦煌的摩尼殿\n\n把人杀了\n\n只要一片，多捡了没用\n\n如果是邪派，做完十次后会得知一个秘密\n\n敦煌\n\n守卫莫高窟\n\n任务接取地点：敦煌 禅房\n\n任务流程：\n\nsay 须菩提。若有善男子。善女人。初日分以恒河沙等身布施。中日分复以恒河沙等身布施。\n\n去寺后林\n\n过一个新式迷宫\n\nleap上到莫高窟\n\n等个半分钟\n\n直接开片\n\n打完收工\n\n西南区域\n\n点苍山\n\n点苍山守门\n\n任务接取地点：点苍山归藏子\n\n任务流程：\n\n详见https://pkuxkx.net/wiki/baodian/publickungfu#dokuwiki__top点苍剑法部分\n\n成都\n\n救病治人\n\n任务接取地点：成都药铺 天竺僧\n\n任务流程：\n\n有100级医术要求，如果不够会提示\n\n会告诉你病人在哪里，要什么药材，药材可以去挖，当铺，药铺,各地小摊小贩找，特别的牛黄要具有一定分解术的人杀牛（act fen）\n\n去酒楼买一个酒袋，灌满清水，把药材放进去\n\nlook可以看见酒店里面的药材\n\n放错了可以get出来\n\n全部放对后药材会融化在水里\n\n到地点后你的病人会有中毒提示\n\n直接一给完事\n\n目前的BUG：如果一个药材有多个同名字的物品，只有其中一个是对的，不收就换一下，我这里的蛇胆就有多个物品——2024.09.15 by dddr\n\n复仇\n\n任务接取地点：成都破败的驿站 张芸芸\n\n任务前置：\n\n需人物处于疲惫及以上状态\n\n到这个米仓古道\n\n睡起来就出现NPC\n\n再次look出现山贼地址\n\n到地方会有提示\n\n砍完收工\n\n任务流程：\n\n解完quest后直接看字迹就会告诉你地方，过去砍死就行\n\n渝州\n\n五福宫香火\n\n任务接取地点：渝州五福宫 道士\n\n任务流程：\n\n去渝州五福宫找道士打听\n\n然后在渝州城内找到渝州居民\n\n一定要有这个前缀的才行\n\n找到后直接quanjuan\n\n有可能失败，接着忽悠他一直忽悠到捐钱\n\n居民年纪越大，成功率越低，但是不用管，使劲忽悠就行\n\n忽悠三个后完成\n\n大树堡\n\n纪晓芙和杨逍\n\n任务接取地点：大树堡竖街 纪晓芙      敌人等级：26级\n\n任务流程：\n\n和纪晓芙打听，会告诉你一个地点，在那个房间待一会会有提示\n\n如果有多个同名房间，只有其中一个会有提示\n\nlook会获得信息\n\n给店小二获得下一步提示，让回去找纪晓芙\n\n回去后让去听雨轩\n\n等一会会跳出一堆杀手，开片！\n\n打完收工\n\n逻娑城\n\n佛心反噬\n\n任务接取地点：逻娑城 千佛廊 人物等级40以上且游戏时间是午夜\n\n任务流程：\n\n去逻娑城来福杂货铺买个酥油\n\n半夜的时候到千佛廊\n\n打赢即可\n\n青城山\n\n访将军冢归来遇险\n\n任务接取地点：青城山 裴将军墓 解锁天遁剑诀（青城派内功专属，tqt增加的心法）\n\n任务流程：\n\nhttps://pkuxkx.net/forum/thread-49988-1-1.html\n\n峨嵋山\n\n峨嵋山闹事\n\n任务接取地点：峨嵋山 持有峨嵋邀请函的情况下在峨嵋山走动（峨眉本派弟子可以直接找静道师太ask，每日2次）\n\n任务流程：\n\n有邀请函的情况下在峨嵋晃荡，会提示一个信息\n\n直接过去会有一句提示\n\n你看到豹彪子形迹可疑，鬼鬼祟祟的，应该就是巡山弟子提到的人。\n\n直接杀了\n\n杀死后加极少量经验（50-100点），若干次掉落。\n\n其他区域\n\n涂鸦日常\n\n每日一次\n\n随便一家妓院的门口墙上都会有人涂鸦，记下来自己看到的\n\n向任何一个hof list（武庙上屏风上的人物）上的npc打听风月宝鉴，他会给出当时的对应关系\n\n豪宅擒贼\n\n任务接取地点：自己买的豪宅里面（豪宅估价200W）\n\n任务流程：\n\n详见https://pkuxkx.net/wiki/baodian/xkxhouseproperty\n\n户籍日常\n\n任务开启地点：户籍所在地的守城人，可能是兵也可能是将。主题是xx任务，比如临安府任务，look 城门可以看到当地的真实地名",
+  "structured_content": [
+    {
+      "path": "区域日常任务",
+      "content": "MMORPG最经典的日常任务，大侠们记得做完了给个好评哦！\n\nPS：每个日常奖励和日常答题答对一道题的奖励差不多,和等级挂钩——dddr\n\nPPS：有些日常任务对玩家exp会有要求，具体多少我也不知道——dddr",
+      "level": 1
+    },
+    {
+      "path": "北方区域",
+      "content": "",
+      "level": 1
+    },
+    {
+      "path": "北方区域 > 大同",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "北方区域 > 大同 > 五虎断门刀",
+      "content": "任务接取地点：大同院落 姚伯当\n\n敌人等级：15级\n\n任务流程：\n\n直接向姚伯当打听残招，会告诉一个人名和地点，过去直接砍死就行\n\n额外的，会五虎断门刀的玩家连续完成100天后，五虎断门刀会解锁新pfm，可以试用一定时间",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240408-173524.png",
+          "alt": "",
+          "title": "",
+          "position": 798
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240408-173638.png",
+          "alt": "",
+          "title": "",
+          "position": 1063
+        }
+      ]
+    },
+    {
+      "path": "北方区域 > 代州",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "北方区域 > 代州 > 代州地宫",
+      "content": "任务接取地点：代州阿育王塔内\n\n任务流程：\n\n先来到阿育王塔内，往箱子里丢七银，一次丢一银。\n\n会刷出来一个洞口，直接down下去，进入地宫。\n\n地宫内会有一个佛像，直接look佛像。\n\nlook以后会得到以下信息\n\n这个是某个房间描述的乱序排序，是你需要找到的房间。同时还有一行信息\n\n这个是暗号\n\n根据描述走到对应的房间后，直接输入暗号，会捡到一个香囊\n\n接着回到地宫内部，把香囊丢下，会刷新异兽。\n\nid here查看异兽的名称，直接开砍\n\n砍死后获得经验",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240408-173939.png",
+          "alt": "",
+          "title": "",
+          "position": 1686
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240408-174047.png",
+          "alt": "",
+          "title": "",
+          "position": 2091
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240408-174111.png",
+          "alt": "",
+          "title": "",
+          "position": 2418
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240408-174148.png",
+          "alt": "",
+          "title": "",
+          "position": 2765
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240408-174315.png",
+          "alt": "",
+          "title": "",
+          "position": 3160
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240408-174431.png",
+          "alt": "",
+          "title": "",
+          "position": 3495
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240408-174515.png",
+          "alt": "",
+          "title": "",
+          "position": 3884
+        }
+      ]
+    },
+    {
+      "path": "北方区域 > 河北",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "北方区域 > 河北 > 河北比武",
+      "content": "任务接取地点：河北卫州 徐冲霄\n\n任务流程：\n\n找徐冲霄打听job，会让你去河北找某人较量\n\n过去找到这个人后开始较量\n\n开砍！\n\n打完收工\n\nPS：丐帮有概率多要到1次，且丐帮做到一定次数会获得pfm通臂拳奖励，降龙掌底子+20%速度，-20%威力",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240408-174816.png",
+          "alt": "",
+          "title": "",
+          "position": 4412
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240408-174847.png",
+          "alt": "",
+          "title": "",
+          "position": 4738
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240408-174933.png",
+          "alt": "",
+          "title": "",
+          "position": 5055
+        }
+      ]
+    },
+    {
+      "path": "北方区域 > 河北 > 击退辽兵打草谷",
+      "content": "任务接取地点：河北雄州\n\n任务流程：\n\n江湖频道会提示有辽兵南下打草谷(5小时一刷新)，说明怪刷了，直接去该地点就能看见，5个左右NPC\n\n直接killall开杀\n\n打完收工",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240408-223705.png",
+          "alt": "",
+          "title": "",
+          "position": 5699
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240408-223725.png",
+          "alt": "",
+          "title": "",
+          "position": 6024
+        }
+      ]
+    },
+    {
+      "path": "北方区域 > 河北 > 河北拦截",
+      "content": "任务接取地点：河北 清风店\n\n任务流程：\n\n直接去清风店，等一会提示有人进来，yield yes进战斗拖住他，拖到他的仇家来后yield no下kill参与击杀就OK\n\n随世界时间刷新机制，两次刷新间隔20分钟左右（左右浮动5分钟），去到等一会等不到很正常。",
+      "level": 3
+    },
+    {
+      "path": "北方区域 > 恒山",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "北方区域 > 恒山 > 恒山刻经",
+      "content": "任务接取地点：恒山纯阳宫\n\n任务流程：\n\n在恒山纯阳宫处look jing\n\n会看见一句经文和要目标地点\n\n走到目标地点，一字一字的把经文刻下来，标点符号也要刻\n\n全部完整的刻完后获得奖励\n\n额外的，有道家养生术的完成后会加半级到一级",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240409-081818.png",
+          "alt": "",
+          "title": "",
+          "position": 6926
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240409-081925.png",
+          "alt": "",
+          "title": "",
+          "position": 7328
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240409-081943.png",
+          "alt": "",
+          "title": "",
+          "position": 7654
+        }
+      ]
+    },
+    {
+      "path": "北方区域 > 云冈石窟",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "北方区域 > 云冈石窟 > 云冈石窟悟禅",
+      "content": "任务接取地点：云冈石窟第一窟 需要学会禅宗心法\n\n任务流程:\n\n在云冈石窟第一窟look fudiao，找到土黄色方框下面绿色方框中的描述所对应的房间（注意不是在第一窟直接linghui,而是根据描述找到对应的窟去linghui），linghui即可\n\n奖励禅宗心法加半级到一级",
+      "level": 3
+    },
+    {
+      "path": "北方区域 > 晋阳",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "北方区域 > 晋阳 > 风陵夜话",
+      "content": "任务接取地点：晋阳安渡老店 章舞戟\n\n任务流程：\n\n找章舞戟打听风陵夜话\n\n这个时候和谍报输口令一样，输入非正确答案自动失败且当天不可再完成\n\n会提示你输入任何一个相关人物的ID，推荐用小号who玩家查询玩家ID，像我这个就不一定叫hei yiren。\n\n用小号查到玩家ID\n\n正确输入后获取奖励",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240409-082203.png",
+          "alt": "",
+          "title": "",
+          "position": 8676
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240409-193012.png",
+          "alt": "",
+          "title": "",
+          "position": 8941
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240409-082732.png",
+          "alt": "",
+          "title": "",
+          "position": 9448
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240409-082817.png",
+          "alt": "",
+          "title": "",
+          "position": 9771
+        }
+      ]
+    },
+    {
+      "path": "中原区域",
+      "content": "",
+      "level": 1
+    },
+    {
+      "path": "中原区域 > 泰安",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "中原区域 > 泰安 > 泰安找画",
+      "content": "任务接取地点：泰安东院 单伯山\n\n任务流程：\n\n向单伯山打听散佚的画卷，他会告诉你一个地点\n\n在这里\n\n钻进去会自动拾取画卷\n\n一直使用look hua juan可以依次查看画卷\n\n画卷里多副画，正确的会出现ascii两次，一个是长描述，一个是题诗（词？）——zine原话\n\n几幅画里面有一幅画是诗词的，记住旁边的表情，在剩下的画中找一样表情的，然后看地点描述是啥，去对应的房间找，一般有1-2个地方——dddr\n\n这时候有2个选项:1.直接把画卷给单伯山（如果觉得地点不好找）2.或者去找，到地点用bizhao命令，最多错2次，再多就bizhao不了了\n\n找对了会被炸飞\n\n然后直接回去找单伯山算账。\n\n砍人的收益更高，但是要打架，直接给画卷不用打架。",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240408-214934.png",
+          "alt": "",
+          "title": "",
+          "position": 10375
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240408-215125.png",
+          "alt": "",
+          "title": "",
+          "position": 10692
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240408-215133.png",
+          "alt": "",
+          "title": "",
+          "position": 10957
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240408-215207.png",
+          "alt": "",
+          "title": "",
+          "position": 11281
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240408-215427.png",
+          "alt": "",
+          "title": "",
+          "position": 11620
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240408-220416.png",
+          "alt": "",
+          "title": "",
+          "position": 12270
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240408-220739.png",
+          "alt": "",
+          "title": "",
+          "position": 12597
+        }
+      ]
+    },
+    {
+      "path": "中原区域 > 濠州府",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "中原区域 > 濠州府 > 濠州送快递",
+      "content": "任务接取地点：濠州府五湖门 桑飞虹 要求人物等级30级且门派是正派\n\n任务流程：\n\n找桑飞虹接任务\n\n到地方把快递一送\n\n回去找桑飞虹，回到后自动获得奖励",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240418-123037.png",
+          "alt": "",
+          "title": "",
+          "position": 13208
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240418-123300.png",
+          "alt": "",
+          "title": "",
+          "position": 13530
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240418-123403.png",
+          "alt": "",
+          "title": "",
+          "position": 13860
+        }
+      ]
+    },
+    {
+      "path": "中原区域 > 全真教",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "中原区域 > 全真教 > 枣核乾坤",
+      "content": "任务接取地点：全真教 水塘\n\n任务流程：\n\n枣核丢出去后可以捡回来",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20250420-141007.png",
+          "alt": "",
+          "title": "",
+          "position": 14320
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250420-141022.png",
+          "alt": "",
+          "title": "",
+          "position": 14585
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250420-141038.png",
+          "alt": "",
+          "title": "",
+          "position": 14850
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250420-141101.png",
+          "alt": "",
+          "title": "",
+          "position": 15175
+        }
+      ]
+    },
+    {
+      "path": "中原区域 > 全真教 > 灵台照煞",
+      "content": "任务接取地点：全真教 升仙坊\n\n任务流程：\n\n进献一个红片开始日常（捏天珠产出）\n\n然后会告诉你几个地方，去把自己的邪念杀了\n\n长这样\n\nNPC纯copy你，玄武直接打到大道磨灭\n\n其中一个会把红片掉回来\n\n速度捡回来，别被人偷了\n\n全部杀完获得奖励",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20250509-122845.png",
+          "alt": "",
+          "title": "",
+          "position": 15564
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250509-123014.png",
+          "alt": "",
+          "title": "",
+          "position": 15964
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250509-123029.png",
+          "alt": "",
+          "title": "",
+          "position": 16281
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250509-123146.png",
+          "alt": "",
+          "title": "",
+          "position": 16615
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250509-123211.png",
+          "alt": "",
+          "title": "",
+          "position": 16940
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250509-123238.png",
+          "alt": "",
+          "title": "",
+          "position": 17265
+        }
+      ]
+    },
+    {
+      "path": "中原区域 > 襄阳",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "中原区域 > 襄阳 > 郭靖邀请赵爵爷",
+      "content": "去襄阳的帅府大厅，ask guo about 送英雄帖\n\n去信阳北市，ask zhao xiaosan about 拜访赵家，根据反馈w一步后kou n,pai n，到达大厅，give tie to zhao\n\n一步步走去襄阳帅府大厅，每步间隔最少5秒以上。\n\n途中会有刺客过来杀，杀完后再走\n\n到达帅府大厅后自动获得奖励，完成任务，刺客越多奖励越高",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240503-235108.png",
+          "alt": "",
+          "title": "",
+          "position": 17748
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240503-235246.png",
+          "alt": "",
+          "title": "",
+          "position": 18090
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240503-235351.png",
+          "alt": "",
+          "title": "",
+          "position": 18479
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240503-235454.png",
+          "alt": "",
+          "title": "",
+          "position": 18816
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240503-235540.png",
+          "alt": "",
+          "title": "",
+          "position": 19145
+        }
+      ]
+    },
+    {
+      "path": "中原区域 > 襄阳 > 烧毁辎重",
+      "content": "任务接取地点：襄阳帅府大厅 郭靖\n\n任务流程：\n\n需要至少两个人才能完成，单人无法完成\n\nA角色先到南阳辎重营待命\n\nB角色在外面捡瓦罐，然后扔过来把守军勾引走\n\nB角色在外面拖住，不要killall\n\nA角色在里面点火\n\n烧完后跳奖励\n\nB角色killall，然后撤离\n\n如果在A角色没烧毁前，B角色杀了守军，辎重营会立马刷新守军且守军被勾引出去马上就会返回，一直持续到重启才会重置这个行为模式",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20250309-190644.png",
+          "alt": "",
+          "title": "",
+          "position": 19679
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250309-190751.png",
+          "alt": "",
+          "title": "",
+          "position": 20075
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250309-190824.png",
+          "alt": "",
+          "title": "",
+          "position": 20464
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250309-190843.png",
+          "alt": "",
+          "title": "",
+          "position": 20729
+        }
+      ]
+    },
+    {
+      "path": "中原区域 > 扬州",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "中原区域 > 扬州 > 蜡像馆日常",
+      "content": "任务开启地点：扬州蜡像馆 需要拥有自己的蜡像\n\n任务开启流程：详见https://pkuxkx.net/wiki/pkuxkx/laxiangguan#%E8%9C%A1%E5%83%8F%E9%A6%86%E6%97%A5%E5%B8%B8",
+      "level": 3
+    },
+    {
+      "path": "中原区域 > 潼关",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "中原区域 > 潼关 > 搜寻鹅卵石",
+      "content": "任务接取地点：潼关华阴 夜月寒\n\n任务流程：\n\n去潼关镇买紫色粉末,至少买20个\n\n去潼关乱石滩挖石头\n\n挖出来后撒上粉末\n\n极大概率是普通石头\n\n独特的石头不能再撒，再撒会自动丢掉，注意\n\n挖够3个回去交任务\n\n后续：看来不少人要感谢这个骗粉的家伙，任务到好友度离友好不远后\n\n入幽谷进正屋，找到读书人，问何以解忧，这是武学家梦寐以求的功能消武学障。(只有前十名进入的有）",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20250105-145323.png",
+          "alt": "",
+          "title": "",
+          "position": 21942
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250105-145421.png",
+          "alt": "",
+          "title": "",
+          "position": 22272
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250105-145514.png",
+          "alt": "",
+          "title": "",
+          "position": 22595
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250105-145529.png",
+          "alt": "",
+          "title": "",
+          "position": 22917
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250105-145548.png",
+          "alt": "",
+          "title": "",
+          "position": 23240
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250105-145719.png",
+          "alt": "",
+          "title": "",
+          "position": 23574
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250105-150318.png",
+          "alt": "",
+          "title": "",
+          "position": 23897
+        },
+        {
+          "src": "/wiki/_media/task/%E9%87%87%E9%9B%86%E9%B9%85%E5%8D%B5%E7%9F%B31.png?w=1000&tok=8a0a96",
+          "alt": "",
+          "title": "",
+          "position": 24176
+        },
+        {
+          "src": "/wiki/_media/task/%E9%87%87%E9%9B%86%E9%B9%85%E5%8D%B5%E7%9F%B32.png?w=1000&tok=da2626",
+          "alt": "",
+          "title": "",
+          "position": 24517
+        },
+        {
+          "src": "/wiki/_media/task/%E9%87%87%E9%9B%86%E9%B9%85%E5%8D%B5%E7%9F%B33.png?w=1000&tok=43c3a1",
+          "alt": "",
+          "title": "",
+          "position": 24810
+        }
+      ]
+    },
+    {
+      "path": "中原区域 > 南阳",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "中原区域 > 南阳 > 采集蛇莓",
+      "content": "任务接取地点：南阳学堂 古德\n\n任务前置流程：\n\nlook一下学童，按照提示问一下\n\n去九龙镇会刷新一个妇人\n\n然后去医馆\n\n把东西搞到手\n\n任务流程：\n\n打听帮助\n\n挖10个蛇莓送去福胜寺僧人即可完成,必须要接到任务后挖的才要，提前存的是不要的\n\n在某次挖蛇莓的时候会突然出现提示，做完后续父子相认，再把他老爸的前置任务做完，就给你救济贫民的任务了",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20250127-204437.png",
+          "alt": "",
+          "title": "",
+          "position": 25317
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250127-204458.png",
+          "alt": "",
+          "title": "",
+          "position": 25647
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250127-204514.png",
+          "alt": "",
+          "title": "",
+          "position": 25972
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250127-204523.png",
+          "alt": "",
+          "title": "",
+          "position": 26291
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250127-204528.png",
+          "alt": "",
+          "title": "",
+          "position": 26556
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250127-204532.png",
+          "alt": "",
+          "title": "",
+          "position": 26821
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250127-204543.png",
+          "alt": "",
+          "title": "",
+          "position": 27141
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250127-204548.png",
+          "alt": "",
+          "title": "",
+          "position": 27406
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250127-204604.png",
+          "alt": "",
+          "title": "",
+          "position": 27697
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250127-204618.png",
+          "alt": "",
+          "title": "",
+          "position": 28015
+        },
+        {
+          "src": "/wiki/_media/task/%E7%88%B6%E5%AD%90%E7%9B%B8%E8%AE%A4.png?w=800&tok=fe4a04",
+          "alt": "",
+          "title": "",
+          "position": 28437
+        }
+      ]
+    },
+    {
+      "path": "中原区域 > 南阳 > 救济贫民",
+      "content": "任务接取地点：南阳学堂 古济和\n\n任务前置流程：\n\n解锁古德日活，将古德好感度刷到知己，并且完成古敬和的心事\n\n任务流程：",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20250206-200759.png",
+          "alt": "",
+          "title": "",
+          "position": 28940
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250206-200805.png",
+          "alt": "",
+          "title": "",
+          "position": 29205
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250206-200829.png",
+          "alt": "",
+          "title": "",
+          "position": 29496
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250206-200836.png",
+          "alt": "",
+          "title": "",
+          "position": 29761
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250206-200841.png",
+          "alt": "",
+          "title": "",
+          "position": 30026
+        }
+      ]
+    },
+    {
+      "path": "中原区域 > 南阳 > 古敬和心事",
+      "content": "任务接取地点：南阳大堂古敬和，ask gu about 心事会让你帮他做两件事\n\n先去集市货郎处买香\n\n买完去灵山道观上香给一次友好度\n\n再去乱石岗剿灭乱军拿点钢枪\n\n拿到后给古敬和点钢枪又是一次友好度\n\n两次任务古敬和的友好度就到知己了",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/%E5%8F%A4%E6%95%AC%E5%92%8C1.png?w=800&tok=5be474",
+          "alt": "",
+          "title": "",
+          "position": 30369
+        },
+        {
+          "src": "/wiki/_media/task/%E5%8F%A4%E6%95%AC%E5%92%8C2.png?w=800&tok=e704a7",
+          "alt": "",
+          "title": "",
+          "position": 30632
+        },
+        {
+          "src": "/wiki/_media/task/%E5%8F%A4%E6%95%AC%E5%92%8C3.png?w=800&tok=79db2d",
+          "alt": "",
+          "title": "",
+          "position": 30901
+        },
+        {
+          "src": "/wiki/_media/task/%E5%8F%A4%E6%95%AC%E5%92%8C4.png?w=800&tok=fc3786",
+          "alt": "",
+          "title": "",
+          "position": 31168
+        },
+        {
+          "src": "/wiki/_media/task/%E5%8F%A4%E6%95%AC%E5%92%8C5.png?w=800&tok=2dce4e",
+          "alt": "",
+          "title": "",
+          "position": 31439
+        },
+        {
+          "src": "/wiki/_media/task/%E5%8F%A4%E6%95%AC%E5%92%8C6.png?w=800&tok=b39f7b",
+          "alt": "",
+          "title": "",
+          "position": 31709
+        }
+      ]
+    },
+    {
+      "path": "中原区域 > 卢氏县",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "中原区域 > 卢氏县 > 意难平",
+      "content": "任务接取地点：卢氏县 枯草领木屋（必须学会上清快剑才能接）\n\n任务前置流程：\n\n先进一遍木屋\n\n被踢出来后会提示你去搞画\n\n去找盲画师画一副石清的画\n\n再回来进去后马上给，不然还会被踢出去\n\n直接较量是不行的，剑法skills不足700也是不行的\n\n换上清快剑就可以了\n\n任务流程：\n\n解锁前置后，每天回来切上清快剑出来直接较量就行",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20250127-205019.png",
+          "alt": "",
+          "title": "",
+          "position": 32266
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250127-205113.png",
+          "alt": "",
+          "title": "",
+          "position": 32653
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250127-205213.png",
+          "alt": "",
+          "title": "",
+          "position": 33061
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250127-205223.png",
+          "alt": "",
+          "title": "",
+          "position": 33384
+        }
+      ]
+    },
+    {
+      "path": "中原区域 > 卢氏县 > 修缮佛像",
+      "content": "任务接取地点：卢氏县 大雄殿\n\n任务流程：\n\n在大雄殿look一下佛像会提示需要修缮（NPC说需要修缮才算接到任务）\n\n去卢氏县找铁匠\n\n如果没有小锤记得买一个\n\n然后回去直接修缮\n\n有可能修的时候有恶霸来骚扰，直接送他归西\n\n修完就OK",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20250127-205730.png",
+          "alt": "",
+          "title": "",
+          "position": 33871
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250127-205918.png",
+          "alt": "",
+          "title": "",
+          "position": 34276
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250127-205941.png",
+          "alt": "",
+          "title": "",
+          "position": 34601
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250127-205953.png",
+          "alt": "",
+          "title": "",
+          "position": 34923
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250127-210007.png",
+          "alt": "",
+          "title": "",
+          "position": 35257
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250127-210018.png",
+          "alt": "",
+          "title": "",
+          "position": 35522
+        }
+      ]
+    },
+    {
+      "path": "中原区域 > 商州",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "中原区域 > 商州 > 种核桃树",
+      "content": "任务接取地点：商州 大殿\n\n任务前置：\n\n在铁鹿禅师附近晃荡时，听到禅师说想吃家乡的核桃解锁前置\n\n去卢氏县小贩那买一个核桃回来给禅师，会加好感度（每日一次）\n\n好感度刷到友好以上后，ask all会发现解锁晨钟暮鼓选项，ask后解锁晨钟暮鼓进度\n\n在早晨和晌午这两个时间段都可以敲钟，在下午和傍晚这两个时间段都可以击鼓，每日一次\n\n敲钟\\击鼓之后不要长时间在房间内停留，房间有人的时候其他人无法敲钟\\击鼓\n\n没解锁晨钟暮鼓的话也可以敲钟击鼓，但是不计次数\n\n累积敲钟约100次左右，击鼓约100次左右后完成（运气好几十次就行，运气不好需要100多次）\n\n同时解锁种核桃树日活\n\n任务流程：\n\nlook种子可以看见要去哪里种，种多深\n\n像这个就要去卢氏县杂货铺，挖三次后种下\n\n种完就算成功",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20250719-122031.png",
+          "alt": "",
+          "title": "",
+          "position": 36619
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250719-122232.png",
+          "alt": "",
+          "title": "",
+          "position": 36969
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250719-122347.png",
+          "alt": "",
+          "title": "",
+          "position": 37302
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250719-122526.png",
+          "alt": "",
+          "title": "",
+          "position": 37635
+        }
+      ]
+    },
+    {
+      "path": "中原区域 > 泰山",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "中原区域 > 泰山 > 五色土祭天地",
+      "content": "任务接取地点：泰山 岱宗坊\n\n任务前置流程：\n\n在曲阜少昊陵捡到五色土\n\n然后去曲阜孔府，把无色土给衍圣公孔璠\n\n任务流程：\n\n分别去泰山（青色土）、恒山（黑色土）、嵩山(黄色土）、华山（红色土）、衡山(白色土)\n\n嵩山的可以在这里挖\n\n在岱宗坊南一步小贩那里买酒醴\n\n按以下顺序摆放\n\nbaifang qingse tu in east\n\n* baifang heise tu in north\n\n* baifang huangse tu in middle\n\n* baifang hongse tu in west\n\n* baifang baise tu in south</del>\n\n你将青色土放在正东方位。 baifang qingse tu in east\n\n你将黄色土放在正中方位。 baifang huangse tu in middle\n\n你将白色土放在正西方位。 baifang baise tu in west\n\n你将红色土放在正南方位。 baifang hongse tu in south\n\n你将黑色土放在正北方位。 baifang heise tu in north\n\n如果身上没有唯一性武功，邪派内功，可以学会正气拳经。正气拳经：300级以后可lian show。每日一次的lian show结束之后，当前激发的特殊内功（如果该内功wudao时能提升）就会提升当前级别小点的20%-45%，如果身上有毒，全解。(补: 需要lian到500级后, lian show才有附加的功能)",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20250601-200730.png",
+          "alt": "",
+          "title": "",
+          "position": 38398
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250601-201050.png",
+          "alt": "",
+          "title": "",
+          "position": 38784
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250601-201424.png",
+          "alt": "",
+          "title": "",
+          "position": 39822
+        }
+      ]
+    },
+    {
+      "path": "中原区域 > 中原",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "中原区域 > 中原 > 柳家恩怨",
+      "content": "任务接取地点：中原 西厅\n\n任务前置流程：\n\n在南阳迎宾楼，找柳二打听name\n\n去中原鲁山，会发现多了一个enter的路径\n\n找柳重水打听柳二\n\n做一次宋远桥，会额外得到一个伤药\n\n回去给柳重川\n\n然后打听柳二\n\n任务流程：\n\nask 田庄纠纷\n\n得知任务地点\n\n到地点后会发现多一个随机NPC\n\n田契一给了事",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20250720-162525.png",
+          "alt": "",
+          "title": "",
+          "position": 40542
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250720-162600.png",
+          "alt": "",
+          "title": "",
+          "position": 40877
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250720-162709.png",
+          "alt": "",
+          "title": "",
+          "position": 41199
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250720-164952.png",
+          "alt": "",
+          "title": "",
+          "position": 41584
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250720-165021.png",
+          "alt": "",
+          "title": "",
+          "position": 41904
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250720-165054.png",
+          "alt": "",
+          "title": "",
+          "position": 42169
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250720-165123.png",
+          "alt": "",
+          "title": "",
+          "position": 42434
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250720-165219.png",
+          "alt": "",
+          "title": "",
+          "position": 42782
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250720-165339.png",
+          "alt": "",
+          "title": "",
+          "position": 43102
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250720-165413.png",
+          "alt": "",
+          "title": "",
+          "position": 43431
+        }
+      ]
+    },
+    {
+      "path": "中原区域 > 中原 > 盟主任务(魏无双)",
+      "content": "任务接取地点：泰山 封禅台\n\n*  https://www.pkuxkx.net/wiki/pkuxkx/wulinmengzhu",
+      "level": 3
+    },
+    {
+      "path": "中原区域 > 中原 > 大别山猛兽",
+      "content": "",
+      "level": 3
+    },
+    {
+      "path": "江南区域",
+      "content": "",
+      "level": 1
+    },
+    {
+      "path": "江南区域 > 建康府南城",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "江南区域 > 建康府南城 > 江南访友",
+      "content": "任务接取地点：建康南城绛云楼里面荷花池 焦公礼\n\n任务流程：\n\n找焦公礼问访友，会告诉你一个地点\n\n跟着提示一通走后会刷新太白三英\n\n三英会时聚时散，id会不一样\n\n随便一个打听访友，等一会三英就会叫杀（你确定是访友？不是讨债？）\n\n三英合体的时候是打不死的，等分开的时候才会受到伤害\n\n打完收工",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240424-231849.png",
+          "alt": "",
+          "title": "",
+          "position": 44497
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240424-232000.png",
+          "alt": "",
+          "title": "",
+          "position": 44826
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240424-232015.png",
+          "alt": "",
+          "title": "",
+          "position": 45091
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240424-232049.png",
+          "alt": "",
+          "title": "",
+          "position": 45419
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240424-232229.png",
+          "alt": "",
+          "title": "",
+          "position": 45892
+        }
+      ]
+    },
+    {
+      "path": "江南区域 > 长沙府",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "江南区域 > 长沙府 > 禹王祭拜",
+      "content": "任务开启地点：长沙禹王碑\n\n任务前置流程：\n\n找长沙文星桥老者打听帮助,有几种任务需要你帮忙\n\n第一种，失物寻找\n\n会告诉你一个地点和丢失的物品\n\n丢失的物品会在地点附近四格内的房间，到处走走\n\n第二种,找吃的\n\n想办法给他整回来，在长沙府 橘子园\n\n第三种，帮忙祭拜，在长沙府 禹王碑\n\n任务全部走完后，每天可以回来baiji\n\n任务流程：\n\n直接拜祭",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240425-003928.png",
+          "alt": "",
+          "title": "",
+          "position": 46482
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240425-004052.png",
+          "alt": "",
+          "title": "",
+          "position": 46881
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240425-004150.png",
+          "alt": "",
+          "title": "",
+          "position": 47146
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240425-004446.png",
+          "alt": "",
+          "title": "",
+          "position": 47467
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240425-004535.png",
+          "alt": "",
+          "title": "",
+          "position": 47798
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240425-005007.png",
+          "alt": "",
+          "title": "",
+          "position": 48129
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240425-005440.png",
+          "alt": "",
+          "title": "",
+          "position": 48394
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240426-000737.png",
+          "alt": "",
+          "title": "",
+          "position": 48753
+        }
+      ]
+    },
+    {
+      "path": "江南区域 > 长沙府 > 九龙门挖宝",
+      "content": "任务开启地点：长沙九龙派 易吉\n\n任务前置流程：\n\n需先完成禹王拜祭，获得以下消息：朱凯说道：「我听人说长沙司狱府中关押着九龙派的好汉。」\n\n直接杀到黑狱\n\n除老者外全部砍翻，战斗难度介于谍报和韩世忠之间\n\n砍翻后直接走\n\n直接去外面九龙派\n\n以后记得每天回来PY一下\n\n该任务与长沙平叛互斥，救了就不能平叛\n\n任务流程:\n\n需营救易吉且好感度达到一定程度\n\n每天过去贴贴的时候易吉会告诉你一个信息\n\n直接去对应地点按照顺序挖，最后加个scoop back就可以把宝箱挖出来\n\n多个地点同名字的话，只有一个地点会出，挖不到会提示宝箱早就被挖走了，换下一个\n\n开宝箱会得一些小奖励",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240425-010837.png",
+          "alt": "",
+          "title": "",
+          "position": 49347
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240425-010949.png",
+          "alt": "",
+          "title": "",
+          "position": 49739
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240425-011019.png",
+          "alt": "",
+          "title": "",
+          "position": 50061
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240426-000938.png",
+          "alt": "",
+          "title": "",
+          "position": 50387
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240602-221223.png",
+          "alt": "",
+          "title": "",
+          "position": 50877
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240602-221321.png",
+          "alt": "",
+          "title": "",
+          "position": 51314
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240602-221339.png",
+          "alt": "",
+          "title": "",
+          "position": 51638
+        }
+      ]
+    },
+    {
+      "path": "江南区域 > 长沙府 > 长沙比武",
+      "content": "任务开启地点：长沙翊武亭 周亮\n\n任务开启流程：\n\n开砍！\n\n打完收工",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240425-011925.png",
+          "alt": "",
+          "title": "",
+          "position": 52030
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240425-011952.png",
+          "alt": "",
+          "title": "",
+          "position": 52400
+        }
+      ]
+    },
+    {
+      "path": "江南区域 > 长沙府 > 传道授业",
+      "content": "任务开启地点：长沙爱晚亭 朱熹\n\n任务开启流程：\n\n1000级微言大义开启",
+      "level": 3
+    },
+    {
+      "path": "江南区域 > 镇江",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "江南区域 > 镇江 > 镇江当保镖",
+      "content": "任务开启地点：镇江正殿 天虚道人\n\n敌人等级:玩家等级-12级\n\n任务开启流程：\n\n这个就是我们要保护的NPC\n\n找城内的NPC打听，不一定是哪个的\n\n不能找王老汉本人打听\n\n每个人问两遍\n\n打听到一些信息后就可以去找王老汉了\n\n开片，guard有效但不多，NPC还是能越过你打死老王\n\n保护不了也无所谓，片完回去找道长\n\n如果成功保护王老汉",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240428-141505.png",
+          "alt": "",
+          "title": "",
+          "position": 53048
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240428-141540.png",
+          "alt": "",
+          "title": "",
+          "position": 53375
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240428-150004.png",
+          "alt": "",
+          "title": "",
+          "position": 53706
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240428-150218.png",
+          "alt": "",
+          "title": "",
+          "position": 54030
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240429-002053.png",
+          "alt": "",
+          "title": "",
+          "position": 54350
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240429-002131.png",
+          "alt": "",
+          "title": "",
+          "position": 54681
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240429-002209.png",
+          "alt": "",
+          "title": "",
+          "position": 55022
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240429-002242.png",
+          "alt": "",
+          "title": "",
+          "position": 55352
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240501-233809.png",
+          "alt": "",
+          "title": "",
+          "position": 55675
+        }
+      ]
+    },
+    {
+      "path": "江南区域 > 嘉兴",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "江南区域 > 嘉兴 > 韩宝驹牵马",
+      "content": "任务开启地点：嘉兴 人物exp 100K以上\n\n任务流程：同公共任务韩宝驹，详见https://pkuxkx.net/wiki/task/public#%E9%9F%A9%E5%AE%9D%E9%A9%B9",
+      "level": 3
+    },
+    {
+      "path": "江南区域 > 衢州",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "江南区域 > 衢州 > 龙德邻包船",
+      "content": "任务开启地点：衢州码头 龙德邻\n\n任务流程：\n\n打听完会自动上船\n\n路上会有江匪打劫，全杀了\n\n到地点OUT一下自动领取奖励,如果龙德邻死了，什么奖励都没有",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240821-192859.png",
+          "alt": "",
+          "title": "",
+          "position": 56591
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240821-192923.png",
+          "alt": "",
+          "title": "",
+          "position": 56913
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240821-192945.png",
+          "alt": "",
+          "title": "",
+          "position": 57178
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240821-193012.png",
+          "alt": "",
+          "title": "",
+          "position": 57504
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240821-193023.png",
+          "alt": "",
+          "title": "",
+          "position": 57769
+        }
+      ]
+    },
+    {
+      "path": "江南区域 > 梅岭",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "江南区域 > 梅岭 > 梅岭筑城",
+      "content": "任务开启地点：梅岭古道 横浦关 副将\n\n任务前置流程：\n\n准备以下物品：80本史书（洛阳望星楼三楼、岳阳楼、扬州书肆等），80金，铁锅5个（杂货铺买），8把200+伤害的武器（数量是按修满关系算，解锁任务只需要一点点）\n\n找副将打听筑城，会要求找4个人作保，分别是\n\n望梅阁驿卒，要钱（1次给1G,80G到生死之交，某海王给cash巨亏4000G）\n\n红梅铺周大处，要书（80本到生死之交）\n\n梅岭古道范常鹊，要武器（8个武器到生死之交）\n\n禅院大观禅师，要铁锅（5个到生死之交）\n\n给完后ask作保，如果不肯就接着给东西刷好感\n\n4个人都作保后回去问副将筑城\n\n任务流程：\n\nask副将筑城\n\n在这个地点\n\n捡地上的斧锤wield上，然后zao，会掉下来花岗石，要中等大小的，能get起来，而get不起来的则是很大块的不用管\n\n回到横浦关drop下去，这里最好身上带15块左右石头，因为有些规格的不行\n\n任务后续：\n\n筑城完成10-12次后副将会告诉你将军的猫不见了\n\n然后up上楼去找将军凌寒ask 找猫，看名字还养猫，开始以为是个漂亮英姿飒爽军娘，没想到look是个大汉。。,并且这个大汉你要是没完成前置跑来找他会好感度降低，降得极低，传说有某耍剑的把凌寒打晕背到人口密集地方导致N多玩家凌寒的好感度极低。\n\n按提示去找老范问问，他会告诉你去哪找猫并且让你买猫最喜欢吃的小鱼干去引她出来\n\n这两地方看大侠你2分之1的脸黑不了，我就比较黑不是第一个地方出来。。。\n\n把猫带给凌寒任务就结束了，一次成功好感度就到生死之交了，这猫是凌寒将军的命根啊。。。。~~~~这个任务是南雄王宫的前置任务，需要凌寒好感度到生死之交才能接到，但是南雄王宫任务暂时还没开放",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240821-220323.png",
+          "alt": "",
+          "title": "",
+          "position": 59078
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240821-220506.png",
+          "alt": "",
+          "title": "",
+          "position": 59534
+        },
+        {
+          "src": "/wiki/_media/task/%E5%87%8C%E5%AF%92%E6%89%BE%E7%8C%AB1.png?w=1000&tok=59e55c",
+          "alt": "",
+          "title": "",
+          "position": 59869
+        },
+        {
+          "src": "/wiki/_media/task/%E5%87%8C%E5%AF%92%E6%89%BE%E7%8C%AB2.png?w=1000&tok=1af340",
+          "alt": "",
+          "title": "",
+          "position": 60322
+        },
+        {
+          "src": "/wiki/_media/task/%E5%87%8C%E5%AF%92%E6%89%BE%E7%8C%AB3.png?w=1000&tok=64a279",
+          "alt": "",
+          "title": "",
+          "position": 60693
+        },
+        {
+          "src": "/wiki/_media/task/%E5%87%8C%E5%AF%92%E6%89%BE%E7%8C%AB4.png?w=1000&tok=597ce6",
+          "alt": "",
+          "title": "",
+          "position": 61061
+        },
+        {
+          "src": "/wiki/_media/task/%E5%87%8C%E5%AF%92%E6%89%BE%E7%8C%AB5.png?w=1000&tok=07864a",
+          "alt": "",
+          "title": "",
+          "position": 61487
+        },
+        {
+          "src": "/wiki/_media/task/%E5%87%8C%E5%AF%92%E5%A5%BD%E6%84%9F%E5%BA%A6.png?w=1000&tok=593804",
+          "alt": "",
+          "title": "",
+          "position": 61760
+        }
+      ]
+    },
+    {
+      "path": "江南区域 > 建宁府",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "江南区域 > 建宁府 > 造船",
+      "content": "建宁府的船厂，ask gongtou about 造船，会给你提示：\n\nget zaozi;get mucai;look mu cai\n\n根据工头的形状需求凿掉对应的数字\n\n完成后give mucai to gongtou\n\n别忘了drop zao zi",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240826-181210.png",
+          "alt": "",
+          "title": "",
+          "position": 62221
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240826-181342.png",
+          "alt": "",
+          "title": "",
+          "position": 62521
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240826-181422.png",
+          "alt": "",
+          "title": "",
+          "position": 62771
+        }
+      ]
+    },
+    {
+      "path": "江南区域 > 温州府",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "江南区域 > 温州府 > 守擂",
+      "content": "任务开启地点：温州府擂台\n\n任务前置流程：\n\n在大雄宝殿处会有锦囊，捡起来交还施主就行\n\n锦囊会累积在一起，大概半小时一刷新。（目前有大米蹲着一直捡——2024.08.25）\n\n有壮士反映，昧了太多失物后直接BUSY，15分钟啥都干不了，quit都不行，有昧了一千多个的烈士被BUSY了8小时还在busy，死了才解脱–2024.09.15\n\nlook可以看见是谁丢的，直接还给施主就行\n\n还够10个解锁头衔\n\n找知府解锁任务\n\n任务流程：\n\n直接去擂台处shoulei\n\nready就开打\n\n打完可以ready继续打，NPC会越来越强\n\n差不多就下来领奖了\n\n最多守10轮\n\n晚上是不给打的，要游戏时间白天",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240825-123114.png",
+          "alt": "",
+          "title": "",
+          "position": 63284
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240825-123236.png",
+          "alt": "",
+          "title": "",
+          "position": 63769
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240825-123336.png",
+          "alt": "",
+          "title": "",
+          "position": 64162
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240825-123356.png",
+          "alt": "",
+          "title": "",
+          "position": 64483
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240825-123532.png",
+          "alt": "",
+          "title": "",
+          "position": 64836
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240825-123542.png",
+          "alt": "",
+          "title": "",
+          "position": 65158
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240825-123822.png",
+          "alt": "",
+          "title": "",
+          "position": 65493
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240825-123843.png",
+          "alt": "",
+          "title": "",
+          "position": 65758
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240826-131656.png",
+          "alt": "",
+          "title": "",
+          "position": 66136
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240825-123744.png",
+          "alt": "",
+          "title": "",
+          "position": 66401
+        }
+      ]
+    },
+    {
+      "path": "江南区域 > 衡州",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "江南区域 > 衡州 > 金盆洗手",
+      "content": "任务开启地点：衡州后堂 刘正风\n\n任务流程：\n\n找刘府找刘正风打听\n\n然后去衡州城里找百姓要盆\n\n如果没有再找另一个百姓要\n\n在刘府大门时会有一大堆嵩山弟子埋伏\n\n全部杀掉\n\n如果不杀掉回去交盆会不收\n\n杀完后交盆",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20241007-151600.png",
+          "alt": "",
+          "title": "",
+          "position": 66983
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20241007-151625.png",
+          "alt": "",
+          "title": "",
+          "position": 67309
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20241007-151647.png",
+          "alt": "",
+          "title": "",
+          "position": 67635
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20241007-151722.png",
+          "alt": "",
+          "title": "",
+          "position": 67966
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20241007-151754.png",
+          "alt": "",
+          "title": "",
+          "position": 68345
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20241007-151816.png",
+          "alt": "",
+          "title": "",
+          "position": 68664
+        }
+      ]
+    },
+    {
+      "path": "江南区域 > 铜官山",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "江南区域 > 铜官山 > 营救张无忌",
+      "content": "任务开启地点：铜官山 江边 码头\n\n任务流程：\n\n路过铜官山江边时如果有提示，说明任务触发\n\n可以看见多了一个matou方向，直接进入就会触发\n\n会告诉你出现什么颜色的字时jing一下（每天任务颜色不一样），照做后即可完成",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20250416-191810.png",
+          "alt": "",
+          "title": "",
+          "position": 69198
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250416-191834.png",
+          "alt": "",
+          "title": "",
+          "position": 69463
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250416-191911.png",
+          "alt": "",
+          "title": "",
+          "position": 69801
+        }
+      ]
+    },
+    {
+      "path": "江南区域 > 袁州",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "江南区域 > 袁州 > 周子旺造反",
+      "content": "任务开启地点：袁州 周家\n\n任务流程：\n\n先在袁州干坏事，被袁州通缉\n\n然后就可以做日常了\n\n说一个人会提示要东西，找小贩买了给他",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20250421-233729.png",
+          "alt": "",
+          "title": "",
+          "position": 70409
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250421-233744.png",
+          "alt": "",
+          "title": "",
+          "position": 70732
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250421-233806.png",
+          "alt": "",
+          "title": "",
+          "position": 70997
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250421-233945.png",
+          "alt": "",
+          "title": "",
+          "position": 71329
+        }
+      ]
+    },
+    {
+      "path": "江南区域 > 无锡",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "江南区域 > 无锡 > 申息之师",
+      "content": "任务开启地点：无锡 春申密室\n\n任务前置：\n\nask 樵夫 rumors获得信息\n\n提示你look rock时如果时间不对时没有反应的，要晚上\n\n时间对了会有提示\n\n然后回去找玄云大师，按照提示做获得日晷\n\n去常州找小贩买龙衔烛\n\n晚上带齐两个物品去春申涧，照提示一步步做就可以进去春申密室\n\nlook bihua获得信息，然后回去找玄云大师解惑后开启日常\n\n任务流程：\n\n在春申密室look bihua\n\n春申涧有人的时候是不给进密室的\n\n然后会看见无锡的局部地图，有一个房间是高亮的\n\n去到那个房间huajie，把阴兵杀完，出来就完成",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20250517-112625.png",
+          "alt": "",
+          "title": "",
+          "position": 71788
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250517-112727.png",
+          "alt": "",
+          "title": "",
+          "position": 72254
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250517-113045.png",
+          "alt": "",
+          "title": "",
+          "position": 72958
+        }
+      ]
+    },
+    {
+      "path": "江南区域 > 建康府北城",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "江南区域 > 建康府北城 > 经幢棋局",
+      "content": "任务开启地点：建康府北城 鸡鸣寺\n\n任务流程：\n\n找知远和尚打听经幢棋局\n\n然后到石刻经幢下五子棋",
+      "level": 3
+    },
+    {
+      "path": "江南区域 > 天台山",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "江南区域 > 天台山 > 晨行录",
+      "content": "任务开启地点：天台山 客房\n\n凌晨时刻在客房睡醒，别卡凌晨尾巴去，醒来不是凌晨就寄了\n\n回答一个克制的武功\n\n金剋木，木剋土，土剋水，水剋火，火剋金\n\n金 辟邪剑法\n\n木 太极拳\n\n水 太极拳\n\n火 降龙十八掌\n\n土 乾坤大挪移\n\n然后去始丰溪北岸采气\n\n要采很多次，一直到提示\n\n回去东大街较量冯遮西结束",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20250727-114233.png",
+          "alt": "",
+          "title": "",
+          "position": 73943
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250727-114252.png",
+          "alt": "",
+          "title": "",
+          "position": 74208
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250727-114303.png",
+          "alt": "",
+          "title": "",
+          "position": 74473
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250727-114428.png",
+          "alt": "",
+          "title": "",
+          "position": 75140
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250727-114506.png",
+          "alt": "",
+          "title": "",
+          "position": 75464
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250727-114525.png",
+          "alt": "",
+          "title": "",
+          "position": 75789
+        }
+      ]
+    },
+    {
+      "path": "江南区域 > 天台山 > 市口聆书",
+      "content": "任务开启地点：天台山 市口\n\n给柳快嘴一银，listen xxx听书，可听的有三段：“柳快嘴小声道：就不能听点常见的？我只知道许逊斩蛟、寒山拾得、济公斗蟋蟀。”",
+      "level": 3
+    },
+    {
+      "path": "江南区域 > 泉州",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "江南区域 > 泉州 > 曾宅闹鬼",
+      "content": "任务开启地点：泉州 曾宅\n\n每日首次到达曾宅，曾从龙会问你\n\n去杂货铺买鸡血回来洒上去\n\n然后在泉州山门的狻猊嘴里把纸拿出来（如果没有劈碎了等刷新）\n\n去枕云亭看看桃木剑刷新没，要主动look，路过是看不见的\n\n跳起来把桃木剑拿了\n\n回去quxie会进入枯井，把鬼杀完\n\n出来自动获取奖励",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20250728-102009.png",
+          "alt": "",
+          "title": "",
+          "position": 76578
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250728-102039.png",
+          "alt": "",
+          "title": "",
+          "position": 76904
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250728-102120.png",
+          "alt": "",
+          "title": "",
+          "position": 77247
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250728-102227.png",
+          "alt": "",
+          "title": "",
+          "position": 77589
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250728-102315.png",
+          "alt": "",
+          "title": "",
+          "position": 77854
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250728-102345.png",
+          "alt": "",
+          "title": "",
+          "position": 78177
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250728-102421.png",
+          "alt": "",
+          "title": "",
+          "position": 78565
+        }
+      ]
+    },
+    {
+      "path": "西北区域",
+      "content": "",
+      "level": 1
+    },
+    {
+      "path": "西北区域 > 凉州",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "西北区域 > 凉州 > 将军心事",
+      "content": "任务接取地点：凉州将军府 徐晓\n\n任务前置:\n\n去金塔寺到处走走，找到佛像\n\n我是在这里找到的，找到后还给将军\n\n还完后将军开始装傻，我们需要再问一遍\n\n任务流程：\n\n去给定的地方，找到房间数佛像，要look一下房间才有提示，路过是没有的，有多个房间名字一样时，只算提示的房间",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240908-121730.png",
+          "alt": "",
+          "title": "",
+          "position": 79099
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240908-122046.png",
+          "alt": "",
+          "title": "",
+          "position": 79426
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240908-122136.png",
+          "alt": "",
+          "title": "",
+          "position": 79756
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240908-122208.png",
+          "alt": "",
+          "title": "",
+          "position": 80114
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240908-122256.png",
+          "alt": "",
+          "title": "",
+          "position": 80482
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240908-122321.png",
+          "alt": "",
+          "title": "",
+          "position": 80747
+        }
+      ]
+    },
+    {
+      "path": "西北区域 > 塔尔寺",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "西北区域 > 塔尔寺 > 发展信徒",
+      "content": "任务接取地点：塔尔寺小金瓦殿 根敦.朱巴 敌人等级:24级\n\n任务流程：\n\n找根敦朱巴打听\n\n然后去湟中找百姓布道，一定要有百姓头衔的人\n\n往死里布道\n\n一直到有人出来挑事\n\n砍翻",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20241006-105825.png",
+          "alt": "",
+          "title": "",
+          "position": 81279
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20241006-105902.png",
+          "alt": "",
+          "title": "",
+          "position": 81614
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20241006-105936.png",
+          "alt": "",
+          "title": "",
+          "position": 81933
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20241006-110004.png",
+          "alt": "",
+          "title": "",
+          "position": 82256
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20241006-110023.png",
+          "alt": "",
+          "title": "",
+          "position": 82572
+        }
+      ]
+    },
+    {
+      "path": "西北区域 > 湟中",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "西北区域 > 湟中 > 解蝎毒",
+      "content": "任务接取地点：湟中青唐小吃 度吐迷\n\n任务流程：\n\n不建议血少的人做，容易真死\n\n打听\n\n到塔尔寺的僧舍去\n\n到了以后直接sleep\n\n然后自己就会中蝎毒\n\n接着去藏医馆就会得到解药\n\n拿回去给渡吐迷就行",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20241006-110256.png",
+          "alt": "",
+          "title": "",
+          "position": 83145
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20241010-002644.png",
+          "alt": "",
+          "title": "",
+          "position": 83467
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20241010-002707.png",
+          "alt": "",
+          "title": "",
+          "position": 83792
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20241010-002823.png",
+          "alt": "",
+          "title": "",
+          "position": 84176
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20241010-002902.png",
+          "alt": "",
+          "title": "",
+          "position": 84499
+        }
+      ]
+    },
+    {
+      "path": "西北区域 > 丝绸之路",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "西北区域 > 丝绸之路 > 夜盗密咒壁画",
+      "content": "任务接取地点：丝绸之路 双塔堡\n\n任务流程：\n\n去敦煌的摩尼殿\n\n把人杀了\n\n只要一片，多捡了没用\n\n如果是邪派，做完十次后会得知一个秘密",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20250615-114957.png",
+          "alt": "",
+          "title": "",
+          "position": 84967
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250615-115719.png",
+          "alt": "",
+          "title": "",
+          "position": 85288
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250615-115755.png",
+          "alt": "",
+          "title": "",
+          "position": 85606
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250615-115833.png",
+          "alt": "",
+          "title": "",
+          "position": 85871
+        }
+      ]
+    },
+    {
+      "path": "西北区域 > 敦煌",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "西北区域 > 敦煌 > 守卫莫高窟",
+      "content": "任务接取地点：敦煌 禅房\n\n任务流程：\n\nsay 须菩提。若有善男子。善女人。初日分以恒河沙等身布施。中日分复以恒河沙等身布施。\n\n去寺后林\n\n过一个新式迷宫\n\nleap上到莫高窟\n\n等个半分钟\n\n直接开片\n\n打完收工",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20250615-120502.png",
+          "alt": "",
+          "title": "",
+          "position": 86456
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250615-120605.png",
+          "alt": "",
+          "title": "",
+          "position": 86866
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250615-120735.png",
+          "alt": "",
+          "title": "",
+          "position": 87187
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250615-120802.png",
+          "alt": "",
+          "title": "",
+          "position": 87564
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250615-120816.png",
+          "alt": "",
+          "title": "",
+          "position": 87829
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250615-120836.png",
+          "alt": "",
+          "title": "",
+          "position": 88147
+        }
+      ]
+    },
+    {
+      "path": "西南区域",
+      "content": "",
+      "level": 1
+    },
+    {
+      "path": "西南区域 > 点苍山",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "西南区域 > 点苍山 > 点苍山守门",
+      "content": "任务接取地点：点苍山归藏子\n\n任务流程：\n\n详见https://pkuxkx.net/wiki/baodian/publickungfu#dokuwiki__top点苍剑法部分",
+      "level": 3
+    },
+    {
+      "path": "西南区域 > 成都",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "西南区域 > 成都 > 救病治人",
+      "content": "任务接取地点：成都药铺 天竺僧\n\n任务流程：\n\n有100级医术要求，如果不够会提示\n\n会告诉你病人在哪里，要什么药材，药材可以去挖，当铺，药铺,各地小摊小贩找，特别的牛黄要具有一定分解术的人杀牛（act fen）\n\n去酒楼买一个酒袋，灌满清水，把药材放进去\n\nlook可以看见酒店里面的药材\n\n放错了可以get出来\n\n全部放对后药材会融化在水里\n\n到地点后你的病人会有中毒提示\n\n直接一给完事\n\n目前的BUG：如果一个药材有多个同名字的物品，只有其中一个是对的，不收就换一下，我这里的蛇胆就有多个物品——2024.09.15 by dddr",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240914-212603.png",
+          "alt": "",
+          "title": "",
+          "position": 89230
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240915-012224.png",
+          "alt": "",
+          "title": "",
+          "position": 89495
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240915-012440.png",
+          "alt": "",
+          "title": "",
+          "position": 89941
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240915-012510.png",
+          "alt": "",
+          "title": "",
+          "position": 90270
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240915-012549.png",
+          "alt": "",
+          "title": "",
+          "position": 90719
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240915-012556.png",
+          "alt": "",
+          "title": "",
+          "position": 91039
+        }
+      ]
+    },
+    {
+      "path": "西南区域 > 成都 > 复仇",
+      "content": "任务接取地点：成都破败的驿站 张芸芸\n\n任务前置：\n\n需人物处于疲惫及以上状态\n\n到这个米仓古道\n\n睡起来就出现NPC\n\n再次look出现山贼地址\n\n到地方会有提示\n\n砍完收工\n\n任务流程：\n\n解完quest后直接看字迹就会告诉你地方，过去砍死就行",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20250302-123416.png",
+          "alt": "",
+          "title": "",
+          "position": 91610
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250302-123437.png",
+          "alt": "",
+          "title": "",
+          "position": 91931
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250302-123449.png",
+          "alt": "",
+          "title": "",
+          "position": 92196
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250302-123509.png",
+          "alt": "",
+          "title": "",
+          "position": 92519
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250302-123527.png",
+          "alt": "",
+          "title": "",
+          "position": 92784
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250302-123545.png",
+          "alt": "",
+          "title": "",
+          "position": 93110
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250302-123620.png",
+          "alt": "",
+          "title": "",
+          "position": 93431
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250302-123634.png",
+          "alt": "",
+          "title": "",
+          "position": 93696
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250304-162001.png",
+          "alt": "",
+          "title": "",
+          "position": 94040
+        }
+      ]
+    },
+    {
+      "path": "西南区域 > 渝州",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "西南区域 > 渝州 > 五福宫香火",
+      "content": "任务接取地点：渝州五福宫 道士\n\n任务流程：\n\n去渝州五福宫找道士打听\n\n然后在渝州城内找到渝州居民\n\n一定要有这个前缀的才行\n\n找到后直接quanjuan\n\n有可能失败，接着忽悠他一直忽悠到捐钱\n\n居民年纪越大，成功率越低，但是不用管，使劲忽悠就行\n\n忽悠三个后完成",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20240915-200549.png",
+          "alt": "",
+          "title": "",
+          "position": 94639
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240915-200630.png",
+          "alt": "",
+          "title": "",
+          "position": 94966
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240915-200705.png",
+          "alt": "",
+          "title": "",
+          "position": 95353
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240915-200911.png",
+          "alt": "",
+          "title": "",
+          "position": 95685
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20240915-201004.png",
+          "alt": "",
+          "title": "",
+          "position": 96080
+        }
+      ]
+    },
+    {
+      "path": "西南区域 > 大树堡",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "西南区域 > 大树堡 > 纪晓芙和杨逍",
+      "content": "任务接取地点：大树堡竖街 纪晓芙      敌人等级：26级\n\n任务流程：\n\n和纪晓芙打听，会告诉你一个地点，在那个房间待一会会有提示\n\n如果有多个同名房间，只有其中一个会有提示\n\nlook会获得信息\n\n给店小二获得下一步提示，让回去找纪晓芙\n\n回去后让去听雨轩\n\n等一会会跳出一堆杀手，开片！\n\n打完收工",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20251021-183548.png",
+          "alt": "",
+          "title": "",
+          "position": 96563
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20251021-183638.png",
+          "alt": "",
+          "title": "",
+          "position": 96905
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20251021-183731.png",
+          "alt": "",
+          "title": "",
+          "position": 97239
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20251021-183827.png",
+          "alt": "",
+          "title": "",
+          "position": 97562
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20251021-184141.png",
+          "alt": "",
+          "title": "",
+          "position": 97895
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20251021-184215.png",
+          "alt": "",
+          "title": "",
+          "position": 98217
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20251021-184337.png",
+          "alt": "",
+          "title": "",
+          "position": 98545
+        }
+      ]
+    },
+    {
+      "path": "西南区域 > 逻娑城",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "西南区域 > 逻娑城 > 佛心反噬",
+      "content": "任务接取地点：逻娑城 千佛廊 人物等级40以上且游戏时间是午夜\n\n任务流程：\n\n去逻娑城来福杂货铺买个酥油\n\n半夜的时候到千佛廊\n\n打赢即可",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20250420-124904.png",
+          "alt": "",
+          "title": "",
+          "position": 99198
+        },
+        {
+          "src": "/wiki/_media/task/pasted/20250420-124928.png",
+          "alt": "",
+          "title": "",
+          "position": 99516
+        }
+      ]
+    },
+    {
+      "path": "西南区域 > 青城山",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "西南区域 > 青城山 > 访将军冢归来遇险",
+      "content": "任务接取地点：青城山 裴将军墓 解锁天遁剑诀（青城派内功专属，tqt增加的心法）\n\n任务流程：\n\nhttps://pkuxkx.net/forum/thread-49988-1-1.html",
+      "level": 3
+    },
+    {
+      "path": "西南区域 > 峨嵋山",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "西南区域 > 峨嵋山 > 峨嵋山闹事",
+      "content": "任务接取地点：峨嵋山 持有峨嵋邀请函的情况下在峨嵋山走动（峨眉本派弟子可以直接找静道师太ask，每日2次）\n\n任务流程：\n\n有邀请函的情况下在峨嵋晃荡，会提示一个信息\n\n直接过去会有一句提示\n\n你看到豹彪子形迹可疑，鬼鬼祟祟的，应该就是巡山弟子提到的人。\n\n直接杀了\n\n杀死后加极少量经验（50-100点），若干次掉落。",
+      "level": 3,
+      "images": [
+        {
+          "src": "/wiki/_media/task/pasted/20250728-003833.png",
+          "alt": "",
+          "title": "",
+          "position": 100570
+        }
+      ]
+    },
+    {
+      "path": "其他区域",
+      "content": "",
+      "level": 1
+    },
+    {
+      "path": "其他区域 > 涂鸦日常",
+      "content": "每日一次\n\n随便一家妓院的门口墙上都会有人涂鸦，记下来自己看到的\n\n向任何一个hof list（武庙上屏风上的人物）上的npc打听风月宝鉴，他会给出当时的对应关系",
+      "level": 3
+    },
+    {
+      "path": "其他区域 > 豪宅擒贼",
+      "content": "任务接取地点：自己买的豪宅里面（豪宅估价200W）\n\n任务流程：\n\n详见https://pkuxkx.net/wiki/baodian/xkxhouseproperty",
+      "level": 3
+    },
+    {
+      "path": "其他区域 > 户籍日常",
+      "content": "任务开启地点：户籍所在地的守城人，可能是兵也可能是将。主题是xx任务，比如临安府任务，look 城门可以看到当地的真实地名",
+      "level": 3
+    }
+  ],
+  "metadata": {
+    "title": "task:gequyurichang",
+    "url": "https://www.pkuxkx.net/wiki/task/gequyurichang",
+    "category": "任务知识/日常任务",
+    "tags": [
+      "任务知识/日常任务"
+    ],
+    "chunk_index": 0,
+    "total_chunks": 1,
+    "scraped_at": "2026-01-12 11:34:49",
+    "content_hash": "9bd1d96add375cad"
+  }
+}

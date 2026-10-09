@@ -1,0 +1,479 @@
+{
+  "id": "1f5800fee4ec2488",
+  "type": "page",
+  "text": "命令一览\n\n以下命令中的“|”表示可以互相替换的缩写、全称、拼音命令或者英语命令。\n\n人物（动物）交互命令\n\nkill 人物id\n\n主动攻击，试图杀死对方（俗称叫杀）。对方也同样会试图杀死你。请谨慎使用。\n\nkillall\n\n主动攻击，试图杀死同一房间内的所有npc。对方也同样会试图杀死你。请谨慎使用。\n\nkillall 人物id\n\n主动攻击，试图杀死同一房间内的所有叫这个id的npc。对方也同样会试图杀死你。请谨慎使用。\n\n注意，有几个地方，初期是不能轻易下kill和killall的，会被NPC杀死：\n\n扬州飞龙帮、泉州巨鲸帮、泰山封禅台、泰山正气厅、泰山侠义厅这些地方不能下kill只能killall加id否者这里的玩家NPC会对你叫杀，\n\n另外康亲王府书房不能随便进去一进去就会被通缉，被通缉后不能随便进北京皇宫和北京城，遇到巡逻的会跟随你叫杀这里你没有300M以上一群大内侍卫高手会围死你，\n\n最后告诫大家江南建康府的看门的那些武将官兵是绝对不要下kill和killall,杀一个会被全服的官兵追杀不管路过哪个城门都是满屏红色叫杀还不能被疏通需要等一个小时以上quit都没用。\n\nhit 人物id\n\n强迫对方与你战斗，可以一直hit直到对方昏迷。\n\n（相当于另一种形式的kill，优点是有机率不被叫杀。）\n\nhitall\n\n强迫同一房间内的所有npc与你战斗。\n\nhitall 人物id\n\n强迫同一房间内的所有叫这个id的npc与你战斗。\n\nfight 人物id\n\n要求别人与你进行战斗，点到为止。\n\ngive 人物id 物品id|give 物品id to 人物id\n\n给别人物品。\n\nget all from corpse\n\n搜查尸体。\n\nask 人物id about 任何事情\n\n向别人打探某件事情，这个命令在解谜时很重要，通常需要ask才能获得进一步的信息。\n\nask 人物id about all\n\n向别人打探，他都知道什么事情。\n\n成年后1次花费1金。\n\ntrain 动物id\n\n训练动物，坐骑。\n\neat 食物id\n\n吃东西，吃东西加人物状态食物一项，这项为零不自动恢复精神气血，eat参数-stat，可以查询本次重启之后吃掉、喝掉的食物饮水\n\ndrink 装水器皿id\n\n喝水，喝水加任务状态饮水一项，这项为零同样不自动恢复精神气血，并且在大沙漠还容易晕倒。\n\n场景交互命令\n\n方向\n\n移动到某个方向。\n\ngo 方向\n\n移动到某个方向。\n\nopen 场景物品id\n\n开。（并不太统一，比如，开门可能是open men，也可能是open door）\n\nclose 场景物品id\n\n关。\n\nclimb 场景物品id\n\n攀爬，如新手教程中的爬过小缓坡就是 climb path\n\nlocalmaps（快捷指令 lm）\n\n查看本地地图。\n\nlocalmaps 房间名称\n\n查看本地地图，高亮显示该房间。\n\nmaphere\n\n查看附近地图。\n\ncomment\n\n一切皆可评论命令，comment here|物品|npc名查看其他玩家已经添加的评论\n\ncomment -a here|物品|npc 加入你的评论\n\n回复已有某条评论在内容部分后面加 @\n\n物品交互命令\n\nget 物品id\n\n捡起物品。\n\nget all\n\n捡起所有物品。\n\ndrop 物品id\n\n丢弃物品。\n\ndrop all\n\n丢弃所有物品。\n\nwear 衣服等id\n\n穿上。支持特定中文名称，特定名称和mine都支持强制替换已有部位支持强制替换已有部位。\n\nwear all\n\nwear mine\n\n穿上所有autoload的装备，如果遇到已有部位已经装备则自动替换成autoload的装备。\n\nremove 衣服等id\n\n脱下。\n\nremove all\n\nwield 武器id\n\n装备武器。可以使用wield at left/right 选择装备在哪只手\n\nunwield 武器id\n\n放下手里的武器。\n\naddvalue\n\n北侠车船通充值。\n\nride\n\n一些场景中可用过划船。\n\n获取信息命令\n\n命令模糊查询\n\n如果你想不起来完整命令，可以通过部分字母加问号来查询命令。\n\nas?\n\n符合你查找的命令有：ask、pass、alias、disassemble、passwd、task。\n\nl|look\n\n显示所处地点的详细信息。\n\nl|look 方向\n\n显示所处地点该方向前方地点的详细信息。\n\nl|look 人物id\n\n显示所处地点该人物的详细信息。\n\nlookin 人物id\n\n显示所处地点该人物的真面目。\n\nl|look 物品id\n\n显示身上，或所处地点该物品的详细信息。\n\nsc|score\n\n显示个人档案。\n\nstatus_me\n\n显示自己的各项战斗属性。\n\n有命令参数： -a/-b/-c\n\nhp\n\n显示自己的精神，气血等信息。\n\nhpbrief\n\n显示自己的精神，气血等信息。\n\n推荐设置变量：set hpbrief long,report\n\n以获得更多状态，和在战斗中自动获取状态。\n\n格式：\n\n#经验,潜能,最大内力,内力,最大精力,精力\n\n#气血上限,最大气血,气血,精神上限,最大精神,精神\n\n#真气,战意,食物,饮水,非战斗/战斗中,不忙/忙\n\ni|inventory\n\n查询自己身上的物品\n\nid\n\n显示自己身上的物品id，有些id相同的物品不进行合并，会依次列出。格式如下：\n\n你身上携带物品的别称如下 :\n\n干粮                           = gan liang, ganliang, liang\n\n铜板                           = coin, coins, coin_money\n\n白银                           = silver, ingot, silver_money\n\n武士刀                         = wushi dao, dao\n\n牛皮酒袋                       = jiudai, wineskin, skin\n\n武士刀                         = wushi dao, dao\n\n牛皮酒袋                       = jiudai, wineskin, skin\n\n牛皮酒袋                       = jiudai, wineskin, skin\n\n锦囊                           = jin nang, nang, baoshi dai, dai, gem bag, sachet\n\ni2\n\n另外一种形式显示自己身上的物品id，相同id的物品会合并到一组，在前面标注数量。格式如下：\n\n你身上带著下列这些东西(负重 35%)：\n\n一百七十四块干粮(Gan liang)\n\n八十文铜板(Coin)\n\n十两白银(Silver)\n\n二柄武士刀(Wushi dao)\n\n三个牛皮酒袋(Jiudai)\n\n锦囊(Jin nang)\n\n-------------------------------------------\n\n你右手拿着：武士刀(Wushi dao)\n\n-------------------------------------------\n\n你身上穿着：\n\n锦囊(Jin nang)\n\nid here\n\n显示所有跟你在同一个房间里的人物及物品id。格式如下：\n\n在这个房间中, 生物及物品的(英文)名称如下 :\n\n牛皮酒袋                       = jiudai, wineskin, skin\n\n陆乘风                         = lu chengfeng, lu, chengfeng\n\n归云庄卫士                     = wei shi, shi, wei\n\nwho\n\n显示在线玩家名单。\n\n有命令参数： -l/-w\n\nnews\n\n看看有什么新闻。\n\ntime\n\n查询现实和mud时间。\n\nexp\n\n查看连线时间和经验值统计信息。\n\nmudage\n\n显示自己在mud中度过的时间。\n\nuptime\n\n北大侠客行已经执行的时间。\n\nwizlist\n\n列出巫师名单。\n\npaihang\n\n高手排行榜。\n\ntop\n\n高手爬行榜。\n\n武功相关命令\n\n作为武侠游戏最重要的内容，特将武功相关命令集中归类。\n\nsk|skills|cha\n\n显示自己所学过的技能。\n\nsk|skills|cha 人物id\n\n显示师徒、或夫妻所学过的技能。\n\nsk|skills|cha -learn 人物id\n\n显示师傅可以被学习的武功级别。（限部分npc）\n\nskbrief 武功id\n\n显示自己某技能的具体信息。\n\n格式：\n\n#技能等级/技能小点\n\nverify 武功id\n\n显示某种武功的功能及特殊招式。\n\n激发：jifa|enable\n\n显示你掌握的基本武功，每种基本武功激发的特殊武功，特殊武功的有效等级。\n\njifa|enable ?\n\n列出所有能使用特殊技能的技能种类。\n\njifa|enable 基本武功id 特殊武功id\n\n指定所要用的特殊技能，需指明技能种类和技能名称。\n\n备：bei|prepare 特殊武功id\n\n一般角色都会不止一种空手武功，激发以后还需要备一下，才能将选定的特殊武功在战斗中使用出来。\n\n互备（空手） bei|prepare 特殊武功id 特殊武功id\n\n有些空手武功可以组合使用，攻击速度+0.5，不能和互博（攻击速度+1）叠加。\n\n互备（武器） wbei 特殊武功id 特殊武功id\n\n有些武器武功也可以组合使用，攻击速度+0.5，不能和互博（攻击速度+1）叠加。\n\n拜师：bai|apprentice 人物id\n\n拜某人为师。\n\n读书：du|study 书籍id 次数\n\n通过读书提高某种技能，必须会读书识字。\n\n学习：xue|learn 人物id for 武功id 次数\n\n向别人请教有关某一种技能的疑难问题，你请教的对象在这项技能上的造诣必须比你高，而你经由这种方式学习得来的技能也不可能高於你所请教的人，请教需要消耗自己的潜能。此外学习也需要消耗一些精力，而消耗的精力跟你自己、与你学习对象的悟性有关。当你要学习的功夫等级已经高于你的师父时，再学就是以切磋的形式来学了。这时消耗的潜能、精力都是正常学习时的好几倍。除非没有更厉害的师父可以拜了，否则还是尽量拜更高级师父以保证正常的学习速度。\n\n修炼：xiulian 特殊内功id\n\n修炼内功是后期提高特殊内功的唯一途径，修炼有可能走火，所以最好在安全的地方修炼以避免走火。\n\n练习：lian|pratice 基本武功id 次数\n\n练习某个种类的技能，这个技能必须是经过 jifa 的特殊技能。如果你对这方面的基本技能够高，可以经由练习直接升级，而且升级的上限不能超过你的基本技能的等级。\n\n领悟：lingwu 基本武功id 次数\n\n如：lingwu force 10\n\n新增了剑心居机制，建议去剑心居领悟。\n\n各门派领悟地点：\n\n武当派：静修阁\n\n华山派：练功房\n\n明教：练功房\n\n全真派：静思院\n\n天龙寺：后院\n\n桃花岛：归云庄练功房\n\n少林寺：达摩院二楼\n\n古墓：演武洞\n\n丐帮：土地庙\n\n峨嵋派：神灯阁二楼\n\n日月神教：望海石\n\n星宿派：后山石壁\n\n慕容：燕子坞花园\n\n大轮寺：苦修札仓\n\n朝廷：校场\n\n灵鹫宫：戏凤阁\n\n白驼山：练功室\n\n雪山派：静修室\n\n天地会：侧厅\n\n神龙教：练功房\n\n青城派：闭关密室\n\n百姓：武馆练功场\n\n打坐：dazuo|exercise 数值|max\n\n将你的气血转化为内力。当内力超过自己内力上限的两倍，内力上限又没达到内功支持的内力极限时，内力上限就会增长一点。\n\n打坐：dz\n\n缓慢增加内力和提高基本内功。内功到达一定水平后dz有可能会打通任督二脉，所有先天随机增加1－2点。\n\n在dz时halt或者战斗等可能导致走火，减少内力上限。所以最好在安全的地方dz以避免走火。\n\n转换：transform 来源特殊内功id into 目标特殊内功id|none 转换百分比\n\n将不同内功的内力相互转换。\n\n吐纳：tuna|respirate 数值|max\n\n将你的精神转变成精力。当精力超过自己精力上限的两倍，精力上限又没达到内功支持的精力极限时，精力上限就会增长一点。\n\n加力：jiali|enforce 数值|none|half|max\n\n每次击中敌人时，发出几点内力伤敌。\n\n内功功能：yun|exert 功能名称 (施用对象)\n\n使用内功功能，必须jifa指定你要使用的内功。\n\n内功的普通功能：\n\nrecover            恢复自己的气血。\n\nqi                 持续恢复自己的气血。\n\nregenerate         恢复自己的精神。\n\njing               持续恢复自己的精神。\n\n内功的特殊功能（可能有些内功没有）：\n\nheal               用内力替自己疗伤（回复有效气血）。\n\nlifeheal           用内力替他人疗伤。\n\ninspire            用内力回复有效精神。\n\npowerup            用内力短时间内将自己的战斗力提高。\n\nroar               用内力发出吼声，震昏同一房间的其他生物。\n\n外功绝招：perform (武功种类.)招式名称 (施用对象)\n\n使用外功绝招，必须jifa指定你要使用的武功，不指定武功种类时，空手的外功是指你的拳脚功夫，使用武器时则是兵刃的武功。\n\n如：太极剑法之缠字决可以用 perform taiji-jian.chan 或者直接 perform chan\n\nabandon|fangqi 技能名称\n\n放弃一项你所学过的技能，注意这里所说的「放弃」是指将这项技能从你人物的资料中删除。\n\npart_abandon <技能名称> <放弃的级别数>\n\n放弃自己某种技能若干级。可以在需要调整自己的技能等级时使用。\n\n整理中\n\nsetfrd 设定好友名单\n\nunsetfrd 取消好友设定\n\njiaoliang 玩家和玩家之间或者玩家和npc之间用jiaoliang命令战斗，不会造成实质伤害。\n\n交流\n\ntell <sb> <信息>          告诉玩家一些信息，只有你们两人能看到\n\nreply <信息>              回答刚才tell你的人\n\nsay <信息>                说话，同一房间的人都可听到\n\nwhisper <sb>              对同一房间的人说悄悄话\n\nloving                    夫妻间亲热的指令\n\nemote                     做一个系统没有定义的动作\n\nfemote 查询emote\n\nwhistle 吹口哨。。\n\nmaimai 你一边在自己头上插根草标一边大声喝道：「谁要买我？」，哼！一副穷酸样。\n\n宠物相关\n\nslaughter 杀死自己的宠物\n\n外部\n\nquit 退出mud，回到现实世界\n\nsave 保存自己的状态\n\nversion 显示mudos版本\n\nauto_reply                设定自动回复信息\n\nchangewield               交换左右两手的武器\n\nbeg <sth> from <sb>       向某人乞讨，丐帮弟子才能使用\n\ncheck <sb>                打听别人技能，丐帮弟子才能使用\n\nfollow <sb>               跟随别人一起行动\n\nguard <方向> ；guard <sb> ；guard <sth>  守卫某个方向，物品或人物\n\nhalt                      强行中止正在进行的动作\n\nput <sth> in <容器>       把物品放到某容器内\n\nsemote                    列出所有可以使用的emote\n\nshichou <sb>              若你与别的玩家结仇，见面会自动kill，用此命令解除结仇状态\n\nsleep                     睡觉，是快速恢复精神和体力的方法。\n\nsteal <sth> from <sb>     偷窃别人的东西\n\nteam <sb>                 组织队伍\n\nvote                      提议对某人采取行动，由大家投票决定。如果五分钟内没有人附议，\n\n投票会自动取消。当前可以有如下<动议>：\n\nchblk: 关闭某人交谈频道，需三票以上的简单多数同意。\n\nunchblk: 打开某人交谈频道，需三票以上的三分之一票数同意。\n\nalert 朝廷官员召唤高手保护自己的命令\n\nalias 设定一些命令替代系统提供的命令，可用$1 $2 $3 等参数，to alias多行命令\n\n–cemote（目前关闭） 模拟系统的emote做一个动作\n\ndescribe 设定别人look自己时的描述\n\ndestroy 销毁礼品\n\ndo<次数> <命令> 将命令重复10次以内\n\nfemote <pattern> 查找含有<pattern>字样的emote\n\nfinger 查询玩家连线资料等信息\n\nhelp <主题> 寻求关于某一<主题>帮助\n\nlocate <task物品名> 查找task物品的位置\n\nnick 给自己取个响亮的外号\n\npaimai 拍卖物品\n\npasswd 修改自己的mud密码\n\nset 设定一些环境变量的值\n\nsetmail 申请@pkuxkx.net邮箱\n\nsos 向巫师求救\n\nsuicide -f 再也不玩了，自杀吧。没有后悔药的，考虑清楚了\n\ntask 显示task任务榜\n\ntitle 看自己的头衔和外号等\n\nto 发送多行信息，如to chat；to rumor\n\ntune；tune channel <channelid> 关闭自己的某个频道，无参数则显示现在收听的频道\n\nunset 取消某个环境变量的设定\n\nvotehelpnew 新手投票\n\nwhistle 召唤自己的宠物\n\nwimpy 显示自己的wimpy参数设置\n\nshowequip 向大家展示自己装备的属性\n\njobquery 这个指令可以显示你当前的任务状态，包括门忠任务，满不懂任务等等。\n\n自定义jobquery -m 显示门派任务 -x 新手任务 -z 主流任务 -t 特殊任务，\n\njobquery ++ 加入自定义任务列表，比如jobquery ++1 把1号任务加入列表。 --从自定义列表中删除。\n\n符合你查找的命令有：duanjin、dunji、jianxiao、jinglei、pojia、xiejia。（这么一想。。想要称上命令一览。。要加的职业命令有得是啊。。\n\n？？？\n\naccept <sb> 收某人为弟子, 如果对方也答应要拜你为师的话\n\nexpell | kaichu 开除不成才的弟子，被开除的弟子所有技能都会降到原来的一半\n\nrecruit | shou [cancel] | <对象>  收某人为弟子，如果对方也答应要拜你为师的话\n\nhatred 查询你的师门和别的门派间的关系程度\n\ncreateskill\n\nselfpractice\n\nselfthinking\n\njingji*\n\ncemote\n\neditedmote\n\nenchance\n\nestell\n\nhatred\n\nskill\n\nscan\n\nbaishi\n\nnuoyi\n\nresearch\n\nquanjia\n\nmusic\n\nmudlist 网路精灵并没有被载入，请先将网路精灵载入。\n\npr\n\nsms（目前关闭）利用移动飞信给自己的手机发短信\n\nwebuser\n\nzmuduser\n\nlocate\n\njob  获取任务 ask *** about job\n\nnote 笔记 记录洗澡，吃药，升级等获得天赋，help note 查详细信息。",
+  "structured_content": [
+    {
+      "path": "命令一览",
+      "content": "以下命令中的“|”表示可以互相替换的缩写、全称、拼音命令或者英语命令。",
+      "level": 1
+    },
+    {
+      "path": "命令一览 > 人物（动物）交互命令",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "命令一览 > 人物（动物）交互命令 > kill 人物id",
+      "content": "主动攻击，试图杀死对方（俗称叫杀）。对方也同样会试图杀死你。请谨慎使用。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 人物（动物）交互命令 > killall",
+      "content": "主动攻击，试图杀死同一房间内的所有npc。对方也同样会试图杀死你。请谨慎使用。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 人物（动物）交互命令 > killall > killall 人物id",
+      "content": "主动攻击，试图杀死同一房间内的所有叫这个id的npc。对方也同样会试图杀死你。请谨慎使用。\n\n注意，有几个地方，初期是不能轻易下kill和killall的，会被NPC杀死：\n\n扬州飞龙帮、泉州巨鲸帮、泰山封禅台、泰山正气厅、泰山侠义厅这些地方不能下kill只能killall加id否者这里的玩家NPC会对你叫杀，\n\n另外康亲王府书房不能随便进去一进去就会被通缉，被通缉后不能随便进北京皇宫和北京城，遇到巡逻的会跟随你叫杀这里你没有300M以上一群大内侍卫高手会围死你，\n\n最后告诫大家江南建康府的看门的那些武将官兵是绝对不要下kill和killall,杀一个会被全服的官兵追杀不管路过哪个城门都是满屏红色叫杀还不能被疏通需要等一个小时以上quit都没用。",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 人物（动物）交互命令 > hit 人物id",
+      "content": "强迫对方与你战斗，可以一直hit直到对方昏迷。\n\n（相当于另一种形式的kill，优点是有机率不被叫杀。）",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 人物（动物）交互命令 > hitall",
+      "content": "强迫同一房间内的所有npc与你战斗。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 人物（动物）交互命令 > hitall > hitall 人物id",
+      "content": "强迫同一房间内的所有叫这个id的npc与你战斗。",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 人物（动物）交互命令 > hitall > fight 人物id",
+      "content": "要求别人与你进行战斗，点到为止。",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 人物（动物）交互命令 > give 人物id 物品id|give 物品id to 人物id",
+      "content": "给别人物品。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 人物（动物）交互命令 > get all from corpse",
+      "content": "搜查尸体。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 人物（动物）交互命令 > ask 人物id about 任何事情",
+      "content": "向别人打探某件事情，这个命令在解谜时很重要，通常需要ask才能获得进一步的信息。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 人物（动物）交互命令 > ask 人物id about 任何事情 > ask 人物id about all",
+      "content": "向别人打探，他都知道什么事情。\n\n成年后1次花费1金。",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 人物（动物）交互命令 > train 动物id",
+      "content": "训练动物，坐骑。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 人物（动物）交互命令 > eat 食物id",
+      "content": "吃东西，吃东西加人物状态食物一项，这项为零不自动恢复精神气血，eat参数-stat，可以查询本次重启之后吃掉、喝掉的食物饮水",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 人物（动物）交互命令 > drink 装水器皿id",
+      "content": "喝水，喝水加任务状态饮水一项，这项为零同样不自动恢复精神气血，并且在大沙漠还容易晕倒。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 场景交互命令",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "命令一览 > 场景交互命令 > 方向",
+      "content": "移动到某个方向。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 场景交互命令 > 方向 > go 方向",
+      "content": "移动到某个方向。",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 场景交互命令 > open 场景物品id",
+      "content": "开。（并不太统一，比如，开门可能是open men，也可能是open door）",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 场景交互命令 > close 场景物品id",
+      "content": "关。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 场景交互命令 > climb 场景物品id",
+      "content": "攀爬，如新手教程中的爬过小缓坡就是 climb path",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 场景交互命令 > localmaps（快捷指令 lm）",
+      "content": "查看本地地图。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 场景交互命令 > localmaps（快捷指令 lm） > localmaps 房间名称",
+      "content": "查看本地地图，高亮显示该房间。",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 场景交互命令 > maphere",
+      "content": "查看附近地图。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 场景交互命令 > comment",
+      "content": "一切皆可评论命令，comment here|物品|npc名查看其他玩家已经添加的评论\n\ncomment -a here|物品|npc 加入你的评论\n\n回复已有某条评论在内容部分后面加 @",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 物品交互命令",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "命令一览 > 物品交互命令 > get 物品id",
+      "content": "捡起物品。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 物品交互命令 > get 物品id > get all",
+      "content": "捡起所有物品。",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 物品交互命令 > drop 物品id",
+      "content": "丢弃物品。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 物品交互命令 > drop 物品id > drop all",
+      "content": "丢弃所有物品。",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 物品交互命令 > wear 衣服等id",
+      "content": "穿上。支持特定中文名称，特定名称和mine都支持强制替换已有部位支持强制替换已有部位。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 物品交互命令 > wear 衣服等id > wear all",
+      "content": "",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 物品交互命令 > wear 衣服等id > wear mine",
+      "content": "穿上所有autoload的装备，如果遇到已有部位已经装备则自动替换成autoload的装备。",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 物品交互命令 > remove 衣服等id",
+      "content": "脱下。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 物品交互命令 > remove 衣服等id > remove all",
+      "content": "",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 物品交互命令 > wield 武器id",
+      "content": "装备武器。可以使用wield at left/right 选择装备在哪只手",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 物品交互命令 > wield 武器id > unwield 武器id",
+      "content": "放下手里的武器。",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 物品交互命令 > addvalue",
+      "content": "北侠车船通充值。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 物品交互命令 > ride",
+      "content": "一些场景中可用过划船。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 获取信息命令",
+      "content": "",
+      "level": 2
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > 命令模糊查询",
+      "content": "如果你想不起来完整命令，可以通过部分字母加问号来查询命令。\n\nas?\n\n符合你查找的命令有：ask、pass、alias、disassemble、passwd、task。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > l|look",
+      "content": "显示所处地点的详细信息。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > l|look > l|look 方向",
+      "content": "显示所处地点该方向前方地点的详细信息。",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > l|look > l|look 人物id",
+      "content": "显示所处地点该人物的详细信息。",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > l|look > lookin 人物id",
+      "content": "显示所处地点该人物的真面目。",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > l|look > l|look 物品id",
+      "content": "显示身上，或所处地点该物品的详细信息。",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > sc|score",
+      "content": "显示个人档案。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > status_me",
+      "content": "显示自己的各项战斗属性。\n\n有命令参数： -a/-b/-c",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > hp",
+      "content": "显示自己的精神，气血等信息。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > hpbrief",
+      "content": "显示自己的精神，气血等信息。\n\n推荐设置变量：set hpbrief long,report\n\n以获得更多状态，和在战斗中自动获取状态。\n\n格式：\n\n#经验,潜能,最大内力,内力,最大精力,精力\n\n#气血上限,最大气血,气血,精神上限,最大精神,精神\n\n#真气,战意,食物,饮水,非战斗/战斗中,不忙/忙",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > i|inventory",
+      "content": "查询自己身上的物品",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > id",
+      "content": "显示自己身上的物品id，有些id相同的物品不进行合并，会依次列出。格式如下：\n\n你身上携带物品的别称如下 :\n\n干粮                           = gan liang, ganliang, liang\n\n铜板                           = coin, coins, coin_money\n\n白银                           = silver, ingot, silver_money\n\n武士刀                         = wushi dao, dao\n\n牛皮酒袋                       = jiudai, wineskin, skin\n\n武士刀                         = wushi dao, dao\n\n牛皮酒袋                       = jiudai, wineskin, skin\n\n牛皮酒袋                       = jiudai, wineskin, skin\n\n锦囊                           = jin nang, nang, baoshi dai, dai, gem bag, sachet",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > id > i2",
+      "content": "另外一种形式显示自己身上的物品id，相同id的物品会合并到一组，在前面标注数量。格式如下：\n\n你身上带著下列这些东西(负重 35%)：\n\n一百七十四块干粮(Gan liang)\n\n八十文铜板(Coin)\n\n十两白银(Silver)\n\n二柄武士刀(Wushi dao)\n\n三个牛皮酒袋(Jiudai)\n\n锦囊(Jin nang)\n\n-------------------------------------------\n\n你右手拿着：武士刀(Wushi dao)\n\n-------------------------------------------\n\n你身上穿着：\n\n锦囊(Jin nang)",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > id > id here",
+      "content": "显示所有跟你在同一个房间里的人物及物品id。格式如下：\n\n在这个房间中, 生物及物品的(英文)名称如下 :\n\n牛皮酒袋                       = jiudai, wineskin, skin\n\n陆乘风                         = lu chengfeng, lu, chengfeng\n\n归云庄卫士                     = wei shi, shi, wei",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > who",
+      "content": "显示在线玩家名单。\n\n有命令参数： -l/-w",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > news",
+      "content": "看看有什么新闻。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > time",
+      "content": "查询现实和mud时间。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > exp",
+      "content": "查看连线时间和经验值统计信息。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > mudage",
+      "content": "显示自己在mud中度过的时间。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > uptime",
+      "content": "北大侠客行已经执行的时间。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > wizlist",
+      "content": "列出巫师名单。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > paihang",
+      "content": "高手排行榜。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 获取信息命令 > top",
+      "content": "高手爬行榜。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 武功相关命令",
+      "content": "作为武侠游戏最重要的内容，特将武功相关命令集中归类。",
+      "level": 2
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > sk|skills|cha",
+      "content": "显示自己所学过的技能。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > sk|skills|cha > sk|skills|cha 人物id",
+      "content": "显示师徒、或夫妻所学过的技能。",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > sk|skills|cha > sk|skills|cha -learn 人物id",
+      "content": "显示师傅可以被学习的武功级别。（限部分npc）",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > skbrief 武功id",
+      "content": "显示自己某技能的具体信息。\n\n格式：\n\n#技能等级/技能小点",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > verify 武功id",
+      "content": "显示某种武功的功能及特殊招式。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > 激发：jifa|enable",
+      "content": "显示你掌握的基本武功，每种基本武功激发的特殊武功，特殊武功的有效等级。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > 激发：jifa|enable > jifa|enable ?",
+      "content": "列出所有能使用特殊技能的技能种类。",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > 激发：jifa|enable > jifa|enable 基本武功id 特殊武功id",
+      "content": "指定所要用的特殊技能，需指明技能种类和技能名称。",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > 备：bei|prepare 特殊武功id",
+      "content": "一般角色都会不止一种空手武功，激发以后还需要备一下，才能将选定的特殊武功在战斗中使用出来。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > 备：bei|prepare 特殊武功id > 互备（空手） bei|prepare 特殊武功id 特殊武功id",
+      "content": "有些空手武功可以组合使用，攻击速度+0.5，不能和互博（攻击速度+1）叠加。",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > 备：bei|prepare 特殊武功id > 互备（武器） wbei 特殊武功id 特殊武功id",
+      "content": "有些武器武功也可以组合使用，攻击速度+0.5，不能和互博（攻击速度+1）叠加。",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > 拜师：bai|apprentice 人物id",
+      "content": "拜某人为师。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > 读书：du|study 书籍id 次数",
+      "content": "通过读书提高某种技能，必须会读书识字。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > 学习：xue|learn 人物id for 武功id 次数",
+      "content": "向别人请教有关某一种技能的疑难问题，你请教的对象在这项技能上的造诣必须比你高，而你经由这种方式学习得来的技能也不可能高於你所请教的人，请教需要消耗自己的潜能。此外学习也需要消耗一些精力，而消耗的精力跟你自己、与你学习对象的悟性有关。当你要学习的功夫等级已经高于你的师父时，再学就是以切磋的形式来学了。这时消耗的潜能、精力都是正常学习时的好几倍。除非没有更厉害的师父可以拜了，否则还是尽量拜更高级师父以保证正常的学习速度。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > 修炼：xiulian 特殊内功id",
+      "content": "修炼内功是后期提高特殊内功的唯一途径，修炼有可能走火，所以最好在安全的地方修炼以避免走火。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > 练习：lian|pratice 基本武功id 次数",
+      "content": "练习某个种类的技能，这个技能必须是经过 jifa 的特殊技能。如果你对这方面的基本技能够高，可以经由练习直接升级，而且升级的上限不能超过你的基本技能的等级。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > 领悟：lingwu 基本武功id 次数",
+      "content": "如：lingwu force 10\n\n新增了剑心居机制，建议去剑心居领悟。\n\n各门派领悟地点：\n\n武当派：静修阁\n\n华山派：练功房\n\n明教：练功房\n\n全真派：静思院\n\n天龙寺：后院\n\n桃花岛：归云庄练功房\n\n少林寺：达摩院二楼\n\n古墓：演武洞\n\n丐帮：土地庙\n\n峨嵋派：神灯阁二楼\n\n日月神教：望海石\n\n星宿派：后山石壁\n\n慕容：燕子坞花园\n\n大轮寺：苦修札仓\n\n朝廷：校场\n\n灵鹫宫：戏凤阁\n\n白驼山：练功室\n\n雪山派：静修室\n\n天地会：侧厅\n\n神龙教：练功房\n\n青城派：闭关密室\n\n百姓：武馆练功场",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > 打坐：dazuo|exercise 数值|max",
+      "content": "将你的气血转化为内力。当内力超过自己内力上限的两倍，内力上限又没达到内功支持的内力极限时，内力上限就会增长一点。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > 打坐：dazuo|exercise 数值|max > 打坐：dz",
+      "content": "缓慢增加内力和提高基本内功。内功到达一定水平后dz有可能会打通任督二脉，所有先天随机增加1－2点。\n\n在dz时halt或者战斗等可能导致走火，减少内力上限。所以最好在安全的地方dz以避免走火。",
+      "level": 4
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > 转换：transform 来源特殊内功id into 目标特殊内功id|none 转换百分比",
+      "content": "将不同内功的内力相互转换。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > 吐纳：tuna|respirate 数值|max",
+      "content": "将你的精神转变成精力。当精力超过自己精力上限的两倍，精力上限又没达到内功支持的精力极限时，精力上限就会增长一点。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > 加力：jiali|enforce 数值|none|half|max",
+      "content": "每次击中敌人时，发出几点内力伤敌。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > 内功功能：yun|exert 功能名称 (施用对象)",
+      "content": "使用内功功能，必须jifa指定你要使用的内功。\n\n内功的普通功能：\n\nrecover            恢复自己的气血。\n\nqi                 持续恢复自己的气血。\n\nregenerate         恢复自己的精神。\n\njing               持续恢复自己的精神。\n\n内功的特殊功能（可能有些内功没有）：\n\nheal               用内力替自己疗伤（回复有效气血）。\n\nlifeheal           用内力替他人疗伤。\n\ninspire            用内力回复有效精神。\n\npowerup            用内力短时间内将自己的战斗力提高。\n\nroar               用内力发出吼声，震昏同一房间的其他生物。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > 外功绝招：perform (武功种类.)招式名称 (施用对象)",
+      "content": "使用外功绝招，必须jifa指定你要使用的武功，不指定武功种类时，空手的外功是指你的拳脚功夫，使用武器时则是兵刃的武功。\n\n如：太极剑法之缠字决可以用 perform taiji-jian.chan 或者直接 perform chan",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > abandon|fangqi 技能名称",
+      "content": "放弃一项你所学过的技能，注意这里所说的「放弃」是指将这项技能从你人物的资料中删除。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 武功相关命令 > part_abandon <技能名称> <放弃的级别数>",
+      "content": "放弃自己某种技能若干级。可以在需要调整自己的技能等级时使用。",
+      "level": 3
+    },
+    {
+      "path": "命令一览 > 整理中",
+      "content": "setfrd 设定好友名单\n\nunsetfrd 取消好友设定\n\njiaoliang 玩家和玩家之间或者玩家和npc之间用jiaoliang命令战斗，不会造成实质伤害。\n\n交流\n\ntell <sb> <信息>          告诉玩家一些信息，只有你们两人能看到\n\nreply <信息>              回答刚才tell你的人\n\nsay <信息>                说话，同一房间的人都可听到\n\nwhisper <sb>              对同一房间的人说悄悄话\n\nloving                    夫妻间亲热的指令\n\nemote                     做一个系统没有定义的动作\n\nfemote 查询emote\n\nwhistle 吹口哨。。\n\nmaimai 你一边在自己头上插根草标一边大声喝道：「谁要买我？」，哼！一副穷酸样。\n\n宠物相关\n\nslaughter 杀死自己的宠物\n\n外部\n\nquit 退出mud，回到现实世界\n\nsave 保存自己的状态\n\nversion 显示mudos版本\n\nauto_reply                设定自动回复信息\n\nchangewield               交换左右两手的武器\n\nbeg <sth> from <sb>       向某人乞讨，丐帮弟子才能使用\n\ncheck <sb>                打听别人技能，丐帮弟子才能使用\n\nfollow <sb>               跟随别人一起行动\n\nguard <方向> ；guard <sb> ；guard <sth>  守卫某个方向，物品或人物\n\nhalt                      强行中止正在进行的动作\n\nput <sth> in <容器>       把物品放到某容器内\n\nsemote                    列出所有可以使用的emote\n\nshichou <sb>              若你与别的玩家结仇，见面会自动kill，用此命令解除结仇状态\n\nsleep                     睡觉，是快速恢复精神和体力的方法。\n\nsteal <sth> from <sb>     偷窃别人的东西\n\nteam <sb>                 组织队伍\n\nvote                      提议对某人采取行动，由大家投票决定。如果五分钟内没有人附议，\n\n投票会自动取消。当前可以有如下<动议>：\n\nchblk: 关闭某人交谈频道，需三票以上的简单多数同意。\n\nunchblk: 打开某人交谈频道，需三票以上的三分之一票数同意。\n\nalert 朝廷官员召唤高手保护自己的命令\n\nalias 设定一些命令替代系统提供的命令，可用$1 $2 $3 等参数，to alias多行命令\n\n–cemote（目前关闭） 模拟系统的emote做一个动作\n\ndescribe 设定别人look自己时的描述\n\ndestroy 销毁礼品\n\ndo<次数> <命令> 将命令重复10次以内\n\nfemote <pattern> 查找含有<pattern>字样的emote\n\nfinger 查询玩家连线资料等信息\n\nhelp <主题> 寻求关于某一<主题>帮助\n\nlocate <task物品名> 查找task物品的位置\n\nnick 给自己取个响亮的外号\n\npaimai 拍卖物品\n\npasswd 修改自己的mud密码\n\nset 设定一些环境变量的值\n\nsetmail 申请@pkuxkx.net邮箱\n\nsos 向巫师求救\n\nsuicide -f 再也不玩了，自杀吧。没有后悔药的，考虑清楚了\n\ntask 显示task任务榜\n\ntitle 看自己的头衔和外号等\n\nto 发送多行信息，如to chat；to rumor\n\ntune；tune channel <channelid> 关闭自己的某个频道，无参数则显示现在收听的频道\n\nunset 取消某个环境变量的设定\n\nvotehelpnew 新手投票\n\nwhistle 召唤自己的宠物\n\nwimpy 显示自己的wimpy参数设置\n\nshowequip 向大家展示自己装备的属性\n\njobquery 这个指令可以显示你当前的任务状态，包括门忠任务，满不懂任务等等。\n\n自定义jobquery -m 显示门派任务 -x 新手任务 -z 主流任务 -t 特殊任务，\n\njobquery ++ 加入自定义任务列表，比如jobquery ++1 把1号任务加入列表。 --从自定义列表中删除。\n\n符合你查找的命令有：duanjin、dunji、jianxiao、jinglei、pojia、xiejia。（这么一想。。想要称上命令一览。。要加的职业命令有得是啊。。\n\n？？？\n\naccept <sb> 收某人为弟子, 如果对方也答应要拜你为师的话\n\nexpell | kaichu 开除不成才的弟子，被开除的弟子所有技能都会降到原来的一半\n\nrecruit | shou [cancel] | <对象>  收某人为弟子，如果对方也答应要拜你为师的话\n\nhatred 查询你的师门和别的门派间的关系程度\n\ncreateskill\n\nselfpractice\n\nselfthinking\n\njingji*\n\ncemote\n\neditedmote\n\nenchance\n\nestell\n\nhatred\n\nskill\n\nscan\n\nbaishi\n\nnuoyi\n\nresearch\n\nquanjia\n\nmusic\n\nmudlist 网路精灵并没有被载入，请先将网路精灵载入。\n\npr\n\nsms（目前关闭）利用移动飞信给自己的手机发短信\n\nwebuser\n\nzmuduser\n\nlocate\n\njob  获取任务 ask *** about job\n\nnote 笔记 记录洗澡，吃药，升级等获得天赋，help note 查详细信息。",
+      "level": 2
+    }
+  ],
+  "metadata": {
+    "title": "pkuxkx:command",
+    "url": "https://www.pkuxkx.net/wiki/pkuxkx/command",
+    "category": "操作命令",
+    "tags": [
+      "操作命令"
+    ],
+    "chunk_index": 0,
+    "total_chunks": 1,
+    "scraped_at": "2026-01-12 11:30:57",
+    "content_hash": "122f61e515d6f8d2"
+  }
+}
