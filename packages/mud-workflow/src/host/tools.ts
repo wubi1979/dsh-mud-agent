@@ -297,7 +297,10 @@ export function registerMudWorkflowTools(
     description:
       '保存流程（新建或修缮）：过 schema + 结构校验即生效。locked 流程拒改；'
       + 'sendCredential 凭据动词只允许锁定流程使用（会被拒绝）。'
-      + '改进流程 = 一次调用即可让后续执行更准——先 mud_workflow_get 看现状再改。',
+      + '改进流程 = 一次调用即可让后续执行更准——先 mud_workflow_get 看现状再改。'
+      + '新建流程：步骤表 { entry, steps[] } 的字段格式先用 mud_workflow_get 读 login（内置示例）参照；'
+      + '把你重复执行 ≥2 次且稳定成功的确定性序列沉淀为流程——流程是跨重启的长期资产，'
+      + '沉淀后把流程名回报给玩家。',
     parameters: {
       type: 'object',
       properties: {

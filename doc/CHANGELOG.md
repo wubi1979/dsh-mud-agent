@@ -746,3 +746,22 @@
 - **回归**：wake.spec 署名用例改版；typecheck + test 全绿；lib 重建后生效。
 
 > AI生成
+
+## [v0.0.64]goal-round-driver 禁用（路线 1A，实验期）(2026-10-10)
+> 总结：实证 driver 无「接入」概念——未接入时 armed goal 每空闲续轮、工具全被闸门拒绝仍空转跑满 256；本层 patch 禁用 dsh-base 全局 goal-round-driver，goal 域退化为纯状态面，续行回归任务书心跳与行批次（严格「有信息进入才注入」）。
+
+- **根因链**：`/goal` create ⇒ activation armed（进程本地，与 admit 闸门正交）；goal-round-driver 触发条件仅「agent 空闲 + active + armed + 额度剩余」，不认识接入状态。未接入时：mud-core3 goal/changed 监听惰性跳过（不投任务书）、无行流竞争、agent 空闲 ⇒ 轮次立即排队；agent 持 `<goal_round>` 空转（工具被闸门拒）⇒ 短回合收尾 ⇒ idle ⇒ 下一轮，数秒一轮直冲 defaultMaxGoalRounds=256。persona「不要自行放弃」封死 blocked 出口 ⇒ 无任何终止途径。
+- **patch 层**：cordis.patch.yml 增 `- id: goal-round-driver` + `disabled: true`（applyEntryPatches 按 id 定向 disable，LAST layer 时序在 dsh-base 之后）。零代码改动，重启宿主生效。
+- **persona 同步**：决策节奏第 4 条改报告制——判定目标已达成 ⇒ 向玩家报告结果与验证依据后视为完成（清除归玩家），删去「用 update_goal(action=complete) 收尾」的自主路径（driver 禁用后 goal-round 授权不可达，complete/blocked 收敛到直接人类回合）。
+- **保留面**：goal 域跨重启持久、/goal 命令、get_goal 工具、任务书 {{goal}} 节选、goal/changed→kickoff 触发（玩家设/改/恢复 = 信息事件）全部不动。实验结论回流后再定夺（备选：路线 2 自建轻量目标）。
+
+> AI生成
+
+## [v0.0.65]收敛—回报—沉淀纪律 + save 工具新建路径指引 (2026-10-10)
+> 总结：诊断 agent 不沉淀流程的三断点（persona 只教消费不教生产 / save 描述缺「从零新建」schema 路径 / 无沉淀判据），两处文本级修复；另裁定状态栏「最大气血 vs 气血上限」非重复（生效上限 vs 基准上限，健康时数值恰好相同）。
+
+- **persona 决策节奏 +第 6 条**（mud-core3 cordis.patch.yml）：研究/试验以「结论+依据回报玩家」为终点，不无限枚举；同一序列手工重复 ≥2 次且稳定成功 ⇒ mud_workflow_save 沉淀（先 get login 参照格式）并回报流程名。同条覆盖「研究练功机制不收敛、不回报、浪费 token」问题。
+- **mud_workflow_save 描述补两句**（mud-workflow host/tools.ts）：新建流程步骤表格式参照 mud_workflow_get('login')；沉淀时机 = 重复 ≥2 次稳定成功，流程是跨重启长期资产。已重建 lib（2026-10-10 12:02），mud-workflow 测试 77 全绿。
+- **状态栏重复值裁定**：最大气血 = 生效上限（受伤/中毒时低于基准），气血上限 = 基准上限；combat 容量比（最大气血/气血上限）依赖两键分立，健康时数值相同属正常表现，HUD 保留双键不改动。
+
+> AI生成

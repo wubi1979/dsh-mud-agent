@@ -49,7 +49,105 @@
           "steps": 8
         }
       ],
-      "updatedAt": 1791560809833
+      "updatedAt": 1791597981009
+    },
+    {
+      "region": "信阳",
+      "edges": [
+        {
+          "dest": "汉口镇  ◇ 市集",
+          "pinyin": "hankou",
+          "steps": 11
+        },
+        {
+          "dest": "濠州府  ◇ 广场",
+          "pinyin": "haozhou",
+          "steps": 10
+        },
+        {
+          "dest": "江州  ◇ 半壁山古渡",
+          "pinyin": "jiangzhou",
+          "steps": 6
+        },
+        {
+          "dest": "庐州  ◇ 石板桥",
+          "pinyin": "luzhou",
+          "steps": 9
+        },
+        {
+          "dest": "南阳  ◇ 集市",
+          "pinyin": "nanyang",
+          "steps": 15
+        },
+        {
+          "dest": "往生堂  ◇ 往生堂广场",
+          "pinyin": "shashou",
+          "steps": 18
+        },
+        {
+          "dest": "许昌  ◇ 许昌城",
+          "pinyin": "xuchang",
+          "steps": 10
+        },
+        {
+          "dest": "扬州  ◇ 中央广场",
+          "pinyin": "yangzhou",
+          "steps": 10
+        }
+      ],
+      "updatedAt": 1791597060776
+    },
+    {
+      "region": "南阳城",
+      "edges": [
+        {
+          "dest": "白河东岸  ◇ 白河东岸",
+          "pinyin": "baihe",
+          "steps": 4
+        },
+        {
+          "dest": "伏牛山  ◇ 木扎岭",
+          "pinyin": "funiu",
+          "steps": 13
+        },
+        {
+          "dest": "老河口  ◇ 老河口",
+          "pinyin": "laohekou",
+          "steps": 7
+        },
+        {
+          "dest": "商州  ◇ 北街",
+          "pinyin": "shangzhou",
+          "steps": 14
+        },
+        {
+          "dest": "襄阳  ◇ 北渡口",
+          "pinyin": "xiangyang",
+          "steps": 8
+        },
+        {
+          "dest": "信阳  ◇ 小广场",
+          "pinyin": "xinyang",
+          "steps": 15
+        },
+        {
+          "dest": "许昌  ◇ 许昌城",
+          "pinyin": "xuchang",
+          "steps": 8
+        }
+      ],
+      "updatedAt": 1791597069560
+    },
+    {
+      "region": "樊城北渡口",
+      "edges": [
+        {
+          "dest": "南阳城  ◇ 集市",
+          "pinyin": "nanyangcheng",
+          "steps": 8
+        }
+      ],
+      "updatedAt": 1791597290850
     }
   ],
   "hints": []
