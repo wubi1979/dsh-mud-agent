@@ -95,11 +95,13 @@ mud_send {
 
 | 项 | 规则 |
 |---|---|
-| `listen` 编译 | 全空 ⇒ `{}`（不武装判据）；缺省判据按模式注入：**有 `cmd` ⇒ `gaCount: 1` + `maxLines` 兜底**；**裸读 ⇒ `quietMs: 300`** |
+| `listen` 编译 | 全空 ⇒ `{}`（不武装判据）；缺省判据按模式注入：**有 `cmd` ⇒ 命中长程预设表则注入完成句判据（见下）· 未命中 ⇒ `gaCount: 1` + `maxLines` 兜底**；**裸读 ⇒ `quietMs: 300`**；模型显式给 `listen` ⇒ 整体覆盖缺省（预设同理被覆盖） |
+| **空命令** | **放开**（2026-10-10 二次裁定）：照常发送，走缺省 `gaCount:1` 立即收束——空输入也是命令 ⇒ 回 prompt+GA（A.2 1:1），刷提示符无害；等长程命令不用它（根因治理靠长程判据预设 + persona 等待纪律；曾设可读拒绝，因根因已除放开） |
+| **长程命令判据预设** | `LONG_CMD_PROFILES`（cmd 头匹配；2026-10-10）：命中 ⇒ 注入**完成句 `until`**（跨批命中；A.3 长程命令期间无 GA）+ 预设 `timeoutMs` 兜底；不设 `gaCount`/`maxLines`（GA 不来、行数剪断会误判）。现役条目：`dz|dazuo` ⇒ 等内息收回丹田句、兜底 120s；`sleep` ⇒ 等一觉醒来句、兜底 300s。**新条目须先语料校准并登记 A.3 原句**（A.6 纪律）；`xue` 即时完成 GA 收尾，不入表 |
 | `wait: false` | 只 `runtime.send(cmd)`，**不 read、不设超时、不判成败**；返回 `{ok:true, reason:'sent', lines:[]}`；需提供 `cmd`（裸读不适用）；仍过禁发表/连接闸门/持有者（拒绝序不变，§8.4） |
 | `until` / `failOn` | 字符串正则源（解释器/工具侧编译），命中序有意义（§8.13） |
-| `timeoutMs` | **钳制 ≤ 60000**（协作式超时上限）；Config 缺省 `sendTimeoutMs` 15000 |
-| 兜底行数 | Config 缺省 `sendMaxLines` 50 |
+| `timeoutMs` | **模型显式值钳制 ≤ 60000**（协作式超时上限）；缺省 = 预设条目 `timeoutMs`（**系统注入值，豁免钳制**——until 是主收束，本值纯兜底）或 Config `sendTimeoutMs` 15000 |
+| 兜底行数 | Config 缺省 `sendMaxLines` 50（长程预设不设——完成句收束，行数剪断会误判） |
 | `render` | `ok: true` ⇒ 行原文 `join('\n')`（`reason:'sent'` ⇒ 发送即走说明文案）；拒/错 ⇒ 可读文本 |
 | **硬编码项** | 禁词表最小集（§12.3）与裸读 `quietMs = 300`：**无例证不进 Config** |
 

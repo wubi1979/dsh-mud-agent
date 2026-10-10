@@ -303,6 +303,59 @@ describe('mud_send 判据与 initial（stub）', () => {
   })
 })
 
+describe('mud_send 空命令与长程判据预设（§8.7，A.3）', () => {
+  it('空命令放开（2026-10-10 二次裁定）：照常发送，走缺省 gaCount:1（空输入也回 GA，等长程不用它）', async () => {
+    const sent: string[] = []
+    const { call, readCapture } = setup({}, { send: (cmd: string) => { sent.push(cmd); return true } })
+    await expect(call('mud_send', { cmd: '' })).resolves.toMatchObject({ ok: true })
+    await call('mud_send', { cmd: '   ' })
+    expect(sent).toEqual(['', '   '])
+    expect(readCapture().opts.gaCount).toBe(1)
+    expect(readCapture().opts.timeoutMs).toBe(15000)
+  })
+
+  it('cmd:"dz" 命中预设：until = 完成句（受理句不误命中），无 gaCount，timeout = 预设兜底 120s', async () => {
+    const sent: string[] = []
+    const { call, readCapture } = setup({}, { send: (cmd: string) => { sent.push(cmd); return true } })
+    await call('mud_send', { cmd: 'dz' })
+    expect(sent).toEqual(['dz'])
+    const opts = readCapture().opts
+    expect(opts.gaCount).toBeUndefined() // 长程命令期间无 GA（A.3），GA 不再关窗
+    expect(opts.maxLines).toBeUndefined() // 不设行数兜底（中途剪断会误判 + 失配误报）
+    expect(opts.timeoutMs).toBe(120_000) // 预设系统值，豁免 60s 钳制
+    expect(opts.until).toHaveLength(2) // 完成双形态：内息收回 / 内力上限突破（2026-10-10 用户补）
+    expect(opts.until![0]!.exec('你将运转于全身经脉间的内息收回丹田，深深吸了口气，站了起来。')).not.toBeNull()
+    expect(opts.until![0]!.exec('你盘膝坐下，默运基本内功，一股内息自丹田引出……')).toBeNull()
+    expect(opts.until![1]!.test('你的内力增加了！！')).toBe(true)
+  })
+
+  it('cmd:"dazuo 10" 同命中预设；"dazuox" 不命中（走缺省 gaCount:1 + 15s）', async () => {
+    const { call, readCapture } = setup()
+    await call('mud_send', { cmd: 'dazuo 10' })
+    expect(readCapture().opts.timeoutMs).toBe(120_000)
+    await call('mud_send', { cmd: 'dazuox' })
+    expect(readCapture().opts.gaCount).toBe(1)
+    expect(readCapture().opts.timeoutMs).toBe(15000)
+  })
+
+  it('cmd:"sleep" 命中预设：until = 醒来句，timeout 兜底 300s', async () => {
+    const { call, readCapture } = setup()
+    await call('mud_send', { cmd: 'sleep' })
+    const opts = readCapture().opts
+    expect(opts.timeoutMs).toBe(300_000)
+    expect(opts.until![0]!.test('你一觉醒来，精神抖擞地活动了几下手脚。')).toBe(true)
+  })
+
+  it('模型显式 listen 仍整体覆盖预设；显式 timeoutMs 仍钳 60s', async () => {
+    const { call, readCapture } = setup()
+    await call('mud_send', { cmd: 'dz', listen: { until: ['自定义完成句'] } })
+    expect(readCapture().opts.until![0]!.source).toBe('自定义完成句')
+    expect(readCapture().opts.timeoutMs).toBe(15000) // 缺省钳制语义不变
+    await call('mud_send', { cmd: 'dz', timeoutMs: 999_999 })
+    expect(readCapture().opts.timeoutMs).toBe(MAX_TIMEOUT_MS)
+  })
+})
+
 describe('mud_walk 判据预设特化（T23，stub）', () => {
   it('缺省 args：发裸 walk，静默窗收束（无 gaCount），超时下限 30s', async () => {
     const sent: string[] = []

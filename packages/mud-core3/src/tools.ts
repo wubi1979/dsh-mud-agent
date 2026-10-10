@@ -236,6 +236,68 @@ const WALK_SPEED_RE = /^-?\d+$/
 /** mud_walk 总超时下限毫秒（长路线 15+ 步 × 慢速档 ≈ 12s+；低于此值用下限）。 */
 const WALK_MIN_TIMEOUT_MS = 30000
 
+// ── 长程命令判据预设（§8.7）──────────────────────────────────────────
+//
+// 长程命令（打坐/睡觉等）：受理帧自带 GA + prompt，其后输出流**无 GA 无 prompt**
+//（A.3：dz 受理后 56 批 / 约 57s），完成句与末条推送同块到达 ⇒ 缺省 `gaCount:1`
+// 只会收在受理帧。等待完成按**完成句 until**（跨批命中）收，timeout 只做兜底。
+// 纪律（A.6）：判据必须引用附录实录原文，不得凭印象写正则——条目原句见 A.3
+//（2026-10-10 用户提供）；新条目实机语料校准后逐条添加，机制不变。
+
+/** 长程命令判据预设条目。 */
+export interface LongCmdProfile {
+  /** 命令头匹配（对 trim 后的整条 cmd 测：首词 + 词边界）。 */
+  match: RegExp
+  /** 完成判据（until 正则源；在累积应答文本上测，可跨批命中）。 */
+  until: readonly string[]
+  /** 负面判据（failOn 正则源：受理被拒/被打断句；实机校准后补）。 */
+  failOn?: readonly string[]
+  /** 行间静默关窗（quietMs；输出流节奏未校准前不设——误早关窗比兜底超时更毒）。 */
+  quietMs?: number
+  /**
+   * 总超时毫秒（**系统注入值，豁免模型面 60s 钳制**——钳制只约束模型显式给的
+   * timeoutMs；until 是主收束，本值纯兜底）。
+   */
+  timeoutMs: number
+}
+
+/** 已知长程命令判据表（cmd 头匹配；模型显式 listen 仍整体覆盖，语义不变）。 */
+export const LONG_CMD_PROFILES: readonly LongCmdProfile[] = [
+  {
+    // 打坐（A.3 实录：受理帧 GA 后 57s 无 GA；受理/完成句原句 2026-10-10 用户提供）
+    // 完成双形态（2026-10-10 用户补）：内息收回 = 正常结束；内力增加了 = 上限突破
+    match: /^(dz|dazuo)(\s|$)/,
+    until: ['你将运转于全身经脉间的内息收回丹田', '你的内力增加了！！'],
+    timeoutMs: 120_000,
+  },
+  {
+    // 睡觉（受理/完成句原句 2026-10-10 用户提供；全程时长无实测，兜底放宽待校准）
+    match: /^sleep(\s|$)/,
+    until: ['你一觉醒来，精神抖擞地活动了几下手脚'],
+    timeoutMs: 300_000,
+  },
+]
+
+/** cmd 头匹配长程判据预设；未命中返回 null。 */
+export function matchLongCmdProfile(cmd: string): LongCmdProfile | null {
+  const c = cmd.trim()
+  for (const p of LONG_CMD_PROFILES) {
+    if (p.match.test(c)) return p
+  }
+  return null
+}
+
+/** 预设条目 → listen 判据（until 必有；failOn/quietMs 条件展开，exactOptionalPropertyTypes）。 */
+function profileListen(p: LongCmdProfile): ListenOpts {
+  const until = compileRegexes([...p.until], '长程预设.until')
+  const failOn = p.failOn !== undefined ? compileRegexes([...p.failOn], '长程预设.failOn') : undefined
+  return {
+    ...(until !== undefined ? { until } : {}),
+    ...(failOn !== undefined ? { failOn } : {}),
+    ...(p.quietMs !== undefined ? { quietMs: p.quietMs } : {}),
+  }
+}
+
 /** 引擎缺席时的可读拒绝（I9：不是必然失败的桩，注册照常、执行明确说明）。 */
 export const CORE_ABSENT_ERROR = '已拒绝：mud-core3 引擎服务缺席（ctx.mudCore3 未装配），工具仅注册未接线'
 
@@ -371,6 +433,7 @@ export function registerMudTools(
         cmd: {
           type: 'string',
           description: '要发送的命令；缺省 = 裸读（不发命令，读近期行流）。'
+            + '空命令只回一个提示符（立即返回），等待长程命令不要用它。'
             + '命令一律小写；命令参数（人名/物品名等英文 id）先用全小写尝试，'
             + '游戏不认（提示找不到/没这个东西）时再试大小写混合原样拼写',
         },
@@ -380,7 +443,7 @@ export function registerMudTools(
         },
         listen: {
           type: 'object',
-          description: '完成判据（缺省：有 cmd = 一段完整文字；裸读 = 最近行 + 短静默窗口）',
+          description: '完成判据（缺省：有 cmd = 一段完整文字；已知长程命令（dz/sleep 等）= 自动等完成句、一次性返回全程行文；裸读 = 最近行 + 短静默窗口）',
           properties: {
             until: { type: 'array', items: { type: 'string' }, description: '完成判据正则（在累积应答文本上测，可跨批命中）' },
             failOn: { type: 'array', items: { type: 'string' }, description: '负面判据正则（命中即失败收束）' },
@@ -426,6 +489,10 @@ export function registerMudTools(
         if (hit !== null) return reject(`拒绝执行：危险命令（${hit}）被禁（不可逆）`)
       }
 
+      // 空命令放开（2026-10-10 二次裁定）：长程等待根因已除（判据预设 + persona
+      // 纪律），拒绝不再必要。空输入也是命令 ⇒ 回 prompt+GA（A.2 1:1），走缺省
+      // gaCount:1 立即收束——用于刷提示符无害；等长程命令仍须走预设/裸读 + until。
+
       // 只对「未连接」设限（三期裁定：不受接入闸门、不要求已登录）。
       // 探测中（probeState=probing）仍按已连接放行——probeState 是只读观测面，
       // 不回写 conn 三态（T5.1），TCP 确实通，发送/等待语义不受探测影响。
@@ -447,7 +514,23 @@ export function registerMudTools(
         return { ok: true, reason: 'sent', lines: [] }
       }
 
-      // timeoutMs 钳制（§8.7）：缺省注入，上限 MAX_TIMEOUT_MS。
+      // listen 编译（非法正则 → 可读拒绝，不 throw）。
+      let listen: ListenOpts
+      try {
+        listen = compileListen(args.listen)
+      } catch (e) {
+        return reject((e as Error).message)
+      }
+
+      // 长程命令判据预设（§8.7）：模型未显式给 listen 且 cmd 命中预设表 ⇒ 注入
+      // 完成句判据（受理帧 GA 不再关窗，等完成句跨批命中；A.3 长程命令无 GA）。
+      // 显式 listen 整体覆盖预设 ⇒ profile 一并不适用（timeout 同步回归标准缺省）。
+      const profile = args.cmd !== undefined && Object.keys(listen).length === 0
+        ? matchLongCmdProfile(args.cmd)
+        : null
+
+      // timeoutMs 钳制（§8.7）：模型显式值钳上限 MAX_TIMEOUT_MS；缺省 = 预设兜底
+      //（系统注入值，豁免钳制——until 是主收束）或 sendTimeoutMs。
       let timeoutMs: number
       if (args.timeoutMs !== undefined) {
         if (!Number.isInteger(args.timeoutMs) || args.timeoutMs <= 0) {
@@ -455,15 +538,9 @@ export function registerMudTools(
         }
         timeoutMs = Math.min(args.timeoutMs, MAX_TIMEOUT_MS)
       } else {
-        timeoutMs = Math.min(c.defaults.sendTimeoutMs, MAX_TIMEOUT_MS)
-      }
-
-      // listen 编译（非法正则 → 可读拒绝，不 throw）。
-      let listen: ListenOpts
-      try {
-        listen = compileListen(args.listen)
-      } catch (e) {
-        return reject((e as Error).message)
+        timeoutMs = profile !== null
+          ? profile.timeoutMs
+          : Math.min(c.defaults.sendTimeoutMs, MAX_TIMEOUT_MS)
       }
 
       // 会话级持有者：同一时刻只允许一个执行体在 send+read（冲突可读拒绝，不劈半）。
@@ -479,8 +556,9 @@ export function registerMudTools(
         // initial：有 cmd = 空（acc 只收 send 后新行）；裸读 = pending 尾部快照
         //（不物理消费，范围含接入前的录制行）。
         const initial = bare ? tc.runtime.recentLines(c.defaults.sendMaxLines) : []
-        // 缺省判据（§8.7）：有 cmd = gaCount:1 + maxLines 兜底；
-        // 裸读 = maxLines + 短静默窗口。模型显式给 listen 时整体覆盖缺省。
+        // 缺省判据（§8.7）：有 cmd = 命中长程预设表 ⇒ 完成句判据（timeout 用预设
+        // 兜底值）；未命中 ⇒ gaCount:1 + maxLines 兜底。裸读 = maxLines + 短静默
+        // 窗口。模型显式给 listen 时整体覆盖缺省（预设同理被覆盖）。
         const opts: ReadOpts = bare
           ? {
               timeoutMs,
@@ -493,7 +571,9 @@ export function registerMudTools(
               timeoutMs,
               signal: exec.signal,
               ...(Object.keys(listen).length === 0
-                ? { gaCount: 1, maxLines: c.defaults.sendMaxLines }
+                ? (profile !== null
+                    ? profileListen(profile)
+                    : { gaCount: 1, maxLines: c.defaults.sendMaxLines })
                 : listen),
             }
         const r = await tc.runtime.read(opts, initial)
