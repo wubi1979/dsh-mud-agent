@@ -28,7 +28,8 @@
 import type { SessionRuntime } from './runtime.ts'
 import type { ReadOpts } from './read.ts'
 import type { ConnState } from './roster.ts'
-import type { LoggedInState, WorldSnapshot } from './world.ts'
+import type { LoggedInState, WorldEntry, WorldSnapshot } from './world.ts'
+import { DEFAULT_TRACK_RULES } from './tracker.ts'
 import type { MudLine } from './link/line.ts'
 import {
   belowStaminaFloor, STAMINA_CUR_KEY, STAMINA_MAX_KEY, STAMINA_ZONE,
@@ -265,15 +266,20 @@ export interface LongCmdProfile {
 export const LONG_CMD_PROFILES: readonly LongCmdProfile[] = [
   {
     // 打坐（A.3 实录：受理帧 GA 后 57s 无 GA；受理/完成句原句 2026-10-10 用户提供）
-    // 完成双形态（2026-10-10 用户补）：内息收回 = 正常结束；内力增加了 = 上限突破
+    // 完成三形态（2026-10-10 用户补）：内息收回 = 正常结束；内力增加了 = 上限突破；运功完毕站起 = 收尾变体
+    // 受理被拒（A.3，2026-10-10 用户补）：精神不足 ⇒ failOn 立即收窗，拒绝句原文回给 agent 自决
     match: /^(dz|dazuo)(\s|$)/,
-    until: ['你将运转于全身经脉间的内息收回丹田', '你的内力增加了！！'],
+    until: ['你将运转于全身经脉间的内息收回丹田', '你的内力增加了！！', '你运功完毕，深深吸了口气，站了起来。'],
+    failOn: ['你现在的气太少了，无法产生内息运行全身经脉。', '你现在精不够，无法控制内息的流动！'],
     timeoutMs: 120_000,
   },
   {
     // 睡觉（受理/完成句原句 2026-10-10 用户提供；全程时长无实测，兜底放宽待校准）
+    // 受理被拒（A.3，2026-10-10 用户补）：刚睡过 ⇒ failOn 立即收窗。原句尾随空格不进判据
+    //（子串匹配两侧兼容：句体命中即收，行文带不带尾随空白都能命中）
     match: /^sleep(\s|$)/,
     until: ['你一觉醒来，精神抖擞地活动了几下手脚'],
+    failOn: ['你刚刚睡过一觉, 多睡对身体有害无益!'],
     timeoutMs: 300_000,
   },
 ]
@@ -298,9 +304,52 @@ function profileListen(p: LongCmdProfile): ListenOpts {
   }
 }
 
+// ── 状态拉取命令读后投影（§8.7）──────────────────────────────────────
+//
+// persona 旧措辞「命令不会有返回结果」的实证后果（2026-10-10）：agent 对状态
+// 拉取命令发 wait:false 盲发循环（"没有返回值 ⇒ 等待无意义"），服务器限流。
+// 读后投影 = 收窗后把追踪器（T19）**本窗口**刚写入 World 的语义分区快照附进
+// 工具结果——解析零重复（判据单点在 tracker），结果从表格原文升级为结构化状态。
+// 命令集合单点 = DEFAULT_TRACK_RULES 的 rule id（不建第二张表；A.6 语料校准
+// 随规则条目走）。
+
+/** 投影取的语义分区（追踪器写入面，§10.3）；location/nav/gmcp/session 不在此列。 */
+const STATE_PULL_ZONES: readonly string[] = ['vitals', 'combat', 'character', 'inventory', 'skills']
+
+/**
+ * 状态拉取命令识别：**单点 = DEFAULT_TRACK_RULES 推导**，但只取「命令触发的
+ * 表格/序列规则」（zone ∈ 语义分区白名单 且 shape ∈ table/sequence）——规则表
+ * 同时含 walk 系列、combat、id 等行流匹配规则（非命令触发、zone 不在白名单），不能
+ * 全量拼接。推导结果 ≈ `hpbrief|hp|sc|i|skills|exp`，词边界保证 `id`/`inventory`
+ * 不误伤。
+ */
+export const STATE_PULL_CMD_RE = new RegExp(
+  `^(?:${DEFAULT_TRACK_RULES
+    .filter(r => (r.shape === 'table' || r.shape === 'sequence') && STATE_PULL_ZONES.includes(r.zone))
+    .map(r => r.id)
+    .join('|')})(?:\\s|$)`,
+)
+
+/**
+ * 读后投影：只取 `sinceMs`（send 时刻）之后写入的条目 = **本窗口的刷新证据**。
+ * 陈旧条目不投影（如 hp 被限流时窗内零写入 ⇒ 返回 null，调用方 fail-open 回原文，
+ * 绝不让旧值冒充新值）。
+ */
+function projectStateZones(world: WorldSnapshot, sinceMs: number): WorldSnapshot | null {
+  const out: Record<string, Record<string, WorldEntry>> = {}
+  let count = 0
+  for (const zone of STATE_PULL_ZONES) {
+    for (const [key, entry] of Object.entries(world[zone] ?? {})) {
+      if (entry.source.time < sinceMs) continue
+      ;(out[zone] ??= {})[key] = entry
+      count += 1
+    }
+  }
+  return count > 0 ? out : null
+}
+
 /** 引擎缺席时的可读拒绝（I9：不是必然失败的桩，注册照常、执行明确说明）。 */
 export const CORE_ABSENT_ERROR = '已拒绝：mud-core3 引擎服务缺席（ctx.mudCore3 未装配），工具仅注册未接线'
-
 /** 归属未命中的可读拒绝。 */
 export const NOT_BOUND_ERROR = '已拒绝：本会话未绑定 MUD 账号'
 
@@ -318,7 +367,7 @@ export type MudConnectResult =
   | { ok: true; state: string }
 export type MudSendResult =
   | { ok: false; error: string }
-  | { ok: true; reason: string; lines: string[] }
+  | { ok: true; reason: string; lines: string[]; world?: WorldSnapshot }
 /** mud_walk 行走结果分类（T23.5/T23.11，D13）：软/硬阻断与"没站在出发点"处置不同。 */
 export type MudWalkOutcome = 'arrived' | 'soft-stop' | 'hard-stop' | 'unaccepted' | 'incomplete'
 
@@ -425,7 +474,8 @@ export function registerMudTools(
       + 'wait=false 时发送即走：只发命令不等应答（不 read、不判成败），用于翻页/save 等'
       + '"发了就行"的动作。未连接时被拒绝，可先调用 mud_connect。listen 声明完成判据'
       + '（缺省等一段完整文字）；必须给超时或缺省由系统注入（绝不无界等待）。'
-      + '返回应答行原文，由你自决下一步。',
+      + '返回应答行原文；状态拉取命令（hpbrief/hp/sc/i/skills）还会附带系统解析好的'
+      + ' world 结构化状态（world 字段，与 mud_state 同形），直接读它即可。',
     isConcurrencySafe: () => false, // socket 写 + 行流等待，独占（谓词恒 false）
     parameters: {
       type: 'object',
@@ -462,6 +512,7 @@ export function registerMudTools(
           ok: { type: 'boolean' },
           reason: { type: 'string' },
           lines: { type: 'array', items: { type: 'string' } },
+          world: { type: 'object' },
           error: { type: 'string' },
         },
         required: ['ok'],
@@ -473,6 +524,10 @@ export function registerMudTools(
         if (!v.ok) return [{ type: 'text', text: v.error }]
         // 发送即走（wait:false）：无应答行可给，明说语义并指引状态面。
         if (v.reason === 'sent') return [{ type: 'text', text: '已发送（发送即走：未等待应答；状态可用 mud_state 查看）' }]
+        // 读后投影（§8.7）：拉取命令带 world ⇒ 渲染结构化状态（与 mud_state 同款
+        // JSON 风格），原文表格不再重复进上下文；无 world（非拉取命令/窗内零写入）
+        // ⇒ 维持原文 join。
+        if (v.world !== undefined) return [{ type: 'text', text: JSON.stringify(v.world, null, 2) }]
         return [{ type: 'text', text: v.lines.join('\n') }]
       },
     },
@@ -550,6 +605,8 @@ export function registerMudTools(
       }
       try {
         const bare = args.cmd === undefined
+        // 读后投影的窗口起点（§8.7）：send 时刻之后写入的条目才算本窗口刷新证据。
+        const sendAt = Date.now()
         if (args.cmd !== undefined && !tc.runtime.send(args.cmd)) {
           return reject('已拒绝：发送失败（连接可能已断开）')
         }
@@ -577,7 +634,15 @@ export function registerMudTools(
                 : listen),
             }
         const r = await tc.runtime.read(opts, initial)
-        return { ok: true, reason: r.reason, lines: r.lines.map(l => l.text) }
+        // 读后投影（§8.7）：拉取命令收窗后附 world 语义分区快照（零解析重复）；
+        // 窗内零写入 ⇒ 不带字段 fail-open 回原文。wait:false 与裸读不投影
+        //（前者已提前返回，后者无 cmd 不命中档案）。
+        const lines = r.lines.map(l => l.text)
+        if (args.cmd !== undefined && STATE_PULL_CMD_RE.test(args.cmd.trim())) {
+          const world = projectStateZones(c.stateOf(tc.sessionId).world, sendAt)
+          if (world !== null) return { ok: true, reason: r.reason, lines, world }
+        }
+        return { ok: true, reason: r.reason, lines }
       } finally {
         tc.runtime.releaseSend(holder)
       }

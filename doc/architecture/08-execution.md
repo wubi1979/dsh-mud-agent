@@ -40,7 +40,7 @@ L6 是 agent **能动**的唯一出口——把"想做什么"变成"MUD 上发�
 
 | 工具 | 语义 | 约束 |
 |---|---|---|
-| **`mud_send`** | 发命令 + **判据驱动等应答**；**不带 `cmd` = 裸读近况**；**`wait: false` = 发送即走**（T19 D11：只 send 不 read、不设超时、不判成败——分页/save 等"发了就行"的动作；返回 `reason:'sent'`，仍过持有者与拒绝序） | 不受接入闸门；**只拒未连接**；独占（`isConcurrencySafe: false`）；应答原文返回调用方 |
+| **`mud_send`** | 发命令 + **判据驱动等应答**；**不带 `cmd` = 裸读近况**；**`wait: false` = 发送即走**（T19 D11：只 send 不 read、不设超时、不判成败——分页/save 等"发了就行"的动作；返回 `reason:'sent'`，仍过持有者与拒绝序） | 不受接入闸门；**只拒未连接**；独占（`isConcurrencySafe: false`）；应答原文返回调用方（状态拉取命令另有读后投影，§8.7） |
 | **`mud_walk`** | **内建路径自动行走 + 导航动作**（T23；`mud_send` 的判据预设特化，非新持有者/新闸门）：`action` 缺省 `walk`（发 `walk` 家族命令：拼音名 / `-c` / `-q` / `-p` / 缺省恢复）、`action: 'speed'`（`set walk_speed <值>`）；判据已落地（`until` 到达 + `failOn` 软阻断/未受理 ⇒ `outcome`，T23.5）；`node` 家族（玩家自建路径）**只留槽位、本期不实现**（A.9 结论 9） | 同 `mud_send` 约束（只拒未连接、独占、持有者、可读拒绝）；`args` 拒分号/换行（walk 前缀使 deny 扫描失效，显式堵拼接）；预留动作执行返回可读拒绝 |
 | **`mud_state`** | **状态自述**（两轴 + World 合并快照，§10.5） | **不受闸门 / 不受连接约束，只过归属** |
 | **`mud_connect`** | **建连**（幂等：已连接不重连、不踢已登录会话） | 三期把"连接是手工动词"升格为工具，模型可自行调用 |
@@ -97,12 +97,13 @@ mud_send {
 |---|---|
 | `listen` 编译 | 全空 ⇒ `{}`（不武装判据）；缺省判据按模式注入：**有 `cmd` ⇒ 命中长程预设表则注入完成句判据（见下）· 未命中 ⇒ `gaCount: 1` + `maxLines` 兜底**；**裸读 ⇒ `quietMs: 300`**；模型显式给 `listen` ⇒ 整体覆盖缺省（预设同理被覆盖） |
 | **空命令** | **放开**（2026-10-10 二次裁定）：照常发送，走缺省 `gaCount:1` 立即收束——空输入也是命令 ⇒ 回 prompt+GA（A.2 1:1），刷提示符无害；等长程命令不用它（根因治理靠长程判据预设 + persona 等待纪律；曾设可读拒绝，因根因已除放开） |
-| **长程命令判据预设** | `LONG_CMD_PROFILES`（cmd 头匹配；2026-10-10）：命中 ⇒ 注入**完成句 `until`**（跨批命中；A.3 长程命令期间无 GA）+ 预设 `timeoutMs` 兜底；不设 `gaCount`/`maxLines`（GA 不来、行数剪断会误判）。现役条目：`dz|dazuo` ⇒ 等内息收回丹田句、兜底 120s；`sleep` ⇒ 等一觉醒来句、兜底 300s。**新条目须先语料校准并登记 A.3 原句**（A.6 纪律）；`xue` 即时完成 GA 收尾，不入表 |
+| **长程命令判据预设** | `LONG_CMD_PROFILES`（cmd 头匹配；2026-10-10）：命中 ⇒ 注入**完成句 `until`**（跨批命中；A.3 长程命令期间无 GA）+ **受理被拒句 `failOn`**（命中即收窗 `reason:'failOn'`，优先于 until——拒绝句原文回给 agent 自决，不空等到 timeout）+ 预设 `timeoutMs` 兜底；不设 `gaCount`/`maxLines`（GA 不来、行数剪断会误判）。现役条目：`dz\|dazuo` ⇒ until 三形态（内息收回/内力上限突破/运功完毕站起）+ failOn 精神不足句、兜底 120s；`sleep` ⇒ until 一觉醒来句 + failOn 刚睡过句、兜底 300s。**新条目（until 与 failOn 同纪律）须先语料校准并登记 A.3 原句**（A.6 纪律）；`xue` 即时完成 GA 收尾，不入表 |
 | `wait: false` | 只 `runtime.send(cmd)`，**不 read、不设超时、不判成败**；返回 `{ok:true, reason:'sent', lines:[]}`；需提供 `cmd`（裸读不适用）；仍过禁发表/连接闸门/持有者（拒绝序不变，§8.4） |
+| **读后投影**（2026-10-10） | `cmd` 头命中**状态拉取档案**且收窗 ⇒ 结果附 `world` 字段 = **本窗口**（send 时刻起）追踪器写入的语义分区快照（`vitals/combat/character/inventory/skills`，条目含来源元数据，与 `mud_state` 的 world 同形）。档案**单点 = `DEFAULT_TRACK_RULES` 推导**（zone ∈ 白名单 且 shape ∈ table/sequence，≈ `hpbrief\|hp\|sc\|i\|skills\|exp`；词边界不误伤 `id`/`inventory`），解析零重复（判据单点在 tracker，§10.3）。**窗内零写入 ⇒ 不带字段**（fail-open 回原文行——限流警告等非表格应答天然覆盖，旧值不冒充新值）；`wait:false` 与裸读不投影。投递通道的 `status` 剔除（§10.3 D8）不变 |
 | `until` / `failOn` | 字符串正则源（解释器/工具侧编译），命中序有意义（§8.13） |
 | `timeoutMs` | **模型显式值钳制 ≤ 60000**（协作式超时上限）；缺省 = 预设条目 `timeoutMs`（**系统注入值，豁免钳制**——until 是主收束，本值纯兜底）或 Config `sendTimeoutMs` 15000 |
 | 兜底行数 | Config 缺省 `sendMaxLines` 50（长程预设不设——完成句收束，行数剪断会误判） |
-| `render` | `ok: true` ⇒ 行原文 `join('\n')`（`reason:'sent'` ⇒ 发送即走说明文案）；拒/错 ⇒ 可读文本 |
+| `render` | `ok: true` ⇒ 行原文 `join('\n')`（`reason:'sent'` ⇒ 发送即走说明文案；**带 `world` ⇒ JSON 渲染投影快照**——原文表格不重复进上下文）；拒/错 ⇒ 可读文本 |
 | **硬编码项** | 禁词表最小集（§12.3）与裸读 `quietMs = 300`：**无例证不进 Config** |
 
 **`mud_walk` 参数与判据预设（T23，A.9）**

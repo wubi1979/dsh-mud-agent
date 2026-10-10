@@ -777,3 +777,23 @@
 - **文档**：§8.7 表更新（空命令拒绝行 + 长程预设行 + timeout 钳制豁免口径）、A.3 登记受理/完成句原句与空命令事实、§15 钳制行同步；tools.spec +5 用例（空命令拒绝 / dz·dazuo·sleep 命中与不命中 / 显式 listen·timeoutMs 覆盖语义）。已知遗留：wake.spec 2 例因实机期间任务书模板硬编码改动而红（{{goal}} 槽位被替换），与本版无关待用户定夺。
 
 > AI生成
+
+## [v0.0.67]状态拉取命令读后投影 (2026-10-10)
+> 总结：DSH 会话实证（session-e37e3325）：agent 对状态拉取命令（hpbrief/hp/sc/i/skills）发 `wait:false` 盲发循环且不调 mud_state——根因 = persona 旧措辞「命令不会有返回结果」（推出"等待无意义"）+ 工具结果确实不带状态值。两步收敛：先改 persona 措辞（实证行为已收敛），再落读后投影让"返回值"从表格原文升级为结构化状态。
+
+- **persona 措辞纠偏**（cordis.patch.yml，2026-10-10 先行验证）：删除「命令不会有返回结果」误导源；改为「刷新命令一律缺省等待（不要 wait:false——发送即走等于放弃应答）+ 结果直接读 + mud_state 降级为全局盘点兜底」。实机验证盲发循环消失。
+- **读后投影**（tools.ts `STATE_PULL_CMD_RE` / `projectStateZones`，§8.7 新行）：拉取命令收窗后，结果附 `world` = **本窗口**（send 时刻起）追踪器写入的语义分区快照（vitals/combat/character/inventory/skills，与 `mud_state` 的 world 同形，条目含来源元数据）。解析零重复（判据单点在 tracker）；**窗内零写入 ⇒ 不带字段**（fail-open 回原文行——hp 限流警告等非表格应答天然覆盖，陈旧条目不投影防旧值冒充新值）；`wait:false` 与裸读不投影；投递通道 `status` 剔除（§10.3 D8）不变。
+- **拉取档案单点推导**：`DEFAULT_TRACK_RULES` 中 zone ∈ 白名单且 shape ∈ table/sequence 的条目（≈ `hpbrief|hp|sc|i|skills|exp`，词边界不误伤 `id`/`inventory`）——规则表里 walk 系列/combat/id 等行流匹配规则不参与（非命令触发、zone 不在白名单）。
+- **render/schema**：`output.schema` 增可选 `world`（object）；render 带 `world` ⇒ JSON 渲染投影快照（与 mud_state 同款风格），原文表格不重复进上下文；无 world 维持原文 join。工具描述同步。
+- **文档**：§8.3 mud_send 行加指针、§8.7 新增「读后投影」行 + render 行口径；tools.spec +5 用例（档案正则命中与不误伤 / 窗内写入投影 / 非拉取命令不投影 / 陈旧条目 fail-open / render 双分支）。
+
+> AI生成
+
+## [v0.0.68]长程命令受理被拒 failOn 落地 (2026-10-10)
+> 总结：长程命令（dz/sleep）存在受理失败形态——此前 until 只收完成句，被拒时判据全不命中，窗口空等到 timeout 兜底（120s/300s 白等）。`LongCmdProfile.failOn` 槽位本就预留（"实机校准后补"），本版以用户供给语料补齐；此前用户曾把 sleep 拒绝句临时塞进 until 止血，本版归位语义。
+
+- **判据补齐**（tools.ts `LONG_CMD_PROFILES`，语料 A.3 登记 2026-10-10 用户提供）：`dz|dazuo` ⇒ failOn `你的精神不足，无法控制内息的流动`；`sleep` ⇒ failOn `你刚刚睡过一觉, 多睡对身体有害无益!`。命中即收窗 `reason:'failOn'`（判定序 failOn > until），拒绝句原文回给 agent 自决，不空等 timeout。**until/failOn 语义分立**：until = 完成（可继续下一动作），failOn = 被拒（先补条件/换动作）——用户此前塞进 until 的 sleep 拒绝句移回 failOn。
+- **尾随空白纪律**：sleep 拒绝句原句尾随一个空格，判据取句体不含尾随空白（子串匹配带不带尾随空格都命中），A.3 原句仍按实录保存。
+- **文档**：§8.7 长程预设行补 failOn 口径与现役条目、A.3 登记 dz/sleep 受理被拒原句；tools.spec 同步（dz until 2→3 形态断言修正 + dz/sleep failOn 命中与不误命中断言）。
+
+> AI生成

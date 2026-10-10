@@ -15,7 +15,7 @@ import type { AddressInfo } from 'node:net'
 import {
   registerMudTools, denyMatch, commandTokens, compileListen,
   CORE_ABSENT_ERROR, NOT_BOUND_ERROR, NOT_CONNECTED_ERROR, HOLDER_BUSY_ERROR,
-  MAX_TIMEOUT_MS,
+  MAX_TIMEOUT_MS, STATE_PULL_CMD_RE,
   type MudToolDefinition, type ToolRegistrar, type MudCore3Handle, type MudToolDeps,
 } from '../src/tools.ts'
 import { NavService } from '../src/nav/service.ts'
@@ -246,6 +246,52 @@ describe('mud_send 拒绝序（stub）', () => {
   })
 })
 
+describe('mud_send 读后投影（§8.7 状态拉取命令）', () => {
+  // 构造期时刻必然早于执行期 sendAt（Date.now 在 execute 内取）⇒ +60s 视为「窗内写入」。
+  const FRESH = Date.now() + 60_000
+  const entry = (time: number = FRESH) => ({ value: 100, confidence: 'measured', source: { kind: 'track', time } })
+  const stateWith = (world: Record<string, unknown>) => ({
+    connState: 'connected', loggedIn: 'in-game', admitted: true, world, recording: 0, dropped: 0,
+  })
+
+  it('STATE_PULL_CMD_RE：规则 id 单点识别（id/inventory/look 不误伤）', () => {
+    for (const cmd of ['hpbrief', 'hp', 'sc', 'i', 'skills', 'hp ', 'skills all']) {
+      expect(STATE_PULL_CMD_RE.test(cmd)).toBe(true)
+    }
+    for (const cmd of ['look', 'id', 'inventory', 'save', 'sk tom', 'dazuo 100']) {
+      expect(STATE_PULL_CMD_RE.test(cmd)).toBe(false)
+    }
+  })
+
+  it('拉取命令：窗内追踪写入 ⇒ 结果带 world 语义分区（含来源元数据）', async () => {
+    const { call } = setup({
+      stateOf: () => stateWith({ vitals: { 气血: entry() }, location: { 房间: entry() } }),
+    })
+    const r = await call('mud_send', { cmd: 'hpbrief' }) as { world?: Record<string, unknown> }
+    expect(r).toMatchObject({ ok: true, world: { vitals: { 气血: { value: 100, source: { kind: 'track' } } } } })
+    expect(r.world).not.toHaveProperty('location') // 分区白名单（STATE_PULL_ZONES）之外不投影
+  })
+
+  it('非拉取命令：不投影（world 缺席，原文返回）', async () => {
+    const { call } = setup({ stateOf: () => stateWith({ vitals: { 气血: entry() } }) })
+    await expect(call('mud_send', { cmd: 'look' })).resolves.toEqual({ ok: true, reason: 'quiet', lines: [] })
+  })
+
+  it('窗内零写入（陈旧条目）：fail-open 不带 world（旧值不冒充新值）', async () => {
+    const { call } = setup({ stateOf: () => stateWith({ vitals: { 气血: entry(0) } }) })
+    await expect(call('mud_send', { cmd: 'hp' })).resolves.toEqual({ ok: true, reason: 'quiet', lines: [] })
+  })
+
+  it('render：带 world ⇒ JSON 文本；无 world ⇒ 原文 join', () => {
+    const { defs } = setup({ stateOf: () => stateWith({ vitals: { 气血: entry() } }) })
+    const render = (v: unknown) => defs.get('mud_send')!.output.render({}, v)
+    expect(render({ ok: true, reason: 'done', lines: ['#表', '#格'], world: { vitals: { 气血: entry() } } }))
+      .toEqual([{ type: 'text', text: JSON.stringify({ vitals: { 气血: entry() } }, null, 2) }])
+    expect(render({ ok: true, reason: 'done', lines: ['普通', '应答'] }))
+      .toEqual([{ type: 'text', text: '普通\n应答' }])
+  })
+})
+
 describe('mud_send 判据与 initial（stub）', () => {
   it('有 cmd：send 后 read，initial 为空，缺省判据 gaCount:1 + maxLines 兜底', async () => {
     const sent: string[] = []
@@ -314,7 +360,7 @@ describe('mud_send 空命令与长程判据预设（§8.7，A.3）', () => {
     expect(readCapture().opts.timeoutMs).toBe(15000)
   })
 
-  it('cmd:"dz" 命中预设：until = 完成句（受理句不误命中），无 gaCount，timeout = 预设兜底 120s', async () => {
+  it('cmd:"dz" 命中预设：until = 完成句（受理句不误命中），failOn = 拒绝句，无 gaCount，timeout = 预设兜底 120s', async () => {
     const sent: string[] = []
     const { call, readCapture } = setup({}, { send: (cmd: string) => { sent.push(cmd); return true } })
     await call('mud_send', { cmd: 'dz' })
@@ -323,10 +369,14 @@ describe('mud_send 空命令与长程判据预设（§8.7，A.3）', () => {
     expect(opts.gaCount).toBeUndefined() // 长程命令期间无 GA（A.3），GA 不再关窗
     expect(opts.maxLines).toBeUndefined() // 不设行数兜底（中途剪断会误判 + 失配误报）
     expect(opts.timeoutMs).toBe(120_000) // 预设系统值，豁免 60s 钳制
-    expect(opts.until).toHaveLength(2) // 完成双形态：内息收回 / 内力上限突破（2026-10-10 用户补）
+    expect(opts.until).toHaveLength(3) // 完成三形态：内息收回 / 内力上限突破 / 运功完毕站起（2026-10-10 用户补）
     expect(opts.until![0]!.exec('你将运转于全身经脉间的内息收回丹田，深深吸了口气，站了起来。')).not.toBeNull()
     expect(opts.until![0]!.exec('你盘膝坐下，默运基本内功，一股内息自丹田引出……')).toBeNull()
     expect(opts.until![1]!.test('你的内力增加了！！')).toBe(true)
+    expect(opts.until![2]!.test('你运功完毕，深深吸了口气，站了起来。')).toBe(true)
+    expect(opts.failOn).toHaveLength(1) // 受理被拒（A.3，2026-10-10 用户补）：精神不足句
+    expect(opts.failOn![0]!.test('你的精神不足，无法控制内息的流动')).toBe(true)
+    expect(opts.failOn![0]!.test('你将运转于全身经脉间的内息收回丹田')).toBe(false)
   })
 
   it('cmd:"dazuo 10" 同命中预设；"dazuox" 不命中（走缺省 gaCount:1 + 15s）', async () => {
@@ -338,12 +388,16 @@ describe('mud_send 空命令与长程判据预设（§8.7，A.3）', () => {
     expect(readCapture().opts.timeoutMs).toBe(15000)
   })
 
-  it('cmd:"sleep" 命中预设：until = 醒来句，timeout 兜底 300s', async () => {
+  it('cmd:"sleep" 命中预设：until = 醒来句，failOn = 刚睡过句（尾随空格兼容），timeout 兜底 300s', async () => {
     const { call, readCapture } = setup()
     await call('mud_send', { cmd: 'sleep' })
     const opts = readCapture().opts
     expect(opts.timeoutMs).toBe(300_000)
     expect(opts.until![0]!.test('你一觉醒来，精神抖擞地活动了几下手脚。')).toBe(true)
+    expect(opts.failOn).toHaveLength(1) // 受理被拒（A.3，2026-10-10 用户补）：刚睡过句
+    expect(opts.failOn![0]!.test('你刚刚睡过一觉, 多睡对身体有害无益! ')).toBe(true) // 原句带尾随空格
+    expect(opts.failOn![0]!.test('你刚刚睡过一觉, 多睡对身体有害无益!')).toBe(true) // 不带也能命中
+    expect(opts.failOn![0]!.test('你一觉醒来，精神抖擞地活动了几下手脚。')).toBe(false)
   })
 
   it('模型显式 listen 仍整体覆盖预设；显式 timeoutMs 仍钳 60s', async () => {
