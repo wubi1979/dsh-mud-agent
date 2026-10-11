@@ -18,15 +18,17 @@
  *     （整窗按行 join 匹配，无 'm' 时 `^` = 窗首，提示行在横幅之后永不命中）；
  *   - need-new 实机整句内嵌**动态用户名**（`使用\S+创造`），`(yes)` 括号须转义。
  *
- * 步表（动作在路由前执行，条件发送 = 独立步骤）：
+ * 步表（动作在路由前执行，条件发送 = 独立步骤；T26 具名槽词汇，DEC-19——
+ * wait.outcomes 槽表 + onOutcome 单表，判据按结局命名，不再有 until/failOn 下标）：
  *   prompt-name   等名字提示 → 发 {name}
- *   prompt-pass   等密码提示（failOn 用户名不存在/非法整句 → need-new 出口）→ 发 {pass}
- *   confirm       等「替换 | 成功句」（failOn 密码错误类 → bad-pass 出口）；
- *                 replace 命中 → replace 步，否则 → send-empty
+ *   prompt-pass   等密码提示（fail 槽 需建新人物：用户名不存在/非法整句）→ 发 {pass}
+ *   confirm       等「需替换 | 登录成功」（fail 槽 密码错误类）；需替换命中 →
+ *                 replace 步，登录成功 → send-empty，密码错误 → bad-pass 出口
  *   replace       发 y（login.md replace 步 action=y，默认应答）
  *   wait-success  等成功句
  *   send-empty    终态空命令（走凭据通道不进发送回显）
  *   wait-ga       空命令收 GA = 登录真的收尾了的确认 → success 出口
+ *                 （GA 边界收窗保持 legacy gaCount——GA 无结局可分类）。
  *
  * 连接守卫不在本表：流程执行以已建立连接为前提（core3 workflowIoFor 缝在
  * io 注入前拒绝未连接，等待以连接为前提——未连接时 driver 永远不会到达）。
@@ -43,19 +45,19 @@ import type { WorkflowRecord } from 'mud-workflow/contract'
 const STEP_MS = 30_000
 const SUCCESS_MS = 5_000
 
-// ── 判据（login.md 定稿 + 实测勘误，见文件头）────────────────────────
+// ── 判据（login.md 定稿 + 实测勘误，见文件头；按结局命名挂槽，T26）────
 
-/** 步 1 driver：英文名字提示（实机单形态；^ 行首锚防聊天误触发，配 flags 'm'）。 */
+/** 槽「名字提示」：英文名字提示（实机单形态；^ 行首锚防聊天误触发，配 flags 'm'）。 */
 const NAME_SRC = '^您的英文名字（要注册新人物请输入new。）：'
-/** 步 2 fail：用户名不存在/非法 → 实质失败（need-new；`\S+` = 实机整句内嵌的动态用户名，2026-10-03 实机勘误）。 */
+/** 槽「需建新人物」（fail）：用户名不存在/非法 → 实质失败（`\S+` = 实机整句内嵌的动态用户名，2026-10-03 实机勘误）。 */
 const NEED_NEW_SRC = '^同意玩家须知并使用\\S+创造一个新的人物，您确定吗\\(yes\\)？|^对不起，你的英文名字只能用小写英文字母。'
-/** 步 2 driver：密码提示（实机单形态；裸「请输入密码：」不作判据，防误触发）。 */
+/** 槽「密码提示」：密码提示（实机单形态；裸「请输入密码：」不作判据，防误触发）。 */
 const PASS_SRC = '^此ID档案已存在，请输入密码：'
-/** 步 3 fail：密码错误类（login.md 字面三条，'m' 多行锚；实测密码错常表现为服务器直接断连 → 走 timeout/断线路）。 */
+/** 槽「密码错误」（fail）：密码错误类（login.md 字面三条，'m' 多行锚；实测密码错常表现为服务器直接断连 → 走 timeout/断线路）。 */
 const BAD_PASS_SRC = '^密码错误！|^密码不正确|^如果帐号用register命令注册过，并且密码已经忘记，请按照'
-/** 步 3 分支 driver：替换在线人物提示（login.md 字面全句）。 */
+/** 槽「需替换」：替换在线人物提示（login.md 字面全句）。 */
 const REPLACE_SRC = '您要将另一个连线中的相同人物赶出去，取而代之吗？\\(y\\/n\\)'
-/** 步 3/5 成功句（两条定稿判据；「欢迎来到」勘误见文件头）。 */
+/** 槽「登录成功」：成功句两条定稿判据（「欢迎来到」勘误见文件头）。 */
 const SUCCESS_SRC = '目前权限：\\(player\\)|重新连线完毕'
 
 /** 登录流程（locked；经 mudCore3.builtinFlows 交 mud-workflow 注册表挂载，agent 拒改拒删）。 */
@@ -70,27 +72,47 @@ export const login: WorkflowRecord = {
     steps: [
       {
         id: 'prompt-name',
-        wait: { until: [NAME_SRC], flags: 'm', timeoutMs: STEP_MS },
+        wait: {
+          closeOn: 'criteria',
+          outcomes: { 名字提示: { kind: 'ok', patterns: [NAME_SRC] } },
+          flags: 'm',
+          timeoutMs: STEP_MS,
+        },
         action: { sendCredential: '{name}' },
         next: { goto: 'prompt-pass' },
       },
       {
         id: 'prompt-pass',
-        wait: { until: [PASS_SRC], failOn: [NEED_NEW_SRC], flags: 'm', timeoutMs: STEP_MS },
-        onFailOn: { '0': { exit: { stage: 'need-new', ok: false } } },
+        wait: {
+          closeOn: 'criteria',
+          outcomes: {
+            需建新人物: { kind: 'fail', patterns: [NEED_NEW_SRC] },
+            密码提示: { kind: 'ok', patterns: [PASS_SRC] },
+          },
+          flags: 'm',
+          timeoutMs: STEP_MS,
+        },
+        onOutcome: { 需建新人物: { exit: { stage: 'need-new', ok: false } } },
         action: { sendCredential: '{pass}' },
         next: { goto: 'confirm' },
       },
       {
         id: 'confirm',
         wait: {
-          until: [REPLACE_SRC, SUCCESS_SRC],
-          failOn: [BAD_PASS_SRC],
+          closeOn: 'criteria',
+          outcomes: {
+            密码错误: { kind: 'fail', patterns: [BAD_PASS_SRC] },
+            需替换: { kind: 'ok', patterns: [REPLACE_SRC] },
+            登录成功: { kind: 'ok', patterns: [SUCCESS_SRC] },
+          },
           flags: 'm',
           timeoutMs: STEP_MS,
         },
-        onFailOn: { '0': { exit: { stage: 'bad-pass', ok: false } } },
-        branch: [{ goto: 'replace' }],
+        onOutcome: {
+          需替换: { goto: 'replace' },
+          密码错误: { exit: { stage: 'bad-pass', ok: false } },
+        },
+        // 登录成功（ok 未覆盖）→ next
         next: { goto: 'send-empty' },
       },
       {
@@ -100,7 +122,11 @@ export const login: WorkflowRecord = {
       },
       {
         id: 'wait-success',
-        wait: { until: [SUCCESS_SRC], timeoutMs: STEP_MS },
+        wait: {
+          closeOn: 'criteria',
+          outcomes: { 登录成功: { kind: 'ok', patterns: [SUCCESS_SRC] } },
+          timeoutMs: STEP_MS,
+        },
         next: { goto: 'send-empty' },
       },
       {

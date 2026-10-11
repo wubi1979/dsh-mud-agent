@@ -47,8 +47,9 @@ import type {
 } from './roster.ts'
 // 验证码链路（T13）：恢复帧词汇表类型来自 mud-workflow 契约层（A1 单点声明）；
 // 取图纯层（D3 fetch 注入）。
-import type { CaptchaResume, WorkflowIO, WorkflowIoHandle } from 'mud-workflow/contract'
+import type { CaptchaResume, IoReadOpts, IoReadResult, WorkflowIO, WorkflowIoHandle } from 'mud-workflow/contract'
 import { fetchCaptchaImage, type CaptchaFetch } from './captcha.ts'
+import { resolveAwaitPlan } from './command-profiles.ts'
 
 /** 服务依赖（宿主/测试注入）。 */
 export interface MudServiceDeps {
@@ -588,14 +589,47 @@ export class MudService {
 
     // 实现按契约端口实例化：行载体 = MudLine（read(initial) 原样回环），
     // 契约面只承诺 text（窄面），两侧都不需要 cast。
+    //
+    // T26（§3.6 缝侧"本窗等的是哪条命令"）：send/sendCredential 记 `lastSent`
+    //（凭据置 null——凭据命令不走表）；read 在步未显式声明判据（until/failOn/
+    // closeOn 均缺省）时按 lastSent 查命令总表注入（表条目为基线，步声明的
+    // quietMs/maxLines 后声明为准），结果带归因（command/source）。会话级持有
+    // 者独占（§8.6）⇒ 窗口内无第二执行体发送，该推断在结构上成立。未登记命
+    // 令与已声明步原样透传（现役行为零变化；未声明且未登记 ⇒ 不收窗等超时，
+    // DEC-4 由保存期告警与 T26.7 翻转兜住）。
+    let lastSent: string | null = null
     const io: WorkflowIO<MudLine> = {
-      send: cmd => rt.send(cmd),
-      sendCredential: cmd => rt.sendCredential(cmd),
+      send: cmd => {
+        lastSent = cmd
+        return rt.send(cmd)
+      },
+      sendCredential: cmd => {
+        lastSent = null
+        return rt.sendCredential(cmd)
+      },
       // recentLines 只回未读行（abs > readAbs 水位过滤）：pending 环不物理消费，
       // 已被前序收束窗消费的应答行（如答错句残行）不得重入后续读窗——否则答错
       // 重入时 judge 的 initial 快照会立即再命中旧答错句。（T14.2：原「URL 抽取
       // 豁免」只为 awaitCaptcha 闭包自取存在，URL 槽化后随之删除——过滤代码零改动。）
-      read: (opts, initial) => rt.read(opts, initial ?? []),
+      read: async (opts, initial) => {
+        const declared = opts.until !== undefined || opts.failOn !== undefined || opts.closeOn !== undefined
+        if (declared || lastSent === null) return rt.read(opts, initial ?? [])
+        const plan = resolveAwaitPlan(lastSent)
+        if (plan.source !== 'table' && plan.source !== 'empty') return rt.read(opts, initial ?? [])
+        const injected: IoReadOpts = {
+          ...opts,
+          ...(plan.closeOn !== undefined ? { closeOn: plan.closeOn } : {}),
+          ...(plan.slots !== undefined ? { slots: plan.slots } : {}),
+          ...(opts.quietMs !== undefined || plan.quietMs === undefined ? {} : { quietMs: plan.quietMs }),
+          ...(opts.maxLines !== undefined || plan.maxLines === undefined ? {} : { maxLines: plan.maxLines }),
+        }
+        const r = await rt.read(injected, initial ?? [])
+        return {
+          ...r,
+          ...(plan.command !== undefined ? { command: plan.command } : {}),
+          source: plan.source,
+        } satisfies IoReadResult
+      },
       recentLines: n => rt.recentLines(n).filter(l => l.abs > rt.readWatermark()),
       awaitCaptcha,
       state: () => this.status(sessionId),

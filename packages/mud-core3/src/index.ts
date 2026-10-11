@@ -46,6 +46,7 @@ import { MAX_TIMEOUT_MS } from './tools.ts'
 import type { WorkflowRecord } from 'mud-workflow/contract'
 import { login } from './flows/login.ts'
 import { fullme } from './flows/fullme.ts'
+import { tableSlotsOf } from './command-profiles.ts'
 import type { SessionLogOptions } from './log/log-service.ts'
 import { resolveLogDir, purgeSessionLogs } from './log/log-service.ts'
 // Remote 边界类型从非根子路径取（typert 要求，见 src/types.ts）。
@@ -290,6 +291,9 @@ export interface MudCore3Service extends MudCore3Handle {
   runtimeFor(agent: { id: unknown }): SessionRuntime | null
   /** 流程实体（locked login 等；mud-workflow 注册表启动期挂载，fail-loud 校验）。 */
   readonly builtinFlows: readonly WorkflowRecord[]
+  /** 命令总表槽名查询（T26.5；契约层 FlowSlotsPort 实现，宿主插件注入注册表）：
+   * 命令命中总表条目返回槽名序列（fail 先行），未登记返回 null。 */
+  readonly tableSlotsOf: (sent: string) => readonly string[] | null
 }
 
 // ── Remote 服务 ─────────────────────────────────────────────────
@@ -1009,6 +1013,9 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     // 流程实体（数据归 core3，2026-10-01 裁定）：mud-workflow 注册表启动期挂载。
     // fullme（T13）：captcha 词汇表 T13.1 已落地，registerBuiltins fail-loud 可过（B6）。
     builtinFlows: [login, fullme],
+    // 表槽名查询（T26.5）：mud-workflow 注册表保存门/视图校验的端口（宿主插件
+    // 经窄结构读取注入，先注端口再挂预制）。
+    tableSlotsOf,
   } satisfies MudCore3Service)
 
   // ── Remote 服务注册 ────────────────────────────────────────

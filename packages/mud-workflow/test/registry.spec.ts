@@ -9,7 +9,7 @@ import {
   MAX_SNAPSHOTS_PER_FLOW, WorkflowRegistry, snapshotKey, type WorkflowDomainTables,
 } from '../src/core/index.ts'
 import {
-  checkFlow, type Flow, type HostTable, type WorkflowRecord, type WorkflowSnapshot,
+  checkFlow, normalizeFlow, type Flow, type HostTable, type WorkflowRecord, type WorkflowSnapshot,
 } from '../src/contract/index.ts'
 
 /** 最小合法流程（单步，等一行后成功出口）。 */
@@ -66,7 +66,7 @@ describe('WorkflowRegistry 保存门', () => {
   it('合法流程可保存：version 从 1 起，list/get 可见', async () => {
     const registry = new WorkflowRegistry()
     const saved = await registry.save({ name: 'demo', title: '演示', flow: simpleFlow() })
-    expect(saved.version).toBe(1)
+    expect(saved.record.version).toBe(1)
     expect(registry.get('demo')?.title).toBe('演示')
     expect(registry.list().map(r => r.name)).toContain('demo')
   })
@@ -75,7 +75,7 @@ describe('WorkflowRegistry 保存门', () => {
     const registry = new WorkflowRegistry()
     await registry.save({ name: 'demo', title: '演示', flow: simpleFlow() })
     const again = await registry.save({ name: 'demo', title: '演示 v2', flow: simpleFlow() })
-    expect(again.version).toBe(2)
+    expect(again.record.version).toBe(2)
   })
 
   it('流程非法（goto 指向不存在的步）可读拒绝', async () => {
@@ -120,7 +120,7 @@ describe('WorkflowRegistry 保存门', () => {
     const prefab = record({ name: 'supply', version: 3 })
     const registry = new WorkflowRegistry([prefab])
     const saved = await registry.save({ name: 'supply', title: '补给', flow: simpleFlow() })
-    expect(saved.version).toBe(4)
+    expect(saved.record.version).toBe(4)
     expect(registry.get('supply')?.title).toBe('补给')
     await registry.delete('supply')
     expect(registry.get('supply')?.version).toBe(3) // 还原预制
@@ -394,7 +394,8 @@ describe('迁入取新与变更账本（T16）', () => {
 
     expect(back).toMatchObject({ title: 'A', version: 3 })
     expect(back.flow).toEqual(simpleFlow())
-    expect(registry.get('demo')?.flow).toEqual(simpleFlow())
+    // 读时归一（T26.6）：get 面返回新词汇（until → 槽表 closeOn/outcomes）。
+    expect(registry.get('demo')?.flow).toEqual(normalizeFlow(simpleFlow()))
     expect(registry.history('demo').map(s => s.version)).toEqual([3, 2, 1])
     await expect(registry.rollback('demo', 99)).rejects.toThrow(/没有 v99/)
   })
@@ -435,5 +436,183 @@ describe('迁入取新与变更账本（T16）', () => {
     await expect(registry.attachDomain(tables)).rejects.toThrow(/域写失败/)
     expect(registry.domainAttached).toBe(false)
     expect(registry.get('demo')).toMatchObject({ title: '内存期' })
+  })
+})
+
+// ── T26.5：新词汇保存门（closeOn/outcomes/captureFrom/onOutcome）+ 读时归一 ──
+
+describe('T26.5 新词汇保存门与读时归一', () => {
+  /** 单步新格式流程骨架（wait/step 覆写由用例给出）。 */
+  const flowWith = (step: Partial<Flow['steps'][number]>): Flow => ({
+    entry: 'a',
+    steps: [{
+      id: 'a',
+      wait: { closeOn: 'criteria', outcomes: { 完成: { kind: 'ok', patterns: ['成了'] } }, timeoutMs: 1000 },
+      next: { exit: { stage: 'success', ok: true } },
+      ...step,
+    }],
+  })
+  const slotsOf = (cmd: string): readonly string[] | null => (cmd === 'dz' ? ['完成', '内息不足'] : null)
+
+  it('混用新旧词汇拒存：until + closeOn；onOutcome + branch', () => {
+    expect(() => checkFlow(flowWith({
+      wait: { until: ['x'], closeOn: 'criteria', outcomes: { 完成: { kind: 'ok', patterns: ['y'] } }, timeoutMs: 1000 },
+    }))).toThrow(/混用新旧判据词汇/)
+    expect(() => checkFlow(flowWith({
+      onOutcome: { 完成: { exit: { stage: 'success', ok: true } } },
+      branch: [{ exit: { stage: 'success', ok: true } }],
+    }))).toThrow(/混用新旧路由词汇/)
+  })
+
+  it('outcomes 键枚举外拒存；合成槽名放行', () => {
+    expect(() => checkFlow(flowWith({
+      wait: { closeOn: 'criteria', outcomes: { 乱写的: { kind: 'ok', patterns: ['x'] } }, timeoutMs: 1000 },
+    }))).toThrow(/不在枚举内/)
+    expect(() => checkFlow(flowWith({
+      wait: { closeOn: 'criteria', outcomes: { 槽1: { kind: 'ok', patterns: ['x'] }, 拒1: { kind: 'fail', patterns: ['y'] } }, timeoutMs: 1000 },
+    }))).not.toThrow()
+  })
+
+  it('推定槽仅 race/quiet；criteria 无非空判据槽拒存；race 缺 quietMs 拒存', () => {
+    const presumed = { 推定完成: { kind: 'ok' as const, patterns: [] as string[] } }
+    expect(() => checkFlow(flowWith({
+      wait: { closeOn: 'criteria', outcomes: presumed, timeoutMs: 1000 },
+    }))).toThrow(/推定槽/)
+    expect(() => checkFlow(flowWith({
+      wait: { closeOn: 'quiet', outcomes: presumed, timeoutMs: 1000 },
+    }))).toThrow(/quietMs/)
+    expect(() => checkFlow(flowWith({
+      wait: { closeOn: 'quiet', quietMs: 300, outcomes: presumed, timeoutMs: 1000 },
+    }))).not.toThrow()
+    expect(() => checkFlow(flowWith({
+      wait: { closeOn: 'criteria', outcomes: { 已挂起: { kind: 'fail', patterns: ['x'] }, 答错: { kind: 'fail', patterns: [] as string[] } }, timeoutMs: 1000 },
+    }))).toThrow(/推定槽/)
+    expect(() => checkFlow(flowWith({
+      wait: { closeOn: 'criteria', timeoutMs: 1000 },
+    }))).toThrow(/非空判据槽/)
+  })
+
+  it('outcomes/captureFrom 缺 closeOn 拒存；新格式 captures 缺 captureFrom 拒存', () => {
+    expect(() => checkFlow(flowWith({
+      wait: { outcomes: { 完成: { kind: 'ok', patterns: ['x'] } }, timeoutMs: 1000 },
+    }))).toThrow(/缺 closeOn/)
+    expect(() => checkFlow(flowWith({
+      wait: { closeOn: 'criteria', outcomes: { 完成: { kind: 'ok', patterns: ['x'] } }, captures: ['u'], timeoutMs: 1000 },
+    }))).toThrow(/没有 captureFrom/)
+  })
+
+  it('captureFrom 组数只对该槽 patterns[0] 计；该处之外的捕获组拒存', () => {
+    expect(() => checkFlow(flowWith({
+      wait: {
+        closeOn: 'criteria',
+        outcomes: { 验证码地址: { kind: 'ok', patterns: ['^(https?:\\/\\/\\S+)'] } },
+        captureFrom: '验证码地址',
+        captures: ['captchaUrl'],
+        timeoutMs: 1000,
+      },
+    }))).not.toThrow()
+    expect(() => checkFlow(flowWith({
+      wait: {
+        closeOn: 'criteria',
+        outcomes: {
+          验证码地址: { kind: 'ok', patterns: ['^(https?:\\/\\/\\S+)'] },
+          答对: { kind: 'ok', patterns: ['^(\\S+) 答对'] },
+        },
+        captureFrom: '验证码地址',
+        captures: ['captchaUrl'],
+        timeoutMs: 1000,
+      },
+    }))).toThrow(/只允许出现在 captureFrom/)
+  })
+
+  it('端口校验：喂令已登记缺席槽拒存；未登记/动态命令告警放行', () => {
+    const dead: Flow = {
+      entry: 'a',
+      steps: [
+        { id: 'a', action: { send: 'dz' }, next: { goto: 'b' } },
+        { id: 'b', wait: { timeoutMs: 1000 }, onOutcome: { 不存在的槽: { exit: { stage: 'x', ok: true } } } },
+      ],
+    }
+    expect(() => checkFlow(dead, slotsOf)).toThrow(/超喂令 dz/)
+    const unregistered: Flow = {
+      entry: 'a',
+      steps: [
+        { id: 'a', action: { send: 'foobar' }, next: { goto: 'b' } },
+        { id: 'b', wait: { timeoutMs: 1000 }, onOutcome: { 完成: { exit: { stage: 'x', ok: true } } } },
+      ],
+    }
+    expect(checkFlow(unregistered, slotsOf)).toHaveLength(1)
+    const dynamic: Flow = {
+      entry: 'a',
+      steps: [
+        { id: 'a', action: { send: 'look {x}' }, next: { goto: 'b' } },
+        { id: 'b', wait: { timeoutMs: 1000 }, onOutcome: { 任意: { exit: { stage: 'x', ok: true } } } },
+      ],
+    }
+    expect(checkFlow(dynamic, slotsOf)).toHaveLength(0)
+  })
+
+  it('normalizeFlow：until/failOn/branch/onFailOn/captures → 槽表 + onOutcome/captureFrom；幂等', () => {
+    const legacy: Flow = {
+      entry: 'a',
+      steps: [
+        {
+          id: 'a',
+          wait: { until: ['^(A)', 'B'], failOn: ['F1', 'F2'], captures: ['v'], flags: 'm', timeoutMs: 1000 },
+          onFailOn: { '0': { goto: 'a' } },
+          branch: [{ exit: { stage: 'ok1', ok: true } }],
+          next: { goto: 'a' },
+        },
+        { id: 'b', wait: { gaCount: 1, timeoutMs: 1000 }, next: { exit: { stage: 'done', ok: true } } },
+      ],
+    }
+    const n = normalizeFlow(legacy)
+    const w = n.steps[0]!.wait!
+    expect(w.closeOn).toBe('criteria')
+    expect(w.outcomes).toEqual({
+      拒1: { kind: 'fail', patterns: ['F1'] },
+      拒2: { kind: 'fail', patterns: ['F2'] },
+      槽1: { kind: 'ok', patterns: ['^(A)'] },
+      槽2: { kind: 'ok', patterns: ['B'] },
+    })
+    expect(w.captureFrom).toBe('槽1')
+    expect(w.captures).toEqual(['v'])
+    expect(w.flags).toBe('m')
+    expect(w.until).toBeUndefined()
+    expect(n.steps[0]!.onOutcome).toEqual({ 拒1: { goto: 'a' }, 槽1: { exit: { stage: 'ok1', ok: true } } })
+    expect(n.steps[0]!.branch).toBeUndefined()
+    expect(n.steps[0]!.onFailOn).toBeUndefined()
+    // gaCount-only wait 保持 legacy 透传。
+    expect(n.steps[1]!.wait).toEqual({ gaCount: 1, timeoutMs: 1000 })
+    // 幂等：归一产物再归一不变。
+    expect(normalizeFlow(n)).toEqual(n)
+    // 归一产物过保存门（合成槽名放行）。
+    expect(() => checkFlow(n)).not.toThrow()
+  })
+
+  it('registry：save 透出保存门告警；get 读时归一（legacy until → 槽表）', async () => {
+    const registry = new WorkflowRegistry()
+    registry.setSlotsOf(slotsOf)
+    const { record, warnings } = await registry.save({
+      name: 'demo',
+      title: '告警放行',
+      flow: {
+        entry: 'a',
+        steps: [
+          { id: 'a', action: { send: 'foobar' }, next: { goto: 'b' } },
+          { id: 'b', wait: { timeoutMs: 1000 }, onOutcome: { 完成: { exit: { stage: 'x', ok: true } } } },
+        ],
+      },
+    })
+    expect(record.version).toBe(1)
+    expect(warnings).toHaveLength(1)
+    // 读时归一：legacy until 流程经 get 面返回槽表新词汇。
+    await registry.save({ name: 'legacy', title: '遗留形态', flow: simpleFlow() })
+    const got = registry.get('legacy')!
+    expect(got.flow.steps[0]!.wait).toMatchObject({
+      closeOn: 'criteria',
+      outcomes: { 槽1: { kind: 'ok', patterns: ['成功'] } },
+    })
+    expect(got.flow.steps[0]!.wait!.until).toBeUndefined()
   })
 })

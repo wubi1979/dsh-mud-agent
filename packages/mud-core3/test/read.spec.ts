@@ -108,6 +108,157 @@ describe('ReadMachine 判定序', () => {
   })
 })
 
+describe('ReadMachine closeOn 分档（T26，§3.2）', () => {
+  it("'criteria'：受理帧 GA 不关窗，完成句槽命中收窗并给结局帧（outcome/kind）", async () => {
+    const m = new ReadMachine()
+    const p = m.start({
+      closeOn: 'criteria',
+      slots: [
+        { name: '完成', kind: 'ok', res: [/完成/] },
+        { name: '内息不足', kind: 'fail', res: [/气太少/] },
+      ],
+      timeoutMs: 500,
+    })
+    m.onLine(line('你盘膝坐下，默运基本内功'))
+    m.onBoundary() // 受理帧 GA——criteria 下不武装，窗不关
+    expect(m.inFlight).toBe(true)
+    m.onLine(line('你将内息收回丹田，完成'))
+    const r = await p
+    expect(r.reason).toBe('done')
+    expect(r.hit).toEqual({ by: 'until', index: 0, groups: [], outcome: '完成', kind: 'ok' })
+  })
+
+  it("'criteria'：fail 槽先于 ok 槽（声明序无关，fail 槽摊平进 failOn 判定序）", async () => {
+    const m = new ReadMachine()
+    const p = m.start({
+      closeOn: 'criteria',
+      slots: [
+        { name: '完成', kind: 'ok', res: [/完成/] },
+        { name: '内息不足', kind: 'fail', res: [/气太少/] },
+      ],
+      timeoutMs: 500,
+    })
+    m.onLine(line('气太少且完成')) // 两槽同帧命中
+    const r = await p
+    expect(r.reason).toBe('failOn')
+    expect(r.hit).toEqual({ by: 'failOn', index: 0, groups: [], outcome: '内息不足', kind: 'fail' })
+  })
+
+  it("'criteria'：判据未命中 timeout 收场 → 失配记 error（分档：criteria 只判 timeout/maxLines）", async () => {
+    const m = new ReadMachine()
+    const errors: string[] = []
+    m.onLog = (_level, text) => { errors.push(text) }
+    const p = m.start({
+      closeOn: 'criteria',
+      slots: [{ name: '完成', kind: 'ok', res: [/完成/] }],
+      timeoutMs: 60,
+    })
+    m.onLine(line('别的行'))
+    const r = await p
+    expect(r.reason).toBe('timeout')
+    expect(r.hit).toBeUndefined()
+    expect(errors).toHaveLength(1)
+  })
+
+  it("'ga'：判据不命中仍由 GA 收窗、不记失配；GA 收束时扫窗分类给结局帧", async () => {
+    const m = new ReadMachine()
+    const errors: string[] = []
+    m.onLog = (_level, text) => { errors.push(text) }
+    const p = m.start({
+      closeOn: 'ga',
+      slots: [
+        { name: '刚睡过', kind: 'fail', res: [/刚睡过/] },
+        { name: '完成', kind: 'ok', res: [/醒来/] },
+      ],
+      timeoutMs: 500,
+    })
+    m.onLine(line('你一觉醒来，精神抖擞'))
+    m.onBoundary()
+    const r = await p
+    expect(r.reason).toBe('done')
+    expect(r.hit).toEqual({ by: 'ga', index: 0, groups: [], outcome: '完成', kind: 'ok' })
+    expect(errors).toHaveLength(0) // 'ga' 槽仅分类：无 until 声明，天然不判失配
+  })
+
+  it("'ga'：GA 收窗无分类命中 → 裸收窗（hit undefined）", async () => {
+    const m = new ReadMachine()
+    const p = m.start({
+      closeOn: 'ga',
+      slots: [{ name: '完成', kind: 'ok', res: [/不出现/] }],
+      timeoutMs: 500,
+    })
+    m.onLine(line('普通应答'))
+    m.onBoundary()
+    const r = await p
+    expect(r.reason).toBe('done')
+    expect(r.hit).toBeUndefined()
+  })
+
+  it("'race'：判据先到先收（判据赢静默竞速）", async () => {
+    const m = new ReadMachine()
+    const p = m.start({
+      closeOn: 'race',
+      quietMs: 40,
+      slots: [{ name: '到达', kind: 'ok', res: [/^你到达了/] }],
+      timeoutMs: 500,
+    })
+    m.onLine(line('你到达了荆州府。'))
+    const r = await p
+    expect(r.reason).toBe('done')
+    expect(r.hit).toEqual({ by: 'until', index: 0, groups: [], outcome: '到达', kind: 'ok' })
+  })
+
+  it("'race'：静默先到 → by 'silence'，推定槽填充（walk 形态，DEC-5）；静默收束不判失配", async () => {
+    const m = new ReadMachine()
+    const errors: string[] = []
+    m.onLog = (_level, text) => { errors.push(text) }
+    const p = m.start({
+      closeOn: 'race',
+      quietMs: 40,
+      slots: [
+        { name: '到达', kind: 'ok', res: [/^你到达了/] },
+        { name: '软阻断', kind: 'fail', res: [/停了下来/] },
+        { name: '推定完成', kind: 'ok', res: [] },
+      ],
+      timeoutMs: 500,
+    })
+    m.onLine(line('你决定开始前往襄阳方向走去……')) // 出受理行：无判据命中
+    const r = await p
+    expect(r.reason).toBe('quiet')
+    expect(r.hit).toEqual({ by: 'silence', index: -1, groups: [], outcome: '推定完成', kind: 'ok' })
+    expect(errors).toHaveLength(0) // 'race' 的静默是合法收束者（推定完成），不判失配
+  })
+
+  it("'quiet'：静默是唯一收窗者，收束时扫窗分类（by 'silence' 正常出口）", async () => {
+    const m = new ReadMachine()
+    const p = m.start({
+      closeOn: 'quiet',
+      quietMs: 40,
+      slots: [{ name: '完成', kind: 'ok', res: [/醒来/] }],
+      timeoutMs: 500,
+    })
+    m.onLine(line('你一觉醒来，精神抖擞')) // 'quiet' 槽不收窗：行到达时只累积
+    expect(m.inFlight).toBe(true)
+    const r = await p
+    expect(r.reason).toBe('quiet')
+    expect(r.hit).toEqual({ by: 'silence', index: 0, groups: [], outcome: '完成', kind: 'ok' })
+  })
+
+  it("'quiet'：无分类命中 → 裸 silence 帧（index -1，无 outcome）", async () => {
+    const m = new ReadMachine()
+    const p = m.start({
+      closeOn: 'quiet',
+      quietMs: 40,
+      slots: [{ name: '完成', kind: 'ok', res: [/不出现/] }],
+      timeoutMs: 500,
+    })
+    m.onLine(line('普通应答'))
+    const r = await p
+    expect(r.reason).toBe('quiet')
+    expect(r.hit).toEqual({ by: 'silence', index: -1, groups: [] })
+  })
+})
+
 describe('ReadMachine 命中帧（T15：命中判据 + 捕获组由读窗机返回）', () => {
   it('① until 按声明序定位命中下标（until[1] 命中 ⇒ index 1）', async () => {
     const m = new ReadMachine()

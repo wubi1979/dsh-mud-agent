@@ -37,7 +37,8 @@ import {
 import type { MudNavFace } from './nav/service.ts'
 import { parseDirectionPath, parseWalkTable } from './nav/route.ts'
 import { nextBlocker } from './nav/blocker.ts'
-import type { WorkflowIoSeam } from 'mud-workflow/contract'
+import type { WorkflowIoSeam, ReadHit } from 'mud-workflow/contract'
+import { resolveAwaitPlan } from './command-profiles.ts'
 
 /**
  * 宿主 ToolDefinition 的窄结构（本包只用到的面；T17 与宿主真实形状对齐）：
@@ -186,27 +187,11 @@ export const MAX_TIMEOUT_MS = 60000
 const BARE_READ_QUIET_MS = 300
 
 /**
- * mud_walk 行走静默窗毫秒（收「走完了」）：walk 逐步输出（walk_speed 0/1 =
- * 0.2s/步，3 = 0.8s/步），步间隔远小于 1.5s ⇒ 连续输出不断流；到达后输出停
- * ⇒ 静默 1.5s 即收束。不能用 gaCount（每步都出提示符，GA 计数会第一步就关窗）。
- * 行文判据（A.9 结论 5，2026-10-08 实机）：到达 `你到达了荆州府。` ⇒ until；
- * 软阻断 `你因为种种原因停了下来，可以用walk继续进行。`（下标 0）与未受理
- * `当前区域的系统内建路径出发点在：…`（下标 1）⇒ failOn，**下标即 outcome 分类**。
- * 查询类参数（`-c` / `-q`）**不注入**行走判据——其答复本身含"未受理"同族句。
- * 交战中：战斗接管（§8.6 持有者 + 危险抢占）会以 `reason:'danger'` 打断本读窗 ⇒
- * walk 以中断收束；**用户裁定 2026-10-08：先假设可恢复**（战斗结束后用无参 `walk`
- * 继续走完），实测发现不能恢复再改口径。被抢占时持有者已归战斗，本工具的
- * `finally releaseSend` 只解除自己的持有（runtime 按 holder 比对）⇒ 战斗持有不受影响。
+ * mud_walk 应答静默窗毫秒（**非行走动作**：查询 `-c` / `-q` 与 `speed` 只等
+ * 一段静默收应答尾巴；行走类的判据已入命令总表 walk 条目——'race' 形态，
+ * 见 commands/std.ts）。
  */
-const WALK_QUIET_MS = 1500
-
-/** 到达判据（A.9 结论 5）：完整句 `你到达了荆州府。`。 */
-const WALK_UNTIL: readonly string[] = ['^你到达了']
-
-/** 失败判据（A.9 结论 5）：**只有软阻断**（下标 0，无参 `walk` 可继续）。 */
-const WALK_FAILON: readonly string[] = [
-  '你因为种种原因停了下来',
-]
+const WALK_REPLY_QUIET_MS = 1500
 
 /**
  * "在出发点"的**正向证据**（反证口径，用户裁定 2026-10-08）：
@@ -236,73 +221,6 @@ const WALK_SPEED_RE = /^-?\d+$/
 
 /** mud_walk 总超时下限毫秒（长路线 15+ 步 × 慢速档 ≈ 12s+；低于此值用下限）。 */
 const WALK_MIN_TIMEOUT_MS = 30000
-
-// ── 长程命令判据预设（§8.7）──────────────────────────────────────────
-//
-// 长程命令（打坐/睡觉等）：受理帧自带 GA + prompt，其后输出流**无 GA 无 prompt**
-//（A.3：dz 受理后 56 批 / 约 57s），完成句与末条推送同块到达 ⇒ 缺省 `gaCount:1`
-// 只会收在受理帧。等待完成按**完成句 until**（跨批命中）收，timeout 只做兜底。
-// 纪律（A.6）：判据必须引用附录实录原文，不得凭印象写正则——条目原句见 A.3
-//（2026-10-10 用户提供）；新条目实机语料校准后逐条添加，机制不变。
-
-/** 长程命令判据预设条目。 */
-export interface LongCmdProfile {
-  /** 命令头匹配（对 trim 后的整条 cmd 测：首词 + 词边界）。 */
-  match: RegExp
-  /** 完成判据（until 正则源；在累积应答文本上测，可跨批命中）。 */
-  until: readonly string[]
-  /** 负面判据（failOn 正则源：受理被拒/被打断句；实机校准后补）。 */
-  failOn?: readonly string[]
-  /** 行间静默关窗（quietMs；输出流节奏未校准前不设——误早关窗比兜底超时更毒）。 */
-  quietMs?: number
-  /**
-   * 总超时毫秒（**系统注入值，豁免模型面 60s 钳制**——钳制只约束模型显式给的
-   * timeoutMs；until 是主收束，本值纯兜底）。
-   */
-  timeoutMs: number
-}
-
-/** 已知长程命令判据表（cmd 头匹配；模型显式 listen 仍整体覆盖，语义不变）。 */
-export const LONG_CMD_PROFILES: readonly LongCmdProfile[] = [
-  {
-    // 打坐（A.3 实录：受理帧 GA 后 57s 无 GA；受理/完成句原句 2026-10-10 用户提供）
-    // 完成三形态（2026-10-10 用户补）：内息收回 = 正常结束；内力增加了 = 上限突破；运功完毕站起 = 收尾变体
-    // 受理被拒（A.3，2026-10-10 用户补）：精神不足 ⇒ failOn 立即收窗，拒绝句原文回给 agent 自决
-    match: /^(dz|dazuo)(\s|$)/,
-    until: ['你将运转于全身经脉间的内息收回丹田', '你的内力增加了！！', '你运功完毕，深深吸了口气，站了起来。'],
-    failOn: ['你现在的气太少了，无法产生内息运行全身经脉。', '你现在精不够，无法控制内息的流动！'],
-    timeoutMs: 120_000,
-  },
-  {
-    // 睡觉（受理/完成句原句 2026-10-10 用户提供；全程时长无实测，兜底放宽待校准）
-    // 受理被拒（A.3，2026-10-10 用户补）：刚睡过 ⇒ failOn 立即收窗。原句尾随空格不进判据
-    //（子串匹配两侧兼容：句体命中即收，行文带不带尾随空白都能命中）
-    match: /^sleep(\s|$)/,
-    until: ['你一觉醒来，精神抖擞地活动了几下手脚'],
-    failOn: ['你刚刚睡过一觉, 多睡对身体有害无益!'],
-    timeoutMs: 300_000,
-  },
-]
-
-/** cmd 头匹配长程判据预设；未命中返回 null。 */
-export function matchLongCmdProfile(cmd: string): LongCmdProfile | null {
-  const c = cmd.trim()
-  for (const p of LONG_CMD_PROFILES) {
-    if (p.match.test(c)) return p
-  }
-  return null
-}
-
-/** 预设条目 → listen 判据（until 必有；failOn/quietMs 条件展开，exactOptionalPropertyTypes）。 */
-function profileListen(p: LongCmdProfile): ListenOpts {
-  const until = compileRegexes([...p.until], '长程预设.until')
-  const failOn = p.failOn !== undefined ? compileRegexes([...p.failOn], '长程预设.failOn') : undefined
-  return {
-    ...(until !== undefined ? { until } : {}),
-    ...(failOn !== undefined ? { failOn } : {}),
-    ...(p.quietMs !== undefined ? { quietMs: p.quietMs } : {}),
-  }
-}
 
 // ── 状态拉取命令读后投影（§8.7）──────────────────────────────────────
 //
@@ -367,7 +285,7 @@ export type MudConnectResult =
   | { ok: true; state: string }
 export type MudSendResult =
   | { ok: false; error: string }
-  | { ok: true; reason: string; lines: string[]; world?: WorldSnapshot }
+  | { ok: true; reason: string; lines: string[]; outcome?: string; world?: WorldSnapshot }
 /** mud_walk 行走结果分类（T23.5/T23.11，D13）：软/硬阻断与"没站在出发点"处置不同。 */
 export type MudWalkOutcome = 'arrived' | 'soft-stop' | 'hard-stop' | 'unaccepted' | 'incomplete'
 
@@ -404,10 +322,13 @@ function stringArray(v: unknown): string[] | undefined {
   return out.length > 0 ? out : undefined
 }
 
-/** 收束原因 ⇒ 行走结果（`failOn` 当前只有软阻断一项；未受理走**反证**，见调用点）。 */
-function walkOutcome(reason: string): MudWalkOutcome {
-  if (reason === 'until') return 'arrived'
-  if (reason === 'failOn') return 'soft-stop'
+/** 收束结果 ⇒ 行走结果（按命中帧判，T26.2）：到达/软阻断句由 walk 条目槽名给
+ *（'race' 形态判据命中），未命中/静默收束 ⇒ incomplete（静默收束推定完成仍按
+ * 未判定走调用侧行为性分类——unaccepted / hard-stop 判定不归表，DEC-10）。
+ * 遗留 `reason === 'until' / 'failOn'` 判保留（兼容既有桩与无槽形态）。 */
+function walkOutcome(r: { reason: string; hit?: ReadHit | undefined }): MudWalkOutcome {
+  if (r.hit?.outcome === '到达' || r.hit?.by === 'until' || r.reason === 'until') return 'arrived'
+  if (r.hit?.outcome === '软阻断' || r.hit?.by === 'failOn' || r.reason === 'failOn') return 'soft-stop'
   return 'incomplete'
 }
 export type MudStateResult =
@@ -511,6 +432,7 @@ export function registerMudTools(
         properties: {
           ok: { type: 'boolean' },
           reason: { type: 'string' },
+          outcome: { type: 'string', description: '命中结局槽名（命令判据总表分类，T26）：如 完成/突破/内息不足' },
           lines: { type: 'array', items: { type: 'string' } },
           world: { type: 'object' },
           error: { type: 'string' },
@@ -524,11 +446,13 @@ export function registerMudTools(
         if (!v.ok) return [{ type: 'text', text: v.error }]
         // 发送即走（wait:false）：无应答行可给，明说语义并指引状态面。
         if (v.reason === 'sent') return [{ type: 'text', text: '已发送（发送即走：未等待应答；状态可用 mud_state 查看）' }]
+        // 结局槽名（T26：命令判据总表分类）附在行文尾，模型按名读结果。
+        const suffix = v.outcome !== undefined ? `\n[结局] ${v.outcome}` : ''
         // 读后投影（§8.7）：拉取命令带 world ⇒ 渲染结构化状态（与 mud_state 同款
         // JSON 风格），原文表格不再重复进上下文；无 world（非拉取命令/窗内零写入）
         // ⇒ 维持原文 join。
-        if (v.world !== undefined) return [{ type: 'text', text: JSON.stringify(v.world, null, 2) }]
-        return [{ type: 'text', text: v.lines.join('\n') }]
+        if (v.world !== undefined) return [{ type: 'text', text: JSON.stringify(v.world, null, 2) + suffix }]
+        return [{ type: 'text', text: v.lines.join('\n') + suffix }]
       },
     },
     async execute(rawArgs, exec) {
@@ -577,15 +501,14 @@ export function registerMudTools(
         return reject((e as Error).message)
       }
 
-      // 长程命令判据预设（§8.7）：模型未显式给 listen 且 cmd 命中预设表 ⇒ 注入
-      // 完成句判据（受理帧 GA 不再关窗，等完成句跨批命中；A.3 长程命令无 GA）。
-      // 显式 listen 整体覆盖预设 ⇒ profile 一并不适用（timeout 同步回归标准缺省）。
-      const profile = args.cmd !== undefined && Object.keys(listen).length === 0
-        ? matchLongCmdProfile(args.cmd)
-        : null
+      // 收束解析（T26.2，DEC-21 解析单点）：explicit listen > 表条目 > 翻转前
+      // 兜底（未登记命令暂按 gaCount:1，DEC-4 第一步）；空命令特例归 'ga'。
+      // 显式 listen 整体走遗留形态（语义不变）；表条目形态由 closeOn 分档生效。
+      const decl = Object.keys(listen).length > 0 ? { listen } : undefined
+      const plan = args.cmd !== undefined ? resolveAwaitPlan(args.cmd, decl) : null
 
-      // timeoutMs 钳制（§8.7）：模型显式值钳上限 MAX_TIMEOUT_MS；缺省 = 预设兜底
-      //（系统注入值，豁免钳制——until 是主收束）或 sendTimeoutMs。
+      // timeoutMs 钳制（§8.7）：模型显式值钳上限 MAX_TIMEOUT_MS；缺省 = 表条目
+      // 预算（系统注入值，豁免钳制——判据是主收束）或 sendTimeoutMs。
       let timeoutMs: number
       if (args.timeoutMs !== undefined) {
         if (!Number.isInteger(args.timeoutMs) || args.timeoutMs <= 0) {
@@ -593,9 +516,7 @@ export function registerMudTools(
         }
         timeoutMs = Math.min(args.timeoutMs, MAX_TIMEOUT_MS)
       } else {
-        timeoutMs = profile !== null
-          ? profile.timeoutMs
-          : Math.min(c.defaults.sendTimeoutMs, MAX_TIMEOUT_MS)
+        timeoutMs = plan?.timeoutMs ?? Math.min(c.defaults.sendTimeoutMs, MAX_TIMEOUT_MS)
       }
 
       // 会话级持有者：同一时刻只允许一个执行体在 send+read（冲突可读拒绝，不劈半）。
@@ -613,9 +534,9 @@ export function registerMudTools(
         // initial：有 cmd = 空（acc 只收 send 后新行）；裸读 = pending 尾部快照
         //（不物理消费，范围含接入前的录制行）。
         const initial = bare ? tc.runtime.recentLines(c.defaults.sendMaxLines) : []
-        // 缺省判据（§8.7）：有 cmd = 命中长程预设表 ⇒ 完成句判据（timeout 用预设
-        // 兜底值）；未命中 ⇒ gaCount:1 + maxLines 兜底。裸读 = maxLines + 短静默
-        // 窗口。模型显式给 listen 时整体覆盖缺省（预设同理被覆盖）。
+        // 读窗参数：裸读 = 缺省判据或模型显式 listen（现役口径）；有 cmd 按解析
+        // 计划分档——explicit = 遗留判据形态；empty = 空命令归 'ga'；table =
+        // 条目形态（closeOn 分档）；fallback = 翻转前兜底 gaCount:1。
         const opts: ReadOpts = bare
           ? {
               timeoutMs,
@@ -624,15 +545,30 @@ export function registerMudTools(
                 ? { maxLines: c.defaults.sendMaxLines, quietMs: BARE_READ_QUIET_MS }
                 : listen),
             }
-          : {
-              timeoutMs,
-              signal: exec.signal,
-              ...(Object.keys(listen).length === 0
-                ? (profile !== null
-                    ? profileListen(profile)
-                    : { gaCount: 1, maxLines: c.defaults.sendMaxLines })
-                : listen),
-            }
+          : plan === null
+            ? { timeoutMs, signal: exec.signal } // 不可达（cmd 有值则 plan 非 null；类型收窄兜底）
+            : plan.source === 'explicit'
+              ? {
+                  timeoutMs,
+                  signal: exec.signal,
+                  ...(plan.until !== undefined ? { until: plan.until } : {}),
+                  ...(plan.failOn !== undefined ? { failOn: plan.failOn } : {}),
+                  ...(plan.gaCount !== undefined ? { gaCount: plan.gaCount } : {}),
+                  ...(plan.quietMs !== undefined ? { quietMs: plan.quietMs } : {}),
+                  ...(plan.maxLines !== undefined ? { maxLines: plan.maxLines } : {}),
+                }
+              : plan.source === 'table'
+                ? {
+                    timeoutMs,
+                    signal: exec.signal,
+                    ...(plan.closeOn !== undefined ? { closeOn: plan.closeOn } : {}),
+                    ...(plan.slots !== undefined ? { slots: plan.slots } : {}),
+                    ...(plan.quietMs !== undefined ? { quietMs: plan.quietMs } : {}),
+                    ...(plan.maxLines !== undefined ? { maxLines: plan.maxLines } : {}),
+                  }
+                : plan.source === 'empty'
+                  ? { timeoutMs, signal: exec.signal, closeOn: 'ga', slots: [], maxLines: c.defaults.sendMaxLines }
+                  : { timeoutMs, signal: exec.signal, gaCount: 1, maxLines: c.defaults.sendMaxLines }
         const r = await tc.runtime.read(opts, initial)
         // 读后投影（§8.7）：拉取命令收窗后附 world 语义分区快照（零解析重复）；
         // 窗内零写入 ⇒ 不带字段 fail-open 回原文。wait:false 与裸读不投影
@@ -640,9 +576,17 @@ export function registerMudTools(
         const lines = r.lines.map(l => l.text)
         if (args.cmd !== undefined && STATE_PULL_CMD_RE.test(args.cmd.trim())) {
           const world = projectStateZones(c.stateOf(tc.sessionId).world, sendAt)
-          if (world !== null) return { ok: true, reason: r.reason, lines, world }
+          if (world !== null) {
+            return {
+              ok: true, reason: r.reason, lines, world,
+              ...(r.hit?.outcome !== undefined ? { outcome: r.hit.outcome } : {}),
+            }
+          }
         }
-        return { ok: true, reason: r.reason, lines }
+        return {
+          ok: true, reason: r.reason, lines,
+          ...(r.hit?.outcome !== undefined ? { outcome: r.hit.outcome } : {}),
+        }
       } finally {
         tc.runtime.releaseSend(holder)
       }
@@ -779,15 +723,25 @@ export function registerMudTools(
         if (!tc.runtime.send(cmd)) {
           return reject('已拒绝：发送失败（连接可能已断开）')
         }
-        // 判据预设（§8.7）：行走类注入到达/失败判据；查询类（-c/-q）与 speed 只静默窗
-        // ——查询答复含"未受理"同族句，注入会把正常查询误判为 unaccepted。
-        const listen = compileListen({
-          ...(isWalkAction && !isQuery ? { until: [...WALK_UNTIL], failOn: [...WALK_FAILON] } : {}),
-          quietMs: WALK_QUIET_MS,
-          maxLines: c.defaults.sendMaxLines,
-        })
-        const r = await tc.runtime.read({ ...listen, timeoutMs, signal: exec.signal }, [])
-        let outcome = isWalkAction ? walkOutcome(r.reason) : undefined
+        // 判据注入（T26.2，DEC-21 解析单点）：行走类走命令总表 walk 条目（'race'
+        // 形态——到达/软阻断句与行走静默窗竞速，commands/std.ts）；查询类（-c/-q）
+        // 走条目 exempt 不套判据、与 speed 一样只等应答静默窗——查询答复含
+        // "未受理"同族句，注入会把正常查询误判为 unaccepted。
+        const plan = isWalkAction && !isQuery ? resolveAwaitPlan(cmd) : null
+        const r = await tc.runtime.read(
+          plan !== null
+            ? {
+                timeoutMs,
+                signal: exec.signal,
+                ...(plan.closeOn !== undefined ? { closeOn: plan.closeOn } : {}),
+                ...(plan.slots !== undefined ? { slots: plan.slots } : {}),
+                ...(plan.quietMs !== undefined ? { quietMs: plan.quietMs } : {}),
+                maxLines: c.defaults.sendMaxLines,
+              }
+            : { timeoutMs, signal: exec.signal, quietMs: WALK_REPLY_QUIET_MS, maxLines: c.defaults.sendMaxLines },
+          [],
+        )
+        let outcome = isWalkAction ? walkOutcome(r) : undefined
         const lines = r.lines.map(l => l.text)
         const region = stringValue(tc.runtime.worldEntry('location', '区域')?.value)
         // 「在出发点」判定（**反证**，用户裁定 2026-10-08）：看本次调用有没有**正向证据**——

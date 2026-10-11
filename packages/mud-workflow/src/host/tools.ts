@@ -98,7 +98,7 @@ export type WorkflowGetResult =
   | { ok: true; record: WorkflowRecord }
 export type WorkflowSaveResult =
   | { ok: false; error: string }
-  | { ok: true; name: string; version: number; updatedAt: string }
+  | { ok: true; name: string; version: number; updatedAt: string; warnings?: string[] }
 export type WorkflowDeleteResult =
   | { ok: false; error: string }
   | { ok: true; deleted: boolean; lockedBuiltin: boolean }
@@ -313,10 +313,14 @@ export function registerMudWorkflowTools(
     output: {
       schema: okSchema({
         name: { type: 'string' }, version: { type: 'integer' }, updatedAt: { type: 'string' },
+        warnings: { type: 'array', items: { type: 'string' } },
       }),
       render: (_args, value) => {
         const v = value as WorkflowSaveResult
-        return [{ type: 'text', text: v.ok ? `已保存：${v.name} v${v.version}` : v.error }]
+        if (!v.ok) return [{ type: 'text', text: v.error }]
+        const base = `已保存：${v.name} v${v.version}`
+        const warns = (v.warnings ?? []).map(w => `⚠ ${w}`)
+        return [{ type: 'text', text: warns.length > 0 ? `${base}\n${warns.join('\n')}` : base }]
       },
     },
     async execute(rawArgs) {
@@ -327,12 +331,17 @@ export function registerMudWorkflowTools(
         return reject('已拒绝：name/title/flow 必填')
       }
       try {
-        const record = await e.registry.save({
+        const { record, warnings } = await e.registry.save({
           name: args.name,
           title: args.title,
           flow: args.flow as Parameters<WorkflowRegistry['save']>[0]['flow'],
         })
-        return { ok: true, name: record.name, version: record.version, updatedAt: record.updatedAt }
+        // 保存门告警（T26.5，DEC-13 档）：不可静态判定的结局引用随结果透出——
+        // 模型读得见才能修；无告警不收字段（exactOptionalPropertyTypes 纪律）。
+        return {
+          ok: true, name: record.name, version: record.version, updatedAt: record.updatedAt,
+          ...(warnings.length > 0 ? { warnings: [...warnings] } : {}),
+        }
       } catch (err) {
         return reject((err as Error).message)
       }

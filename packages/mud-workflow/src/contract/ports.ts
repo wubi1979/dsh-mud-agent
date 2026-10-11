@@ -17,6 +17,8 @@
  * 出口统一过 pass 掩码（core/interpreter）。
  */
 
+import type { ClosureKind, OutcomeKind, OutcomeName } from './schema.ts'
+
 /**
  * 行窄面：契约只承诺 `text`（ANSI/样式/行号等字段不进内核）。
  *
@@ -29,10 +31,25 @@ export interface IoLine {
   readonly text: string
 }
 
-/** 读参数（引擎 ReadOpts 的结构化子集；正则已由解释器从字符串源编译）。 */
+/** 读参数（引擎 ReadOpts 的结构化子集；正则已由解释器从字符串源编译）。
+ *
+ * T26（§3.2/§3.10，DEC-19）：读参数**槽表化**——`closeOn` 显式单值 + `slots`
+ * 结局槽表（与命令总表条目同构；`res` 为已编译正则，推定槽为空数组）。遗留
+ * `until`/`failOn` 数组保留（读时归一的过渡形态；T26.6 后解释器一律产槽表）。 */
+export interface IoOutcomeSlot {
+  readonly name: OutcomeName
+  readonly kind: OutcomeKind
+  /** 与槽 patterns 一一对应的编译正则（推定槽为空数组）。 */
+  readonly res: readonly RegExp[]
+}
+
 export interface IoReadOpts {
   until?: RegExp[]
   failOn?: RegExp[]
+  /** 收窗形态（T26）：给出时判据由 `slots` 派生，`until`/`failOn` 不参与判定。 */
+  closeOn?: ClosureKind
+  /** 结局槽表（T26；fail 槽在前 = 判定序）。 */
+  slots?: readonly IoOutcomeSlot[]
   gaCount?: number
   quietMs?: number
   maxLines?: number
@@ -55,14 +72,25 @@ export type IoReadReason =
  *
  * 有了它，路由（`branch[index]`）与捕获（`groups`）不必再在流程侧重测一遍——
  * 分类、捕获与收窗因此物理上不可能不一致（§8.13）。
+ *
+ * T26 扩展（§3.3）：`by` 扩为五值——报告**实际收窗者**（判据命中 = `'until'`/
+ * `'failOn'`；GA 边界收窗并分类命中 = `'ga'`；静默收窗 = `'silence'`；行数剪断
+ * = `'maxLines'`；无分类的边界/剪断收窗仍为 `undefined` 命中帧）。`index` 为
+ * 该槽 `patterns` 数组内下标（非判据收束 = -1）；`outcome` = 命中的结局槽名
+ *（契约层 `OutcomeName`，名字是对外契约：流程按名路由、工具面按名渲染、观测
+ * 按名归因）；`kind` = 槽判定（failOn → fail、until → ok）。
  */
 export interface ReadHit {
-  /** 命中的判据所在数组。 */
-  readonly by: 'until' | 'failOn'
-  /** 该判据在数组里的下标（`branch` / `onFailOn` 的键）。 */
+  /** 实际收窗者：判据命中（until/failOn）或形态收束（ga/silence/maxLines）。 */
+  readonly by: 'until' | 'failOn' | 'ga' | 'silence' | 'maxLines'
+  /** 判据命中：该槽 patterns 数组内下标；非判据收束 = -1。 */
   readonly index: number
   /** 该判据在整窗文本上**首次命中**的捕获组（组 1..n；未参与组 `undefined`；无组为空数组）。 */
   readonly groups: readonly (string | undefined)[]
+  /** 命中的结局槽名（契约层 `OutcomeName`；无分类命中时缺省）。 */
+  readonly outcome?: OutcomeName
+  /** 结局槽判定（kind 决定消费侧分流：fail 未覆盖 ⇒ 结构化失败出口）。 */
+  readonly kind?: OutcomeKind
 }
 
 /** 读结果：现场行 + 收束原因 + 命中判据帧。 */
@@ -74,6 +102,10 @@ export interface IoReadResult {
    * `disconnected` / `danger` 关窗时为 `undefined`（无判据命中）。
    */
   readonly hit: ReadHit | undefined
+  /** 归因（T26，§3.6）：缝侧按 `lastSent` 查表注入时给出的表条目 id。 */
+  readonly command?: string
+  /** 归因（T26，§3.6）：本窗判据来源——`table`/`empty` = 缝侧查表注入。 */
+  readonly source?: 'table' | 'empty'
 }
 
 /** 会话状态窄面（内核入口只判连接轴）。 */

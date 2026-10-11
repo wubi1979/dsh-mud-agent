@@ -160,7 +160,8 @@ seen = max(deliveredAbs, readAbs)
 **职责**：一行流多消费者之一，服务"send 命令 + 等应答"与"裸读近况"两种读。
 
 ```
-判定序（写死，不可配）：failOn > until > gaCount > maxLines
+槽表判定序（写死，不可配）：fail 槽 > ok 槽 > GA 计数 > 行数兜底（承 failOn > until > gaCount > maxLines）
+收窗形态（closeOn，§8.10）：ga / criteria / race / quiet——race/quiet 的静默（by:'silence'）是正常收束者
 异步收束源：quiet / timeout / signal / disconnected / danger
 ```
 
@@ -168,13 +169,13 @@ seen = max(deliveredAbs, readAbs)
 |---|---|
 | **挂载** | 独立类，挂 `SessionRuntime`；`onBoundary` 直挂它（GA 判据） |
 | **有界缓冲** | **复用 `runtime.pendingLines`**，不自建缓冲（P2） |
-| **`failOn`** | **agent 驱动的打断**：突发行一到达即命中收束，并返回累积行**含触发行** |
+| **槽表判据（T26）** | **判据收窗**：判据槽（`outcomes`，`closeOn: 'criteria'`/`'race'`；fail 槽先于 ok 槽）突发行一到达即命中收束，并返回累积行**含触发行**；`'ga'`/`'quiet'` 形态下**槽不参与收窗**（GA/静默是唯一收窗者，收束时扫窗文本分类出 `outcome`，未命中则无结局）。**GA 是否关窗由 `closeOn` 决定**：`criteria`（及 `race`）不武装 GA——受理帧的 GA 正是要忽略的那个；`closeOn` 缺省 = 现役遗留语义（判据即收窗、GA 按 gaCount） |
 | **`abortWait`** | **系统驱动打断的出口，已有调用者**（T21.5）：战斗危险抢占通道在威胁行到达时以触发行打断在途读窗（`reason:'danger'` 收束，触发行含在结果尾，§6.3）；意识层复用后置（§17.3） |
 | **`swallow` 吞行钩子** | 空实现（规则层后置）：规则动作吞行留摘要，吞掉的行不进任何模型面 |
 | **`ReadResult.rest`** | **砍掉**：判据命中后的同批剩余行照常走行路径（逐行回调模型下自然并回） |
-| **命中帧 `hit`（T15）** | 判据命中时**同时**给出「哪条判据赢了（`by` + `index`）+ 该条首个命中的捕获组（`groups`）」——`by='until'\|'failOn'`、`index` 即 `branch`/`onFailOn` 的键、`groups` 为组 1..n（未参与组 `undefined`）。无判据命中（`gaCount`/`maxLines` 关窗或异步收束）⇒ `hit === undefined`。**判据匹配系统内单点在本机**：流程解释器与工具面都消费该帧，不再各自重测一遍（§8.13） |
+| **命中帧 `hit`（T15/T26）** | 判据命中时**同时**给出「哪条判据赢了（`by` + `index`）+ 该条首个命中的捕获组（`groups`）」——T26 起 `by` 扩为**五值** `'until'|'failOn'|'ga'|'silence'|'maxLines'`（遗留数组判据仍报 `'until'`/`'failOn'`，`index` = 数组下标；槽表判据 `index` = 槽内 `patterns` 下标），判据命中带 **`outcome`（槽名）+ `kind`（ok/fail）**；`by:'silence'` = 静默收束（带推定槽 outcome），`'ga'`/`'maxLines'` 关窗无判据命中 ⇒ 无 `outcome`。**判据匹配系统内单点在本机**：流程解释器与工具面都消费该帧，不再各自重测一遍（§8.13） |
 | **取组与有状态正则** | 判定与取组用**同一次 `exec` 调用**（`exec(accText)` 一次拿到命中位置与组，不写 `test` → `exec` 两段），且调用前**重置 `lastIndex`**：`g`/`y` 是**有状态**标志（起点由 `lastIndex` 决定，`y` 还要求"正好落在 `lastIndex` 处"），不重置会让同一判据在窗口变长/跨 read 复用时时灵时不灵。词汇表白名单 = `d/i/m/s/u`（`g`/`y` 对单次 `exec` 无意义或只改锚定起点；保存门拒存留后置，见 §17.3） |
-| **失配留痕** | `until` 失配记 error（语料可见，由命中帧判定，不再复测正则）；**GA/EOR 边界关窗不算失配** |
+| **失配留痕（T26 按 `closeOn` 分档）** | 判据失配记 error（语料可见，由命中帧判定，不再复测正则）：遗留与 `'criteria'`/`'race'` 档——quiet/timeout 收场或被 `maxLines` 剪断而判据未命中 ⇒ error；**GA/EOR 边界关窗不算失配**；`'ga'`/`'quiet'` 档槽不收窗 ⇒ 天然无失配 |
 | **裸读** | 无 `cmd`：`initial = pendingLines 尾部 maxLines 行快照`（**含 admit 前录制行**——挂机近况回看；**不物理消费**）；缺省判据 `maxLines: 50 + quietMs: 300`；返回时推进 `readAbs` |
 | **有 cmd** | `acc` 只收 **send 之后的新行**（积压留给投递）；返回时推进 `readAbs = acc 尾行号` |
 | **并发** | read 在途**不需要互斥**——水位线天然隔离（`readAbs` 推进后投递从 `seen` 之后拉取，重复被结构消除） |

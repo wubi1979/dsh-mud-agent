@@ -656,3 +656,122 @@ describe('MudService 连接失败可诊断', () => {
     await server.close()
   })
 })
+
+// ── 流程缝判据注入（T26，§3.6）─────────────────────────────────────
+
+describe('workflowIoFor 缝侧 lastSent 查表注入（T26）', () => {
+  const GA = Buffer.from([255, 249])
+
+  /** 脚本化 mock：收到 dz → 受理句+GA，60ms 后完成句+GA（受理 GA 不关窗的实证场）。 */
+  async function startDzServer(): Promise<MockServer> {
+    const received: string[] = []
+    let sock: net.Socket | null = null
+    const server = net.createServer((s) => {
+      sock = s
+      s.on('data', (d: Buffer) => {
+        const text = stripIac(d)
+        received.push(text)
+        if (text.includes('dz')) {
+          s.write('你盘膝坐下，默运基本内功，一股内息自丹田引出……\n')
+          s.write(GA)
+          setTimeout(() => {
+            s.write('你将运转于全身经脉间的内息收回丹田，深深吸了口气，站了起来。\n')
+            s.write(GA)
+          }, 60)
+        }
+      })
+      s.write('欢迎\n')
+      s.write(GA)
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const port = (server.address() as AddressInfo).port
+    return {
+      port,
+      received,
+      close() {
+        sock?.destroy()
+        return new Promise(resolve => server.close(() => resolve()))
+      },
+    }
+  }
+
+  async function seamWith(server: MockServer) {
+    const servers = new Map<string, ServerRecord>([
+      ['ws-1', { workspaceId: 'ws-1', name: 'S', host: '127.0.0.1', port: server.port }],
+    ])
+    const accounts = new Map<string, AccountRecord>([
+      ['a1', { id: 'a1', name: 'u1', passRef: 'c1', serverId: 'ws-1', preset: 'mud-player', admitted: false }],
+    ])
+    const creds = new Map<string, ResolvedCredentials>([['c1', { name: 'u1', pass: 'p1' }]])
+    const service = new MudService(makeDeps(servers, accounts, creds))
+    service.register('a1')
+    await service.connect('a1')
+    const handle = await service.workflowIoFor('a1', 'workflow:test')
+    return { service, handle }
+  }
+
+  it('未声明判据的步 + 登记命令（dz）→ 按表注入：完成句收窗、GA 不早关、归因带 command/source', async () => {
+    const server = await startDzServer()
+    const { service, handle } = await seamWith(server)
+    try {
+      expect(handle.io.send('dz')).toBe(true)
+      const r = await handle.io.read({ timeoutMs: 5000 }, [])
+      expect(r.reason).toBe('done')
+      expect(r.hit?.outcome).toBe('完成') // 槽分类命中（缝侧注入的 criteria 槽表）
+      expect(r.command).toBe('dazuo') // 归因：命中的表条目
+      expect(r.source).toBe('table') // 归因：判据来源 = 查表注入
+    } finally {
+      handle.release()
+      await service.disposeAll()
+      await server.close()
+    }
+  })
+
+  it('已声明判据的步 → 透传不注入（无归因，现役行为零变化）', async () => {
+    const server = await startDzServer()
+    const { service, handle } = await seamWith(server)
+    try {
+      handle.io.send('dz')
+      const r = await handle.io.read({ until: [/永不命中/], timeoutMs: 200 }, [])
+      expect(r.reason).toBe('timeout') // 只等声明判据，注入未发生
+      expect(r.command).toBeUndefined()
+      expect(r.source).toBeUndefined()
+    } finally {
+      handle.release()
+      await service.disposeAll()
+      await server.close()
+    }
+  })
+
+  it('凭据命令置空 lastSent → 不查表', async () => {
+    const server = await startDzServer()
+    const { service, handle } = await seamWith(server)
+    try {
+      handle.io.sendCredential('p1')
+      const r = await handle.io.read({ timeoutMs: 200 }, [])
+      expect(r.reason).toBe('timeout')
+      expect(r.command).toBeUndefined()
+      expect(r.source).toBeUndefined()
+    } finally {
+      handle.release()
+      await service.disposeAll()
+      await server.close()
+    }
+  })
+
+  it('未登记命令（fallback）→ 不注入（现役透传）', async () => {
+    const server = await startDzServer()
+    const { service, handle } = await seamWith(server)
+    try {
+      handle.io.send('foobar')
+      const r = await handle.io.read({ timeoutMs: 200 }, [])
+      expect(r.reason).toBe('timeout')
+      expect(r.command).toBeUndefined()
+      expect(r.source).toBeUndefined()
+    } finally {
+      handle.release()
+      await service.disposeAll()
+      await server.close()
+    }
+  })
+})

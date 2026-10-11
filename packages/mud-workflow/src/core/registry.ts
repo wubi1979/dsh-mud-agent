@@ -25,10 +25,11 @@
  */
 
 import {
-  checkFlow, usesCredentialVerb, workflowRecordSchema, workflowSnapshotSchema,
+  checkFlow, normalizeFlow, usesCredentialVerb, workflowRecordSchema, workflowSnapshotSchema,
 } from '../contract/schema.ts'
 import type {
-  Flow, SnapshotReason, WorkflowEntryView, WorkflowRecord, WorkflowSnapshot,
+  Flow, FlowSlotsPort, SnapshotReason, WorkflowEntryView, WorkflowOrigin, WorkflowRecord,
+  WorkflowSnapshot,
 } from '../contract/schema.ts'
 import type { HostTable } from '../contract/domain.ts'
 
@@ -37,6 +38,13 @@ export interface SaveInput {
   readonly name: string
   readonly title: string
   readonly flow: Flow
+}
+
+/** save 结果（T26.5）：生效记录 + 保存门告警——DEC-13 档「放行但可见」：
+ * 不可静态判定的结局引用等不拒存，以告警随 save 返回，由工具面透出给模型。 */
+export interface SaveResult {
+  readonly record: WorkflowRecord
+  readonly warnings: readonly string[]
 }
 
 /** 每流程快照保留上限（T16 D8：常量；落地后按实测评估是否 Config 化）。 */
@@ -87,9 +95,19 @@ export class WorkflowRegistry {
   private readonly memoryLedger = new Map<string, WorkflowSnapshot>()
   private readonly memoryRecords = mapTable(this.memoryFallback)
   private readonly memorySnapshots = mapTable(this.memoryLedger)
+  /** 命令总表槽名查询（T26.5；core3 装配期注入；null = 无端口，结局引用校验降级告警）。 */
+  private slotsOf: FlowSlotsPort | null = null
 
   constructor(builtins: readonly WorkflowRecord[] = []) {
     this.registerBuiltins(builtins)
+  }
+
+  /**
+   * 注入命令总表槽名查询（T26.5；core3 `tableSlotsOf` 经宿主插件注入——须在
+   * registerBuiltins 之前调用，预制的结局引用校验才能对到表槽集）。
+   */
+  setSlotsOf(port: FlowSlotsPort): void {
+    this.slotsOf = port
   }
 
   /**
@@ -99,18 +117,23 @@ export class WorkflowRegistry {
    *
    * 同名冲突不由本方法裁决（不删不写修缮层）：优先级在 `view` 里按 locked 推导
    *（locked 预制优先 ⇒ 同名修缮降级 shadowed，见 `view`/`entries`/`delete`）。
+   * @returns 保存门告警（DEC-13 档；宿主层点名——不可静态判定的结局引用等）。
    */
-  registerBuiltins(records: readonly WorkflowRecord[]): void {
+  registerBuiltins(records: readonly WorkflowRecord[]): readonly string[] {
     const map = new Map(this.builtins)
+    const warnings: string[] = []
     for (const record of records) {
       workflowRecordSchema.parse(record)
-      checkFlow(record.flow)
+      for (const w of checkFlow(record.flow, this.slotsOf ?? undefined)) {
+        warnings.push(`[${record.name}] ${w}`)
+      }
       if (record.locked !== true && usesCredentialVerb(record.flow)) {
         throw new Error(`预制流程 ${record.name} 违反凭据红线：sendCredential/captcha 只允许 locked 流程使用`)
       }
       map.set(record.name, record)
     }
     this.builtins = map
+    return warnings
   }
 
   /** 生效记录表（域表或内存降级层）。 */
@@ -182,17 +205,38 @@ export class WorkflowRegistry {
    *     `delete` 清理），读取与执行一律用 locked 内置——locked 的「拒改拒删」在
    *     读取/执行侧同样成立（不再只在保存侧成立）；
    *   - 其它 ⇒ agent 修缮优先（非 locked 预制可被修缮覆盖，`delete` 还原为预制）。
+   *
+   * **读时归一**（T26.6）：生效记录经 normalizeFlow 转新词汇（遗留 until/failOn
+   * 系步骤 → closeOn/outcomes 槽表 + onOutcome 路由），执行与 get 面只见新格式；
+   * 归一产物再过一遍 checkFlow 复核（不可判定引用 → 告警随视图可见；结构性异常
+   * 降级为告警不炸视图）。
    */
   private view(name: string): WorkflowEntryView | undefined {
     const builtin = this.builtins.get(name)
     const overlay = this.recordTable().get(name)
+    const toView = (record: WorkflowRecord, origin: WorkflowOrigin, shadowed?: WorkflowRecord): WorkflowEntryView => {
+      const flow = normalizeFlow(record.flow)
+      let warnings: readonly string[] | undefined
+      try {
+        const found = checkFlow(flow, this.slotsOf ?? undefined)
+        if (found.length > 0) warnings = found
+      } catch (e) {
+        warnings = [(e as Error).message]
+      }
+      return {
+        record: { ...record, flow },
+        origin,
+        ...(shadowed !== undefined ? { shadowed } : {}),
+        ...(warnings !== undefined ? { warnings } : {}),
+      }
+    }
     if (builtin !== undefined && builtin.locked === true) {
       return overlay === undefined
-        ? { record: builtin, origin: 'builtin' }
-        : { record: builtin, origin: 'builtin', shadowed: overlay }
+        ? toView(builtin, 'builtin')
+        : toView(builtin, 'builtin', overlay)
     }
-    if (overlay !== undefined) return { record: overlay, origin: 'refined' }
-    if (builtin !== undefined) return { record: builtin, origin: 'builtin' }
+    if (overlay !== undefined) return toView(overlay, 'refined')
+    if (builtin !== undefined) return toView(builtin, 'builtin')
     return undefined
   }
 
@@ -222,13 +266,13 @@ export class WorkflowRegistry {
    * 保存（agent 修缮 / 新建）：
    *   1. locked 同名拒（预制锁死 + 红线：凭据流程不可被替换）；
    *   2. 凭据动词拒（agent 可写词汇表不含 sendCredential）；
-   *   3. schema + 结构校验（校验即生效）；
+   *   3. schema + 结构校验（校验即生效；不可静态判定的结局引用 → 告警随结果返回）；
    *   4. version 自增（覆盖时），updatedAt 记当前时刻；
    *   5. **强审计提交**：先记 `save` 快照，再写生效记录（账本失败 ⇒ 整体失败）。
    *
    * @throws 可读错（工具层转可读拒绝）。
    */
-  async save(input: SaveInput): Promise<WorkflowRecord> {
+  async save(input: SaveInput): Promise<SaveResult> {
     const existing = this.get(input.name)
     if (existing?.locked === true) {
       throw new Error(`流程 ${input.name} 已锁定，不可修改`)
@@ -244,10 +288,10 @@ export class WorkflowRegistry {
       updatedAt: new Date().toISOString(),
       flow: input.flow,
     })
-    checkFlow(record.flow)
+    const warnings = checkFlow(record.flow, this.slotsOf ?? undefined)
     await this.appendSnapshot(record, 'save')
     await this.recordTable().put(record.name, record)
-    return record
+    return { record, warnings }
   }
 
   /**
@@ -289,7 +333,7 @@ export class WorkflowRegistry {
     if (snapshot === undefined) {
       throw new Error(`已拒绝：流程 ${name} 没有 v${version} 的历史快照`)
     }
-    return this.save({ name: snapshot.name, title: snapshot.title, flow: snapshot.flow })
+    return (await this.save({ name: snapshot.name, title: snapshot.title, flow: snapshot.flow })).record
   }
 
   /** 快照记录构造（账本只追加，因此每次都是新对象）。 */

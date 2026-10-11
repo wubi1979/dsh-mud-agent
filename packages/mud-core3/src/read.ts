@@ -32,7 +32,7 @@
  * 填槽，不再在解释器里重测一遍。
  */
 
-import type { IoReadReason, ReadHit } from 'mud-workflow/contract'
+import type { ClosureKind, IoReadReason, OutcomeKind, OutcomeName, ReadHit } from 'mud-workflow/contract'
 import type { MudLine } from './link/line.ts'
 
 /** read 收束原因（词汇表单点声明在契约层 `IoReadReason`；本名保留供本包内部阅读）。 */
@@ -41,16 +41,37 @@ export type ReadReason = IoReadReason
 /** 同步判据命中：收束原因 + 关窗来源（until 失配判责用）+ 命中帧（判据命中才有）。 */
 interface CriterionHit {
   reason: ReadReason
-  source: 'failOn' | 'until' | 'gaCount' | 'maxLines'
+  source: 'failOn' | 'until' | 'gaCount' | 'maxLines' | 'silence'
   hit: ReadHit | undefined
 }
 
-/** read 参数。timeoutMs 必须显式给出或由工具注入缺省 —— 绝不无界等待。 */
+/** 结局槽（T26；与装配器 CompiledSlot 同形——读窗机只认正则数组 + 并行名表）。 */
+export interface ReadSlot {
+  readonly name: OutcomeName
+  readonly kind: OutcomeKind
+  readonly res: readonly RegExp[]
+}
+
+/**
+ * read 参数。timeoutMs 必须显式给出或由工具注入缺省 —— 绝不无界等待。
+ *
+ * T26 形态分档（§3.2）：`closeOn` 给出时按四值配方判定——
+ *   - `'criteria'` / `'race'`：**槽收窗**（fail 槽先于 ok 槽 = 判定序
+ *     failOn > until），GA 不武装；`'race'` 另与静默（quietMs）竞速；
+ *   - `'ga'` / `'quiet'`：**槽仅分类**（GA / 静默是唯一收窗者，收束时扫窗文本
+ *     分类出 outcome；`'ga'` 的 GA 计数 = `gaCount ?? 1`）；此时 `until` /
+ *     `failOn` / `gaCount`（非 'ga'）不参与判定；
+ * `closeOn` 缺省 = 现役遗留语义（判据即收窗、GA 按 gaCount、失配判责照旧）。
+ */
 export interface ReadOpts {
-  /** 完成判据：在累积文本（各行 text 以 \n 连接）上测，**可跨批命中**。 */
+  /** 完成判据（遗留形态）：在累积文本（各行 text 以 \n 连接）上测，**可跨批命中**。 */
   until?: readonly RegExp[]
-  /** 负面判据：命中即以 failOn 收束（优先于 until）。 */
+  /** 负面判据（遗留形态）：命中即以 failOn 收束（优先于 until）。 */
   failOn?: readonly RegExp[]
+  /** 收窗形态（T26）：给出时判据由 `slots` 派生，`until`/`failOn` 不参与判定。 */
+  closeOn?: ClosureKind
+  /** 结局槽表（T26；fail 槽在前 = 判定序）。 */
+  slots?: readonly ReadSlot[]
   /** GA/EOR 边界计数关窗（undefined = 无 GA 关窗；工具层注入缺省 1）。 */
   gaCount?: number
   /** 行间静默毫秒：最后一次行到达后静默即收（quiet）。 */
@@ -75,9 +96,64 @@ export interface ReadResult {
   hit: ReadHit | undefined
 }
 
+/** 平行名表单元：判据命中时给结局槽名（遗留判据无名 ⇒ 缺省）与槽内 pattern 下标。 */
+interface CriteriaMeta {
+  readonly name?: OutcomeName
+  readonly patIdx: number
+}
+
+/** 判据派生产（start 时一次算好）：槽表 → fail/until 两组正则数组 + 并行名表。 */
+interface DerivedCriteria {
+  readonly failRes: readonly RegExp[]
+  readonly failMeta: readonly CriteriaMeta[]
+  readonly untilRes: readonly RegExp[]
+  readonly untilMeta: readonly CriteriaMeta[]
+  /** 槽表全量（ga/quiet 的收束分类用；criteria/race 的判据已派生进上四项）。 */
+  readonly slots: readonly ReadSlot[]
+}
+
+/**
+ * 判据派生（T26 形态分档，§3.2）：
+ *   - 遗留（closeOn 缺省）：until/failOn 原样（无名表）；
+ *   - `'criteria'` / `'race'`：fail 槽 → failOn、ok 槽（非空）→ until（槽已按
+ *     fail 在前排序，此处保序摊平）；
+ *   - `'ga'` / `'quiet'`：槽不参与收窗判定（收束时分类），数组保持为空——
+ *     判据进了 until/fail 就会在行到达时收窗，GA/静默分类机制被短路。
+ */
+function deriveCriteria(opts: ReadOpts): DerivedCriteria {
+  if (opts.closeOn === undefined) {
+    const failOn = opts.failOn ?? []
+    const until = opts.until ?? []
+    return {
+      failRes: failOn,
+      failMeta: failOn.map((_, i) => ({ patIdx: i })),
+      untilRes: until,
+      untilMeta: until.map((_, i) => ({ patIdx: i })),
+      slots: [],
+    }
+  }
+  const failRes: RegExp[] = []
+  const failMeta: CriteriaMeta[] = []
+  const untilRes: RegExp[] = []
+  const untilMeta: CriteriaMeta[] = []
+  if (opts.closeOn === 'criteria' || opts.closeOn === 'race') {
+    for (const slot of opts.slots ?? []) {
+      const target = slot.kind === 'fail'
+        ? { res: failRes, meta: failMeta }
+        : { res: untilRes, meta: untilMeta }
+      slot.res.forEach((re, patIdx) => {
+        target.res.push(re)
+        target.meta.push({ name: slot.name, patIdx })
+      })
+    }
+  }
+  return { failRes, failMeta, untilRes, untilMeta, slots: opts.slots ?? [] }
+}
+
 /** 在途状态。 */
 interface ReadState {
   readonly opts: ReadOpts
+  readonly derived: DerivedCriteria
   acc: MudLine[]
   accText: string
   gaSeen: number
@@ -115,6 +191,7 @@ export class ReadMachine {
       const accText = initial.map(l => l.text).join('\n')
       const state: ReadState = {
         opts,
+        derived: deriveCriteria(opts),
         acc,
         accText,
         gaSeen: 0,
@@ -187,26 +264,69 @@ export class ReadMachine {
    * 声明序找首个命中判据：**单次 `exec`** 同时得到命中（下标）与捕获组；调用前
    * 重置 `lastIndex` —— `g`/`y` 是有状态正则（起点由 `lastIndex` 决定），跨评估
    * 不重置会让"同一判据在窗口变长后时灵时不灵"（§5.2）。
+   *
+   * 命中帧（§3.3）：槽判据命中带 `outcome`（槽名）+ `kind`，`index` = 槽内
+   * pattern 下标；遗留判据（无名表）`index` = 数组下标、不带 outcome。
    */
-  private matchFirst(by: 'until' | 'failOn', res: readonly RegExp[] | undefined, text: string): ReadHit | null {
-    if (res === undefined) return null
+  private matchFirst(by: 'until' | 'failOn', res: readonly RegExp[], meta: readonly CriteriaMeta[], text: string): ReadHit | null {
     for (let i = 0; i < res.length; i++) {
       const re = res[i]!
       re.lastIndex = 0
       const m = re.exec(text)
-      if (m !== null) return { by, index: i, groups: m.slice(1) }
+      if (m === null) continue
+      const groups = m.slice(1)
+      const metaI = meta[i]!
+      return metaI.name !== undefined
+        ? { by, index: metaI.patIdx, groups, outcome: metaI.name, kind: by === 'failOn' ? 'fail' : 'ok' }
+        : { by, index: i, groups }
     }
     return null
   }
 
-  /** 同步判定（写死判定序）：failOn > until > gaCount > maxLines。 */
+  /**
+   * 收束分类（'ga' 边界 / 'silence' 静默收束时扫窗文本）：fail 槽先于 ok 槽
+   *（判定序），槽内按 pattern 序——命中即给结局帧；全不命中 = 无分类（'ga'
+   * 收窗无结局；静默收窗再退推定槽，见 onQuiet）。
+   */
+  private classify(state: ReadState, by: 'ga' | 'silence'): ReadHit | undefined {
+    for (const slot of state.derived.slots) {
+      for (let i = 0; i < slot.res.length; i++) {
+        const re = slot.res[i]!
+        re.lastIndex = 0
+        const m = re.exec(state.accText)
+        if (m !== null) {
+          return { by, index: i, groups: m.slice(1), outcome: slot.name, kind: slot.kind }
+        }
+      }
+    }
+    return undefined
+  }
+
+  /** 推定槽帧（静默收束无分类命中时；`patterns: []` 的槽由静默机制填，DEC-5）。 */
+  private presumedSlot(state: ReadState): ReadHit | undefined {
+    const slot = state.derived.slots.find(s => s.res.length === 0)
+    return slot !== undefined
+      ? { by: 'silence', index: -1, groups: [], outcome: slot.name, kind: slot.kind }
+      : undefined
+  }
+
+  /**
+   * 同步判定：判定序 **failOn > until > gaCount > maxLines**（写死）。
+   * 形态分档（§3.2）：`'criteria'`/`'race'` 槽收窗、GA 不武装；`'ga'` GA 收窗
+   *（`gaCount ?? 1`）且槽仅分类（收束时 classify）；`'quiet'` 无同步收窗者
+   *（静默是唯一收窗者，见 onQuiet）；遗留（closeOn 缺省）照旧。
+   */
   private evaluate(state: ReadState): CriterionHit | null {
-    const { opts, acc, accText } = state
-    const failOnHit = this.matchFirst('failOn', opts.failOn, accText)
+    const { opts, derived, acc, accText } = state
+    const failOnHit = this.matchFirst('failOn', derived.failRes, derived.failMeta, accText)
     if (failOnHit !== null) return { reason: 'failOn', source: 'failOn', hit: failOnHit }
-    const untilHit = this.matchFirst('until', opts.until, accText)
+    const untilHit = this.matchFirst('until', derived.untilRes, derived.untilMeta, accText)
     if (untilHit !== null) return { reason: 'done', source: 'until', hit: untilHit }
-    if (opts.gaCount !== undefined && state.gaSeen >= opts.gaCount) {
+    if (opts.closeOn === 'ga') {
+      if (state.gaSeen >= (opts.gaCount ?? 1)) {
+        return { reason: 'done', source: 'gaCount', hit: this.classify(state, 'ga') }
+      }
+    } else if (opts.closeOn === undefined && opts.gaCount !== undefined && state.gaSeen >= opts.gaCount) {
       return { reason: 'done', source: 'gaCount', hit: undefined }
     }
     if (opts.maxLines !== undefined && acc.length >= opts.maxLines) {
@@ -219,7 +339,24 @@ export class ReadMachine {
   private armQuiet(state: ReadState): void {
     if (state.opts.quietMs === undefined) return
     if (state.quietTimer !== null) clearTimeout(state.quietTimer)
-    state.quietTimer = setTimeout(() => { this.finish('quiet') }, state.opts.quietMs)
+    state.quietTimer = setTimeout(() => { this.onQuiet(state) }, state.opts.quietMs)
+  }
+
+  /**
+   * 静默到点（T26.4）：`'race'` / `'quiet'` 下静默是**合法收束者**——以
+   * `by: 'silence'` 命中帧上报（分类 → 推定槽 → 裸 silence 帧三级回退），消费侧
+   * 据此走**正常出口**；其它形态/遗留语义照旧（quiet 收束、无命中帧）。
+   */
+  private onQuiet(state: ReadState): void {
+    const closeOn = state.opts.closeOn
+    if (closeOn === 'race' || closeOn === 'quiet') {
+      const hit = this.classify(state, 'silence')
+        ?? this.presumedSlot(state)
+        ?? { by: 'silence' as const, index: -1, groups: [] as readonly (string | undefined)[] }
+      this.finish('quiet', 'silence', hit)
+      return
+    }
+    this.finish('quiet')
   }
 
   /** 收束：清计时器/信号监听 → until 失配判责 → resolve（带命中帧）。 */
@@ -233,10 +370,16 @@ export class ReadMachine {
       state.opts.signal.removeEventListener('abort', state.onAbort)
     }
     // until 失配判责（承 core2）：until 声明了却没有 until 命中帧，而收场者是
-    // quiet/timeout 或被 maxLines 剪断 —— 记 error。gaCount 边界关窗不算失配。
-    // 判责由命中帧判定，不再复测正则（顺带消掉有状态正则的第二次调用）。
-    if (state.opts.until !== undefined && hit?.by !== 'until'
-      && (reason === 'quiet' || reason === 'timeout' || source === 'maxLines')) {
+    // quiet/timeout 或被 maxLines 剪断 —— 记 error。分档（§3.2）：
+    //   - 遗留（closeOn 缺省）：quiet/timeout/maxLines 三种收场都判（现役口径）；
+    //   - `'criteria'` / `'race'`：timeout/maxLines 判；静默（'race'）是**合法
+    //     收束者**（推定完成）不判；gaCount 关窗不算失配（同现役）；
+    //   - `'ga'` / `'quiet'`：槽不收窗 ⇒ 无 until 声明 ⇒ 天然不判。
+    const criteriaMiss = state.derived.untilRes.length > 0 && hit?.by !== 'until'
+    const missError = criteriaMiss && (state.opts.closeOn === undefined
+      ? reason === 'quiet' || reason === 'timeout' || source === 'maxLines'
+      : reason === 'timeout' || source === 'maxLines')
+    if (missError) {
       this.onLog?.('error', `read 判据失配：until 未命中即收束（reason=${reason}）`)
     }
     state.resolve({ lines: state.acc, reason, hit })

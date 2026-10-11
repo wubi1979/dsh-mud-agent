@@ -97,9 +97,18 @@ export function apply(ctx: Context, config: MudWorkflowConfig = {}): void {
   // 无害（幂等覆盖同名校验过的预制）。窄结构代位读（本包零 core3 运行时依赖；
   // 类型面由契约 WorkflowIoSeam 单点声明，core3 侧编译期断言）。
   const attachBuiltins = (core: unknown): void => {
+    // 命令总表槽名查询（T26.5）：先注端口再挂预制——保存门/视图校验据此把
+    // onOutcome/captureFrom 引用对到表槽集（窄结构代位读，同 builtinFlows）。
+    const slotsOf = (core as { tableSlotsOf?: unknown }).tableSlotsOf
+    if (typeof slotsOf === 'function') {
+      registry.setSlotsOf(slotsOf as (command: string) => readonly string[] | null)
+    }
     const flows = (core as { builtinFlows?: unknown }).builtinFlows
     if (!Array.isArray(flows) || flows.length === 0) return
-    registry.registerBuiltins(flows as readonly WorkflowRecord[])
+    // 保存门告警点名（DEC-13 档：放行但必须可见——不可静态判定的结局引用等）。
+    for (const w of registry.registerBuiltins(flows as readonly WorkflowRecord[])) {
+      ctx.logger.warn(`mud-workflow: 预制流程告警：${w}`)
+    }
     ctx.logger.info(`mud-workflow: 已挂载 core3 流程实体（${flows.length} 条）`)
     // 冲突点名（策略 A：locked 内置优先 ⇒ 同名修订降级 shadowed，必须可见）。
     const shadowed = registry.entries().filter(entry => entry.shadowed !== undefined)
