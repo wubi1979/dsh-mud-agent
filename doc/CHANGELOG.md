@@ -814,3 +814,18 @@
 - **文档**：§8.3/§8.7（工具面与命令总表全面改口径）、§8.10–§8.15（词汇表契约模式/保存门/解释器语义/缝执行序/login·fullme 步表）、§5.2（ReadMachine 三形态）、§13/§14（留痕与结构化失败）、§16.2/§16.3/§16.5（用例账目与切片表 T26 行）、附录 A.3/A.9 勘误注、doc/flows/{login,fullme}.md 同步、§8.16 口径不变。
 
 > AI生成
+
+## [v0.0.70]v0.0.69 落地核查勘误（§8.7 漏改 + 注释残留 + typecheck 构建序）(2026-10-12)
+
+> 总结：v0.0.69 全面核查——代码全部落地（总表/三形态/契约模式/两级路由/净删/战斗监听窗迁移逐一实证），测试 mud-workflow 96 全绿 + core3 483/485（仅 wake 2 例 v0.0.66 历史遗留）+ typecheck 零错；核查发现三处未随版收口的问题，经用户裁定（新开勘误行登记 + typecheck 前置 build）修正。
+
+- **§8.7「命令总表」行漏改勘误**（`doc/architecture/08-execution.md`）：v0.0.69 声称「§8.7 全面改口径」但该行仍为旧词汇（四判定器 `byQuiet`（'race'）/`bySilence`（推定槽）、`OUTCOME_NAMES` 枚举、closeOn 四值、「未登记暂按 `gaCount:1` 兜底」、walk 条目 `'race'`+`推定完成`）——已改写为 T26.6 终态口径（三判定器 `byBoundary`/`byOutcomes`/`byWindow`、`CLOSURE_KINDS` 三值、kind=契约/槽名=条目数据、保留字拒用、patterns ≥ 1、解析单点四档含「未登记不收窗只等超时」（DEC-4/22）、walk `'criteria'`+flags `'m'`+步数 sizing、`xue` 不入表=不收窗只等超时）；现役条目槽位清单同步实码（dazuo `完成`/`突破`/`内息不足`/`精神不足`）。
+- **tools.ts 两处陈旧注释**（行为无错，仅引用退役词汇）：`mud_walk` 静默窗注释 walk 条目「'race' 形态」→ `'criteria'` + flags `'m'`（T26.6 改判）；空命令放开注释「缺省 `gaCount:1` 立即收束」「走预设/裸读 + until」→ 解析单点特例归 `'ga'`（DEC-4 未登记不收窗）。
+- **typecheck 构建序**（实证复现一次误报）：根 `package.json` 的 `typecheck` 编排前置 `mud-workflow build`——core3 typecheck 经 devDep 解析 `lib/*.d.ts`，产物陈旧时报旧类型错误（提示 `gaCount`）误导排查；§8.8 build 序纪律由记载升级为脚本保证。
+- **判据词汇统一：两表同构「kind 在前、槽名在内」**（2026-10-12 用户裁定）：判据表 `outcomes` 与路由表 `onOutcome` 同构——外层键 = ok/fail、槽条目删 kind 字段只剩 `patterns`；契约 `SlotTable`/`waitSchema.outcomes`/`IoReadOpts`/`ListenSpec` 同步改形，`compileSlots` 按 kind 外层遍历（fail 组先编译即判定序），新增**槽名跨 kind 禁重名拒存**（zod superRefine + 装配期双闸）；`mud_send` listen JSON schema、命令总表（std/skill）、flows/login/fullme、`mud_send`/`mud_walk` 工具描述与 DEC-22 工单示例同步改写；测试 7 个 spec 共 54 处字面量转换（mud-workflow 96 全绿 + core3 483/485 同前 + typecheck 零错）；存量不管（DEC-25）；§8.7/§8.10/§8.11、flows/{login,fullme}.md 判据常量表（kind 列 + fail 组在前）同步。
+- **判据词汇 `count` → `gaCount` 改名**（2026-10-12 用户裁定：ga 语境外的裸 `count` 语义不明）：ga 形态等第 N 个 GA 的词汇全链改名——waitSchema/`IoReadOpts`/interpreter 透传/`CallerDecl`/`CompiledJudge`/`AwaitPlan`/`ReadOpts`/`ListenSpec`/listen JSON schema 与描述/`byBoundary` 签名；**缺省 1 不必显式写**（login wait-ga 步仅 `closeOn: 'ga'`，schema/read 机缺省 1）；与**旧 `gaCount`（缺省兜底档，随 DEC-4 退役）同名异义**——schema.ts/read.spec 头注释加辨析（现 gaCount 仅指 ga 形态显式计数）；测试 6 个 spec 同步（mud-workflow 96 全绿 + core3 483/485 同前 + typecheck 零错）；§8.7/§8.10/§8.15、§5.2、flows/login.md wait-ga 行同步。
+- **命令总表打坐条目归属勘误**（2026-10-12 用户澄清）：打坐标准命令 = `exercise`、别名 = `dazuo`，`dz` 是**另一条命令**（无别名关系）——skill.ts 条目 `id: 'dazuo', aliases: ['dz']` → `id: 'exercise', aliases: ['dazuo']`；tools.spec/service.spec 命中用例与 service.spec mock 服务器改喂 `exercise`，registry.spec 槽名查询端口 fake 键同步；A.3 实录标签 `dz` → `exercise`（勘误注保留原句）、§8.7 命令总表行 `dz|dazuo` → `exercise`（别名 `dazuo`）。help 原文佐证（`help dazuo`）登记 A.3：证实 `exercise|dazuo` 同命令、`dz` 独立（走火风险）；`exercise max` 参数形态待实录（§6.2 挂账）。
+- **命令总表 walk 条目分组勘误**（2026-10-12 用户澄清）：`walk` 属 **usr**（玩家/交互）分组，非 std——条目从 `commands/std.ts` 移入 `commands/usr.ts`（USR_COMMANDS 首条），std.ts 族注释与 tools.ts 两处引用注释同步；行为零变化（装配器合并数组，匹配按首词与分组无关）。
+- **任务专用命令骨架 + 阵法首用例语料**（2026-10-12 用户裁定方向）：新增第六分组 `commands/task.ts`（`TASK_COMMANDS = []` 骨架，头注释载明 2026-10-12 裁定——生效判定 = 会话谱系标记、语义边界 = 只做收窗判据不拦发送）；机制实施（派发面标记写入 / resolveAwaitPlan 任务上下文 / 装配器分离）立 **T27** 待办池（判据原句实录前不接机制，避免无例证建机制）；武当阵法任务语料（`zhenfa`/`zouwei`，唯一实录句「这个房间里正有人在演练阵法」，走位决策型特性）登记**附录 A.10**。
+
+> AI生成

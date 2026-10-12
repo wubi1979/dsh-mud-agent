@@ -65,15 +65,15 @@ describe('compileListen', () => {
   })
 
   it('listen 原样透传（编译在 resolveAwaitPlan 单点）；别面词汇出现即拒；组合自由度 schema 层挡', () => {
-    const out = compileListen({ closeOn: 'ga', count: 2, outcomes: { 完成: { kind: 'ok', patterns: ['你好'] } } })
-    expect(out).toEqual({ closeOn: 'ga', count: 2, outcomes: { 完成: { kind: 'ok', patterns: ['你好'] } } })
+    const out = compileListen({ closeOn: 'ga', gaCount: 2, outcomes: { ok: { 完成: { patterns: ['你好'] } } } })
+    expect(out).toEqual({ closeOn: 'ga', gaCount: 2, outcomes: { ok: { 完成: { patterns: ['你好'] } } } })
     // timeoutMs 是 mud_send 顶层参数；captures/captureFrom 是流程面捕获词汇（
     // ListenSpec 类型不含——运行期防线用同形字面量验证）。
     expect(() => compileListen({ timeoutMs: 5 } as never)).toThrow(/timeoutMs 是 mud_send 顶层参数/)
-    expect(() => compileListen({ closeOn: 'criteria', outcomes: { 完成: { kind: 'ok', patterns: ['x'] } }, captures: ['a'] } as never))
+    expect(() => compileListen({ closeOn: 'criteria', outcomes: { ok: { 完成: { patterns: ['x'] } } }, captures: ['a'] } as never))
       .toThrow(/流程面捕获词汇/)
     // 判据声明缺 closeOn（与流程 wait 同一 schema，DEC-21）。
-    expect(() => compileListen({ outcomes: { 完成: { kind: 'ok', patterns: ['x'] } } })).toThrow(/必须搭配 closeOn/)
+    expect(() => compileListen({ outcomes: { ok: { 完成: { patterns: ['x'] } } } })).toThrow(/必须搭配 closeOn/)
   })
 })
 
@@ -247,7 +247,7 @@ describe('mud_send 拒绝序（stub）', () => {
 
   it('非法 listen 正则：可读拒绝（编译点在 resolveAwaitPlan，执行期报）', async () => {
     const { call } = setup()
-    await expect(call('mud_send', { cmd: 'look', listen: { closeOn: 'criteria', outcomes: { 完成: { kind: 'ok', patterns: ['([bad'] } } } }))
+    await expect(call('mud_send', { cmd: 'look', listen: { closeOn: 'criteria', outcomes: { ok: { 完成: { patterns: ['([bad'] } } } } }))
       .resolves.toMatchObject({ ok: false, error: /正则非法/ })
   })
 })
@@ -308,7 +308,7 @@ describe('mud_send 判据与 initial（stub）', () => {
     expect(readCapture().initial).toEqual([])
     expect(readCapture().opts.closeOn).toBeUndefined()
     expect(readCapture().opts.slots).toBeUndefined()
-    expect(readCapture().opts.count).toBeUndefined()
+    expect(readCapture().opts.gaCount).toBeUndefined()
     expect(readCapture().opts.maxLines).toBe(50)
     expect(readCapture().opts.timeoutMs).toBe(15000)
   })
@@ -329,16 +329,16 @@ describe('mud_send 判据与 initial（stub）', () => {
     expect(readCapture().opts.maxLines).toBe(50)
     expect(readCapture().opts.quietMs).toBe(300)
     expect(readCapture().opts.closeOn).toBeUndefined()
-    expect(readCapture().opts.count).toBeUndefined()
+    expect(readCapture().opts.gaCount).toBeUndefined()
   })
 
   it('模型显式 listen 整体覆盖缺省判据（criteria 槽表）', async () => {
     const { call, readCapture } = setup()
-    await call('mud_send', { cmd: 'look', listen: { closeOn: 'criteria', outcomes: { 完成: { kind: 'ok', patterns: [' done'] } } } })
+    await call('mud_send', { cmd: 'look', listen: { closeOn: 'criteria', outcomes: { ok: { 完成: { patterns: [' done'] } } } } })
     expect(readCapture().opts.closeOn).toBe('criteria')
     expect(readCapture().opts.slots?.[0]).toMatchObject({ name: '完成', kind: 'ok' })
     expect(readCapture().opts.slots![0]!.res[0]!.test(' done')).toBe(true)
-    expect(readCapture().opts.count).toBeUndefined()
+    expect(readCapture().opts.gaCount).toBeUndefined()
   })
 
   it('read 返回行原文（MudLine.text 映射）；结束后释放持有者', async () => {
@@ -368,19 +368,19 @@ describe('mud_send 空命令与命令总表判据（§8.7，A.3，T26）', () =>
     expect(sent).toEqual(['', '   '])
     expect(readCapture().opts.closeOn).toBe('ga')
     expect(readCapture().opts.slots).toBeUndefined() // 无槽表：GA 收窗后无分类，裸 GA 帧
-    expect(readCapture().opts.count).toBe(1) // ga 形态内定等第 1 个 GA
+    expect(readCapture().opts.gaCount).toBe(1) // ga 形态内定等第 1 个 GA
     expect(readCapture().opts.maxLines).toBe(50)
     expect(readCapture().opts.timeoutMs).toBe(15000)
   })
 
-  it('cmd:"dz" 命中表条目："criteria" 形态槽收窗（GA 不武装），fail 槽先行，timeout = 条目预算 120s', async () => {
+  it('cmd:"exercise" 命中表条目："criteria" 形态槽收窗（GA 不武装），fail 槽先行，timeout = 条目预算 120s', async () => {
     const sent: string[] = []
     const { call, readCapture } = setup({}, { send: (cmd: string) => { sent.push(cmd); return true } })
-    await call('mud_send', { cmd: 'dz' })
-    expect(sent).toEqual(['dz'])
+    await call('mud_send', { cmd: 'exercise' })
+    expect(sent).toEqual(['exercise'])
     const opts = readCapture().opts
     expect(opts.closeOn).toBe('criteria') // 打坐受理帧 GA 后 57s 无 GA（A.3）——GA 不武装
-    expect(opts.count).toBeUndefined()
+    expect(opts.gaCount).toBeUndefined()
     expect(opts.maxLines).toBeUndefined() // 不设行数兜底（中途剪断会误判 + 失配误报）
     expect(opts.timeoutMs).toBe(120_000) // 条目系统值，豁免 60s 钳制
     const slots = opts.slots ?? []
@@ -422,12 +422,12 @@ describe('mud_send 空命令与命令总表判据（§8.7，A.3，T26）', () =>
 
   it('模型显式 listen 仍整体覆盖预设（槽级合并：声明槽生效、表槽补充）；显式 timeoutMs 仍钳 60s', async () => {
     const { call, readCapture } = setup()
-    await call('mud_send', { cmd: 'dz', listen: { closeOn: 'criteria', outcomes: { 自定义完成句: { kind: 'ok', patterns: ['自定义完成句'] } } } })
+    await call('mud_send', { cmd: 'exercise', listen: { closeOn: 'criteria', outcomes: { ok: { 自定义完成句: { patterns: ['自定义完成句'] } } } } })
     const merged = readCapture().opts.slots ?? []
     expect(merged.find(s => s.name === '自定义完成句')!.res[0]!.source).toBe('自定义完成句')
     expect(merged.map(s => s.name)).toContain('内息不足') // 表条目槽并入（同形态合并，DEC-5）
     expect(readCapture().opts.timeoutMs).toBe(120_000) // 步声明缺 timeout：表条目预算接管
-    await call('mud_send', { cmd: 'dz', timeoutMs: 999_999 })
+    await call('mud_send', { cmd: 'exercise', timeoutMs: 999_999 })
     expect(readCapture().opts.timeoutMs).toBe(MAX_TIMEOUT_MS)
   })
 })
@@ -441,7 +441,7 @@ describe('mud_walk 判据预设特化（T23/T26.6，stub）', () => {
     expect(readCapture().initial).toEqual([])
     expect(readCapture().opts.closeOn).toBe('criteria') // 到达/软阻断判据收窗（GA 不武装）
     expect(readCapture().opts.quietMs).toBeUndefined() // 行走判据面无静默窗
-    expect(readCapture().opts.count).toBeUndefined()
+    expect(readCapture().opts.gaCount).toBeUndefined()
     expect(readCapture().opts.maxLines).toBe(50)
     expect(readCapture().opts.timeoutMs).toBe(30000) // max(15000, WALK_MIN_TIMEOUT_MS)
   })
@@ -506,7 +506,7 @@ describe('mud_walk 判据预设特化（T23/T26.6，stub）', () => {
     const opts = readCapture().opts
     expect(opts.closeOn).toBe('criteria') // 逐步输出不断流；到达句命中即收
     expect(opts.quietMs).toBeUndefined()
-    expect(opts.count).toBeUndefined() // 每步都出提示符，GA 计数会第一步关窗——不武装
+    expect(opts.gaCount).toBeUndefined() // 每步都出提示符，GA 计数会第一步关窗——不武装
     const slots = opts.slots ?? []
     expect(slots.map(s => `${s.name}:${s.kind}`)).toEqual(['软阻断:fail', '到达:ok']) // fail 槽排前
     expect(slots.find(s => s.name === '到达')!.res[0]!.test('你到达了荆州府。')).toBe(true)
@@ -875,7 +875,7 @@ describe('工具面集成（真实 TCP）', () => {
     // 执行体 A：criteria 永不命中 + 短超时（占住持有者直到超时）
     const first = call('mud_send', {
       cmd: 'longwait',
-      listen: { closeOn: 'criteria', outcomes: { 永不出: { kind: 'ok', patterns: ['永不会出现'] } } },
+      listen: { closeOn: 'criteria', outcomes: { ok: { 永不出: { patterns: ['永不会出现'] } } } },
       timeoutMs: 400,
     }, 'acc-1')
     // 执行体 B（子会话，holder = sub-1 ≠ acc-1）：立即尝试 → 撞持有者

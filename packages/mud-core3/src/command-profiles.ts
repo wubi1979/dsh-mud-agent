@@ -49,7 +49,7 @@ export interface CompiledSlot {
 export interface CompiledJudge {
   readonly closeOn: ClosureKind
   /** GA 计数（ga 形态；缺省 1）。 */
-  readonly count?: number
+  readonly gaCount?: number
   /** 槽表（fail 槽在前）。 */
   readonly slots: readonly CompiledSlot[]
   /** 条目级 flags（整条采用档的编译 flags；告警④与合并档重编译参照）。 */
@@ -77,35 +77,38 @@ function escapeHead(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-/** raw 槽表 → CompiledSlot（fail 槽排前 = 判定序；flags 应用于全部判据）。 */
+/** raw 槽表（kind 在前）→ CompiledSlot（fail 组先编译 = 判定序；flags 应用于全部判据）。
+ * 槽名跨 kind 重名与保留字槽名在此 fail-loud（构建期自检，DEC-18）。 */
 function compileSlots(
   outcomes: SlotTable, where: string, closeOn: ClosureKind, flags: string,
 ): CompiledSlot[] {
   const slots: CompiledSlot[] = []
-  for (const [name, slotValue] of Object.entries(outcomes)) {
-    if (RESERVED_SLOT_NAMES.includes(name)) {
-      throw new Error(`命令条目装配失败：${where} 槽名「${name}」是保留字（ok/fail 是 kind 寻址键）`)
-    }
-    if (slotValue.kind !== 'ok' && slotValue.kind !== 'fail') {
-      throw new Error(`命令条目装配失败：${where} 槽「${name}」kind 非法：${String(slotValue.kind)}`)
-    }
-    if (!Array.isArray(slotValue.patterns) || slotValue.patterns.length === 0) {
-      // patterns ≥ 1（DP 审阅 10）：推定槽已退役，空槽永不命中 = 配置错误。
-      throw new Error(`命令条目装配失败：${where} 槽「${name}」patterns 为空（登记槽必给判据，待实录的槽不登记）`)
-    }
-    const res = slotValue.patterns.map((src) => {
-      if (typeof src !== 'string') throw new Error(`命令条目装配失败：${where} 槽「${name}」含非字符串判据`)
-      try {
-        return new RegExp(src, flags)
-      } catch (e) {
-        throw new Error(`命令条目装配失败：${where} 槽「${name}」判据正则非法: ${src}（${(e as Error).message}）`)
+  const seen = new Set<string>()
+  for (const kind of ['fail', 'ok'] as const) {
+    for (const [name, slotValue] of Object.entries(outcomes[kind] ?? {})) {
+      if (RESERVED_SLOT_NAMES.includes(name)) {
+        throw new Error(`命令条目装配失败：${where} 槽名「${name}」是保留字（ok/fail 是 kind 寻址键）`)
       }
-    })
-    slots.push({ name, kind: slotValue.kind, res, patterns: [...slotValue.patterns] })
+      if (seen.has(name)) {
+        throw new Error(`命令条目装配失败：${where} 槽名「${name}」跨 kind 重名（槽名在 ok/fail 组内必须唯一）`)
+      }
+      seen.add(name)
+      if (!Array.isArray(slotValue.patterns) || slotValue.patterns.length === 0) {
+        // patterns ≥ 1（DP 审阅 10）：推定槽已退役，空槽永不命中 = 配置错误。
+        throw new Error(`命令条目装配失败：${where} 槽「${name}」patterns 为空（登记槽必给判据，待实录的槽不登记）`)
+      }
+      const res = slotValue.patterns.map((src) => {
+        if (typeof src !== 'string') throw new Error(`命令条目装配失败：${where} 槽「${name}」含非字符串判据`)
+        try {
+          return new RegExp(src, flags)
+        } catch (e) {
+          throw new Error(`命令条目装配失败：${where} 槽「${name}」判据正则非法: ${src}（${(e as Error).message}）`)
+        }
+      })
+      slots.push({ name, kind, res, patterns: [...slotValue.patterns] })
+    }
   }
-  // 判定序 fail > ok（fail 槽先测，同帧 fail 收束防误判）。
-  const weight = (s: CompiledSlot): number => (s.kind === 'fail' ? 0 : 1)
-  slots.sort((a, b) => weight(a) - weight(b))
+  // 判定序由遍历序保证（fail 组先编译，fail 槽排前；同 kind 内保持声明序）。
   // 判据收窗形态必须至少有一条可命中判据（否则只剩超时收场 = 配置错误）。
   if (closeOn === 'criteria' && slots.length === 0) {
     throw new Error(`命令条目装配失败：${where}（criteria）没有任何判据槽`)
@@ -125,13 +128,13 @@ function compileJudge(profile: CommandProfile): CompiledJudge {
     return { closeOn: 'quiet', slots: [] }
   }
   if (j.closeOn === 'ga') {
-    if (j.count !== undefined && (!Number.isInteger(j.count) || j.count < 1)) {
-      throw new Error(`命令条目装配失败：${where}（ga）count 必须为正整数`)
+    if (j.gaCount !== undefined && (!Number.isInteger(j.gaCount) || j.gaCount < 1)) {
+      throw new Error(`命令条目装配失败：${where}（ga）gaCount 必须为正整数`)
     }
     const slots = j.outcomes !== undefined ? compileSlots(j.outcomes, where, 'ga', flags) : []
     return {
       closeOn: 'ga',
-      ...(j.count !== undefined ? { count: j.count } : {}),
+      ...(j.gaCount !== undefined ? { gaCount: j.gaCount } : {}),
       slots,
       ...(profile.flags !== undefined ? { flags: profile.flags } : {}),
     }
@@ -221,8 +224,8 @@ export function tableSlotsOf(sent: string): FlowSlotsInfo | null {
  * 由消费方从模型参数/步骤声明原样传入，编译在本函数单点完成）。 */
 export interface CallerDecl {
   closeOn?: ClosureKind
-  outcomes?: Readonly<Record<string, { kind: OutcomeKind; patterns: readonly string[] }>>
-  count?: number
+  outcomes?: SlotTable
+  gaCount?: number
   maxLines?: number
   timeoutMs?: number
   flags?: string
@@ -241,7 +244,7 @@ export type AwaitPlan = {
   readonly source: 'declared' | 'table' | 'empty' | 'none'
   readonly closeOn?: ClosureKind
   readonly slots?: readonly CompiledSlot[]
-  readonly count?: number
+  readonly gaCount?: number
   readonly maxLines?: number
   /** 建议预算（table 档 = 条目法定值；调用方显式值优先）。 */
   readonly timeoutMs?: number
@@ -256,10 +259,7 @@ function compileDeclSlots(
   decl: CallerDecl, where: string,
 ): CompiledSlot[] {
   const flags = decl.flags ?? ''
-  return compileSlots(
-    (decl.outcomes ?? {}) as Record<string, { kind: OutcomeKind; patterns: readonly string[] }>,
-    where, decl.closeOn ?? 'criteria', flags,
-  )
+  return compileSlots(decl.outcomes ?? {}, where, decl.closeOn ?? 'criteria', flags)
 }
 
 /**
@@ -298,7 +298,7 @@ export function resolveAwaitPlan(sent: string | null, decl?: CallerDecl): AwaitP
         source: 'table',
         closeOn: decl.closeOn,
         slots: merged,
-        ...(decl.closeOn === 'ga' ? { count: decl.count ?? profile.judge.count ?? 1 } : {}),
+        ...(decl.closeOn === 'ga' ? { gaCount: decl.gaCount ?? profile.judge.gaCount ?? 1 } : {}),
         ...(decl.maxLines !== undefined || profile.maxLines !== undefined
           ? { maxLines: decl.maxLines ?? profile.maxLines }
           : {}),
@@ -313,7 +313,7 @@ export function resolveAwaitPlan(sent: string | null, decl?: CallerDecl): AwaitP
       source: 'declared',
       closeOn: decl.closeOn,
       slots: own,
-      ...(decl.closeOn === 'ga' && decl.count !== undefined ? { count: decl.count } : {}),
+      ...(decl.closeOn === 'ga' && decl.gaCount !== undefined ? { gaCount: decl.gaCount } : {}),
       ...(decl.maxLines !== undefined ? { maxLines: decl.maxLines } : {}),
       ...(decl.timeoutMs !== undefined ? { timeoutMs: decl.timeoutMs } : {}),
       ...(profile !== null ? { command: profile.id } : {}), // 归因：命中但被整体替换
@@ -325,7 +325,7 @@ export function resolveAwaitPlan(sent: string | null, decl?: CallerDecl): AwaitP
 
   // ③ 空命令特例（DEC-4）：显式归 'ga'（A.2 1:1），回 prompt+GA 立即收束。
   if (sent.trim() === '') {
-    return { source: 'empty', closeOn: 'ga', count: 1, slots: [], command: '' }
+    return { source: 'empty', closeOn: 'ga', gaCount: 1, slots: [], command: '' }
   }
 
   // ④ 表条目（未声明判据 ⇒ 整条采用；条目 flags 编译）。
@@ -335,7 +335,7 @@ export function resolveAwaitPlan(sent: string | null, decl?: CallerDecl): AwaitP
       source: 'table',
       closeOn: profile.judge.closeOn,
       slots: profile.judge.slots,
-      ...(profile.judge.count !== undefined ? { count: profile.judge.count } : {}),
+      ...(profile.judge.gaCount !== undefined ? { gaCount: profile.judge.gaCount } : {}),
       ...(profile.maxLines !== undefined ? { maxLines: profile.maxLines } : {}),
       timeoutMs: profile.timeoutMs,
       command: profile.id,

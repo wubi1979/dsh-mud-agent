@@ -101,19 +101,25 @@ function makeIO(rt: SessionRuntime): WorkflowIO {
     // 契约 IoReadOpts 是 raw 判据，ReadMachine 只认编译槽——转换属于缝的职责，
     // fail 槽排前 = 判定序，flags 随行）。
     read: (opts, initial) => {
+      // 槽表展平（kind 在前）：fail 组排前 = 判定序，flags 随行。
       const slots = opts.outcomes === undefined
         ? undefined
-        : Object.entries(opts.outcomes)
-          .map(([name, slot]) => ({
+        : [
+          ...Object.entries(opts.outcomes.fail ?? {}).map(([name, slot]) => ({
             name,
-            kind: slot.kind,
+            kind: 'fail' as const,
             res: slot.patterns.map(p => new RegExp(p, opts.flags ?? '')),
-          }))
-          .sort((a, b) => (a.kind === 'fail' ? 0 : 1) - (b.kind === 'fail' ? 0 : 1))
+          })),
+          ...Object.entries(opts.outcomes.ok ?? {}).map(([name, slot]) => ({
+            name,
+            kind: 'ok' as const,
+            res: slot.patterns.map(p => new RegExp(p, opts.flags ?? '')),
+          })),
+        ]
       return rt.read({
         ...(opts.closeOn !== undefined ? { closeOn: opts.closeOn } : {}),
         ...(slots !== undefined && slots.length > 0 ? { slots } : {}),
-        ...(opts.count !== undefined ? { count: opts.count } : {}),
+        ...(opts.gaCount !== undefined ? { gaCount: opts.gaCount } : {}),
         ...(opts.maxLines !== undefined ? { maxLines: opts.maxLines } : {}),
         timeoutMs: opts.timeoutMs ?? 30_000,
       }, (initial ?? []) as readonly MudLine[]).then(r => ({

@@ -13,7 +13,9 @@
  *
  * **契约模式（DEC-23）**：`closeOn` 三值与 kind 二分是契约层词汇；**槽名与
  * 判据句是条目数据**（自由命名——命名纪律：分支类目化、行文变体进 patterns
- * 不分槽、应对不同才分槽，见 PLAN DEC-7）。保留字 `ok`/`fail` 由装配期自检拒。
+ * 不分槽、应对不同才分槽，见 PLAN DEC-7）。判据表与路由表同构——**kind 在前、
+ * 槽名在内**（outcomes 外层键 = ok/fail，槽条目不带 kind；2026-10-12 用户裁定
+ * 统一）。保留字 `ok`/`fail` 由装配期自检拒。
  *
  * 判据句**内联**在槽里（DEC-20 口径），原文以附录 A 实录为准（A.6 纪律：
  * 不得凭印象写正则）；同句跨条目复现时就地提常量。
@@ -31,7 +33,7 @@ export type { ClosureKind, OutcomeSlot, SlotTable }
  * 声明同一形状——**一个语法三个消费点**，§3.10 / DEC-21）。
  *
  * 各形态下槽的语义（PLAN 3.2）：
- *   - `ga`：GA/EOR 收窗（`count` 缺省 1，如 2 = 等第 2 个 GA 才关窗）；
+ *   - `ga`：GA/EOR 收窗（`gaCount` 缺省 1，如 2 = 等第 2 个 GA 才关窗）；
  *     **分类槽可选——声明即断言**：窗口关闭时无一命中 ⇒ fail 路由 +
  *     「收窗成功，分支未知」（DP 裁定 1/8）；未声明 ⇒ 关窗即 next；
  *   - `criteria`：**槽收窗**（fail 槽先于 ok 槽 = 判定序），GA 不武装
@@ -39,18 +41,20 @@ export type { ClosureKind, OutcomeSlot, SlotTable }
  *   - `quiet`：**固定采样窗**（窗长 = 条目 `timeoutMs`，唯一计时器、行只累积
  *     不重置；到点关窗：有行 ⇒ ok、零行 ⇒ fail）——无 outcomes 槽（要分类
  *     说明写得出判据，那是 criteria 的事）。
+ *
+ * `SlotTable` 形状（kind 在前）：`{ ok?: { 槽名: { patterns } }, fail?: { … } }`。
  */
 export type Judge =
-  | { readonly closeOn: 'ga'; readonly count?: number; readonly outcomes?: SlotTable }
+  | { readonly closeOn: 'ga'; readonly gaCount?: number; readonly outcomes?: SlotTable }
   | { readonly closeOn: 'criteria'; readonly outcomes: SlotTable }
   | { readonly closeOn: 'quiet' }
 
-/** `byBoundary` — GA 收窗（即时命令；count 缺省 1；分类槽可选——声明即断言）。 */
-export function byBoundary(outcomes?: SlotTable, count?: number): Judge {
+/** `byBoundary` — GA 收窗（即时命令；gaCount 缺省 1；分类槽可选——声明即断言）。 */
+export function byBoundary(outcomes?: SlotTable, gaCount?: number): Judge {
   return {
     closeOn: 'ga',
     ...(outcomes !== undefined ? { outcomes } : {}),
-    ...(count !== undefined ? { count } : {}),
+    ...(gaCount !== undefined ? { gaCount } : {}),
   }
 }
 
@@ -62,7 +66,7 @@ export function byOutcomes(outcomes: SlotTable): Judge {
 /**
  * `byWindow` — 固定采样窗（无明确边界的命令，如 LM）。窗长即条目 `timeoutMs`
  * （**注释纪律**：quiet 判据与 timeout 配合使用，timeout 需谨慎选择时长——
- * 编写责任，非设计代价，用户裁定 2026-10-12）。
+ * 编写责任，非设计代价，用户裁定 2026-10-12）。如果后期需要静默等待指定行数可考虑增加 `LineCount`。
  */
 export function byWindow(): Judge {
   return { closeOn: 'quiet' }
@@ -70,9 +74,9 @@ export function byWindow(): Judge {
 
 /** 命令单元（数据，不含行为）。 */
 export interface CommandProfile {
-  /** 规范命令头 = 表键（'dazuo'）；缝侧按首词精确命中，match 由 id/aliases 派生。 */
+  /** 规范命令头 = 表键（'exercise'）；缝侧按首词精确命中，match 由 id/aliases 派生。 */
   readonly id: string
-  /** 族（'dz'；xue/learn/practice 共条目）。 */
+  /** 族（'exercise'；xue/learn/practice 共条目）。 */
   readonly aliases: readonly string[]
   /** 查询/豁免子形态（如 walk -c/-q）：**测试对象 = 完整发送串**（锚定命令头，
    * DEC-8 修正——参数段正则对完整串失配）；命中即不套用本条目（§8.7）。 */

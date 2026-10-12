@@ -30,16 +30,16 @@ note: fullme 流程实体声明（locked）；词汇表扩展与链路机制见 
 | 5 | `judge` | outcomes：`失效`(fail) = 失效句、`答对`(ok) = 答对句、`答错`(**fail**，信号视角改判 T26.6/DEC-19：被拒是 fail，重入用 when 表达) = 答错句 | **无动作**（收束窗） | `onOutcome.ok` **直达** `exit{stage:'success', ok:true}`；`onOutcome.fail.when` 细化：`答错 → goto answer`（重入，不重发引子）、`失效 → exit{stage:'expired', ok:false}` |
 | 6–8 | `abandon1/2/3` | — | `send: 'fullme 1'` × 3 | 末步 `→ exit{stage:'abandoned', ok:false}` |
 
-**判据常量（与实现一一对应，按槽名归位）**
+**判据常量（与实现一一对应；kind 在前、槽名在内——两表同构，§8.10；fail 组在前 = 判定序）**
 
-| 槽名（kind） | 常量 | 值 |
-|---|---|---|
-| `验证码地址`（ok） | `URL_SRC` | `^(https?:\/\/[^\s]*robot\.php[^\s]*)`（flags `m`；行首锚 + 整体捕获——组 1 入 `captchaUrl` 槽） |
-| `已挂起`（fail） | `STALE_SRC` | `你之前请求的fullme还没有完成` |
-| `冷却中`（fail） | `COOLDOWN_SRC` | `^你刚刚用过这个命令不久，还要[^。]*才能再用。`（flags `m`，时长动态通配） |
-| `答对`（ok） | `OK_SRC` | `你突然感到精神一振，浑身似乎又充满了力量` |
-| `答错`（fail） | `WRONG_SRC` | `好像什么都没有发生，但是又好像有什么事情做错了` |
-| `失效`（fail） | `EXPIRED_SRC` | `还没完成\|失效\|过期`（宽匹配起步，待语料校准） |
+| kind | 槽名 | 常量 | 值 |
+|---|---|---|---|
+| fail | `已挂起` | `STALE_SRC` | `你之前请求的fullme还没有完成` |
+| fail | `冷却中` | `COOLDOWN_SRC` | `^你刚刚用过这个命令不久，还要[^。]*才能再用。`（flags `m`，时长动态通配） |
+| fail | `答错` | `WRONG_SRC` | `好像什么都没有发生，但是又好像有什么事情做错了` |
+| fail | `失效` | `EXPIRED_SRC` | `还没完成\|失效\|过期`（宽匹配起步，待语料校准） |
+| ok | `验证码地址` | `URL_SRC` | `^(https?:\/\/[^\s]*robot\.php[^\s]*)`（flags `m`；行首锚 + 整体捕获——组 1 入 `captchaUrl` 槽） |
+| ok | `答对` | `OK_SRC` | `你突然感到精神一振，浑身似乎又充满了力量` |
 
 ## 设计要点
 

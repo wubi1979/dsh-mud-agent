@@ -88,7 +88,7 @@ L6 是 agent **能动**的唯一出口——把"想做什么"变成"MUD 上发�
 mud_send {
   cmd?: string                                  // 缺省 = 裸读近况
   wait?: boolean                                // T19 D11：false = 发送即走（缺省 true = 发+等应答）
-  listen?: { closeOn?, outcomes?, count?, maxLines?, flags? }   // 与流程 wait 同一 schema（DEC-21/24 全量拼写）
+  listen?: { closeOn?, outcomes?, gaCount?, maxLines?, flags? }   // 与流程 wait 同一 schema（DEC-21/24 全量拼写）
   timeoutMs?: number
 }
 ```
@@ -98,7 +98,7 @@ mud_send {
 | `listen` 校验 | 与流程 `wait` **同一 zod schema**（DEC-21 一个语法三个消费点；全量拼写无简写，DEC-24）；工具面专属限制：`timeoutMs` 是顶层参数不进 listen、`captures`/`captureFrom` 是流程面词汇 ⇒ 出现即拒（可读）。编译在 `resolveAwaitPlan` 单点（非法正则执行期可读拒） |
 | `listen` 解析 | 缺省 ⇒ 按命令总表解析（见「命令总表」行）；模型显式给 `listen` ⇒ 与表条目**形态比对**（DEC-5）：同形态 ⇒ 槽级合并（同名槽后声明整体替换、异名追加、timeoutMs 步声明优先表填缺省），异形态/未登记 ⇒ 声明即全部配方。**裸读**（无 `cmd`）不是"某条命令的收窗"，不走表：缺省 `maxLines: 50 + quietMs: 300` |
 | **空命令** | **放开**（2026-10-10 二次裁定）：照常发送，收窗特例归 `closeOn: 'ga'` 立即收束（空输入也是命令 ⇒ 回 prompt+GA，A.2 1:1；T26.1 起 `resolveAwaitPlan` 特例，兜底行数照设）——刷提示符无害；等长程命令不用它（根因治理靠命令总表判据 + persona 等待纪律；曾设可读拒绝，因根因已除放开） |
-| **命令总表（T26）** | `mud-core3/src/commands/`（`define.ts` 契约 + `std/skill/usr/stunt/profession` 五分组文件；`command-profiles.ts` **装配器**）：条目 = `defineCommand({ id, aliases?, exempt?, timeoutMs, maxLines?, resolve, meta })` **纯数据单元**，**构建期数组、无运行期注册面**（agent 不可修缮）；`resolve` = 四判定器工厂之一——`byBoundary`（`closeOn:'ga'`，GA 收窗槽仅分类）/ `byOutcomes`（`'criteria'`，判据收窗 GA 不武装）/ `byQuiet`（`'race'`，判据与静默竞速）/ `bySilence`（`'quiet'`，纯静默，缺省产出推定槽 `推定完成`）——数据面即契约层 `CLOSURE_KINDS` 四值（§8.10），结局名受 `OUTCOME_NAMES` 枚举约束（§8.8）。**解析单点（DEC-21）**：`resolveAwaitPlan(sent, decl)` 供 `mud_send`/`mud_walk` 与流程缝共用（explicit > table > 兜底三档）；`matchProfile(sent)` 首词 + 词边界命中、`tableSlotsOf(sent)` 槽名查询（保存门槽集校验用，§8.11）。**未登记命令暂按 `gaCount: 1` 兜底**（T26.7 缺省翻转为"不收窗只等超时"未做，以 79 清单覆盖审计为门）。现役条目：`dz|dazuo`（`'criteria'`：`完成`/`突破`/`收尾` ok 槽 + `内息不足`/`精神不足` fail 槽，兜底 120s）、`sleep`（`'criteria'`：`完成` ok + `刚睡过` fail，兜底 300s）——判据原文按 A.3 逐条搬入（不重写正则）；`walk`（`'race'`：`到达`/`软阻断`/`推定完成`，A.9 结论 5，`exempt` 查询类）。即时完成 GA 收尾类（`xue`）不入表（走 gaCount:1 兜底）。**新条目须先语料校准并登记附录 A 原句**（A.6 纪律） |
+| **命令总表（T26，v0.0.70 勘误改口径）** | `mud-core3/src/commands/`（`define.ts` 契约 + `std/skill/usr/stunt/profession` 五分组文件；`command-profiles.ts` **装配器**）：条目 = `defineCommand({ id, aliases?, exempt?, timeoutMs, maxLines?, flags?, resolve, meta })` **纯数据单元**，**构建期数组、无运行期注册面**（agent 不可修缮）；`resolve` = 三判定器工厂之一（T26.6 终态）——`byBoundary`（`closeOn:'ga'`，GA 收窗，gaCount 缺省 1，分类槽可选——声明即断言）/ `byOutcomes`（`'criteria'`，判据收窗 GA 不武装，fail 槽先于 ok 槽）/ `byWindow`（`'quiet'`，固定采样窗——窗长即条目 `timeoutMs`，无槽）——数据面即契约层 `CLOSURE_KINDS` **三值**（§8.10）；**kind（ok/fail）= 契约、槽名 = 条目数据自由命名**（DEC-23；判据表与路由表**两表同构**——**kind 在前、槽名在内**：`outcomes` 外层键 = ok/fail、槽条目不带 kind，2026-10-12 用户裁定统一；保留字 `ok`/`fail` 装配期拒用，`patterns ≥ 1` 推定槽退役）。**解析单点（DEC-21）**：`resolveAwaitPlan(sent, decl)` 供 `mud_send`/`mud_walk` 与流程缝共用——声明（形态比对合并）> 表条目（整条采用）> 空命令特例（归 `'ga'`）> **未登记不收窗只等超时**（DEC-4 终态，无 `gaCount:1` 兜底；超时文案兼语料工单 DEC-22，点名未登记并给出 listen 声明示例）；`matchCommandProfile(sent)` 首词 + 词边界命中（exempt 锚定**完整发送串**）、`tableSlotsOf(sent)` 槽名查询（保存门槽集校验端口，§8.11）。现役条目：`exercise`（别名 `dazuo`；2026-10-12 勘误：打坐标准命令是 `exercise`，`dz` 是另一条命令非别名）（`'criteria'`：`完成`/`突破` ok 槽 + `内息不足`/`精神不足` fail 槽，兜底 120s）、`sleep`（`'criteria'`：`完成` ok + `刚睡过` fail，兜底 300s）——判据原文按 A.3 逐条搬入（不重写正则）；`walk`（`'criteria'` + 条目 flags `'m'` 承重：`到达`（`^你到达了`）/`软阻断`（fail 槽排前），`exempt` 查询类；超时按已知边步数 sizing 10s+3s/步钳 [30s,60s]——race 退役改判，A.9 结论 5）。即时完成 GA 收尾类（`xue`）**不入表 = 未登记不收窗只等超时**——如需登记为 `'ga'` 条目须先语料校准（6.2 挂账）。**新条目须先语料校准并登记附录 A 原句**（A.6 纪律） |
 | `wait: false` | 只 `runtime.send(cmd)`，**不 read、不设超时、不判成败**；返回 `{ok:true, reason:'sent', lines:[]}`；需提供 `cmd`（裸读不适用）；仍过禁发表/连接闸门/持有者（拒绝序不变，§8.4） |
 | **读后投影**（2026-10-10） | `cmd` 头命中**状态拉取档案**且收窗 ⇒ 结果附 `world` 字段 = **本窗口**（send 时刻起）追踪器写入的语义分区快照（`vitals/combat/character/inventory/skills`，条目含来源元数据，与 `mud_state` 的 world 同形）。档案**单点 = `DEFAULT_TRACK_RULES` 推导**（zone ∈ 白名单 且 shape ∈ table/sequence，≈ `hpbrief\|hp\|sc\|i\|skills\|exp`；词边界不误伤 `id`/`inventory`），解析零重复（判据单点在 tracker，§10.3）。**窗内零写入 ⇒ 不带字段**（fail-open 回原文行——限流警告等非表格应答天然覆盖，旧值不冒充新值）；`wait:false` 与裸读不投影。投递通道的 `status` 剔除（§10.3 D8）不变 |
 | `listen`（模型面判据） | 与流程 `wait` 同一 schema（DEC-21/24 全量拼写）；表条目与流程 wait 新格式 = `closeOn` + `outcomes` 槽表（§8.10），两者经同一解析单点落入读窗机（§5.2） |
@@ -164,12 +164,12 @@ mud_walk {
 
 ## 8.10 流程面：词汇表（T26.6 契约模式，2026-10-12 定稿）
 
-> **契约模式（DEC-23）**：**kind（`ok`/`fail`）= 契约**——承担判定序（fail 槽先于 ok 槽，同帧 fail 收束）与粗路由缺省（ok → next / fail → timeout 出口）；**槽名 = 条目数据**——每命令/每步的语料事实，自由命名（命名纪律 DEC-7：分支类目化、行文变体进同槽 `patterns` 不分槽、应对不同才分槽）。判据词汇单点（DEC-21）：表条目 `resolve` / 流程 `wait` / 工具 `listen` 共用契约层同一份 schema；listen 全量拼写无简写（DEC-24）。**读时归一（`normalizeFlow`）已退役**（DEC-25：存储即新词汇，旧词汇解析失败在装载期点名，测试期零兼容层）。
+> **契约模式（DEC-23）**：**kind（`ok`/`fail`）= 契约**——承担判定序（fail 槽先于 ok 槽，同帧 fail 收束）与粗路由缺省（ok → next / fail → timeout 出口）；**槽名 = 条目数据**——每命令/每步的语料事实，自由命名（命名纪律 DEC-7：分支类目化、行文变体进同槽 `patterns` 不分槽、应对不同才分槽）。判据词汇单点（DEC-21）：表条目 `resolve` / 流程 `wait` / 工具 `listen` 共用契约层同一份 schema；listen 全量拼写无简写（DEC-24）。**判据表与路由表两表同构（2026-10-12 用户裁定统一）：同为「kind 在前、槽名在内」——`outcomes` 外层键 = ok/fail（契约），内层键 = 槽名（条目数据），槽条目不带 kind 字段；槽名跨 kind 禁重名（schema 拒存）。****读时归一（`normalizeFlow`）已退役**（DEC-25：存储即新词汇，旧词汇解析失败在装载期点名，测试期零兼容层）。
 
 | 类别 | 项 | 语义 |
 |---|---|---|
-| **读窗 `wait`** | **`closeOn`**（显式单值；缺省 = 未声明判据，缝侧按喂令查表整条注入，DEC-5）+ **`outcomes`**（结局槽表；patterns ≥ 1，推定槽已退役）+ **`captureFrom`**（捕获源槽，组数只对该槽 `patterns[0]` 计）+ `captures`（run 级槽名表）· `count`（仅 ga，等第 N 个 GA）· `maxLines` · `flags`（默认无，白名单 `d/i/m/s/u`）· **`timeoutMs`（可省**：步声明 > 表条目 > 缝侧 30s 兜底，绝不无界等待） | **三形态组合封闭**（schema superRefine）：判据声明必须搭配 `closeOn`；quiet 无槽；criteria 必须声明槽表且无 count；count 仅 ga |
-| **`closeOn` 三形态** | `ga`（GA/EOR 收窗，`count` 缺省 1 可设 N；**分类槽可选——声明即断言**：关窗无一命中 ⇒ 合成 fail 帧 +「收窗成功，分支未知」，DP 裁定 8；未声明 ⇒ 关窗即 next）/ `criteria`（**判据收窗，GA 不武装**；fail 槽先于 ok 槽，同帧 fail 收束防误判）/ `quiet`（**固定采样窗**：唯一计时器 `timeoutMs`，行只累积不重置；到点有行 ⇒ 合成 ok 帧、零行 ⇒ 合成 fail 帧等同 timeout；无槽） | `race` 退役、命令判据面 `quietMs` 退役（**裸读保留**——quietMs 是裸读参数，不在命令判据词汇中）；注释纪律：quiet 与 timeout 配合使用，timeout 需谨慎选择时长（编写责任非设计代价） |
+| **读窗 `wait`** | **`closeOn`**（显式单值；缺省 = 未声明判据，缝侧按喂令查表整条注入，DEC-5）+ **`outcomes`**（结局槽表：**kind 在前、槽名在内**——外层键 ok/fail、内层键槽名，槽条目只含 patterns；patterns ≥ 1，推定槽已退役）+ **`captureFrom`**（捕获源槽，组数只对该槽 `patterns[0]` 计）+ `captures`（run 级槽名表）· `gaCount`（仅 ga，等第 N 个 GA）· `maxLines` · `flags`（默认无，白名单 `d/i/m/s/u`）· **`timeoutMs`（可省**：步声明 > 表条目 > 缝侧 30s 兜底，绝不无界等待） | **三形态组合封闭**（schema superRefine）：判据声明必须搭配 `closeOn`；quiet 无槽；criteria 必须声明槽表且无 gaCount；gaCount 仅 ga；**槽名跨 kind 禁重名**（拒存） |
+| **`closeOn` 三形态** | `ga`（GA/EOR 收窗，`gaCount` 缺省 1 可设 N；**分类槽可选——声明即断言**：关窗无一命中 ⇒ 合成 fail 帧 +「收窗成功，分支未知」，DP 裁定 8；未声明 ⇒ 关窗即 next）/ `criteria`（**判据收窗，GA 不武装**；fail 槽先于 ok 槽，同帧 fail 收束防误判）/ `quiet`（**固定采样窗**：唯一计时器 `timeoutMs`，行只累积不重置；到点有行 ⇒ 合成 ok 帧、零行 ⇒ 合成 fail 帧等同 timeout；无槽） | `race` 退役、命令判据面 `quietMs` 退役（**裸读保留**——quietMs 是裸读参数，不在命令判据词汇中）；注释纪律：quiet 与 timeout 配合使用，timeout 需谨慎选择时长（编写责任非设计代价） |
 | **动作 `action`**（单动作） | `send` \| `sendCredential` \| `captcha`（T14 参数化：收 `url`——值过解释器槽替换，流程捕获槽传入或写死均允许；抓图 → 推帧 → 挂起等人工码，§8.17） | 凭据占位 `{name}` / `{pass}` 由**引擎注入替换**（不经模型）；`send` 空串**拒**，`sendCredential` **允许空串**（终态空命令走凭据通道，不进发送回显）；`{captcha}` 与 T14 命名槽同为引擎替换源（非敏感，不进 pass 掩码，§8.13/§8.17） |
 | **路由 `onOutcome`（两级，DEC-19）** | 外层 **kind 键直达**（`ok` / `fail` → 目标，粗粒度常态——`fail: { exit… }` 一条兜住所有 fail 槽）；细化用 **`when`**（键 = 槽名：⊆ 合并槽集且 kind 一致、**不跨键位查找**）。分流：**fail 未覆盖 ⇒ 结构化 timeout 出口**（运行期附未覆盖槽名注记，DEC-13 ③）；**ok 未覆盖 / 无命中（ga 关窗无分类槽） ⇒ 走 `next`**（kind 缺省） | 目标 = `goto` \| `exit`（`stage` 分类 + `ok`；`'success'` 强制 `ok: true`）；直达与 when 两种形态互斥（schema 拒）；kind 判定标准：**达成/推进 = ok，被拒/中断/未达成/异常 = fail**（fullme 答错已按此改判 fail，重入用 when 表达） |
 | **后置** | 循环 / 计算 / 条件 | JSON 表达不了的例证出现再评估（§17.3） |
@@ -181,7 +181,7 @@ mud_walk {
 | **locked 预制** | **拒改拒删**（`login` 锁死，§8.12） |
 | **非 locked** | 预制与 agent 新建均可 `save`（`version` 自增） |
 | **进化闭环** | **粗胚 → 执行 → 结构化失败现场 → 修缮 → 重试**——流程是 **agent 能力的持久化载体**；`delete` 还原预制 |
-| **保存门（三门，确定性校验即生效）** | ① **zod schema 校验** ② **`checkFlow` 结构门**（`goto` 目标存在 / `success` 的 `ok: true`；**保留字槽名 `ok`/`fail` 拒用**（kind 寻址键防撞名，DP 裁定 7）；**kind 一致性**：when 键引用的槽 kind 不符即拒（不跨键位查找，静态可判的都判）；捕获配对：组数只对 `captureFrom` 槽 `patterns[0]` 计、捕获组只许出现在该处；**when/captureFrom 引用 ⊆ 合并槽集**（本步 `outcomes` ∪ 喂令表槽，经 `tableSlotsOf` 端口注入——字面量喂令已登记而缺席 ⇒ 拒存（死引用），**动态命令/未登记 ⇒ 保存期只校验静态可判的 kind 一致性，查表校验后移运行期 fail-loud**，DP 裁定 4 分档））③ **凭据红线**（§8.12） |
+| **保存门（三门，确定性校验即生效）** | ① **zod schema 校验**（含**槽名跨 kind 禁重名**拒存）② **`checkFlow` 结构门**（`goto` 目标存在 / `success` 的 `ok: true`；**保留字槽名 `ok`/`fail` 拒用**（kind 寻址键防撞名，DP 裁定 7）；**kind 一致性**：when 键引用的槽 kind 不符即拒（不跨键位查找，静态可判的都判）；捕获配对：组数只对 `captureFrom` 槽 `patterns[0]` 计、捕获组只许出现在该处；**when/captureFrom 引用 ⊆ 合并槽集**（本步 `outcomes` ∪ 喂令表槽，经 `tableSlotsOf` 端口注入——字面量喂令已登记而缺席 ⇒ 拒存（死引用），**动态命令/未登记 ⇒ 保存期只校验静态可判的 kind 一致性，查表校验后移运行期 fail-loud**，DP 裁定 4 分档））③ **凭据红线**（§8.12） |
 | **告警档（DEC-13 四处，放行但必须可见）** | ① 喂令字面量未登记表且本步未声明收窗（不收窗只等超时，DEC-4）；② `when` 未覆盖合并槽集内同 kind 槽（点名补全；直达形态 = 全覆盖不告警）；③ **运行期**：timeout 收束时附未覆盖 fail 槽名注记；④ 同形态合并引入带 flags 的表条目而本步未声明 flags（锚定判据失活风险）。`registry.save` 返回 `{record, warnings}`，工具面透出 ⚠ 行；`list`/`get` 视图同样携带复核告警 |
 | **存储** | 独立域 `mud_workflow`（**两张表**：`workflows` 生效记录 + `snapshots` 变更账本）；域不可用 ⇒ 降级内存并告警（记录与账本同在内存降级层），**内存先行、域挂上后迁入**（§14.3） |
 | **迁入取新（T16）** | 迁入前逐条比对域内既有 `version`：**域内更高 ⇒ 不改域**（取新），把内存期记录**归档**为 `migration` 快照并 `warn` 点名——修复"内存先行窗口期的 save 静默把域内高版本覆盖成低版本"；迁入整体失败 ⇒ **不挂域、不清内存**（内存仍是唯一真相，宿主点名告警） |
@@ -281,7 +281,7 @@ wait（读窗，槽表） → fail 槽出口 → action（发送） → 路由�
 | 4 | `replace` | — | `send: 'y'` | `next → wait-success` |
 | 5 | `wait-success` | `登录成功`(ok)：成功句 | — | `next → send-empty` |
 | 6 | `send-empty` | — | `sendCredential: ''`（空命令） | `next → wait-ga` |
-| 7 | `wait-ga` | `closeOn: 'ga'` + `count: 1`（**未声明分类槽**——关窗即 next，5s 兜底） | — | `next → exit(success, ok:true)` |
+| 7 | `wait-ga` | `closeOn: 'ga'`（gaCount 缺省 1 不必写；**未声明分类槽**——关窗即 next，5s 兜底） | — | `next → exit(success, ok:true)` |
 
 **两条实测勘误（E2E 确证，已采纳）**
 

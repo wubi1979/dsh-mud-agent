@@ -30,18 +30,18 @@ note: login 流程实体声明（locked）；机制见 §8.13、执行缝见 §8
 | 4 | `replace` | — | `send: 'y'` | `next → wait-success` |
 | 5 | `wait-success` | outcomes：`登录成功`(ok) = `成功句` | — | `next → send-empty` |
 | 6 | `send-empty` | — | `sendCredential: ''`（**空命令**） | `next → wait-ga` |
-| 7 | `wait-ga` | `closeOn: 'ga'` + `count: 1`（**未声明分类槽**——关窗即 next；`timeoutMs = SUCCESS_MS`） | — | `next → exit{stage:'success', ok:true}` |
+| 7 | `wait-ga` | `closeOn: 'ga'`（gaCount 缺省 1 不必写；**未声明分类槽**——关窗即 next；`timeoutMs = SUCCESS_MS`） | — | `next → exit{stage:'success', ok:true}` |
 
-**判据常量（与实现一一对应，按槽名归位）**
+**判据常量（与实现一一对应；kind 在前、槽名在内——两表同构，§8.10；fail 组在前 = 判定序）**
 
-| 槽名（kind） | 常量 | 值 |
-|---|---|---|
-| `名字提示`（ok） | `NAME_SRC` | `^您的英文名字（要注册新人物请输入new。）：`（flags `m`） |
-| `需建新人物`（fail） | `NEED_NEW_SRC` | `^同意玩家须知并使用\S+创造一个新的人物，您确定吗\(yes\)？\|^对不起，你的英文名字只能用小写英文字母。`（flags `m`） |
-| `密码提示`（ok） | `PASS_SRC` | `^此ID档案已存在，请输入密码：`（flags `m`） |
-| `密码错误`（fail） | `BAD_PASS_SRC` | `^密码错误！\|^密码不正确\|^如果帐号用register命令注册过…`（`flags: 'm'`） |
-| `需替换`（ok） | `REPLACE_SRC` | `您要将另一个连线中的相同人物赶出去，取而代之吗？\(y\/n\)` |
-| `登录成功`（ok） | `SUCCESS_SRC` | `目前权限：\(player\)\|重新连线完毕` |
+| kind | 槽名 | 常量 | 值 |
+|---|---|---|---|
+| fail | `需建新人物` | `NEED_NEW_SRC` | `^同意玩家须知并使用\S+创造一个新的人物，您确定吗\(yes\)？\|^对不起，你的英文名字只能用小写英文字母。`（flags `m`） |
+| fail | `密码错误` | `BAD_PASS_SRC` | `^密码错误！\|^密码不正确\|^如果帐号用register命令注册过…`（`flags: 'm'`） |
+| ok | `名字提示` | `NAME_SRC` | `^您的英文名字（要注册新人物请输入new。）：`（flags `m`） |
+| ok | `密码提示` | `PASS_SRC` | `^此ID档案已存在，请输入密码：`（flags `m`） |
+| ok | `需替换` | `REPLACE_SRC` | `您要将另一个连线中的相同人物赶出去，取而代之吗？\(y\/n\)` |
+| ok | `登录成功` | `SUCCESS_SRC` | `目前权限：\(player\)\|重新连线完毕` |
 
 ## 设计要点
 

@@ -160,7 +160,7 @@ export async function runFlow(
       const opts: IoReadOpts = {
         ...(wait.closeOn !== undefined ? { closeOn: wait.closeOn } : {}),
         ...(wait.outcomes !== undefined ? { outcomes: wait.outcomes } : {}),
-        ...(wait.count !== undefined ? { count: wait.count } : {}),
+        ...(wait.gaCount !== undefined ? { gaCount: wait.gaCount } : {}),
         ...(wait.maxLines !== undefined ? { maxLines: wait.maxLines } : {}),
         ...(wait.timeoutMs !== undefined ? { timeoutMs: wait.timeoutMs } : {}),
         ...(wait.flags !== undefined ? { flags: wait.flags } : {}),

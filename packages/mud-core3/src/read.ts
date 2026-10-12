@@ -9,7 +9,7 @@
  * **三形态（T26.6 终态，DEC-3；race/静默计时器 2026-10-12 退役）**：
  *   - `'criteria'`：槽收窗（判定序 **fail 槽 > ok 槽**，同帧 fail 收束防误判），
  *     GA 不武装（受理帧 GA 正是要忽略的）；判据失配（timeout/maxLines 收场）记 error；
- *   - `'ga'`：GA/EOR 计数收窗（`count ?? 1`，可等第 N 个）；**分类槽可选——
+ *   - `'ga'`：GA/EOR 计数收窗（`gaCount ?? 1`，可等第 N 个）；**分类槽可选——
  *     声明即断言**：关窗时扫窗分类，无一命中 ⇒ 合成 fail 帧（`by:'ga'` 无
  *     outcome——「收窗成功，分支未知」，DP 裁定 8）；未声明分类槽 ⇒ 无帧；
  *   - `'quiet'`：**固定采样窗**——唯一计时器 `timeoutMs`，行只累积**不重置**；
@@ -62,7 +62,7 @@ export interface ReadOpts {
   /** 结局槽表（criteria = 收窗判据；ga = 收束分类；quiet 不用）。 */
   slots?: readonly ReadSlot[]
   /** GA/EOR 边界计数关窗（仅 ga 形态；缺省 1）。 */
-  count?: number
+  gaCount?: number
   /** 行间静默毫秒（**仅裸读**：最后一次行到达后静默即收；命令判据面不用）。 */
   quietMs?: number
   /** 总超时毫秒：**必填**，到点以 timeout 收束（quiet 形态 = 采样窗长）。 */
@@ -292,7 +292,7 @@ export class ReadMachine {
       const okHit = this.matchFirst(derived.okRes, derived.okMeta, accText)
       if (okHit !== null) return { reason: 'done', source: 'criteria', hit: okHit }
     }
-    if (opts.closeOn === 'ga' && state.gaSeen >= (opts.count ?? 1)) {
+    if (opts.closeOn === 'ga' && state.gaSeen >= (opts.gaCount ?? 1)) {
       return { reason: 'done', source: 'ga', hit: this.classifyGa(state) }
     }
     if (opts.maxLines !== undefined && acc.length >= opts.maxLines) {

@@ -2,14 +2,15 @@
  * read 测试 — ReadMachine 判定序/异步收束/失配记错/swallow + runtime 集成（水位线）。
  *
  * T26.6 终态词汇（DEC-3/7/19/21/23）：closeOn 三形态（ga/criteria/quiet）+ 槽表
- *（fail 槽在前 = 判定序）+ count（ga 等第 N 个）+ maxLines（各形态通用兜底）。
- * until/failOn/gaCount/race/quietMs（命令判据面）/静默计时器/推定槽已退役；
+ *（fail 槽在前 = 判定序）+ gaCount（ga 等第 N 个）+ maxLines（各形态通用兜底）。
+ * until/failOn/race/quietMs（命令判据面）/静默计时器/推定槽已退役（旧 `gaCount`
+ * 缺省兜底档同退役——现 gaCount 仅指 ga 形态显式计数）；
  * quietMs 仅裸读（closeOn 缺省）保留。
  *
  * 语义要点（§3.2）：
  *   - criteria：fail 槽 > ok 槽（槽内 pattern 序）；GA 不武装；失配（timeout/
  *     maxLines 收场）记 error；
- *   - ga：GA/EOR 计数关窗（count ?? 1）；声明分类槽而无一命中 ⇒ 断言失败
+ *   - ga：GA/EOR 计数关窗（gaCount ?? 1）；声明分类槽而无一命中 ⇒ 断言失败
  *     合成 fail 帧（by:'ga' 无 outcome——「收窗成功，分支未知」）；未声明分类槽
  *     ⇒ 无帧（关窗即 next）；ga 关窗不算失配；
  *   - quiet：固定采样窗——唯一计时器 timeoutMs，行只累积不重置；到点按行数
@@ -91,7 +92,7 @@ describe('ReadMachine 判定次序', () => {
 
   it('ga：边界优先于 maxLines（边界先到即收，行数未满）', async () => {
     const m = new ReadMachine()
-    const p = m.start({ closeOn: 'ga', count: 1, maxLines: 10, timeoutMs: 500 })
+    const p = m.start({ closeOn: 'ga', gaCount: 1, maxLines: 10, timeoutMs: 500 })
     m.onLine(line('a'))
     m.onBoundary()
     const r = await p
@@ -509,7 +510,7 @@ describe('SessionRuntime.read（集成）', () => {
     expect(r.lines).toEqual([])
   })
 
-  it('GA 边界关窗：ga 形态 count=1 命中即收', async () => {
+  it('GA 边界关窗：ga 形态 gaCount=1 命中即收', async () => {
     const server = await startServer((data, s) => {
       if (data.includes('hp')) {
         s.write('气血 100/100\n')
@@ -520,7 +521,7 @@ describe('SessionRuntime.read（集成）', () => {
     await rt.connect({ host: '127.0.0.1', port: server.port })
     await new Promise(r => setTimeout(r, 50))
 
-    const p = rt.read({ closeOn: 'ga', count: 1, timeoutMs: 2000 })
+    const p = rt.read({ closeOn: 'ga', gaCount: 1, timeoutMs: 2000 })
     rt.send('hp')
     const r = await p
     expect(r.reason).toBe('done')

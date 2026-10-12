@@ -37,7 +37,7 @@ import {
 import type { MudNavFace } from './nav/service.ts'
 import { parseDirectionPath, parseWalkTable } from './nav/route.ts'
 import { nextBlocker } from './nav/blocker.ts'
-import type { WorkflowIoSeam, ReadHit } from 'mud-workflow/contract'
+import type { WorkflowIoSeam, ReadHit, SlotTable } from 'mud-workflow/contract'
 import { waitSchema } from 'mud-workflow/contract'
 import { resolveAwaitPlan, type AwaitPlan, type CallerDecl } from './command-profiles.ts'
 
@@ -140,13 +140,14 @@ export function denyMatch(cmd: string): string | null {
 
 // ── listen 校验（模型面 = 流程 wait 同一语法，DEC-21/24 全量拼写）──────────
 
-/** listen 判据（模型面形态：与流程 `wait` 同一 schema——一个语法三个消费点）。
- * timeoutMs 是 mud_send 顶层参数不进 listen；captures/captureFrom 是流程面
- * 词汇（工具面无 run 级槽）——两者出现即拒。 */
+/** listen 判据（模型面形态：与流程 `wait` 同一 schema——一个语法三个消费点；
+ * kind 在前、槽名在内，2026-10-12 两表同构）。timeoutMs 是 mud_send 顶层参数
+ * 不进 listen；captures/captureFrom 是流程面词汇（工具面无 run 级槽）——两者
+ * 出现即拒。 */
 export interface ListenSpec {
   closeOn?: 'ga' | 'criteria' | 'quiet'
-  outcomes?: Record<string, { kind: 'ok' | 'fail'; patterns: string[] }>
-  count?: number
+  outcomes?: SlotTable
+  gaCount?: number
   maxLines?: number
   flags?: string
 }
@@ -173,7 +174,7 @@ export function compileListen(spec: ListenSpec | undefined): CallerDecl | undefi
   return {
     ...(v.closeOn !== undefined ? { closeOn: v.closeOn } : {}),
     ...(v.outcomes !== undefined ? { outcomes: v.outcomes } : {}),
-    ...(v.count !== undefined ? { count: v.count } : {}),
+    ...(v.gaCount !== undefined ? { gaCount: v.gaCount } : {}),
     ...(v.maxLines !== undefined ? { maxLines: v.maxLines } : {}),
     ...(v.flags !== undefined ? { flags: v.flags } : {}),
   }
@@ -189,8 +190,8 @@ const BARE_READ_QUIET_MS = 300
 
 /**
  * mud_walk 应答静默窗毫秒（**非行走动作**：查询 `-c` / `-q` 与 `speed` 只等
- * 一段静默收应答尾巴；行走类的判据已入命令总表 walk 条目——'race' 形态，
- * 见 commands/std.ts）。
+ * 一段静默收应答尾巴；行走类的判据已入命令总表 walk 条目——'criteria' 形态
+ * + flags 'm'（race 退役改判，T26.6），见 commands/usr.ts）。
  */
 const WALK_REPLY_QUIET_MS = 1500
 
@@ -426,27 +427,37 @@ export function registerMudTools(
         listen: {
           type: 'object',
           description: '收窗判据声明（全量拼写，无简写；覆盖已登记命令的表判据时为槽级合并）。'
-            + '三形态：等一句判据 {closeOn:"criteria",outcomes:{完成:{kind:"ok",patterns:["你将运转于全身经脉间的内息收回丹田"]}}}；'
+            + '三形态：等一句判据 {closeOn:"criteria",outcomes:{ok:{完成:{patterns:["你将运转于全身经脉间的内息收回丹田"]}}}}；'
             + '等 GA（即时命令应答）{closeOn:"ga",timeoutMs:10000}；'
             + '读无边界输出（采样窗，有行即成功）{closeOn:"quiet",timeoutMs:3000}。'
-            + 'outcomes 槽名自取语义名（按分支类目，行文变体并进同一槽的 patterns 数组，'
-            + '应对不同才分槽）；kind 取 ok/fail（fail 先于 ok 判定，命中 fail 即失败收束）；'
-            + 'ga 形态可设 count（缺省 1，如 2 = 等第 2 个 GA）；多行窗行首锚判据（^）须配 flags:"m"',
+            + 'outcomes 外层键 = kind（ok/fail；fail 先于 ok 判定，命中 fail 即失败收束），'
+            + '内层键 = 槽名（按分支类目语义命名，行文变体并进同一槽的 patterns 数组，应对不同才分槽）；'
+            + 'ga 形态可设 gaCount（缺省 1，如 2 = 等第 2 个 GA）；多行窗行首锚判据（^）须配 flags:"m"',
           properties: {
             closeOn: { type: 'string', enum: ['ga', 'criteria', 'quiet'], description: '收窗形态：ga = GA 边界收窗；criteria = 判据收窗（须配 outcomes）；quiet = 采样窗（有行即成功，零行失败）' },
             outcomes: {
               type: 'object',
-              description: '结局槽表：槽名 → {kind, patterns}；槽名语义命名，patterns 为正则源数组（≥1 条）',
-              additionalProperties: {
-                type: 'object',
-                properties: {
-                  kind: { type: 'string', enum: ['ok', 'fail'], description: 'ok = 达成/推进；fail = 被拒/未达成' },
-                  patterns: { type: 'array', items: { type: 'string' }, minItems: 1, description: '判据正则源（同槽多条为行文变体）' },
+              description: '结局槽表：外层键 = kind（ok/fail），内层键 = 槽名（语义命名），值 = {patterns}（正则源数组，≥1 条）',
+              properties: {
+                ok: {
+                  type: 'object',
+                  additionalProperties: {
+                    type: 'object',
+                    properties: { patterns: { type: 'array', items: { type: 'string' }, minItems: 1, description: '判据正则源（同槽多条为行文变体）' } },
+                    required: ['patterns'],
+                  },
                 },
-                required: ['kind', 'patterns'],
+                fail: {
+                  type: 'object',
+                  additionalProperties: {
+                    type: 'object',
+                    properties: { patterns: { type: 'array', items: { type: 'string' }, minItems: 1, description: '判据正则源（同槽多条为行文变体）' } },
+                    required: ['patterns'],
+                  },
+                },
               },
             },
-            count: { type: 'integer', minimum: 1, description: 'ga 形态：等第 N 个 GA 才关窗（缺省 1）' },
+            gaCount: { type: 'integer', minimum: 1, description: 'ga 形态：等第 N 个 GA 才关窗（缺省 1）' },
             maxLines: { type: 'integer', minimum: 1, description: '行数兑底' },
             flags: { type: 'string', description: "正则 flags（多行窗行首锚判据配 'm'；默认无）" },
           },
@@ -504,8 +515,9 @@ export function registerMudTools(
       }
 
       // 空命令放开（2026-10-10 二次裁定）：长程等待根因已除（判据预设 + persona
-      // 纪律），拒绝不再必要。空输入也是命令 ⇒ 回 prompt+GA（A.2 1:1），走缺省
-      // gaCount:1 立即收束——用于刷提示符无害；等长程命令仍须走预设/裸读 + until。
+      // 纪律），拒绝不再必要。空输入也是命令 ⇒ 回 prompt+GA（A.2 1:1），经解析
+      // 单点特例归 'ga'（gaCount 缺省 1）立即收束——用于刷提示符无害；等长程命令
+      // 仍须走表条目判据或显式 listen 声明（未登记不收窗只等超时，DEC-4）。
 
       // 只对「未连接」设限（三期裁定：不受接入闸门、不要求已登录）。
       // 探测中（probeState=probing）仍按已连接放行——probeState 是只读观测面，
@@ -574,7 +586,7 @@ export function registerMudTools(
         //（不物理消费，范围含接入前的录制行）。
         const initial = bare ? tc.runtime.recentLines(c.defaults.sendMaxLines) : []
         // 读窗参数（T26.6 三形态）：有 cmd / 裸读带显式 listen = 按解析计划
-        //（table/declared/empty = closeOn+slots+count+maxLines）；裸读无声明 =
+        //（table/declared/empty = closeOn+slots+gaCount+maxLines）；裸读无声明 =
         // 缺省短静默窗；none 档 = 不收窗只等超时（timeout 兜底 + maxLines
         // 防无界累积）。
         const planOpts = (p: AwaitPlan): ReadOpts => ({
@@ -582,7 +594,7 @@ export function registerMudTools(
           signal: exec.signal,
           ...(p.closeOn !== undefined ? { closeOn: p.closeOn } : {}),
           ...(p.slots !== undefined && p.slots.length > 0 ? { slots: p.slots } : {}),
-          ...(p.count !== undefined ? { count: p.count } : {}),
+          ...(p.gaCount !== undefined ? { gaCount: p.gaCount } : {}),
           ...(p.maxLines !== undefined
             ? { maxLines: p.maxLines }
             : (p.source === 'none' || p.source === 'empty' ? { maxLines: c.defaults.sendMaxLines } : {})),
@@ -597,7 +609,7 @@ export function registerMudTools(
         const lines = r.lines.map(l => l.text)
         // DEC-22 超时工单：未登记命令只等超时——附可读工单（声明示例 + 维护者面）。
         const note = args.cmd !== undefined && plan.source === 'none' && r.reason === 'timeout'
-          ? `（命令「${args.cmd}」未登记收窗判据：本窗只等超时。需判据请在 listen 显式声明，如 listen:{closeOn:"criteria",outcomes:{完成:{kind:"ok",patterns:["…"]}}}；维护者：实录语料（附录 A）并补 commands/ 条目）`
+          ? `（命令「${args.cmd}」未登记收窗判据：本窗只等超时。需判据请在 listen 显式声明，如 listen:{closeOn:"criteria",outcomes:{ok:{完成:{patterns:["…"]}}}}；维护者：实录语料（附录 A）并补 commands/ 条目）`
           : undefined
         const extras = {
           ...(r.hit?.outcome !== undefined ? { outcome: r.hit.outcome } : {}),
@@ -757,7 +769,7 @@ export function registerMudTools(
           return reject('已拒绝：发送失败（连接可能已断开）')
         }
         // 判据注入（T26.6，DEC-21 解析单点）：行走类走命令总表 walk 条目
-        //（'criteria' 形态——到达/软阻断判据收窗，commands/std.ts，flags 'm'
+        //（'criteria' 形态——到达/软阻断判据收窗，commands/usr.ts，flags 'm'
         // 多行窗行首锚）；查询类（-c/-q）走条目 exempt 不套判据、与 speed 一样
         // 只等应答静默窗——查询答复含"未受理"同族句，注入会把正常查询误判。
         const plan = isWalkAction && !isQuery ? resolveAwaitPlan(cmd) : null

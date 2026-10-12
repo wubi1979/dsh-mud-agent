@@ -70,9 +70,11 @@ export const fullme: WorkflowRecord = {
         wait: {
           closeOn: 'criteria',
           outcomes: {
-            已挂起: { kind: 'fail', patterns: [STALE_SRC] },
-            冷却中: { kind: 'fail', patterns: [COOLDOWN_SRC] },
-            验证码地址: { kind: 'ok', patterns: [URL_SRC] },
+            fail: {
+              已挂起: { patterns: [STALE_SRC] },
+              冷却中: { patterns: [COOLDOWN_SRC] },
+            },
+            ok: { 验证码地址: { patterns: [URL_SRC] } },
           },
           captureFrom: '验证码地址',
           captures: ['captchaUrl'],
@@ -102,9 +104,11 @@ export const fullme: WorkflowRecord = {
         wait: {
           closeOn: 'criteria',
           outcomes: {
-            失效: { kind: 'fail', patterns: [EXPIRED_SRC] },
-            答对: { kind: 'ok', patterns: [OK_SRC] },
-            答错: { kind: 'fail', patterns: [WRONG_SRC] },
+            fail: {
+              失效: { patterns: [EXPIRED_SRC] },
+              答错: { patterns: [WRONG_SRC] },
+            },
+            ok: { 答对: { patterns: [OK_SRC] } },
           },
           flags: 'm',
           timeoutMs: STEP_MS,

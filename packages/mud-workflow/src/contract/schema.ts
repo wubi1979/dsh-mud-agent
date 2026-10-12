@@ -10,11 +10,15 @@
  * 出口）；槽名 = 条目数据——每命令的语料事实，自由命名（命名纪律见 DEC-7：分支
  * 类目化、行文变体进 patterns 不分槽、应对不同才分槽）。判据词汇单点（DEC-21）：
  * 表条目 `resolve` / 流程 `wait` / 工具 `listen` 共用本 schema 的同一形状。
+ * **两表同构（2026-10-12 用户裁定统一）**：判据表 outcomes 与路由表 onOutcome
+ * 同为「kind 在前、槽名在内」——outcomes 槽条目不再自带 kind 字段，kind 由
+ * 外层键表达。
  *
  * 词汇表（T26.6 终态，2026-10-12 全面整改）：
  *   - 读窗 wait：closeOn（三值：ga / criteria / quiet）+ outcomes 槽表 +
- *     captureFrom/captures（捕获）+ count（ga 等第 N 个）+ maxLines/timeoutMs +
- *     flags（多行窗语义，默认无）——until/failOn/quietMs/gaCount 全线退役；
+ *     captureFrom/captures（捕获）+ gaCount（ga 等第 N 个）+ maxLines/timeoutMs +
+ *     flags（多行窗语义，默认无）——until/failOn/quietMs 全线退役（旧 `gaCount`
+ *     缺省兜底档同退役——现 `gaCount` 仅指 ga 形态显式计数，见下）；
  *   - 动作 action：send | sendCredential | captcha（单动作；凭据占位 {name}/{pass}
  *     与 {captcha} 槽由引擎注入替换，不经模型）；
  *   - 路由 onOutcome（两级，DEC-19）：外层 kind 键直达（ok/fail → 目标，粗粒度
@@ -32,11 +36,12 @@ import { z } from 'zod'
 // ── 词汇表：收窗形态 + 结局 kind（DEC-3 三值 / DEC-7 kind=契约）────────
 //
 // closeOn 三值与 kind 二分是**词汇不是数据**（§8.8 契约层单点，DEC-23 分层）：
-// 三配方各自封闭，无缺省、无组合自由度（quietMs/gaCount 已随 race/静默收窗退役）。
+// 三配方各自封闭，无缺省、无组合自由度（quietMs 已随静默收窗退役；旧 gaCount
+// 缺省兜底档随 DEC-4「未登记不收窗只等超时」退役——现 gaCount 仅 ga 形态显式计数）。
 
 /**
  * 收窗形态（封闭三值，DEC-3「判定器即形态」2026-10-12 终态）：
- *   - `ga`：GA/EOR 边界收窗（`count` 缺省 1 可设等第 N 个）；分类槽可选——
+ *   - `ga`：GA/EOR 边界收窗（`gaCount` 缺省 1 可设等第 N 个）；分类槽可选——
  *     **声明即断言**：窗口关闭时无一命中 ⇒ fail 路由 +「收窗成功，分支未知」；
  *   - `criteria`：文本判据收窗，GA 不武装（长程命令）；fail 槽先于 ok 槽；
  *   - `quiet`：**固定采样窗**（窗长 = timeoutMs，唯一计时器，行只累积不重置）——
@@ -58,16 +63,24 @@ export type OutcomeKind = (typeof OUTCOME_KINDS)[number]
  */
 export const RESERVED_SLOT_NAMES: readonly string[] = ['ok', 'fail']
 
-/** 结局槽（DEC-7/DEC-23）：kind = 契约；判据句内联（DEC-20 口径），A.6 语料为准。
+/** 结局槽（DEC-7/DEC-23）：判据句内联（DEC-20 口径），A.6 语料为准。
  * patterns ≥ 1（DP 审阅 10）：空槽永不命中——ga 形态只会制造「分支未知」假
- * 失败，criteria 形态是死配置；登记槽必给判据，待实录的槽不登记。 */
+ * 失败，criteria 形态是死配置；登记槽必给判据，待实录的槽不登记。
+ * kind 不在槽条目上——由槽表外层键表达（2026-10-12 两表同构裁定）。 */
 export interface OutcomeSlot {
-  readonly kind: OutcomeKind
   readonly patterns: readonly string[]
 }
 
-/** 槽表（DEC-7 终态）：槽名自由（条目数据，命名纪律见决策表 DEC-7）。 */
-export type SlotTable = Record<string, OutcomeSlot>
+/**
+ * 槽表（DEC-7 终态 + 2026-10-12 两表同构）：**kind 在前、槽名在内**——外层键 =
+ * kind（契约：判定序 fail 先于 ok、粗路由缺省），内层键 = 槽名（条目数据，
+ * 自由命名，命名纪律见决策表 DEC-7）。槽名跨 kind 禁重名（schema superRefine
+ * 拒存）；保留字 ok/fail 禁作槽名（checkFlow / 装配自检拒存）。
+ */
+export type SlotTable = {
+  readonly ok?: Readonly<Record<string, OutcomeSlot>> | undefined
+  readonly fail?: Readonly<Record<string, OutcomeSlot>> | undefined
+}
 
 // ── 读窗判据 ────────────────────────────────────────────────────
 
@@ -78,19 +91,24 @@ export type SlotTable = Record<string, OutcomeSlot>
 export const waitSchema = z.object({
   /** 收窗形态（显式单值；缺省 = 未声明判据——缝侧按喂令查表整条注入，DEC-5）。 */
   closeOn: z.enum(CLOSURE_KINDS).optional(),
-  /** 结局槽表：键 = 槽名（自由命名，保留字 ok/fail 由 checkFlow 拒）；
-   * 值 = kind + 判据句（patterns ≥ 1，推定槽已退役）。 */
-  outcomes: z.record(z.string(), z.object({
-    kind: z.enum(OUTCOME_KINDS),
-    patterns: z.array(z.string().max(512)).min(1).max(8),
-  }).strict()).optional(),
+  /** 结局槽表（kind 在前、槽名在内）：外层键 = ok/fail（契约），内层键 = 槽名
+   *（自由命名，保留字与跨 kind 重名由校验拒存）；值 = 判据句（patterns ≥ 1，
+   * 推定槽已退役）。 */
+  outcomes: z.object({
+    ok: z.record(z.string(), z.object({
+      patterns: z.array(z.string().max(512)).min(1).max(8),
+    }).strict()).optional(),
+    fail: z.record(z.string(), z.object({
+      patterns: z.array(z.string().max(512)).min(1).max(8),
+    }).strict()).optional(),
+  }).strict().optional(),
   /** 捕获源结局槽（DEC-19）：命中该槽时捕获组按序入 `captures` 声明的 run 级
    * 槽（组数只对该槽 patterns[0] 计；捕获组只允许出现在该处）。 */
   captureFrom: z.string().max(32).optional(),
   /** 捕获槽声明（T14）：组值填到哪些 run 级槽（须与 captureFrom 同声明）。 */
   captures: z.array(z.string().max(32)).max(8).optional(),
   /** GA/EOR 边界计数（仅 ga 形态）：缺省 1，如 2 = 等第 2 个 GA 才关窗。 */
-  count: z.number().int().min(1).max(64).optional(),
+  gaCount: z.number().int().min(1).max(64).optional(),
   /** 行数兜底。 */
   maxLines: z.number().int().min(1).max(500).optional(),
   /** 总超时毫秒（可省——缝侧按「步声明 > 表条目 > 30s 兜底」填充）。 */
@@ -102,8 +120,8 @@ export const waitSchema = z.object({
 }).strict().superRefine((w, ctx) => {
   // 组合自由度在 schema 层挡死（DEC-3 三配方各自封闭；DP 审阅裁定 1）。
   if (w.closeOn === undefined) {
-    if (w.outcomes !== undefined || w.captureFrom !== undefined || w.captures !== undefined || w.count !== undefined) {
-      ctx.addIssue({ code: 'custom', message: '判据声明（outcomes/captures/count）必须搭配 closeOn（收窗形态必填）' })
+    if (w.outcomes !== undefined || w.captureFrom !== undefined || w.captures !== undefined || w.gaCount !== undefined) {
+      ctx.addIssue({ code: 'custom', message: '判据声明（outcomes/captures/gaCount）必须搭配 closeOn（收窗形态必填）' })
     }
     return
   }
@@ -111,20 +129,32 @@ export const waitSchema = z.object({
     if (w.outcomes !== undefined || w.captureFrom !== undefined || w.captures !== undefined) {
       ctx.addIssue({ code: 'custom', message: 'quiet 形态无 outcomes 槽（要分类说明写得出判据，那是 criteria 的事）' })
     }
-    if (w.count !== undefined) {
-      ctx.addIssue({ code: 'custom', message: 'count 仅 ga 形态可用' })
+    if (w.gaCount !== undefined) {
+      ctx.addIssue({ code: 'custom', message: 'gaCount 仅 ga 形态可用' })
     }
     return
   }
   if (w.closeOn === 'criteria') {
-    if (w.count !== undefined) {
-      ctx.addIssue({ code: 'custom', message: 'count 仅 ga 形态可用（criteria 下 GA 不武装）' })
+    if (w.gaCount !== undefined) {
+      ctx.addIssue({ code: 'custom', message: 'gaCount 仅 ga 形态可用（criteria 下 GA 不武装）' })
     }
-    if (w.outcomes === undefined || Object.keys(w.outcomes).length === 0) {
+    const slotCount = w.outcomes === undefined
+      ? 0
+      : Object.keys(w.outcomes.ok ?? {}).length + Object.keys(w.outcomes.fail ?? {}).length
+    if (slotCount === 0) {
       ctx.addIssue({ code: 'custom', message: 'criteria 形态必须声明 outcomes 槽表（否则只剩超时收场）' })
     }
   }
-  // ga：outcomes 可选（未声明 ⇒ 关窗即 next）；count 可选（缺省 1）。
+  // ga：outcomes 可选（未声明 ⇒ 关窗即 next）；gaCount 可选（缺省 1）。
+  // 槽名跨 kind 禁重名（kind 在前两表同构的新增约束：同名槽在 ok/fail 两组各
+  // 声明一次会让 kind 寻址歧义——拒存）。
+  if (w.outcomes !== undefined) {
+    const names = [...Object.keys(w.outcomes.ok ?? {}), ...Object.keys(w.outcomes.fail ?? {})]
+    const dup = [...new Set(names.filter((n, i) => names.indexOf(n) !== i))]
+    if (dup.length > 0) {
+      ctx.addIssue({ code: 'custom', message: `槽名跨 kind 重名：${dup.join('、')}（槽名在 ok/fail 组内必须唯一）` })
+    }
+  }
 })
 
 export type Wait = z.infer<typeof waitSchema>
@@ -412,20 +442,24 @@ export function checkFlow(flow: Flow, slotsOf?: FlowSlotsPort): string[] {
 
     const wait = step.wait
     if (wait === undefined) continue
-    const outcomes = wait.outcomes ?? {}
-    const outcomeKeys = Object.keys(outcomes)
-    const ownKind = new Map(outcomeKeys.map(k => [k, outcomes[k]!.kind]))
+    // 槽表展平（kind 在前：外层 kind 键 × 内层槽名 → name/kind/patterns 序列；
+    // 跨 kind 重名已由 schema superRefine 拒存，此处按展平序消费）。
+    const outcomeEntries = OUTCOME_KINDS.flatMap((kind) =>
+      Object.entries(wait.outcomes?.[kind] ?? {}).map(([name, slot]) => ({ name, kind, patterns: slot.patterns })))
+    const outcomeKeys = outcomeEntries.map(e => e.name)
+    const ownKind = new Map(outcomeEntries.map(e => [e.name, e.kind]))
+    const ownByName = new Map(outcomeEntries.map(e => [e.name, e]))
 
     // 槽表形状：保留字 + 判据可编译（patterns ≥ 1 已由 schema 保证）。
-    for (const k of outcomeKeys) {
-      if (RESERVED_SLOT_NAMES.includes(k)) {
-        structural(`步骤 ${step.id} 的结局槽名是保留字：${k}（ok/fail 是 kind 寻址键）`)
+    for (const e of outcomeEntries) {
+      if (RESERVED_SLOT_NAMES.includes(e.name)) {
+        structural(`步骤 ${step.id} 的结局槽名是保留字：${e.name}（ok/fail 是 kind 寻址键）`)
       }
-      for (const p of outcomes[k]!.patterns) {
+      for (const p of e.patterns) {
         try {
           new RegExp(p)
-        } catch (e) {
-          structural(`步骤 ${step.id} 的槽「${k}」判据正则非法：${p}（${(e as Error).message}）`)
+        } catch (err) {
+          structural(`步骤 ${step.id} 的槽「${e.name}」判据正则非法：${p}（${(err as Error).message}）`)
         }
       }
     }
@@ -437,7 +471,7 @@ export function checkFlow(flow: Flow, slotsOf?: FlowSlotsPort): string[] {
         structural(`步骤 ${step.id} 声明了 captureFrom 但没有 captures 槽名表（组值无处填）`)
       }
       checkCaptureNames(step.id, captures)
-      const own = outcomes[wait.captureFrom]
+      const own = ownByName.get(wait.captureFrom)
       if (own !== undefined) {
         let declared: number
         try {
@@ -450,7 +484,7 @@ export function checkFlow(flow: Flow, slotsOf?: FlowSlotsPort): string[] {
         }
         const stray = [
           ...own.patterns.slice(1),
-          ...outcomeKeys.filter(k => k !== wait.captureFrom).flatMap(k => outcomes[k]!.patterns),
+          ...outcomeEntries.filter(x => x.name !== wait.captureFrom).flatMap(x => x.patterns),
         ].find(p => countGroups(p) > 0)
         if (stray !== undefined) {
           structural(`步骤 ${step.id} 存在 captureFrom 槽首判据之外的捕获组（只允许出现在 captureFrom 槽 patterns[0]）：${stray}`)

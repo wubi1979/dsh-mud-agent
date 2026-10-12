@@ -169,7 +169,7 @@ seen = max(deliveredAbs, readAbs)
 |---|---|
 | **挂载** | 独立类，挂 `SessionRuntime`；`onBoundary` 直挂它（GA 判据） |
 | **有界缓冲** | **复用 `runtime.pendingLines`**，不自建缓冲（P2） |
-| **槽表判据（T26.6 三形态）** | **`criteria` 判据收窗**：判据槽（`outcomes`；fail 槽先于 ok 槽）突发行一到达即命中收束，并返回累积行**含触发行**；**GA 不武装**（受理帧的 GA 正是要忽略的那个）。**`ga` 收窗**：槽不参与收窗（GA 计数是唯一收窗者，`count ?? 1`），关窗时扫窗文本分类出 `outcome`——**声明分类槽而无一命中 ⇒ 断言失败合成 fail 帧**（by:'ga' 无 outcome，「收窗成功，分支未知」，DP 裁定 8）；未声明分类槽 ⇒ 无帧（关窗即 next）。**`quiet` 固定采样窗**：唯一计时器 `timeoutMs`，行只累积不重置；到点按行数合成帧（有行 ⇒ ok reason:'quiet'、零行 ⇒ fail reason:'timeout'）；无槽。**`closeOn` 缺省 = 裸读**（quietMs/maxLines/timeout 收窗，命令判据面无静默计时） |
+| **槽表判据（T26.6 三形态）** | **`criteria` 判据收窗**：判据槽（`outcomes`；fail 槽先于 ok 槽）突发行一到达即命中收束，并返回累积行**含触发行**；**GA 不武装**（受理帧的 GA 正是要忽略的那个）。**`ga` 收窗**：槽不参与收窗（GA 计数是唯一收窗者，`gaCount ?? 1`），关窗时扫窗文本分类出 `outcome`——**声明分类槽而无一命中 ⇒ 断言失败合成 fail 帧**（by:'ga' 无 outcome，「收窗成功，分支未知」，DP 裁定 8）；未声明分类槽 ⇒ 无帧（关窗即 next）。**`quiet` 固定采样窗**：唯一计时器 `timeoutMs`，行只累积不重置；到点按行数合成帧（有行 ⇒ ok reason:'quiet'、零行 ⇒ fail reason:'timeout'）；无槽。**`closeOn` 缺省 = 裸读**（quietMs/maxLines/timeout 收窗，命令判据面无静默计时） |
 | **`abortWait`** | **系统驱动打断的出口，已有调用者**（T21.5）：战斗危险抢占通道在威胁行到达时以触发行打断在途读窗（`reason:'danger'` 收束，触发行含在结果尾，§6.3）；意识层复用后置（§17.3） |
 | **`swallow` 吞行钩子** | 空实现（规则层后置）：规则动作吞行留摘要，吞掉的行不进任何模型面 |
 | **`ReadResult.rest`** | **砍掉**：判据命中后的同批剩余行照常走行路径（逐行回调模型下自然并回） |

@@ -34,7 +34,7 @@ const simpleFlow = {
     id: 'a',
     wait: {
       closeOn: 'criteria' as const,
-      outcomes: { 完成: { kind: 'ok' as const, patterns: ['完成'] } },
+      outcomes: { ok: { 完成: { patterns: ['完成'] } } },
       timeoutMs: 1000,
     },
     next: { exit: { stage: 'success', ok: true } },

@@ -11,29 +11,33 @@ import { byOutcomes, defineCommand } from './define.ts'
 /** 修炼/技能命令族（dazuo；xue/learn/practice 等待实录后回填）。 */
 export const SKILL_COMMANDS = [
   defineCommand({
-    // 打坐（A.3 实录：受理帧 GA 后 57s 无 GA——'criteria' 形态，GA 不武装，
-    // 完成句跨批命中收窗；受理被拒句为 fail 槽，立即收窗不空等 120s）。
+    // 打坐（标准命令 exercise，别名 dazuo；A.3 实录：受理帧 GA 后 57s 无 GA——
+    // 'criteria' 形态，GA 不武装，完成句跨批命中收窗；受理被拒句为 fail 槽，
+    // 立即收窗不空等 120s）。
     // 槽位模型（DEC-7 纪律，2026-10-12 重整）：完成三形态收两槽——「收回丹田」
     // 与「站起收尾」是同一事件（正常结束）的行文变体 ⇒ 同槽 patterns（变体
     // 不分槽）；「内力增加」= 突破（不同事件语义，独立槽）；两个 fail 槽保留
     // 分立——agent 应对不同（气血不足回血 / 精神不足会精，v0.0.68 拆句收益）。
     // 待实测（§6.2 第 1 项）：拒绝句原文与附录 A 登记串互不相同，以实机实录
     // 为准落实到底是哪几句（含是否多形态），不得凭印象保留。
-    id: 'dazuo',
-    aliases: ['dz'],
+    id: 'exercise',
+    aliases: ['dazuo'],
     timeoutMs: 120_000,
     meta: { corpus: '附录 A.3（2026-10-10 用户提供）' },
     resolve: byOutcomes({
-      完成: {
-        kind: 'ok',
-        patterns: [
-          '你将运转于全身经脉间的内息收回丹田',
-          '你运功完毕，深深吸了口气，站了起来。',
-        ],
+      ok: {
+        完成: {
+          patterns: [
+            '你将运转于全身经脉间的内息收回丹田',
+            '你运功完毕，深深吸了口气，站了起来。',
+          ],
+        },
+        突破: { patterns: ['你的内力增加了！！'] },
       },
-      突破: { kind: 'ok', patterns: ['你的内力增加了！！'] },
-      内息不足: { kind: 'fail', patterns: ['你现在的气太少了，无法产生内息运行全身经脉。'] },
-      精神不足: { kind: 'fail', patterns: ['你现在精不够，无法控制内息的流动！'] },
+      fail: {
+        内息不足: { patterns: ['你现在的气太少了，无法产生内息运行全身经脉。'] },
+        精神不足: { patterns: ['你现在精不够，无法控制内息的流动！'] },
+      },
     }),
   }),
 ]

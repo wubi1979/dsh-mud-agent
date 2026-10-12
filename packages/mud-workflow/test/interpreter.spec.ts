@@ -52,16 +52,15 @@ function hitFrame(scene: Scene, opts: IoReadOpts): ReadHit | undefined {
     re.lastIndex = 0
     return re.exec(text)
   }
-  const entries = Object.entries(opts.outcomes)
-  // 判序：fail 槽先于 ok 槽（与 core3 读档 deriveCriteria 同——fail 先测防误判）。
+  // 槽表展平（kind 在前）：fail 组先于 ok 组（与 core3 读档判定序同——fail 先测防误判）。
   const ordered = [
-    ...entries.filter(([, slot]) => slot.kind === 'fail'),
-    ...entries.filter(([, slot]) => slot.kind === 'ok'),
+    ...Object.entries(opts.outcomes.fail ?? {}).map(([name, slot]) => ({ name, kind: 'fail' as const, patterns: slot.patterns })),
+    ...Object.entries(opts.outcomes.ok ?? {}).map(([name, slot]) => ({ name, kind: 'ok' as const, patterns: slot.patterns })),
   ]
-  for (const [name, slot] of ordered) {
-    for (let i = 0; i < slot.patterns.length; i++) {
-      const m = execOne(new RegExp(slot.patterns[i]!, opts.flags))
-      if (m !== null) return { by: opts.closeOn ?? 'criteria', index: i, groups: m.slice(1), outcome: name, kind: slot.kind }
+  for (const { name, kind, patterns } of ordered) {
+    for (let i = 0; i < patterns.length; i++) {
+      const m = execOne(new RegExp(patterns[i]!, opts.flags))
+      if (m !== null) return { by: opts.closeOn ?? 'criteria', index: i, groups: m.slice(1), outcome: name, kind }
     }
   }
   // ga 关窗分类断言（DEC-3/DP 裁定 8）：声明分类槽而无一命中 ⇒ 合成 fail 帧。
@@ -134,7 +133,7 @@ describe('runFlow 执行语义', () => {
           id: 'ask-name',
           wait: {
             closeOn: 'criteria' as const,
-            outcomes: { 问名字: { kind: 'ok' as const, patterns: ['英文名字'] } },
+            outcomes: { ok: { 问名字: { patterns: ['英文名字'] } } },
             timeoutMs: 1000,
           },
           action: { sendCredential: '{name}' },
@@ -144,7 +143,7 @@ describe('runFlow 执行语义', () => {
           id: 'ask-pass',
           wait: {
             closeOn: 'criteria' as const,
-            outcomes: { 请输入密码: { kind: 'ok' as const, patterns: ['请输入密码'] } },
+            outcomes: { ok: { 请输入密码: { patterns: ['请输入密码'] } } },
             timeoutMs: 1000,
           },
           action: { sendCredential: '{pass}' },
@@ -170,8 +169,8 @@ describe('runFlow 执行语义', () => {
         wait: {
           closeOn: 'criteria' as const,
           outcomes: {
-            请输入密码: { kind: 'ok' as const, patterns: ['请输入密码'] },
-            需要新角色: { kind: 'fail' as const, patterns: ['需要创建新人物'] },
+            fail: { 需要新角色: { patterns: ['需要创建新人物'] } },
+            ok: { 请输入密码: { patterns: ['请输入密码'] } },
           },
           timeoutMs: 1000,
         },
@@ -191,7 +190,7 @@ describe('runFlow 执行语义', () => {
         id: 'a',
         wait: {
           closeOn: 'criteria' as const,
-          outcomes: { 失败: { kind: 'fail' as const, patterns: ['失败'] } },
+          outcomes: { fail: { 失败: { patterns: ['失败'] } } },
           timeoutMs: 1000,
         },
         next: { exit: { stage: 'success', ok: true } },
@@ -212,8 +211,7 @@ describe('runFlow 执行语义', () => {
           wait: {
             closeOn: 'criteria' as const,
             outcomes: {
-              需替换: { kind: 'ok' as const, patterns: ['取而代之吗'] },
-              权限就绪: { kind: 'ok' as const, patterns: ['权限：\\(player\\)'] },
+              ok: { 需替换: { patterns: ['取而代之吗'] }, 权限就绪: { patterns: ['权限：\\(player\\)'] } },
             },
             timeoutMs: 1000,
           },
@@ -229,7 +227,7 @@ describe('runFlow 执行语义', () => {
           id: 'wait-ok',
           wait: {
             closeOn: 'criteria' as const,
-            outcomes: { 重连完成: { kind: 'ok' as const, patterns: ['重新连线完毕'] } },
+            outcomes: { ok: { 重连完成: { patterns: ['重新连线完毕'] } } },
             timeoutMs: 1000,
           },
           next: { exit: { stage: 'success', ok: true } },
@@ -254,8 +252,7 @@ describe('runFlow 执行语义', () => {
           wait: {
             closeOn: 'criteria' as const,
             outcomes: {
-              需替换: { kind: 'ok' as const, patterns: ['取而代之吗'] },
-              权限就绪: { kind: 'ok' as const, patterns: ['权限：\\(player\\)'] },
+              ok: { 需替换: { patterns: ['取而代之吗'] }, 权限就绪: { patterns: ['权限：\\(player\\)'] } },
             },
             timeoutMs: 1000,
           },
@@ -279,8 +276,8 @@ describe('runFlow 执行语义', () => {
         wait: {
           closeOn: 'criteria' as const,
           outcomes: {
-            权限就绪: { kind: 'ok' as const, patterns: ['目前权限'] },
-            密码错误: { kind: 'fail' as const, patterns: ['密码错误'] },
+            fail: { 密码错误: { patterns: ['密码错误'] } },
+            ok: { 权限就绪: { patterns: ['目前权限'] } },
           },
           timeoutMs: 1000,
         },
@@ -305,8 +302,7 @@ describe('runFlow 执行语义', () => {
         wait: {
           closeOn: 'criteria' as const,
           outcomes: {
-            失败甲: { kind: 'fail' as const, patterns: ['甲'] },
-            失败乙: { kind: 'fail' as const, patterns: ['乙'] },
+            fail: { 失败甲: { patterns: ['甲'] }, 失败乙: { patterns: ['乙'] } },
           },
           timeoutMs: 1000,
         },
@@ -327,7 +323,7 @@ describe('runFlow 执行语义', () => {
         id: 'a',
         wait: {
           closeOn: 'criteria' as const,
-          outcomes: { 永不出现: { kind: 'ok' as const, patterns: ['永不出现'] } },
+          outcomes: { ok: { 永不出现: { patterns: ['永不出现'] } } },
           timeoutMs: 1000,
         },
         next: { exit: { stage: 'success', ok: true } },
@@ -358,7 +354,7 @@ describe('runFlow 执行语义', () => {
         id: 'a',
         wait: {
           closeOn: 'criteria' as const,
-          outcomes: { 回显: { kind: 'ok' as const, patterns: ['回显'] } },
+          outcomes: { ok: { 回显: { patterns: ['回显'] } } },
           timeoutMs: 1000,
         },
         next: { exit: { stage: 'success', ok: true } },
@@ -484,7 +480,7 @@ describe('captcha 动作（T13.1：推图等码 → 值入固定单槽；T14.1 u
           id: 'a',
           wait: {
             closeOn: 'criteria' as const,
-            outcomes: { 出题: { kind: 'ok' as const, patterns: ['答'] } },
+            outcomes: { ok: { 出题: { patterns: ['答'] } } },
             timeoutMs: 1000,
           },
           action: { captcha: { url: '{captchaUrl}' } },
@@ -511,7 +507,7 @@ describe('捕获槽（captureFrom 具名槽，DEC-19：组值由命中帧供给�
         id: 'fight',
         wait: {
           closeOn: 'criteria' as const,
-          outcomes: { 敌现身: { kind: 'ok' as const, patterns: ['^(\\S+) 看起来想要杀死你'] } },
+          outcomes: { ok: { 敌现身: { patterns: ['^(\\S+) 看起来想要杀死你'] } } },
           captureFrom: '敌现身',
           captures: ['attacker'],
           timeoutMs: 1000,
@@ -534,8 +530,8 @@ describe('捕获槽（captureFrom 具名槽，DEC-19：组值由命中帧供给�
         wait: {
           closeOn: 'criteria' as const,
           outcomes: {
-            敌攻击: { kind: 'ok' as const, patterns: ['^(\\S+) 出手攻击'] },
-            战斗结束: { kind: 'fail' as const, patterns: ['^战斗结束'] },
+            fail: { 战斗结束: { patterns: ['^战斗结束'] } },
+            ok: { 敌攻击: { patterns: ['^(\\S+) 出手攻击'] } },
           },
           captureFrom: '敌攻击',
           captures: ['attacker'],
@@ -565,8 +561,8 @@ describe('捕获槽（captureFrom 具名槽，DEC-19：组值由命中帧供给�
           wait: {
             closeOn: 'criteria' as const,
             outcomes: {
-              敌现身: { kind: 'ok' as const, patterns: ['^x'] },
-              你死了: { kind: 'fail' as const, patterns: ['^你死了'] },
+              fail: { 你死了: { patterns: ['^你死了'] } },
+              ok: { 敌现身: { patterns: ['^x'] } },
             },
             captureFrom: '敌现身',
             captures: ['attacker'],
@@ -591,7 +587,7 @@ describe('捕获槽（captureFrom 具名槽，DEC-19：组值由命中帧供给�
         id: 'fight',
         wait: {
           closeOn: 'criteria' as const,
-          outcomes: { 敌现身: { kind: 'ok' as const, patterns: ['^(\\S+) 看起来想要杀死你'] } },
+          outcomes: { ok: { 敌现身: { patterns: ['^(\\S+) 看起来想要杀死你'] } } },
           captureFrom: '敌现身',
           captures: ['attacker'],
           timeoutMs: 1000,
@@ -614,7 +610,7 @@ describe('捕获槽（captureFrom 具名槽，DEC-19：组值由命中帧供给�
           id: 'fight',
           wait: {
             closeOn: 'criteria' as const,
-            outcomes: { 被吸引: { kind: 'ok' as const, patterns: ['^你被(.*?)吸引了'] } },
+            outcomes: { ok: { 被吸引: { patterns: ['^你被(.*?)吸引了'] } } },
             captureFrom: '被吸引',
             captures: ['lure'],
             timeoutMs: 1000,
@@ -663,7 +659,7 @@ describe('捕获槽（captureFrom 具名槽，DEC-19：组值由命中帧供给�
           // 行首锚 + 多行窗：必须显式配 flags 'm'（整窗匹配模型；DEC-13 告警④点名失活风险）。
           wait: {
             closeOn: 'criteria' as const,
-            outcomes: { 有人说话: { kind: 'ok' as const, patterns: ['^(\\S+)对(\\S+)说'] } },
+            outcomes: { ok: { 有人说话: { patterns: ['^(\\S+)对(\\S+)说'] } } },
             captureFrom: '有人说话',
             captures: ['who', 'whom'],
             flags: 'm',
@@ -688,7 +684,7 @@ describe('捕获槽（captureFrom 具名槽，DEC-19：组值由命中帧供给�
           id: 'fight',
           wait: {
             closeOn: 'criteria' as const,
-            outcomes: { 敌现身: { kind: 'ok' as const, patterns: ['^(\\S+) 看起来想要杀死你'] } },
+            outcomes: { ok: { 敌现身: { patterns: ['^(\\S+) 看起来想要杀死你'] } } },
             captureFrom: '敌现身',
             captures: ['attacker'],
             timeoutMs: 1000,
@@ -714,7 +710,7 @@ describe('捕获槽（captureFrom 具名槽，DEC-19：组值由命中帧供给�
           id: 'cap',
           wait: {
             closeOn: 'criteria' as const,
-            outcomes: { 线索: { kind: 'ok' as const, patterns: ['^(\\S+) 线索'] } },
+            outcomes: { ok: { 线索: { patterns: ['^(\\S+) 线索'] } } },
             captureFrom: '线索',
             captures: ['who'],
             timeoutMs: 1000,
@@ -724,7 +720,7 @@ describe('捕获槽（captureFrom 具名槽，DEC-19：组值由命中帧供给�
         },
         { id: 'other', wait: {
           closeOn: 'criteria' as const,
-          outcomes: { 再看: { kind: 'ok' as const, patterns: ['^再看'] } },
+          outcomes: { ok: { 再看: { patterns: ['^再看'] } } },
           timeoutMs: 1000,
         }, next: { goto: 'use' } },
         { id: 'use', action: { send: 'kill {who}' }, next: { exit: { stage: 'success', ok: true } } },
@@ -747,7 +743,7 @@ describe('捕获槽（captureFrom 具名槽，DEC-19：组值由命中帧供给�
           id: 'look',
           wait: {
             closeOn: 'criteria' as const,
-            outcomes: { 长相: { kind: 'ok' as const, patterns: ['^名字：(\\S+)\\n级别'] } },
+            outcomes: { ok: { 长相: { patterns: ['^名字：(\\S+)\\n级别'] } } },
             captureFrom: '长相',
             captures: ['who'],
             timeoutMs: 1000,
@@ -772,8 +768,7 @@ describe('捕获槽（captureFrom 具名槽，DEC-19：组值由命中帧供给�
           wait: {
             closeOn: 'criteria' as const,
             outcomes: {
-              编号: { kind: 'ok' as const, patterns: ['^A(\\d+)'] },
-              标记: { kind: 'ok' as const, patterns: ['^B'] },
+              ok: { 编号: { patterns: ['^A(\\d+)'] }, 标记: { patterns: ['^B'] } },
             },
             captureFrom: '编号',
             captures: ['n'],
@@ -800,8 +795,8 @@ describe('两级路由（DEC-19：kind 直达常态 / when 细化 / ga 断言）
           id: 'ask',
           wait: {
             closeOn: 'ga' as const,
-            count: 1,
-            outcomes: { 拜师成功: { kind: 'ok' as const, patterns: ['你拜入了'] } },
+            gaCount: 1,
+            outcomes: { ok: { 拜师成功: { patterns: ['你拜入了'] } } },
             timeoutMs: 1000,
           },
           onOutcome: { ok: { when: { 拜师成功: { exit: { stage: 'success', ok: true } } } } },
@@ -824,8 +819,8 @@ describe('两级路由（DEC-19：kind 直达常态 / when 细化 / ga 断言）
           id: 'ask',
           wait: {
             closeOn: 'ga' as const,
-            count: 1,
-            outcomes: { 拜师成功: { kind: 'ok' as const, patterns: ['你拜入了'] } },
+            gaCount: 1,
+            outcomes: { ok: { 拜师成功: { patterns: ['你拜入了'] } } },
             timeoutMs: 1000,
           },
           action: { send: '不应发送' },
@@ -893,7 +888,7 @@ describe('两级路由（DEC-19：kind 直达常态 / when 细化 / ga 断言）
     const flow = {
       entry: 'a',
       steps: [
-        { id: 'a', wait: { closeOn: 'criteria' as const, outcomes: { 拦: { kind: 'fail' as const, patterns: ['^拦截'] } }, timeoutMs: 1000 }, onOutcome: { fail: { goto: 'b' } } },
+        { id: 'a', wait: { closeOn: 'criteria' as const, outcomes: { fail: { 拦: { patterns: ['^拦截'] } } }, timeoutMs: 1000 }, onOutcome: { fail: { goto: 'b' } } },
         { id: 'b', action: { send: '补救' }, next: { exit: { stage: 'success', ok: true } } },
       ],
     }
@@ -905,7 +900,7 @@ describe('两级路由（DEC-19：kind 直达常态 / when 细化 / ga 断言）
 })
 
 describe('raw 透传（DEC-21 判据词汇单点：内核不编译、不归一）', () => {
-  it('wait 声明原样透传 io.read（outcomes/count/maxLines/timeoutMs/flags）', async () => {
+  it('wait 声明原样透传 io.read（outcomes/gaCount/maxLines/timeoutMs/flags）', async () => {
     const flow = {
       entry: 'a',
       steps: [
@@ -914,8 +909,8 @@ describe('raw 透传（DEC-21 判据词汇单点：内核不编译、不归一�
           wait: {
             closeOn: 'criteria' as const,
             outcomes: {
-              内息不足: { kind: 'fail' as const, patterns: ['内力不够'] },
-              修炼完毕: { kind: 'ok' as const, patterns: ['你将内息修炼完毕'] },
+              fail: { 内息不足: { patterns: ['内力不够'] } },
+              ok: { 修炼完毕: { patterns: ['你将内息修炼完毕'] } },
             },
             maxLines: 20,
             flags: 'm',
@@ -932,8 +927,8 @@ describe('raw 透传（DEC-21 判据词汇单点：内核不编译、不归一�
     expect(opts).toMatchObject({
       closeOn: 'criteria',
       outcomes: {
-        内息不足: { kind: 'fail', patterns: ['内力不够'] },
-        修炼完毕: { kind: 'ok', patterns: ['你将内息修炼完毕'] },
+        fail: { 内息不足: { patterns: ['内力不够'] } },
+        ok: { 修炼完毕: { patterns: ['你将内息修炼完毕'] } },
       },
       maxLines: 20,
       flags: 'm',

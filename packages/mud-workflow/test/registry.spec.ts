@@ -26,7 +26,7 @@ function simpleFlow(overrides: Partial<Flow> = {}): Flow {
         id: 'a',
         wait: {
           closeOn: 'criteria',
-          outcomes: { 成功: { kind: 'ok', patterns: ['成功'] } },
+          outcomes: { ok: { 成功: { patterns: ['成功'] } } },
           timeoutMs: 1000,
         },
         next: { exit: { stage: 'success', ok: true } },
@@ -73,7 +73,7 @@ function domainTables(): {
 
 /** 命令总表槽名查询（T26.6 端口形：FlowSlotsInfo——形态比对/告警④ flags 点名用）。 */
 const slotsOf = (cmd: string): FlowSlotsInfo | null => {
-  if (cmd === 'dz') {
+  if (cmd === 'exercise') {
     return {
       closeOn: 'criteria',
       slots: [
@@ -159,7 +159,7 @@ describe('WorkflowRegistry 保存门', () => {
         id: 'a',
         wait: {
           closeOn: 'criteria',
-          outcomes: { 失败: { kind: 'fail', patterns: ['失败'] } },
+          outcomes: { fail: { 失败: { patterns: ['失败'] } } },
           timeoutMs: 1000,
         },
         // ok 键下引用 fail 槽 = 跨键位
@@ -230,7 +230,7 @@ describe('捕获槽保存门（captureFrom 具名槽，DEC-19）', () => {
         id: 'a',
         wait: {
           closeOn: 'criteria',
-          outcomes: { [slotName]: { kind: 'ok', patterns } },
+          outcomes: { ok: { [slotName]: { patterns } } },
           captureFrom: slotName,
           captures,
           timeoutMs: 1000,
@@ -491,41 +491,41 @@ describe('T26.6 契约模式保存门', () => {
     entry: 'a',
     steps: [{
       id: 'a',
-      wait: { closeOn: 'criteria', outcomes: { 完成: { kind: 'ok', patterns: ['成了'] } }, timeoutMs: 1000 },
+      wait: { closeOn: 'criteria', outcomes: { ok: { 完成: { patterns: ['成了'] } } }, timeoutMs: 1000 },
       next: { exit: { stage: 'success', ok: true } },
       ...step,
     }],
   })
 
-  it('三形态组合封闭（schema 层 superRefine）：判据声明缺 closeOn / quiet 带 outcomes / count 越界 / criteria 空槽', () => {
+  it('三形态组合封闭（schema 层 superRefine）：判据声明缺 closeOn / quiet 带 outcomes / gaCount 越界 / criteria 空槽', () => {
     // 判据声明必须搭配 closeOn（DEC-3 三配方各自封闭）。
     expect(() => waitSchema.parse({
-      outcomes: { 完成: { kind: 'ok', patterns: ['x'] } }, timeoutMs: 1000,
+      outcomes: { ok: { 完成: { patterns: ['x'] } } }, timeoutMs: 1000,
     })).toThrow(/必须搭配 closeOn/)
     // quiet 无 outcomes 槽（要分类说明写得出判据，那是 criteria 的事）。
     expect(() => waitSchema.parse({
-      closeOn: 'quiet', outcomes: { 完成: { kind: 'ok', patterns: ['x'] } }, timeoutMs: 1000,
+      closeOn: 'quiet', outcomes: { ok: { 完成: { patterns: ['x'] } } }, timeoutMs: 1000,
     })).toThrow(/quiet 形态无 outcomes/)
-    // count 仅 ga 形态可用。
+    // gaCount 仅 ga 形态可用。
     expect(() => waitSchema.parse({
-      closeOn: 'criteria', outcomes: { 完成: { kind: 'ok', patterns: ['x'] } }, count: 2, timeoutMs: 1000,
-    })).toThrow(/count 仅 ga/)
+      closeOn: 'criteria', outcomes: { ok: { 完成: { patterns: ['x'] } } }, gaCount: 2, timeoutMs: 1000,
+    })).toThrow(/gaCount 仅 ga/)
     expect(() => waitSchema.parse({
-      closeOn: 'quiet', timeoutMs: 1000, count: 1,
-    })).toThrow(/count 仅 ga/)
+      closeOn: 'quiet', timeoutMs: 1000, gaCount: 1,
+    })).toThrow(/gaCount 仅 ga/)
     // criteria 必须声明 outcomes（否则只剩超时收场）。
     expect(() => waitSchema.parse({
       closeOn: 'criteria', timeoutMs: 1000,
     })).toThrow(/必须声明 outcomes/)
-    // ga + count 放行（缺省 1 也可显式）。
+    // ga + gaCount 放行（缺省 1 也可显式）。
     expect(() => waitSchema.parse({
-      closeOn: 'ga', count: 2, timeoutMs: 1000,
+      closeOn: 'ga', gaCount: 2, timeoutMs: 1000,
     })).not.toThrow()
   })
 
   it('patterns 空数组拒存（推定槽已退役：patterns ≥ 1，DEC-7 注释纪律）', () => {
     expect(() => waitSchema.parse({
-      closeOn: 'criteria', outcomes: { 完成: { kind: 'ok', patterns: [] } }, timeoutMs: 1000,
+      closeOn: 'criteria', outcomes: { ok: { 完成: { patterns: [] } } }, timeoutMs: 1000,
     })).toThrow()
   })
 
@@ -534,7 +534,7 @@ describe('T26.6 契约模式保存门', () => {
       expect(() => checkFlow(flowWith({
         wait: {
           closeOn: 'criteria',
-          outcomes: { [name]: { kind: 'ok', patterns: ['x'] } },
+          outcomes: { ok: { [name]: { patterns: ['x'] } } },
           timeoutMs: 1000,
         },
       }))).toThrow(/保留字/)
@@ -545,7 +545,7 @@ describe('T26.6 契约模式保存门', () => {
     const bad = flowWith({
       wait: {
         closeOn: 'criteria',
-        outcomes: { 完成: { kind: 'ok', patterns: ['x'] } },
+        outcomes: { ok: { 完成: { patterns: ['x'] } } },
         timeoutMs: 1000,
       },
       onOutcome: { fail: { when: { 完成: { exit: { stage: 'x', ok: false } } } } },
@@ -557,12 +557,12 @@ describe('T26.6 契约模式保存门', () => {
     const dead: Flow = {
       entry: 'a',
       steps: [
-        { id: 'a', action: { send: 'dz' }, next: { goto: 'b' } },
-        { id: 'b', wait: { closeOn: 'criteria', outcomes: { 修炼完毕: { kind: 'ok', patterns: ['x'] } }, timeoutMs: 1000 }, onOutcome: { ok: { when: { 不存在的槽: { goto: 'c' } } } }, next: { goto: 'c' } },
+        { id: 'a', action: { send: 'exercise' }, next: { goto: 'b' } },
+        { id: 'b', wait: { closeOn: 'criteria', outcomes: { ok: { 修炼完毕: { patterns: ['x'] } } }, timeoutMs: 1000 }, onOutcome: { ok: { when: { 不存在的槽: { goto: 'c' } } } }, next: { goto: 'c' } },
         { id: 'c', next: { exit: { stage: 'success', ok: true } } },
       ],
     }
-    expect(() => checkFlow(dead, slotsOf)).toThrow(/超喂令 dz/)
+    expect(() => checkFlow(dead, slotsOf)).toThrow(/超喂令 exercise/)
   })
 
   it('动态命令：保存期只校验静态可判的 kind 一致性，查表整体后移运行期（放行）', () => {
@@ -570,7 +570,7 @@ describe('T26.6 契约模式保存门', () => {
       entry: 'a',
       steps: [
         { id: 'a', action: { send: 'look {x}' }, next: { goto: 'b' } },
-        { id: 'b', wait: { closeOn: 'criteria', outcomes: { 任意: { kind: 'ok', patterns: ['y'] } }, timeoutMs: 1000 }, onOutcome: { ok: { when: { 任意: { goto: 'c' } } } }, next: { goto: 'c' } },
+        { id: 'b', wait: { closeOn: 'criteria', outcomes: { ok: { 任意: { patterns: ['y'] } } }, timeoutMs: 1000 }, onOutcome: { ok: { when: { 任意: { goto: 'c' } } } }, next: { goto: 'c' } },
         { id: 'c', next: { exit: { stage: 'success', ok: true } } },
       ],
     }
@@ -594,12 +594,12 @@ describe('T26.6 契约模式保存门', () => {
     const partial: Flow = {
       entry: 'a',
       steps: [
-        { id: 'a', action: { send: 'dz' }, next: { goto: 'b' } },
+        { id: 'a', action: { send: 'exercise' }, next: { goto: 'b' } },
         {
           id: 'b',
           wait: {
             closeOn: 'criteria',
-            outcomes: { 修炼完毕: { kind: 'ok', patterns: ['x'] } },
+            outcomes: { ok: { 修炼完毕: { patterns: ['x'] } } },
             timeoutMs: 1000,
           },
           onOutcome: { ok: { when: { 修炼完毕: { goto: 'c' } } } },
@@ -609,18 +609,18 @@ describe('T26.6 契约模式保存门', () => {
       ],
     }
     const warnings = checkFlow(partial, slotsOf)
-    // 合并槽集 ok 槽 = {修炼完毕}（本步声明，表槽 dz 的 ok 槽同名合并）；覆盖完整 → 无 ②。
+    // 合并槽集 ok 槽 = {修炼完毕}（本步声明，表槽 exercise 的 ok 槽同名合并）；覆盖完整 → 无 ②。
     expect(warnings).toEqual([])
     // 少覆盖一个 ok 槽 → 点名。
     const partial2: Flow = {
       entry: 'a',
       steps: [
-        { id: 'a', action: { send: 'dz' }, next: { goto: 'b' } },
+        { id: 'a', action: { send: 'exercise' }, next: { goto: 'b' } },
         {
           id: 'b',
           wait: {
             closeOn: 'criteria',
-            outcomes: { 修炼完毕: { kind: 'ok', patterns: ['x'] }, 额外: { kind: 'ok', patterns: ['y'] } },
+            outcomes: { ok: { 修炼完毕: { patterns: ['x'] }, 额外: { patterns: ['y'] } } },
             timeoutMs: 1000,
           },
           onOutcome: { ok: { when: { 修炼完毕: { goto: 'c' } } } },
@@ -640,7 +640,7 @@ describe('T26.6 契约模式保存门', () => {
         { id: 'a', action: { send: 'walk' }, next: { goto: 'b' } },
         {
           id: 'b',
-          wait: { closeOn: 'criteria', outcomes: { 到达: { kind: 'ok', patterns: ['^你到了'] } }, timeoutMs: 1000 },
+          wait: { closeOn: 'criteria', outcomes: { ok: { 到达: { patterns: ['^你到了'] } } }, timeoutMs: 1000 },
           next: { exit: { stage: 'success', ok: true } },
         },
       ],

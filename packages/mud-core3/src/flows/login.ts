@@ -28,7 +28,7 @@
  *   wait-success  等成功句（ok 未覆盖 → next）
  *   send-empty    终态空命令（走凭据通道不进发送回显）
  *   wait-ga       空命令收 GA = 登录真的收尾了的确认 → success 出口
- *                 （closeOn 'ga' 显式声明 + count 1；未声明分类槽 ⇒ 关窗即 next）。
+ *                 （closeOn 'ga' 显式声明，gaCount 缺省 1 不必写；未声明分类槽 ⇒ 关窗即 next）。
  *
  * 连接守卫不在本表：流程执行以已建立连接为前提（core3 workflowIoFor 缝在
  * io 注入前拒绝未连接，等待以连接为前提——未连接时 driver 永远不会到达）。
@@ -74,7 +74,7 @@ export const login: WorkflowRecord = {
         id: 'prompt-name',
         wait: {
           closeOn: 'criteria',
-          outcomes: { 名字提示: { kind: 'ok', patterns: [NAME_SRC] } },
+          outcomes: { ok: { 名字提示: { patterns: [NAME_SRC] } } },
           flags: 'm',
           timeoutMs: STEP_MS,
         },
@@ -86,8 +86,8 @@ export const login: WorkflowRecord = {
         wait: {
           closeOn: 'criteria',
           outcomes: {
-            需建新人物: { kind: 'fail', patterns: [NEED_NEW_SRC] },
-            密码提示: { kind: 'ok', patterns: [PASS_SRC] },
+            fail: { 需建新人物: { patterns: [NEED_NEW_SRC] } },
+            ok: { 密码提示: { patterns: [PASS_SRC] } },
           },
           flags: 'm',
           timeoutMs: STEP_MS,
@@ -102,9 +102,11 @@ export const login: WorkflowRecord = {
         wait: {
           closeOn: 'criteria',
           outcomes: {
-            密码错误: { kind: 'fail', patterns: [BAD_PASS_SRC] },
-            需替换: { kind: 'ok', patterns: [REPLACE_SRC] },
-            登录成功: { kind: 'ok', patterns: [SUCCESS_SRC] },
+            fail: { 密码错误: { patterns: [BAD_PASS_SRC] } },
+            ok: {
+              需替换: { patterns: [REPLACE_SRC] },
+              登录成功: { patterns: [SUCCESS_SRC] },
+            },
           },
           flags: 'm',
           timeoutMs: STEP_MS,
@@ -124,7 +126,7 @@ export const login: WorkflowRecord = {
         id: 'wait-success',
         wait: {
           closeOn: 'criteria',
-          outcomes: { 登录成功: { kind: 'ok', patterns: [SUCCESS_SRC] } },
+          outcomes: { ok: { 登录成功: { patterns: [SUCCESS_SRC] } } },
           timeoutMs: STEP_MS,
         },
         next: { goto: 'send-empty' },
@@ -136,7 +138,7 @@ export const login: WorkflowRecord = {
       },
       {
         id: 'wait-ga',
-        wait: { closeOn: 'ga', count: 1, timeoutMs: SUCCESS_MS },
+        wait: { closeOn: 'ga', timeoutMs: SUCCESS_MS },
         next: { exit: { stage: 'success', ok: true } },
       },
     ],

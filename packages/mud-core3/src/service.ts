@@ -622,7 +622,7 @@ export class MudService {
           ? {
             ...(opts.closeOn !== undefined ? { closeOn: opts.closeOn } : {}),
             ...(opts.outcomes !== undefined ? { outcomes: opts.outcomes } : {}),
-            ...(opts.count !== undefined ? { count: opts.count } : {}),
+            ...(opts.gaCount !== undefined ? { gaCount: opts.gaCount } : {}),
             ...(opts.maxLines !== undefined ? { maxLines: opts.maxLines } : {}),
             ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
             ...(opts.flags !== undefined ? { flags: opts.flags } : {}),
@@ -633,7 +633,7 @@ export class MudService {
           timeoutMs: opts.timeoutMs ?? plan.timeoutMs ?? FLOW_SEAM_TIMEOUT_MS,
           ...(plan.closeOn !== undefined ? { closeOn: plan.closeOn } : {}),
           ...(plan.slots !== undefined && plan.slots.length > 0 ? { slots: plan.slots } : {}),
-          ...(plan.count !== undefined ? { count: plan.count } : {}),
+          ...(plan.gaCount !== undefined ? { gaCount: plan.gaCount } : {}),
           ...(plan.maxLines !== undefined ? { maxLines: plan.maxLines } : {}),
         }
         const r = await rt.read(ro, initial ?? [])

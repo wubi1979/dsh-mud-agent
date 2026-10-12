@@ -17,7 +17,7 @@
  * 出口统一过 pass 掩码（core/interpreter）。
  */
 
-import type { ClosureKind, OutcomeKind, OutcomeSlot } from './schema.ts'
+import type { ClosureKind, OutcomeKind, SlotTable } from './schema.ts'
 
 /**
  * 行窄面：契约只承诺 `text`（ANSI/样式/行号等字段不进内核）。
@@ -42,10 +42,10 @@ export interface IoLine {
 export interface IoReadOpts {
   /** 收窗形态（显式单值；缺省 = 未声明判据，缝侧注入表条目）。 */
   closeOn?: ClosureKind
-  /** 结局槽表（raw 判据源；fail 槽在前 = 判定序）。 */
-  outcomes?: Readonly<Record<string, OutcomeSlot>>
+  /** 结局槽表（raw 判据源；kind 在前、槽名在内——与流程 wait 同形状）。 */
+  outcomes?: SlotTable
   /** GA/EOR 边界计数（仅 ga 形态；缺省 1）。 */
-  count?: number
+  gaCount?: number
   /** 行数兜底。 */
   maxLines?: number
   /** 总超时毫秒（可省——缝侧按「步声明 > 表条目 > 30s 兜底」填充）。 */
@@ -94,7 +94,7 @@ export interface IoReadResult {
   readonly lines: IoLine[]
   readonly reason: IoReadReason
   /**
-   * 命中帧；窗由 `count` 到数（未声明分类槽）/ `maxLines` 剪断 / `timeout` /
+   * 命中帧；窗由 `gaCount` 到数（未声明分类槽）/ `maxLines` 剪断 / `timeout` /
    * `quiet`（零行）/ `signal` / `disconnected` / `danger` 关窗时视形态而定
    *（quiet 总有合成帧；criteria 失配无帧）。
    */

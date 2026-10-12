@@ -160,13 +160,13 @@ describe('workflowIoFor 契约', () => {
       handle.io.send('ping')
       const r1 = await handle.io.read({
         closeOn: 'criteria',
-        outcomes: { 回声: { kind: 'ok', patterns: ['^echo ping$'] } },
+        outcomes: { ok: { 回声: { patterns: ['^echo ping$'] } } },
         timeoutMs: 2000,
       })
       expect(r1.reason).toBe('done')
       // 首窗已消费 echo ping（水位推进）——后续读窗的 initial 快照不得重灌该行；
       // T13 期「URL 抽取豁免」若在，这里会重见已消费行（豁免已随 T14 槽化删除）。
-      const r2 = await handle.io.read({ closeOn: 'ga', count: 1, timeoutMs: 300 }, handle.io.recentLines(100))
+      const r2 = await handle.io.read({ closeOn: 'ga', gaCount: 1, timeoutMs: 300 }, handle.io.recentLines(100))
       expect(r2.lines.map(l => l.text)).not.toContain('echo ping')
       handle.release()
     } finally {

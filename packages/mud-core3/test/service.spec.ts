@@ -662,8 +662,8 @@ describe('MudService 连接失败可诊断', () => {
 describe('workflowIoFor 缝侧 lastSent 查表注入（T26）', () => {
   const GA = Buffer.from([255, 249])
 
-  /** 脚本化 mock：收到 dz → 受理句+GA，60ms 后完成句+GA（受理 GA 不关窗的实证场）。 */
-  async function startDzServer(): Promise<MockServer> {
+  /** 脚本化 mock：收到 exercise → 受理句+GA，60ms 后完成句+GA（受理 GA 不关窗的实证场）。 */
+  async function startExerciseServer(): Promise<MockServer> {
     const received: string[] = []
     let sock: net.Socket | null = null
     const server = net.createServer((s) => {
@@ -671,7 +671,7 @@ describe('workflowIoFor 缝侧 lastSent 查表注入（T26）', () => {
       s.on('data', (d: Buffer) => {
         const text = stripIac(d)
         received.push(text)
-        if (text.includes('dz')) {
+        if (text.includes('exercise')) {
           s.write('你盘膝坐下，默运基本内功，一股内息自丹田引出……\n')
           s.write(GA)
           setTimeout(() => {
@@ -710,15 +710,15 @@ describe('workflowIoFor 缝侧 lastSent 查表注入（T26）', () => {
     return { service, handle }
   }
 
-  it('未声明判据的步 + 登记命令（dz）→ 按表注入：完成句收窗、GA 不早关、归因带 command/source', async () => {
-    const server = await startDzServer()
+  it('未声明判据的步 + 登记命令（exercise）→ 按表注入：完成句收窗、GA 不早关、归因带 command/source', async () => {
+    const server = await startExerciseServer()
     const { service, handle } = await seamWith(server)
     try {
-      expect(handle.io.send('dz')).toBe(true)
+      expect(handle.io.send('exercise')).toBe(true)
       const r = await handle.io.read({ timeoutMs: 5000 }, [])
       expect(r.reason).toBe('done')
       expect(r.hit?.outcome).toBe('完成') // 槽分类命中（缝侧注入的 criteria 槽表）
-      expect(r.command).toBe('dazuo') // 归因：命中的表条目
+      expect(r.command).toBe('exercise') // 归因：命中的表条目
       expect(r.source).toBe('table') // 归因：判据来源 = 查表注入
     } finally {
       handle.release()
@@ -728,18 +728,18 @@ describe('workflowIoFor 缝侧 lastSent 查表注入（T26）', () => {
   })
 
   it('已声明判据 + 登记命令 → 同形态槽级合并注入（声明槽与表槽并存，归因 table）', async () => {
-    const server = await startDzServer()
+    const server = await startExerciseServer()
     const { service, handle } = await seamWith(server)
     try {
-      handle.io.send('dz')
+      handle.io.send('exercise')
       const r = await handle.io.read({
         closeOn: 'criteria',
-        outcomes: { 自定义: { kind: 'ok', patterns: ['自定义句'] } },
+        outcomes: { ok: { 自定义: { patterns: ['自定义句'] } } },
         timeoutMs: 200,
       }, [])
       expect(r.reason).toBe('done')
       expect(r.hit?.outcome).toBe('完成') // 表槽完成句经合并窗口命中（DEC-5 同形态合并）
-      expect(r.command).toBe('dazuo') // 归因：同形态合并命中表条目
+      expect(r.command).toBe('exercise') // 归因：同形态合并命中表条目
       expect(r.source).toBe('table')
     } finally {
       handle.release()
@@ -749,7 +749,7 @@ describe('workflowIoFor 缝侧 lastSent 查表注入（T26）', () => {
   })
 
   it('凭据命令置空 lastSent → 不走表（source none，不收窗只等超时）', async () => {
-    const server = await startDzServer()
+    const server = await startExerciseServer()
     const { service, handle } = await seamWith(server)
     try {
       handle.io.sendCredential('p1')
@@ -765,7 +765,7 @@ describe('workflowIoFor 缝侧 lastSent 查表注入（T26）', () => {
   })
 
   it('未登记命令 → 不收窗只等超时（source none，DEC-4 终态）', async () => {
-    const server = await startDzServer()
+    const server = await startExerciseServer()
     const { service, handle } = await seamWith(server)
     try {
       handle.io.send('foobar')
