@@ -18,17 +18,17 @@
  *     （整窗按行 join 匹配，无 'm' 时 `^` = 窗首，提示行在横幅之后永不命中）；
  *   - need-new 实机整句内嵌**动态用户名**（`使用\S+创造`），`(yes)` 括号须转义。
  *
- * 步表（动作在路由前执行，条件发送 = 独立步骤；T26 具名槽词汇，DEC-19——
- * wait.outcomes 槽表 + onOutcome 单表，判据按结局命名，不再有 until/failOn 下标）：
- *   prompt-name   等名字提示 → 发 {name}
- *   prompt-pass   等密码提示（fail 槽 需建新人物：用户名不存在/非法整句）→ 发 {pass}
- *   confirm       等「需替换 | 登录成功」（fail 槽 密码错误类）；需替换命中 →
- *                 replace 步，登录成功 → send-empty，密码错误 → bad-pass 出口
+ * 步表（动作在路由前执行，条件发送 = 独立步骤；T26.6 两级路由词汇，DEC-19）：
+ *   prompt-name   等名字提示 → 发 {name}（ok 未覆盖 → next）
+ *   prompt-pass   等密码提示（fail 槽 需建新人物）→ 发 {pass}；
+ *                 onOutcome.fail 直达 bad 出口（粗粒度常态——唯一 fail 槽零槽名）
+ *   confirm       等「需替换 | 登录成功」（fail 槽 密码错误）；fail 直达 bad-pass
+ *                 出口；ok 用 when 细化——需替换特化转 replace，登录成功缺省 next
  *   replace       发 y（login.md replace 步 action=y，默认应答）
- *   wait-success  等成功句
+ *   wait-success  等成功句（ok 未覆盖 → next）
  *   send-empty    终态空命令（走凭据通道不进发送回显）
  *   wait-ga       空命令收 GA = 登录真的收尾了的确认 → success 出口
- *                 （GA 边界收窗保持 legacy gaCount——GA 无结局可分类）。
+ *                 （closeOn 'ga' 显式声明 + count 1；未声明分类槽 ⇒ 关窗即 next）。
  *
  * 连接守卫不在本表：流程执行以已建立连接为前提（core3 workflowIoFor 缝在
  * io 注入前拒绝未连接，等待以连接为前提——未连接时 driver 永远不会到达）。
@@ -92,7 +92,8 @@ export const login: WorkflowRecord = {
           flags: 'm',
           timeoutMs: STEP_MS,
         },
-        onOutcome: { 需建新人物: { exit: { stage: 'need-new', ok: false } } },
+        // fail 直达（粗粒度常态）：唯一 fail 槽零槽名；密码提示（ok 未覆盖）→ next
+        onOutcome: { fail: { exit: { stage: 'need-new', ok: false } } },
         action: { sendCredential: '{pass}' },
         next: { goto: 'confirm' },
       },
@@ -109,10 +110,9 @@ export const login: WorkflowRecord = {
           timeoutMs: STEP_MS,
         },
         onOutcome: {
-          需替换: { goto: 'replace' },
-          密码错误: { exit: { stage: 'bad-pass', ok: false } },
+          fail: { exit: { stage: 'bad-pass', ok: false } },   // 任何 fail 槽（密码错误）→ bad-pass
+          ok: { when: { 需替换: { goto: 'replace' } } },       // 细化：需替换特化；登录成功 → 缺省 next
         },
-        // 登录成功（ok 未覆盖）→ next
         next: { goto: 'send-empty' },
       },
       {
@@ -136,7 +136,7 @@ export const login: WorkflowRecord = {
       },
       {
         id: 'wait-ga',
-        wait: { gaCount: 1, timeoutMs: SUCCESS_MS },
+        wait: { closeOn: 'ga', count: 1, timeoutMs: SUCCESS_MS },
         next: { exit: { stage: 'success', ok: true } },
       },
     ],

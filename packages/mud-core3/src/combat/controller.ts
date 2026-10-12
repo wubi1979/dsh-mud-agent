@@ -4,7 +4,7 @@
  * 状态机（PLAN T21 3.4，D4/D6/D12）：
  *
  *   idle ── 遭遇开始（combat.战斗中 0→1 或 目标/敌人数写入）──► acquireSend('combat')
- *     ├─ 成功 ─► held：一个覆盖整场的长读窗（until=结局行，quiet/timeout/maxLines 兜底）
+ *     ├─ 成功 ─► held：一个覆盖整场的长读窗（裸读 quiet/timeout/maxLines 兜底，收束后本层自测结局行）
  *     │          行路径照常（classify→tracker→World），控制器在状态事件里求值规则；
  *     │          读掉的行推进 readAbs ⇒ 投递越过（不回放），投递由 suppress 钩子压制；
  *     │          读窗收束 = 重估：结局/脱战 ⇒ 释放；否则重开窗。
@@ -54,7 +54,8 @@ export interface CombatWorld {
   delete(zone: string, key: string): void
 }
 
-/** 结局行判据（until；A.8.3 实录死亡行 + A.8.5〔推断〕待实录校准，替换只动这里）。 */
+/** 结局行判据（T26.6：本层自测——判定从读窗机 until 下沉回监听方；A.8.3 实录
+ * 死亡行 + A.8.5〔推断〕待实录校准，替换只动这里）。 */
 export const COMBAT_ENDING_RES: readonly RegExp[] = [
   /你的眼前一黑/,   // 死亡（A.8.3 实录）
   /你战胜了/,       // 胜利〔推断，A.8.5〕
@@ -65,7 +66,7 @@ export const COMBAT_ENDING_RES: readonly RegExp[] = [
 
 /** 长读窗与重试参数（缺省见各字段；全部可注入覆盖）。 */
 export interface CombatWindowOptions {
-  /** 结局判据（缺省 COMBAT_ENDING_RES）。 */
+  /** 结局判据（缺省 COMBAT_ENDING_RES；T26.6 起由本层逐行自测）。 */
   readonly endingRes?: readonly RegExp[]
   /** 行间静默毫秒（缺省 3000；战斗输出密集，静默即段间歇）。 */
   readonly quietMs?: number
@@ -321,18 +322,20 @@ export class CombatController {
     void this.holdLoop(token)
   }
 
-  /** 长读窗循环（D4）：覆盖整场的读窗，收束即重估，未脱战重开。 */
+  /** 长读窗循环（D4）：覆盖整场的读窗，收束即重估，未脱战重开。
+   * T26.6 迁移（2026-10-12）：`until` 参数退役——战斗是**监听窗**不是命令应答
+   * 窗，走裸读（quietMs/timeoutMs/maxLines）+ 收束后**自测结局行**（endingRes
+   * 逐行测；结局释放最迟滞后一个静默窗 ≤3s，无害——战斗已结束）。 */
   private async holdLoop(token: number): Promise<void> {
     while (this.token === token && this.phase === 'held') {
       const r = await this.io.read({
-        until: this.win.endingRes,
         quietMs: this.win.quietMs,
         timeoutMs: this.win.timeoutMs,
         maxLines: this.win.maxLines,
       })
       if (this.token !== token || this.phase !== 'held') return
       if (r.reason === 'disconnected') { this.release('disconnected'); return }
-      if (r.hit?.by === 'until') { this.release('结局行'); return }
+      if (r.lines.some(l => this.isEndingLine(l.text))) { this.release('结局行'); return }
       if (this.combatEnded()) { this.release('脱战'); return }
       // 静默兜底（D12/W11）：零行且安静/超时收束，连续达上限即释放防悬挂。
       if ((r.reason === 'quiet' || r.reason === 'timeout') && r.lines.length === 0) {
@@ -343,6 +346,15 @@ export class CombatController {
       }
       this.reporter.note(`读窗收束（${r.reason}，${r.lines.length} 行）未脱战，重开读窗`)
     }
+  }
+
+  /** 结局行自测（T26.6：判定从读窗机 until 下沉回本层——监听窗语义）。 */
+  private isEndingLine(text: string): boolean {
+    for (const re of this.win.endingRes) {
+      re.lastIndex = 0
+      if (re.test(text)) return true
+    }
+    return false
   }
 
   /** 释放（唯一出口）：归还行流 + 复位引擎/边沿/危险态 + 清遭遇键 + 结算记账。

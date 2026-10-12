@@ -47,9 +47,10 @@ import type {
 } from './roster.ts'
 // 验证码链路（T13）：恢复帧词汇表类型来自 mud-workflow 契约层（A1 单点声明）；
 // 取图纯层（D3 fetch 注入）。
-import type { CaptchaResume, IoReadOpts, IoReadResult, WorkflowIO, WorkflowIoHandle } from 'mud-workflow/contract'
+import type { CaptchaResume, IoReadResult, WorkflowIO, WorkflowIoHandle } from 'mud-workflow/contract'
 import { fetchCaptchaImage, type CaptchaFetch } from './captcha.ts'
-import { resolveAwaitPlan } from './command-profiles.ts'
+import { resolveAwaitPlan, type CallerDecl } from './command-profiles.ts'
+import type { ReadOpts } from './read.ts'
 
 /** 服务依赖（宿主/测试注入）。 */
 export interface MudServiceDeps {
@@ -285,6 +286,10 @@ export function sessionNotRegistered(sessionId: string): Error {
     `会话 ${sessionId} 未登记（宿主不认识该会话：可能宿主重启过或页面残留旧会话），请刷新页面后重连或重建账号`,
   )
 }
+
+/** 流程缝超时兜底毫秒（T26.6，DEC-5）：步声明 > 表条目 > 本值——绝不无界等待
+ * 由缝侧最终保证；30s = 状态拉取类应答的安全上限量级。 */
+const FLOW_SEAM_TIMEOUT_MS = 30_000
 
 /** 多会话管理服务。 */
 export class MudService {
@@ -590,13 +595,13 @@ export class MudService {
     // 实现按契约端口实例化：行载体 = MudLine（read(initial) 原样回环），
     // 契约面只承诺 text（窄面），两侧都不需要 cast。
     //
-    // T26（§3.6 缝侧"本窗等的是哪条命令"）：send/sendCredential 记 `lastSent`
-    //（凭据置 null——凭据命令不走表）；read 在步未显式声明判据（until/failOn/
-    // closeOn 均缺省）时按 lastSent 查命令总表注入（表条目为基线，步声明的
-    // quietMs/maxLines 后声明为准），结果带归因（command/source）。会话级持有
-    // 者独占（§8.6）⇒ 窗口内无第二执行体发送，该推断在结构上成立。未登记命
-    // 令与已声明步原样透传（现役行为零变化；未声明且未登记 ⇒ 不收窗等超时，
-    // DEC-4 由保存期告警与 T26.7 翻转兜住）。
+    // T26.6（§3.6 + DEC-21 判据词汇单点）：send/sendCredential 记 `lastSent`
+    //（凭据置 null——凭据命令不走表，DEC-8）；read 收** raw 判据声明**，
+    // 表条目合并与正则编译在本闭包单点完成（resolveAwaitPlan 形态比对：
+    // 未声明 ⇒ 整条采用；同形态 ⇒ 槽级合并；异形态 ⇒ 整体替换；都无 ⇒ 不
+    // 收窗只等超时，DEC-4/DEC-5），结果带归因（closeOn/command/source）。
+    // 会话级持有者独占（§8.6）⇒ 窗口内无第二执行体发送，lastSent 推断在结构
+    // 上成立。timeoutMs 兜底链：步声明 > 表条目 > FLOW_SEAM_TIMEOUT_MS。
     let lastSent: string | null = null
     const io: WorkflowIO<MudLine> = {
       send: cmd => {
@@ -612,20 +617,29 @@ export class MudService {
       // 重入时 judge 的 initial 快照会立即再命中旧答错句。（T14.2：原「URL 抽取
       // 豁免」只为 awaitCaptcha 闭包自取存在，URL 槽化后随之删除——过滤代码零改动。）
       read: async (opts, initial) => {
-        const declared = opts.until !== undefined || opts.failOn !== undefined || opts.closeOn !== undefined
-        if (declared || lastSent === null) return rt.read(opts, initial ?? [])
-        const plan = resolveAwaitPlan(lastSent)
-        if (plan.source !== 'table' && plan.source !== 'empty') return rt.read(opts, initial ?? [])
-        const injected: IoReadOpts = {
-          ...opts,
+        const declared = opts.closeOn !== undefined || opts.outcomes !== undefined
+        const decl: CallerDecl | undefined = declared
+          ? {
+            ...(opts.closeOn !== undefined ? { closeOn: opts.closeOn } : {}),
+            ...(opts.outcomes !== undefined ? { outcomes: opts.outcomes } : {}),
+            ...(opts.count !== undefined ? { count: opts.count } : {}),
+            ...(opts.maxLines !== undefined ? { maxLines: opts.maxLines } : {}),
+            ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+            ...(opts.flags !== undefined ? { flags: opts.flags } : {}),
+          }
+          : undefined
+        const plan = resolveAwaitPlan(lastSent, decl)
+        const ro: ReadOpts = {
+          timeoutMs: opts.timeoutMs ?? plan.timeoutMs ?? FLOW_SEAM_TIMEOUT_MS,
           ...(plan.closeOn !== undefined ? { closeOn: plan.closeOn } : {}),
-          ...(plan.slots !== undefined ? { slots: plan.slots } : {}),
-          ...(opts.quietMs !== undefined || plan.quietMs === undefined ? {} : { quietMs: plan.quietMs }),
-          ...(opts.maxLines !== undefined || plan.maxLines === undefined ? {} : { maxLines: plan.maxLines }),
+          ...(plan.slots !== undefined && plan.slots.length > 0 ? { slots: plan.slots } : {}),
+          ...(plan.count !== undefined ? { count: plan.count } : {}),
+          ...(plan.maxLines !== undefined ? { maxLines: plan.maxLines } : {}),
         }
-        const r = await rt.read(injected, initial ?? [])
+        const r = await rt.read(ro, initial ?? [])
         return {
           ...r,
+          ...(plan.closeOn !== undefined ? { closeOn: plan.closeOn } : {}),
           ...(plan.command !== undefined ? { command: plan.command } : {}),
           source: plan.source,
         } satisfies IoReadResult

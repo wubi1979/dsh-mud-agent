@@ -17,7 +17,7 @@
  * 出口统一过 pass 掩码（core/interpreter）。
  */
 
-import type { ClosureKind, OutcomeKind, OutcomeName } from './schema.ts'
+import type { ClosureKind, OutcomeKind, OutcomeSlot } from './schema.ts'
 
 /**
  * 行窄面：契约只承诺 `text`（ANSI/样式/行号等字段不进内核）。
@@ -31,38 +31,34 @@ export interface IoLine {
   readonly text: string
 }
 
-/** 读参数（引擎 ReadOpts 的结构化子集；正则已由解释器从字符串源编译）。
- *
- * T26（§3.2/§3.10，DEC-19）：读参数**槽表化**——`closeOn` 显式单值 + `slots`
- * 结局槽表（与命令总表条目同构；`res` 为已编译正则，推定槽为空数组）。遗留
- * `until`/`failOn` 数组保留（读时归一的过渡形态；T26.6 后解释器一律产槽表）。 */
-export interface IoOutcomeSlot {
-  readonly name: OutcomeName
-  readonly kind: OutcomeKind
-  /** 与槽 patterns 一一对应的编译正则（推定槽为空数组）。 */
-  readonly res: readonly RegExp[]
-}
-
+/**
+ * 读参数（**raw 判据声明**——与流程 `wait` / 工具 `listen` 同一语法，DEC-21
+ * 「一个语法三个消费点」）：正则编译与表条目合并在**缝侧单点**完成
+ *（core3 `resolveAwaitPlan` + `workflowIoFor` 的 read 缝），内核不持正则。
+ * `closeOn` 缺省 = 未声明判据——缝侧按喂令查表整条注入（DEC-5）；表条目也
+ * 未命中 ⇒ 不收窗只等超时（DEC-4）。`timeoutMs` 可省（步声明 > 表条目 > 缝侧
+ * 30s 兜底，绝不无界等待）。
+ */
 export interface IoReadOpts {
-  until?: RegExp[]
-  failOn?: RegExp[]
-  /** 收窗形态（T26）：给出时判据由 `slots` 派生，`until`/`failOn` 不参与判定。 */
+  /** 收窗形态（显式单值；缺省 = 未声明判据，缝侧注入表条目）。 */
   closeOn?: ClosureKind
-  /** 结局槽表（T26；fail 槽在前 = 判定序）。 */
-  slots?: readonly IoOutcomeSlot[]
-  gaCount?: number
-  quietMs?: number
+  /** 结局槽表（raw 判据源；fail 槽在前 = 判定序）。 */
+  outcomes?: Readonly<Record<string, OutcomeSlot>>
+  /** GA/EOR 边界计数（仅 ga 形态；缺省 1）。 */
+  count?: number
+  /** 行数兜底。 */
   maxLines?: number
-  /** 必填——绝不无界等待（read.ts 语义）。 */
-  timeoutMs: number
+  /** 总超时毫秒（可省——缝侧按「步声明 > 表条目 > 30s 兜底」填充）。 */
+  timeoutMs?: number
+  /** 正则编译 flags（应用于本窗全部槽判据；默认无）。 */
+  flags?: string
 }
 
 /** 读窗收束原因（**单点声明**：core3 `read.ts` 的 `ReadReason` 引用本联合）。 */
 export type IoReadReason =
-  | 'done'      // until / gaCount / maxLines 判据满足
-  | 'failOn'    // 负面判据命中
-  | 'timeout'   // 总超时
-  | 'quiet'     // 行间静默到期
+  | 'done'      // 判据槽命中 / GA 计数到数 / maxLines 剪断
+  | 'timeout'   // 总超时（quiet 形态零行同此——等同 timeout）
+  | 'quiet'     // quiet 采样窗到点且有行 / 裸读静默到期
   | 'signal'    // 中止信号
   | 'disconnected' // 连接关闭
   | 'danger'    // 危险中断（abortWait）
@@ -70,42 +66,45 @@ export type IoReadReason =
 /**
  * 命中判据帧（T15）：读窗机判定"**哪条判据赢了、取到什么值**"的结果。
  *
- * 有了它，路由（`branch[index]`）与捕获（`groups`）不必再在流程侧重测一遍——
+ * 有了它，路由（两级 onOutcome）与捕获（`groups`）不必再在流程侧重测一遍——
  * 分类、捕获与收窗因此物理上不可能不一致（§8.13）。
  *
- * T26 扩展（§3.3）：`by` 扩为五值——报告**实际收窗者**（判据命中 = `'until'`/
- * `'failOn'`；GA 边界收窗并分类命中 = `'ga'`；静默收窗 = `'silence'`；行数剪断
- * = `'maxLines'`；无分类的边界/剪断收窗仍为 `undefined` 命中帧）。`index` 为
- * 该槽 `patterns` 数组内下标（非判据收束 = -1）；`outcome` = 命中的结局槽名
- *（契约层 `OutcomeName`，名字是对外契约：流程按名路由、工具面按名渲染、观测
- * 按名归因）；`kind` = 槽判定（failOn → fail、until → ok）。
+ * T26.6（§3.3，DP 裁定 2）：`by` 四值 = **closeOn 三值 + `maxLines`**（与形态
+ * 枚举同名词，无第二套名字）；`index` 为该槽 `patterns` 数组内下标（非判据
+ * 收束 = -1）；`outcome` = 命中的结局槽名（条目数据，自由命名）；`kind` =
+ * 槽判定（路由的输入）。合成帧：quiet 关窗 `{ by:'quiet', kind }`（kind 由行数
+ * 定，无槽名）；ga 声明分类槽而未命中 `{ by:'ga', kind:'fail' }`（断言失败，
+ * 结果行「收窗成功，分支未知」——DP 裁定 8）。
  */
 export interface ReadHit {
-  /** 实际收窗者：判据命中（until/failOn）或形态收束（ga/silence/maxLines）。 */
-  readonly by: 'until' | 'failOn' | 'ga' | 'silence' | 'maxLines'
+  /** 实际收窗者：closeOn 三值（ga/criteria/quiet）或 maxLines。 */
+  readonly by: 'ga' | 'criteria' | 'quiet' | 'maxLines'
   /** 判据命中：该槽 patterns 数组内下标；非判据收束 = -1。 */
   readonly index: number
   /** 该判据在整窗文本上**首次命中**的捕获组（组 1..n；未参与组 `undefined`；无组为空数组）。 */
   readonly groups: readonly (string | undefined)[]
-  /** 命中的结局槽名（契约层 `OutcomeName`；无分类命中时缺省）。 */
-  readonly outcome?: OutcomeName
+  /** 命中的结局槽名（条目数据；无分类命中时缺省）。 */
+  readonly outcome?: string
   /** 结局槽判定（kind 决定消费侧分流：fail 未覆盖 ⇒ 结构化失败出口）。 */
   readonly kind?: OutcomeKind
 }
 
-/** 读结果：现场行 + 收束原因 + 命中判据帧。 */
+/** 读结果：现场行 + 收束原因 + 命中判据帧 + 缝侧归因。 */
 export interface IoReadResult {
   readonly lines: IoLine[]
   readonly reason: IoReadReason
   /**
-   * 命中帧；窗由 `gaCount` / `maxLines` / `timeout` / `quiet` / `signal` /
-   * `disconnected` / `danger` 关窗时为 `undefined`（无判据命中）。
+   * 命中帧；窗由 `count` 到数（未声明分类槽）/ `maxLines` 剪断 / `timeout` /
+   * `quiet`（零行）/ `signal` / `disconnected` / `danger` 关窗时视形态而定
+   *（quiet 总有合成帧；criteria 失配无帧）。
    */
   readonly hit: ReadHit | undefined
-  /** 归因（T26，§3.6）：缝侧按 `lastSent` 查表注入时给出的表条目 id。 */
+  /** 归因（T26.5/26.6，§3.6）：生效收窗形态（缝侧合并/注入后的最终值）。 */
+  readonly closeOn?: ClosureKind
+  /** 归因：缝侧查表命中的表条目 id（empty 档 = ''）。 */
   readonly command?: string
-  /** 归因（T26，§3.6）：本窗判据来源——`table`/`empty` = 缝侧查表注入。 */
-  readonly source?: 'table' | 'empty'
+  /** 归因：判据来源——table = 表条目（整条采用或同形态合并）；declared = 调用点声明（含异形态整体替换）；empty = 空命令特例；none = 未登记不收窗。 */
+  readonly source?: 'table' | 'declared' | 'empty' | 'none'
 }
 
 /** 会话状态窄面（内核入口只判连接轴）。 */

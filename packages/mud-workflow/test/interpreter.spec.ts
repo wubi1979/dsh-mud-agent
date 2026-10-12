@@ -1,5 +1,16 @@
 /**
  * interpreter — 声明式解释器用例（脚本化 fake IO，先红后绿纪律覆盖语义分支）。
+ *
+ * T26.6 终态词汇（DEC-3/7/19/21/23/25）：closeOn 三形态（ga / criteria / quiet）
+ * + outcomes 槽表 + captureFrom/captures + 两级路由 onOutcome（kind 直达常态 /
+ * when 细化）+ 契约模式（kind=契约、槽名=数据、保留字 ok/fail）。旧词汇
+ * until/failOn/branch/onFailOn/gaCount/quietMs/race 全部退役。
+ *
+ * mini-reader 与 core3 读窗机（`read.ts`）同规则：判据编译与判定在本替身内完成
+ *（真实缝侧单点在 core3 `resolveAwaitPlan` + read 缝）；判定序 **fail 槽 > ok
+ * 槽**（槽表内 pattern 序），ga 关窗分类断言（声明分类槽而未命中 ⇒ 合成 fail
+ * 帧），quiet 合成帧按行数定 kind。真实读窗机形状由 core3 `read.spec` 与
+ * login/fullme E2E 覆盖。
  */
 
 import { describe, expect, it } from 'vitest'
@@ -8,7 +19,7 @@ import { readFileSync } from 'node:fs'
 import { runFlow } from '../src/core/index.ts'
 import type { WorkflowRecord } from '../src/contract/index.ts'
 import type {
-  CaptchaResume, IoLine, IoReadOpts, IoReadReason, IoReadResult, ReadHit, WorkflowIO,
+  CaptchaResume, ClosureKind, IoLine, IoReadOpts, IoReadReason, IoReadResult, ReadHit, WorkflowIO,
 } from '../src/contract/index.ts'
 
 /** 读窗剧本项：一次 read 的应答（窗行 + 收束原因；hit 可直写——静默/边界
@@ -17,51 +28,58 @@ interface Scene {
   lines: string[]
   reason: IoReadReason
   hit?: ReadHit
+  /** 归因 closeOn 直写（缺省 = opts.closeOn 透传；无缝侧注入时供剧本直接给）。 */
+  closeOn?: ClosureKind
 }
 
 /**
- * mini-reader（T15）：按场景收束原因选判据数组，**声明序 `exec` 单次**取"命中 +
- * 捕获组"、调用前重置 `lastIndex` —— 与 core3 读窗机同规则（本替身只负责模拟缝；
- * 真实读窗机由 core3 `test/read.spec.ts` 与 `login`/`fullme` E2E 覆盖）。
+ * mini-reader（T15 替身，与 core3 `read.ts` 同规则）：
+ *  - quiet：固定采样窗合成帧（有行 ⇒ ok、零行 ⇒ fail——kind 由行数定，无槽名）；
+ *  - criteria：判序 **fail 槽 > ok 槽**（槽内 pattern 序），声明序 `exec` 单次取
+ *    「命中 + 捕获组 + 槽名 + kind」，调用前重置 `lastIndex`；
+ *  - ga：关窗分类（声明的槽表）——命中即结局帧；声明分类槽而无一命中 ⇒ 断言
+ *    失败合成 fail 帧（by:'ga' 无 outcome）；未声明分类槽 ⇒ 无帧。
+ * 真实读窗机由 core3 `read.spec` 与 login/fullme E2E 覆盖——本替身只负责模拟缝。
  */
-function sceneHit(scene: Scene, opts: IoReadOpts): ReadHit | undefined {
-  if (scene.reason !== 'done' && scene.reason !== 'failOn') return undefined
-  const by = scene.reason === 'failOn' ? 'failOn' : 'until'
+function hitFrame(scene: Scene, opts: IoReadOpts): ReadHit | undefined {
+  // quiet 形态（合成帧：kind 由行数定，无槽名；reason 不参与路由）。
+  if (opts.closeOn === 'quiet') {
+    return { by: 'quiet', index: -1, groups: [], kind: scene.lines.length > 0 ? 'ok' : 'fail' }
+  }
+  if (opts.outcomes === undefined || scene.reason !== 'done') return undefined
   const text = scene.lines.join('\n')
   const execOne = (re: RegExp): RegExpExecArray | null => {
     re.lastIndex = 0
     return re.exec(text)
   }
-  // 新格式（T26 槽表）：按场景收束原因选 kind，槽序内声明序 exec 单次取
-  // "命中 + 捕获组 + 结局名"——与 core3 读窗机同规则（fail 槽 compileWait 已排前）。
-  if (opts.slots !== undefined) {
-    const kind = scene.reason === 'failOn' ? 'fail' as const : 'ok' as const
-    for (const slot of opts.slots) {
-      if (slot.kind !== kind) continue
-      for (let i = 0; i < slot.res.length; i++) {
-        const m = execOne(slot.res[i]!)
-        if (m !== null) return { by, index: i, groups: m.slice(1), outcome: slot.name, kind: slot.kind }
-      }
+  const entries = Object.entries(opts.outcomes)
+  // 判序：fail 槽先于 ok 槽（与 core3 读档 deriveCriteria 同——fail 先测防误判）。
+  const ordered = [
+    ...entries.filter(([, slot]) => slot.kind === 'fail'),
+    ...entries.filter(([, slot]) => slot.kind === 'ok'),
+  ]
+  for (const [name, slot] of ordered) {
+    for (let i = 0; i < slot.patterns.length; i++) {
+      const m = execOne(new RegExp(slot.patterns[i]!, opts.flags))
+      if (m !== null) return { by: opts.closeOn ?? 'criteria', index: i, groups: m.slice(1), outcome: name, kind: slot.kind }
     }
-    return undefined
   }
-  const res = by === 'failOn' ? opts.failOn : opts.until
-  if (res === undefined) return undefined
-  for (let i = 0; i < res.length; i++) {
-    const m = execOne(res[i]!)
-    if (m !== null) return { by, index: i, groups: m.slice(1) }
-  }
+  // ga 关窗分类断言（DEC-3/DP 裁定 8）：声明分类槽而无一命中 ⇒ 合成 fail 帧。
+  if (opts.closeOn === 'ga') return { by: 'ga', index: -1, groups: [], kind: 'fail' }
   return undefined
 }
 
-/** 脚本化 fake IO：read 按剧本出窗，awaitCaptcha 按剧本出恢复帧，send/creds 记录调用。 */
+/** 脚本化 fake IO：read 按剧本出窗（recorder 记录收到的 raw 读档声明）、
+ * awaitCaptcha 按剧本出恢复帧，send/creds 记录调用。 */
 function fakeIO(scenes: Scene[], captchaResumes: CaptchaResume[] = []): {
   io: WorkflowIO
   sent: string[]
   creds: string[]
+  reads: IoReadOpts[]
 } {
   const sent: string[] = []
   const creds: string[] = []
+  const reads: IoReadOpts[] = []
   let cursor = 0
   let captchaCursor = 0
   const io: WorkflowIO = {
@@ -77,16 +95,19 @@ function fakeIO(scenes: Scene[], captchaResumes: CaptchaResume[] = []): {
       const scene = scenes[cursor]
       cursor += 1
       if (scene === undefined) throw new Error(`剧本耗尽（第 ${cursor} 次读窗）`)
+      reads.push(opts)
+      const closeOn = scene.closeOn ?? opts.closeOn
       return {
         lines: scene.lines.map(text => ({ text }) satisfies IoLine),
         reason: scene.reason,
-        hit: scene.hit ?? sceneHit(scene, opts),
+        hit: scene.hit ?? hitFrame(scene, opts),
+        ...(closeOn !== undefined ? { closeOn } : {}),
       } satisfies IoReadResult
     },
     recentLines: () => [],
     state: () => ({ state: 'connected' }),
   }
-  return { io, sent, creds }
+  return { io, sent, creds, reads }
 }
 
 /** 记录（合法缺省；flow 由用例给）。 */
@@ -111,13 +132,21 @@ describe('runFlow 执行语义', () => {
       steps: [
         {
           id: 'ask-name',
-          wait: { until: ['英文名字'], timeoutMs: 1000 },
+          wait: {
+            closeOn: 'criteria' as const,
+            outcomes: { 问名字: { kind: 'ok' as const, patterns: ['英文名字'] } },
+            timeoutMs: 1000,
+          },
           action: { sendCredential: '{name}' },
           next: { goto: 'ask-pass' },
         },
         {
           id: 'ask-pass',
-          wait: { until: ['请输入密码'], timeoutMs: 1000 },
+          wait: {
+            closeOn: 'criteria' as const,
+            outcomes: { 请输入密码: { kind: 'ok' as const, patterns: ['请输入密码'] } },
+            timeoutMs: 1000,
+          },
           action: { sendCredential: '{pass}' },
           next: { exit: { stage: 'success', ok: true } },
         },
@@ -133,43 +162,63 @@ describe('runFlow 执行语义', () => {
     expect(sent).toEqual([])
   })
 
-  it('failOn 命中 → onFailOn 分类出口（ok:false）', async () => {
+  it('fail 槽命中 → onOutcome.fail 直达出口（粗粒度常态，ok:false）', async () => {
     const flow = {
       entry: 'ask-pass',
       steps: [{
         id: 'ask-pass',
-        wait: { until: ['请输入密码'], failOn: ['需要创建新人物'], timeoutMs: 1000 },
-        onFailOn: { '0': { exit: { stage: 'need-new', ok: false } } },
+        wait: {
+          closeOn: 'criteria' as const,
+          outcomes: {
+            请输入密码: { kind: 'ok' as const, patterns: ['请输入密码'] },
+            需要新角色: { kind: 'fail' as const, patterns: ['需要创建新人物'] },
+          },
+          timeoutMs: 1000,
+        },
+        onOutcome: { fail: { exit: { stage: 'need-new', ok: false } } },
         next: { exit: { stage: 'success', ok: true } },
       }],
     }
-    const { io } = fakeIO([{ lines: ['需要创建新人物'], reason: 'failOn' }])
+    const { io } = fakeIO([{ lines: ['需要创建新人物'], reason: 'done' }])
     const r = await runFlow(record(flow), io, CREDS)
     expect(r).toMatchObject({ ok: false, stage: 'need-new' })
   })
 
-  it('failOn 命中但 onFailOn 未登记 → 缺省 timeout 出口', async () => {
+  it('fail 槽命中但未登记 onOutcome.fail → 缺省 timeout 出口并点名', async () => {
     const flow = {
       entry: 'a',
       steps: [{
         id: 'a',
-        wait: { failOn: ['失败'], timeoutMs: 1000 },
+        wait: {
+          closeOn: 'criteria' as const,
+          outcomes: { 失败: { kind: 'fail' as const, patterns: ['失败'] } },
+          timeoutMs: 1000,
+        },
         next: { exit: { stage: 'success', ok: true } },
       }],
     }
-    const { io } = fakeIO([{ lines: ['失败了'], reason: 'failOn' }])
+    const { io } = fakeIO([{ lines: ['失败了'], reason: 'done' }])
     const r = await runFlow(record(flow), io, CREDS)
     expect(r).toMatchObject({ ok: false, stage: 'timeout' })
+    expect(r.lines.join('\n')).toContain('fail 结局未覆盖')
   })
 
-  it('分支：until 命中 index → branch goto（replace 分支同型）', async () => {
+  it('分支：ok 槽命中 index → onOutcome.ok.when 细化 goto（replace 分支同型）', async () => {
     const flow = {
       entry: 'confirm',
       steps: [
         {
           id: 'confirm',
-          wait: { until: ['取而代之吗', '权限：\\(player\\)'], timeoutMs: 1000 },
-          branch: [{ goto: 'replace' }, { exit: { stage: 'success', ok: true } }],
+          wait: {
+            closeOn: 'criteria' as const,
+            outcomes: {
+              需替换: { kind: 'ok' as const, patterns: ['取而代之吗'] },
+              权限就绪: { kind: 'ok' as const, patterns: ['权限：\\(player\\)'] },
+            },
+            timeoutMs: 1000,
+          },
+          onOutcome: { ok: { when: { 需替换: { goto: 'replace' } } } },
+          next: { exit: { stage: 'success', ok: true } },
         },
         {
           id: 'replace',
@@ -178,7 +227,11 @@ describe('runFlow 执行语义', () => {
         },
         {
           id: 'wait-ok',
-          wait: { until: ['重新连线完毕'], timeoutMs: 1000 },
+          wait: {
+            closeOn: 'criteria' as const,
+            outcomes: { 重连完成: { kind: 'ok' as const, patterns: ['重新连线完毕'] } },
+            timeoutMs: 1000,
+          },
           next: { exit: { stage: 'success', ok: true } },
         },
       ],
@@ -192,20 +245,79 @@ describe('runFlow 执行语义', () => {
     expect(sent).toEqual(['y'])
   })
 
-  it('branch 未命中走 next；无 next → 结构缺出口的结构化 timeout', async () => {
+  it('ok 槽命中但 when 未覆盖 → 走 next（kind 缺省，DEC-19）', async () => {
+    const flow = {
+      entry: 'confirm',
+      steps: [
+        {
+          id: 'confirm',
+          wait: {
+            closeOn: 'criteria' as const,
+            outcomes: {
+              需替换: { kind: 'ok' as const, patterns: ['取而代之吗'] },
+              权限就绪: { kind: 'ok' as const, patterns: ['权限：\\(player\\)'] },
+            },
+            timeoutMs: 1000,
+          },
+          onOutcome: { ok: { when: { 需替换: { goto: 'replace' } } } },
+          next: { goto: 'done' },
+        },
+        { id: 'replace', next: { exit: { stage: 'wrong', ok: false } } },
+        { id: 'done', next: { exit: { stage: 'success', ok: true } } },
+      ],
+    }
+    const { io } = fakeIO([{ lines: ['目前权限：(player)'], reason: 'done' }])
+    const r = await runFlow(record(flow), io, CREDS)
+    expect(r).toMatchObject({ ok: true, stage: 'success' })
+  })
+
+  it('fail 槽 when 细化命中 → 按槽名路由；action 不发（失败不应答）', async () => {
+    const flow = {
+      entry: 'confirm',
+      steps: [{
+        id: 'confirm',
+        wait: {
+          closeOn: 'criteria' as const,
+          outcomes: {
+            权限就绪: { kind: 'ok' as const, patterns: ['目前权限'] },
+            密码错误: { kind: 'fail' as const, patterns: ['密码错误'] },
+          },
+          timeoutMs: 1000,
+        },
+        action: { send: '不应发送' },
+        onOutcome: {
+          fail: { when: { 密码错误: { exit: { stage: 'bad-pass', ok: false } } } },
+        },
+        next: { goto: 'done' },
+      }, { id: 'done', next: { exit: { stage: 'success', ok: true } } }],
+    }
+    const { io, sent } = fakeIO([{ lines: ['密码错误！'], reason: 'done' }])
+    const r = await runFlow(record(flow), io, CREDS)
+    expect(r).toMatchObject({ ok: false, stage: 'bad-pass' })
+    expect(sent).toEqual([])
+  })
+
+  it('fail 槽 when 未覆盖该槽 → timeout 出口并点名槽名（DEC-13 ③）', async () => {
     const flow = {
       entry: 'a',
       steps: [{
         id: 'a',
-        wait: { until: ['x'], timeoutMs: 1000 },
-        branch: [{ exit: { stage: 'branch-exit', ok: false } }],
+        wait: {
+          closeOn: 'criteria' as const,
+          outcomes: {
+            失败甲: { kind: 'fail' as const, patterns: ['甲'] },
+            失败乙: { kind: 'fail' as const, patterns: ['乙'] },
+          },
+          timeoutMs: 1000,
+        },
+        onOutcome: { fail: { when: { 失败甲: { exit: { stage: 'x', ok: false } } } } },
+        next: { exit: { stage: 'success', ok: true } },
       }],
     }
-    const { io } = fakeIO([{ lines: ['别的输出'], reason: 'done' }])
+    const { io } = fakeIO([{ lines: ['乙'], reason: 'done' }])
     const r = await runFlow(record(flow), io, CREDS)
-    expect(r.ok).toBe(false)
-    expect(r.stage).toBe('timeout')
-    expect(r.lines.join('\n')).toContain('未声明后继')
+    expect(r).toMatchObject({ ok: false, stage: 'timeout' })
+    expect(r.lines.join('\n')).toContain('失败乙')
   })
 
   it('timeout 收束 → timeout 出口，现场行随结果返回', async () => {
@@ -213,7 +325,11 @@ describe('runFlow 执行语义', () => {
       entry: 'a',
       steps: [{
         id: 'a',
-        wait: { until: ['永不出现'], timeoutMs: 1000 },
+        wait: {
+          closeOn: 'criteria' as const,
+          outcomes: { 永不出现: { kind: 'ok' as const, patterns: ['永不出现'] } },
+          timeoutMs: 1000,
+        },
         next: { exit: { stage: 'success', ok: true } },
       }],
     }
@@ -240,7 +356,11 @@ describe('runFlow 执行语义', () => {
       entry: 'a',
       steps: [{
         id: 'a',
-        wait: { until: ['回显'], timeoutMs: 1000 },
+        wait: {
+          closeOn: 'criteria' as const,
+          outcomes: { 回显: { kind: 'ok' as const, patterns: ['回显'] } },
+          timeoutMs: 1000,
+        },
         next: { exit: { stage: 'success', ok: true } },
       }],
     }
@@ -273,16 +393,30 @@ describe('runFlow 执行语义', () => {
     expect(r.lines.join('\n')).toContain('goto 环')
   })
 
-  it('纯等待步（无 action）与空窗文本路由正常', async () => {
+  it('纯等待步（closeOn ga 无分类槽）与空窗文本路由正常', async () => {
     const flow = {
       entry: 'a',
       steps: [
-        { id: 'a', wait: { gaCount: 1, timeoutMs: 1000 }, next: { exit: { stage: 'success', ok: true } } },
+        { id: 'a', wait: { closeOn: 'ga' as const, timeoutMs: 1000 }, next: { exit: { stage: 'success', ok: true } } },
       ],
     }
     const { io } = fakeIO([{ lines: ['> '], reason: 'done' }])
     const r = await runFlow(record(flow), io, CREDS)
     expect(r).toMatchObject({ ok: true, stage: 'success' })
+  })
+
+  it('缺出口：ga 关窗无分类且无 next → 结构化 timeout 点名步骤', async () => {
+    const flow = {
+      entry: 'a',
+      steps: [
+        { id: 'a', wait: { closeOn: 'ga' as const, timeoutMs: 1000 } },
+      ],
+    }
+    const { io } = fakeIO([{ lines: ['> '], reason: 'done' }])
+    const r = await runFlow(record(flow), io, CREDS)
+    expect(r.ok).toBe(false)
+    expect(r.stage).toBe('timeout')
+    expect(r.lines.join('\n')).toContain('未声明后继')
   })
 })
 
@@ -348,7 +482,11 @@ describe('captcha 动作（T13.1：推图等码 → 值入固定单槽；T14.1 u
       steps: [
         {
           id: 'a',
-          wait: { until: ['答'], timeoutMs: 1000 },
+          wait: {
+            closeOn: 'criteria' as const,
+            outcomes: { 出题: { kind: 'ok' as const, patterns: ['答'] } },
+            timeoutMs: 1000,
+          },
           action: { captcha: { url: '{captchaUrl}' } },
           next: { exit: { stage: 'success', ok: true } },
         },
@@ -365,13 +503,19 @@ describe('captcha 动作（T13.1：推图等码 → 值入固定单槽；T14.1 u
   })
 })
 
-describe('捕获槽（T14.1：until[0] 命中行提取捕获组入 run 级命名槽）', () => {
-  it('① wait 命中 until[0] 捕获组入槽，本步 send 正确替换', async () => {
+describe('捕获槽（captureFrom 具名槽，DEC-19：组值由命中帧供给）', () => {
+  it('① captureFrom 命中 → 组值入槽，本步 send 正确替换', async () => {
     const flow = {
       entry: 'fight',
       steps: [{
         id: 'fight',
-        wait: { until: ['^(\\S+) 看起来想要杀死你'], captures: ['attacker'], timeoutMs: 1000 },
+        wait: {
+          closeOn: 'criteria' as const,
+          outcomes: { 敌现身: { kind: 'ok' as const, patterns: ['^(\\S+) 看起来想要杀死你'] } },
+          captureFrom: '敌现身',
+          captures: ['attacker'],
+          timeoutMs: 1000,
+        },
         action: { send: 'kill {attacker}' },
         next: { exit: { stage: 'success', ok: true } },
       }],
@@ -387,36 +531,54 @@ describe('捕获槽（T14.1：until[0] 命中行提取捕获组入 run 级命名
       entry: 'fight',
       steps: [{
         id: 'fight',
-        wait: { until: ['^(\\S+) 出手攻击'], failOn: ['^战斗结束'], captures: ['attacker'], timeoutMs: 1000 },
+        wait: {
+          closeOn: 'criteria' as const,
+          outcomes: {
+            敌攻击: { kind: 'ok' as const, patterns: ['^(\\S+) 出手攻击'] },
+            战斗结束: { kind: 'fail' as const, patterns: ['^战斗结束'] },
+          },
+          captureFrom: '敌攻击',
+          captures: ['attacker'],
+          timeoutMs: 1000,
+        },
         action: { send: 'kill {attacker}' },
-        onFailOn: { '0': { exit: { stage: 'success', ok: true } } },
-        branch: [{ goto: 'fight' }],
+        onOutcome: { fail: { when: { 战斗结束: { exit: { stage: 'success', ok: true } } } } },
+        next: { goto: 'fight' },
       }],
     }
     const { io, sent } = fakeIO([
       { lines: ['张三 出手攻击'], reason: 'done' },
       { lines: ['李四 出手攻击'], reason: 'done' },
-      { lines: ['战斗结束'], reason: 'failOn' },
+      { lines: ['战斗结束'], reason: 'done' },
     ])
     const r = await runFlow(record(flow), io, CREDS)
     expect(r).toMatchObject({ ok: true, stage: 'success' })
     expect(sent).toEqual(['kill 张三', 'kill 李四'])
   })
 
-  it('③ failOn 收束不写槽：后继步的槽引用原样保留', async () => {
+  it('③ fail 结局命中不写槽：后继步的槽引用原样保留', async () => {
     const flow = {
       entry: 'fight',
       steps: [
         {
           id: 'fight',
-          wait: { until: ['^x'], failOn: ['^你死了'], captures: ['attacker'], timeoutMs: 1000 },
-          onFailOn: { '0': { goto: 'after' } },
+          wait: {
+            closeOn: 'criteria' as const,
+            outcomes: {
+              敌现身: { kind: 'ok' as const, patterns: ['^x'] },
+              你死了: { kind: 'fail' as const, patterns: ['^你死了'] },
+            },
+            captureFrom: '敌现身',
+            captures: ['attacker'],
+            timeoutMs: 1000,
+          },
+          onOutcome: { fail: { when: { 你死了: { goto: 'after' } } } },
           next: { exit: { stage: 'success', ok: true } },
         },
         { id: 'after', action: { send: 'kill {attacker}' }, next: { exit: { stage: 'success', ok: true } } },
       ],
     }
-    const { io, sent } = fakeIO([{ lines: ['你死了'], reason: 'failOn' }])
+    const { io, sent } = fakeIO([{ lines: ['你死了'], reason: 'done' }])
     const r = await runFlow(record(flow), io, CREDS)
     expect(r).toMatchObject({ ok: true, stage: 'success' })
     expect(sent).toEqual(['kill {attacker}'])
@@ -427,7 +589,13 @@ describe('捕获槽（T14.1：until[0] 命中行提取捕获组入 run 级命名
       entry: 'fight',
       steps: [{
         id: 'fight',
-        wait: { until: ['^(\\S+) 看起来想要杀死你'], captures: ['attacker'], timeoutMs: 1000 },
+        wait: {
+          closeOn: 'criteria' as const,
+          outcomes: { 敌现身: { kind: 'ok' as const, patterns: ['^(\\S+) 看起来想要杀死你'] } },
+          captureFrom: '敌现身',
+          captures: ['attacker'],
+          timeoutMs: 1000,
+        },
         action: { send: 'kill {attacker} 与 {unknown}' },
         next: { exit: { stage: 'success', ok: true } },
       }],
@@ -444,7 +612,13 @@ describe('捕获槽（T14.1：until[0] 命中行提取捕获组入 run 级命名
       steps: [
         {
           id: 'fight',
-          wait: { until: ['^你被(.*?)吸引了'], captures: ['lure'], timeoutMs: 1000 },
+          wait: {
+            closeOn: 'criteria' as const,
+            outcomes: { 被吸引: { kind: 'ok' as const, patterns: ['^你被(.*?)吸引了'] } },
+            captureFrom: '被吸引',
+            captures: ['lure'],
+            timeoutMs: 1000,
+          },
           next: { goto: 'strike' },
         },
         { id: 'strike', action: { send: 'kill {lure}' }, next: { exit: { stage: 'success', ok: true } } },
@@ -458,20 +632,25 @@ describe('捕获槽（T14.1：until[0] 命中行提取捕获组入 run 级命名
     expect(sent).toEqual([])
   })
 
-  it('⑥b 空值护栏（D11）：done 收束但一条 until 都没命中 → 同型 timeout 收束', async () => {
+  it('⑥b 捕获槽无结局命中（ga 关窗无分类）→ 同型护栏收束并点名', async () => {
     const flow = {
-      entry: 'fight',
+      entry: 'urlwait',
       steps: [{
-        id: 'fight',
-        wait: { gaCount: 1, until: ['^(\\S+) 看起来想要杀死你'], captures: ['attacker'], timeoutMs: 1000 },
-        action: { send: 'kill {attacker}' },
+        id: 'urlwait',
+        wait: {
+          closeOn: 'ga' as const,
+          captureFrom: '验证码地址',
+          captures: ['captchaUrl'],
+          timeoutMs: 1000,
+        },
+        action: { send: 'open {captchaUrl}' },
         next: { exit: { stage: 'success', ok: true } },
       }],
     }
     const { io, sent } = fakeIO([{ lines: ['一些无关输出'], reason: 'done' }])
     const r = await runFlow(record(flow), io, CREDS)
     expect(r).toMatchObject({ ok: false, stage: 'timeout' })
-    expect(r.lines.join('\n')).toContain('本窗无「槽1」结局命中')
+    expect(r.lines.join('\n')).toContain('本窗无「验证码地址」结局命中')
     expect(sent).toEqual([])
   })
 
@@ -481,9 +660,15 @@ describe('捕获槽（T14.1：until[0] 命中行提取捕获组入 run 级命名
       steps: [
         {
           id: 'listen',
-          // 行首锚 + 多行窗：按 §8.13 勘误③ 必须配 flags 'm'（整窗匹配模型；
-          // 旧「逐行提取」实现会掩盖这个分歧——见 ⑨–⑪ 语义澄清用例）。
-          wait: { until: ['^(\\S+)对(\\S+)说'], flags: 'm', captures: ['who', 'whom'], timeoutMs: 1000 },
+          // 行首锚 + 多行窗：必须显式配 flags 'm'（整窗匹配模型；DEC-13 告警④点名失活风险）。
+          wait: {
+            closeOn: 'criteria' as const,
+            outcomes: { 有人说话: { kind: 'ok' as const, patterns: ['^(\\S+)对(\\S+)说'] } },
+            captureFrom: '有人说话',
+            captures: ['who', 'whom'],
+            flags: 'm',
+            timeoutMs: 1000,
+          },
           next: { goto: 'reply' },
         },
         { id: 'reply', action: { send: 'tell {whom} 收到 {who}' }, next: { exit: { stage: 'success', ok: true } } },
@@ -501,7 +686,13 @@ describe('捕获槽（T14.1：until[0] 命中行提取捕获组入 run 级命名
       steps: [
         {
           id: 'fight',
-          wait: { until: ['^(\\S+) 看起来想要杀死你'], captures: ['attacker'], timeoutMs: 1000 },
+          wait: {
+            closeOn: 'criteria' as const,
+            outcomes: { 敌现身: { kind: 'ok' as const, patterns: ['^(\\S+) 看起来想要杀死你'] } },
+            captureFrom: '敌现身',
+            captures: ['attacker'],
+            timeoutMs: 1000,
+          },
           action: { send: 'hi {name} {pass} {attacker}' },
           next: { goto: 'cred' },
         },
@@ -521,11 +712,21 @@ describe('捕获槽（T14.1：until[0] 命中行提取捕获组入 run 级命名
       steps: [
         {
           id: 'cap',
-          wait: { until: ['^(\\S+) 线索'], captures: ['who'], timeoutMs: 1000 },
+          wait: {
+            closeOn: 'criteria' as const,
+            outcomes: { 线索: { kind: 'ok' as const, patterns: ['^(\\S+) 线索'] } },
+            captureFrom: '线索',
+            captures: ['who'],
+            timeoutMs: 1000,
+          },
           action: { send: 'ask {who}' },
           next: { goto: 'other' },
         },
-        { id: 'other', wait: { until: ['^再看'], timeoutMs: 1000 }, next: { goto: 'use' } },
+        { id: 'other', wait: {
+          closeOn: 'criteria' as const,
+          outcomes: { 再看: { kind: 'ok' as const, patterns: ['^再看'] } },
+          timeoutMs: 1000,
+        }, next: { goto: 'use' } },
         { id: 'use', action: { send: 'kill {who}' }, next: { exit: { stage: 'success', ok: true } } },
       ],
     }
@@ -538,37 +739,19 @@ describe('捕获槽（T14.1：until[0] 命中行提取捕获组入 run 级命名
     expect(sent).toEqual(['ask 妖精', 'kill 妖精'])
   })
 
-  // ── 语义澄清（2026-10-05）：捕获与路由同源 ──────────────────────────
-  // 规则：捕获判定 = 路由判定（同一份 firstHit 结果）。命中 index = 0（捕获判据
-  // 路径）⇒ 整窗 exec 提取，组空 ⇒ D11 结构化 timeout；命中 index > 0（其它已
-  // 声明判据）⇒ 该路径不捕获、不失败，按该判据路由；一条都没命中 ⇒ D11 timeout。
-
-  it('⑨ 其它已声明判据命中时不被捕获失败吞掉：分类出口可达（语义澄清）', async () => {
-    const flow = {
-      entry: 'judge',
-      steps: [
-        {
-          id: 'judge',
-          wait: { until: ['^(\\S+) 想要杀死你', '^你已经死了'], captures: ['attacker'], timeoutMs: 1000 },
-          branch: [{ goto: 'kill' }, { exit: { stage: 'dead', ok: false } }],
-          next: { goto: 'kill' },
-        },
-        { id: 'kill', action: { send: 'kill {attacker}' }, next: { exit: { stage: 'success', ok: true } } },
-      ],
-    }
-    const { io, sent } = fakeIO([{ lines: ['你已经死了'], reason: 'done' }])
-    const r = await runFlow(record(flow), io, CREDS)
-    expect(r).toMatchObject({ ok: false, stage: 'dead' })
-    expect(sent).toEqual([])
-  })
-
-  it('⑩ 跨行捕获判据整窗 exec：显式 \\n 的 until[0] 可捕获（不再逐行失配）', async () => {
+  it('⑩ 跨行捕获判据整窗 exec：显式 \\n 的 patterns[0] 可捕获（不再逐行失配）', async () => {
     const flow = {
       entry: 'look',
       steps: [
         {
           id: 'look',
-          wait: { until: ['^名字：(\\S+)\\n级别'], captures: ['who'], timeoutMs: 1000 },
+          wait: {
+            closeOn: 'criteria' as const,
+            outcomes: { 长相: { kind: 'ok' as const, patterns: ['^名字：(\\S+)\\n级别'] } },
+            captureFrom: '长相',
+            captures: ['who'],
+            timeoutMs: 1000,
+          },
           next: { goto: 'use' },
         },
         { id: 'use', action: { send: 'ask {who}' }, next: { exit: { stage: 'success', ok: true } } },
@@ -580,13 +763,22 @@ describe('捕获槽（T14.1：until[0] 命中行提取捕获组入 run 级命名
     expect(sent).toEqual(['ask hero'])
   })
 
-  it('⑪ 命中非捕获判据且无 branch：走 next 不捕获，未填充槽原样保留（语义澄清）', async () => {
+  it('⑪ 命中非捕获槽 → 走路由不捕获，未填充槽原样保留（语义澄清）', async () => {
     const flow = {
       entry: 'wait',
       steps: [
         {
           id: 'wait',
-          wait: { until: ['^A(\\d+)', '^B'], captures: ['n'], timeoutMs: 1000 },
+          wait: {
+            closeOn: 'criteria' as const,
+            outcomes: {
+              编号: { kind: 'ok' as const, patterns: ['^A(\\d+)'] },
+              标记: { kind: 'ok' as const, patterns: ['^B'] },
+            },
+            captureFrom: '编号',
+            captures: ['n'],
+            timeoutMs: 1000,
+          },
           next: { goto: 'use' },
         },
         { id: 'use', action: { send: 'v={n}' }, next: { exit: { stage: 'success', ok: true } } },
@@ -599,97 +791,20 @@ describe('捕获槽（T14.1：until[0] 命中行提取捕获组入 run 级命名
   })
 })
 
-describe('解释器去重测（T15.2：匹配单点在 core3 读窗机）', () => {
-  it('⑪ 解释器源码内不再出现判据匹配（只编译判据，不 test/exec）', () => {
-    const src = readFileSync(new URL('../src/core/interpreter.ts', import.meta.url), 'utf8')
-    // 断言"代码"而非注释：剥掉块注释与行注释后再查。
-    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
-    expect(code).not.toMatch(/\.exec\(/)
-    expect(code).not.toMatch(/\.test\(/)
-    expect(code).not.toContain('captureSlots')
-    expect(code).not.toContain('firstHit')
-  })
-})
-
-describe('T26.6 新格式路由（closeOn 槽表 + onOutcome + captureFrom）', () => {
-  /** login confirm 同型的新格式 wait（具名槽）。 */
-  const NEW_WAIT = {
-    closeOn: 'criteria' as const,
-    outcomes: {
-      需替换: { kind: 'ok' as const, patterns: ['您要将另一个连线中的相同人物赶出去'] },
-      登录成功: { kind: 'ok' as const, patterns: ['目前权限'] },
-      密码错误: { kind: 'fail' as const, patterns: ['密码错误'] },
-    },
-    timeoutMs: 1000,
-  }
-
-  it('ok 槽命中 → onOutcome goto 转后继步', async () => {
-    const flow = {
-      entry: 'confirm',
-      steps: [
-        { id: 'confirm', wait: NEW_WAIT, onOutcome: { 需替换: { goto: 'replace' } }, next: { goto: 'done' } },
-        { id: 'replace', action: { send: 'y' }, next: { exit: { stage: 'success', ok: true } } },
-        { id: 'done', next: { exit: { stage: 'success', ok: true } } },
-      ],
-    }
-    const { io, sent } = fakeIO([{ lines: ['您要将另一个连线中的相同人物赶出去，取而代之吗？'], reason: 'done' }])
-    const r = await runFlow(record(flow), io, CREDS)
-    expect(r).toMatchObject({ ok: true, stage: 'success' })
-    expect(sent).toEqual(['y'])
-  })
-
-  it('ok 槽命中但未覆盖 → 走 next（§3.10 语义保持）', async () => {
-    const flow = {
-      entry: 'confirm',
-      steps: [
-        { id: 'confirm', wait: NEW_WAIT, onOutcome: { 需替换: { goto: 'replace' } }, next: { goto: 'done' } },
-        { id: 'replace', next: { exit: { stage: 'wrong', ok: false } } },
-        { id: 'done', next: { exit: { stage: 'success', ok: true } } },
-      ],
-    }
-    const { io } = fakeIO([{ lines: ['目前权限：(player)'], reason: 'done' }])
-    const r = await runFlow(record(flow), io, CREDS)
-    expect(r).toMatchObject({ ok: true, stage: 'success' })
-  })
-
-  it('fail 槽命中 → onOutcome exit 终结；action 不发（失败不应答，legacy 同序）', async () => {
-    const flow = {
-      entry: 'confirm',
-      steps: [
-        {
-          id: 'confirm',
-          wait: NEW_WAIT,
-          action: { send: '不应发送' },
-          onOutcome: { 密码错误: { exit: { stage: 'bad-pass', ok: false } } },
-          next: { goto: 'done' },
-        },
-        { id: 'done', next: { exit: { stage: 'success', ok: true } } },
-      ],
-    }
-    const { io, sent } = fakeIO([{ lines: ['密码错误！'], reason: 'failOn' }])
-    const r = await runFlow(record(flow), io, CREDS)
-    expect(r).toMatchObject({ ok: false, stage: 'bad-pass' })
-    expect(sent).toEqual([])
-  })
-
-  it('fail 槽命中但未覆盖 → 缺省 timeout 出口', async () => {
-    const flow = {
-      entry: 'confirm',
-      steps: [{ id: 'confirm', wait: NEW_WAIT, next: { exit: { stage: 'success', ok: true } } }],
-    }
-    const { io } = fakeIO([{ lines: ['密码错误！'], reason: 'failOn' }])
-    const r = await runFlow(record(flow), io, CREDS)
-    expect(r).toMatchObject({ ok: false, stage: 'timeout' })
-  })
-
-  it('closeOn ga：GA 收窗 + 分类命中 → 按结局名路由', async () => {
+describe('两级路由（DEC-19：kind 直达常态 / when 细化 / ga 断言）', () => {
+  it('ga 分类命中 → onOutcome.ok.when 按槽名路由', async () => {
     const flow = {
       entry: 'ask',
       steps: [
         {
           id: 'ask',
-          wait: { closeOn: 'ga' as const, gaCount: 1, outcomes: { 拜师成功: { kind: 'ok' as const, patterns: ['你拜入了'] } }, timeoutMs: 1000 },
-          onOutcome: { 拜师成功: { exit: { stage: 'success', ok: true } } },
+          wait: {
+            closeOn: 'ga' as const,
+            count: 1,
+            outcomes: { 拜师成功: { kind: 'ok' as const, patterns: ['你拜入了'] } },
+            timeoutMs: 1000,
+          },
+          onOutcome: { ok: { when: { 拜师成功: { exit: { stage: 'success', ok: true } } } } },
         },
       ],
     }
@@ -701,152 +816,141 @@ describe('T26.6 新格式路由（closeOn 槽表 + onOutcome + captureFrom）', 
     expect(r).toMatchObject({ ok: true, stage: 'success' })
   })
 
-  it('quiet + silence 推定槽 → 正常出口（T26.4：静默照常路由，不是 timeout）', async () => {
+  it('ga 声明分类槽但无一命中 → 断言失败（fail 路由 + 「收窗成功，分支未知」；action 不发）', async () => {
     const flow = {
-      entry: 'walk',
+      entry: 'ask',
       steps: [
         {
-          id: 'walk',
+          id: 'ask',
           wait: {
-            closeOn: 'race' as const,
-            quietMs: 1000,
-            outcomes: {
-              推定完成: { kind: 'ok' as const, patterns: [] },
-              软阻断: { kind: 'fail' as const, patterns: ['前面没有去'] },
-            },
+            closeOn: 'ga' as const,
+            count: 1,
+            outcomes: { 拜师成功: { kind: 'ok' as const, patterns: ['你拜入了'] } },
             timeoutMs: 1000,
           },
-          onOutcome: { 推定完成: { exit: { stage: 'success', ok: true } }, 软阻断: { exit: { stage: 'soft-stop', ok: false } } },
+          action: { send: '不应发送' },
+          onOutcome: { fail: { exit: { stage: 'assert-miss', ok: false } } },
         },
       ],
     }
-    const { io } = fakeIO([
-      { lines: [], reason: 'quiet', hit: { by: 'silence', index: -1, groups: [], outcome: '推定完成', kind: 'ok' } },
+    // 剧本直写 GA 收窗且无分类命中（合成帧 by:'ga' kind:'fail'）——读窗机形状见 core3 read.spec。
+    const { io, sent } = fakeIO([
+      { lines: ['一些无关输出'], reason: 'done', hit: { by: 'ga', index: -1, groups: [], kind: 'fail' } },
     ])
     const r = await runFlow(record(flow), io, CREDS)
+    expect(r).toMatchObject({ ok: false, stage: 'assert-miss' })
+    expect(r.lines.join('\n')).toContain('收窗成功，分支未知')
+    expect(sent).toEqual([])
+  })
+
+  it('ga 未声明分类槽 → 关窗即 next（无 hit，命中档由 read 机 omitted）', async () => {
+    const flow = {
+      entry: 'a',
+      steps: [
+        { id: 'a', wait: { closeOn: 'ga' as const, timeoutMs: 1000 }, next: { goto: 'b' } },
+        { id: 'b', next: { exit: { stage: 'success', ok: true } } },
+      ],
+    }
+    const { io } = fakeIO([{ lines: ['> '], reason: 'done' }])
+    const r = await runFlow(record(flow), io, CREDS)
     expect(r).toMatchObject({ ok: true, stage: 'success' })
   })
 
-  it('裸静默（无分类）→ 无命中走 next', async () => {
+  it('quiet 有行 → 合成 ok 帧 → 走 next（静默照常路由，不是 timeout）', async () => {
     const flow = {
       entry: 'walk',
       steps: [
         {
           id: 'walk',
-          wait: {
-            closeOn: 'quiet' as const,
-            quietMs: 1000,
-            outcomes: { 推定完成: { kind: 'ok' as const, patterns: [] } },
-            timeoutMs: 1000,
-          },
+          wait: { closeOn: 'quiet' as const, timeoutMs: 1000 },
           next: { exit: { stage: 'success', ok: true } },
         },
       ],
     }
-    const { io } = fakeIO([{ lines: [], reason: 'quiet', hit: { by: 'silence', index: -1, groups: [] } }])
+    const { io } = fakeIO([{ lines: ['回显一'], reason: 'quiet' }])
     const r = await runFlow(record(flow), io, CREDS)
     expect(r).toMatchObject({ ok: true, stage: 'success' })
   })
 
-  it('captureFrom 命中 → 组值入槽，后继步正确替换', async () => {
+  it('quiet 零行 → 合成 fail 帧（等同 timeout）→ fail 路由/缺省 timeout 出口', async () => {
     const flow = {
-      entry: 'urlwait',
+      entry: 'walk',
       steps: [
         {
-          id: 'urlwait',
-          wait: {
-            closeOn: 'criteria' as const,
-            outcomes: { 验证码地址: { kind: 'ok' as const, patterns: ['^(https?://\\S*robot\\.php\\S*)'] } },
-            captureFrom: '验证码地址',
-            captures: ['captchaUrl'],
-            timeoutMs: 1000,
-          },
-          next: { goto: 'open' },
+          id: 'walk',
+          wait: { closeOn: 'quiet' as const, timeoutMs: 1000 },
+          onOutcome: { fail: { exit: { stage: 'silent-fail', ok: false } } },
         },
-        { id: 'open', action: { send: 'open {captchaUrl}' }, next: { exit: { stage: 'success', ok: true } } },
       ],
     }
-    const { io, sent } = fakeIO([{ lines: ['https://mud.example/robot.php?filename=abc'], reason: 'done' }])
+    const { io } = fakeIO([{ lines: [], reason: 'timeout' }])
+    const r = await runFlow(record(flow), io, CREDS)
+    expect(r).toMatchObject({ ok: false, stage: 'silent-fail' })
+  })
+
+  it('onOutcome 两级形态互斥：直达（goto/exit）与 when 并存由 schema 拒存——见 registry 保存门', async () => {
+    // 本用例只确认解释器对直达形态的消费（goto）：fail 直达转步。
+    const flow = {
+      entry: 'a',
+      steps: [
+        { id: 'a', wait: { closeOn: 'criteria' as const, outcomes: { 拦: { kind: 'fail' as const, patterns: ['^拦截'] } }, timeoutMs: 1000 }, onOutcome: { fail: { goto: 'b' } } },
+        { id: 'b', action: { send: '补救' }, next: { exit: { stage: 'success', ok: true } } },
+      ],
+    }
+    const { io, sent } = fakeIO([{ lines: ['拦截了'], reason: 'done' }])
     const r = await runFlow(record(flow), io, CREDS)
     expect(r).toMatchObject({ ok: true, stage: 'success' })
-    expect(sent).toEqual(['open https://mud.example/robot.php?filename=abc'])
+    expect(sent).toEqual(['补救'])
   })
+})
 
-  it('captureFrom 组提取为空 → D11 空值护栏收束，不落槽', async () => {
+describe('raw 透传（DEC-21 判据词汇单点：内核不编译、不归一）', () => {
+  it('wait 声明原样透传 io.read（outcomes/count/maxLines/timeoutMs/flags）', async () => {
     const flow = {
-      entry: 'urlwait',
+      entry: 'a',
       steps: [
         {
-          id: 'urlwait',
-          wait: {
-            closeOn: 'criteria' as const,
-            outcomes: { 验证码地址: { kind: 'ok' as const, patterns: ['^(x*)robot'] } },
-            captureFrom: '验证码地址',
-            captures: ['captchaUrl'],
-            timeoutMs: 1000,
-          },
-          action: { send: 'open {captchaUrl}' },
-          next: { exit: { stage: 'success', ok: true } },
-        },
-      ],
-    }
-    const { io, sent } = fakeIO([{ lines: ['robot'], reason: 'done' }])
-    const r = await runFlow(record(flow), io, CREDS)
-    expect(r).toMatchObject({ ok: false, stage: 'timeout' })
-    expect(r.lines.join('\n')).toContain('捕获槽 captchaUrl 提取为空')
-    expect(sent).toEqual([])
-  })
-
-  it('captureFrom 无结局命中（GA/maxLines 关窗）→ 同型护栏收束', async () => {
-    const flow = {
-      entry: 'urlwait',
-      steps: [
-        {
-          id: 'urlwait',
-          wait: {
-            closeOn: 'criteria' as const,
-            maxLines: 5,
-            outcomes: { 验证码地址: { kind: 'ok' as const, patterns: ['^(https?://\\S*robot\\.php\\S*)'] } },
-            captureFrom: '验证码地址',
-            captures: ['captchaUrl'],
-            timeoutMs: 1000,
-          },
-          action: { send: 'open {captchaUrl}' },
-          next: { exit: { stage: 'success', ok: true } },
-        },
-      ],
-    }
-    const { io, sent } = fakeIO([{ lines: ['无关输出'], reason: 'done' }])
-    const r = await runFlow(record(flow), io, CREDS)
-    expect(r).toMatchObject({ ok: false, stage: 'timeout' })
-    expect(r.lines.join('\n')).toContain('本窗无「验证码地址」结局命中')
-    expect(sent).toEqual([])
-  })
-
-  it('captureFrom 命中其它覆盖的 fail 结局 → 跳过捕获照常路由', async () => {
-    const flow = {
-      entry: 'urlwait',
-      steps: [
-        {
-          id: 'urlwait',
+          id: 'a',
           wait: {
             closeOn: 'criteria' as const,
             outcomes: {
-              验证码地址: { kind: 'ok' as const, patterns: ['^(https?://\\S*robot\\.php\\S*)'] },
-              已挂起: { kind: 'fail' as const, patterns: ['你之前请求的fullme还没有完成'] },
+              内息不足: { kind: 'fail' as const, patterns: ['内力不够'] },
+              修炼完毕: { kind: 'ok' as const, patterns: ['你将内息修炼完毕'] },
             },
-            captureFrom: '验证码地址',
-            captures: ['captchaUrl'],
-            timeoutMs: 1000,
+            maxLines: 20,
+            flags: 'm',
+            timeoutMs: 3000,
           },
-          onOutcome: { 已挂起: { exit: { stage: 'stale', ok: false } } },
-          next: { goto: 'open' },
+          next: { exit: { stage: 'success', ok: true } },
         },
-        { id: 'open', next: { exit: { stage: 'success', ok: true } } },
       ],
     }
-    const { io } = fakeIO([{ lines: ['你之前请求的fullme还没有完成'], reason: 'failOn' }])
+    const { io, reads } = fakeIO([{ lines: ['你将内息修炼完毕'], reason: 'done' }])
     const r = await runFlow(record(flow), io, CREDS)
-    expect(r).toMatchObject({ ok: false, stage: 'stale' })
+    expect(r).toMatchObject({ ok: true, stage: 'success' })
+    const opts = reads[0]!
+    expect(opts).toMatchObject({
+      closeOn: 'criteria',
+      outcomes: {
+        内息不足: { kind: 'fail', patterns: ['内力不够'] },
+        修炼完毕: { kind: 'ok', patterns: ['你将内息修炼完毕'] },
+      },
+      maxLines: 20,
+      flags: 'm',
+      timeoutMs: 3000,
+    })
+  })
+})
+
+describe('解释器去重测（T15.2：匹配单点在 core3 读窗机）', () => {
+  it('⑪ 解释器源码内不再出现判据匹配（不 test/exec/编译）', () => {
+    const src = readFileSync(new URL('../src/core/interpreter.ts', import.meta.url), 'utf8')
+    // 断言"代码"而非注释：剥掉块注释与行注释后再查。
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+    expect(code).not.toMatch(/\.exec\(/)
+    expect(code).not.toMatch(/\.test\(/)
+    expect(code).not.toContain('captureSlots')
+    expect(code).not.toContain('firstHit')
+    expect(code).not.toMatch(/new RegExp/)
   })
 })

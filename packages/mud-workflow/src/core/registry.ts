@@ -25,7 +25,7 @@
  */
 
 import {
-  checkFlow, normalizeFlow, usesCredentialVerb, workflowRecordSchema, workflowSnapshotSchema,
+  checkFlow, usesCredentialVerb, workflowRecordSchema, workflowSnapshotSchema,
 } from '../contract/schema.ts'
 import type {
   Flow, FlowSlotsPort, SnapshotReason, WorkflowEntryView, WorkflowOrigin, WorkflowRecord,
@@ -202,29 +202,26 @@ export class WorkflowRegistry {
   /**
    * 按名解析生效视图（**裁决优先级单一落点**，`get`/`list`/`entries` 共用）：
    *   - **locked 预制 ⇒ 内置优先**：同名修缮降级为 `shadowed`（保留在存储层待
-   *     `delete` 清理），读取与执行一律用 locked 内置——locked 的「拒改拒删」在
-   *     读取/执行侧同样成立（不再只在保存侧成立）；
+   *     `delete` 清理），读取与执行一律用 locked 内置；
    *   - 其它 ⇒ agent 修缮优先（非 locked 预制可被修缮覆盖，`delete` 还原为预制）。
    *
-   * **读时归一**（T26.6）：生效记录经 normalizeFlow 转新词汇（遗留 until/failOn
-   * 系步骤 → closeOn/outcomes 槽表 + onOutcome 路由），执行与 get 面只见新格式；
-   * 归一产物再过一遍 checkFlow 复核（不可判定引用 → 告警随视图可见；结构性异常
-   * 降级为告警不炸视图）。
+   * **as-written**（T26.6，DEC-25）：存储即新词汇（读时归一已退役）；视图只过
+   * checkFlow 复核出告警（不可判定引用 → 告警随视图可见；结构性异常降级为
+   * 告警不炸视图）。旧词汇记录解析失败在装载期点名（测试期零兼容层）。
    */
   private view(name: string): WorkflowEntryView | undefined {
     const builtin = this.builtins.get(name)
     const overlay = this.recordTable().get(name)
     const toView = (record: WorkflowRecord, origin: WorkflowOrigin, shadowed?: WorkflowRecord): WorkflowEntryView => {
-      const flow = normalizeFlow(record.flow)
       let warnings: readonly string[] | undefined
       try {
-        const found = checkFlow(flow, this.slotsOf ?? undefined)
+        const found = checkFlow(record.flow, this.slotsOf ?? undefined)
         if (found.length > 0) warnings = found
       } catch (e) {
         warnings = [(e as Error).message]
       }
       return {
-        record: { ...record, flow },
+        record,
         origin,
         ...(shadowed !== undefined ? { shadowed } : {}),
         ...(warnings !== undefined ? { warnings } : {}),

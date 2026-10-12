@@ -727,15 +727,20 @@ describe('workflowIoFor 缝侧 lastSent 查表注入（T26）', () => {
     }
   })
 
-  it('已声明判据的步 → 透传不注入（无归因，现役行为零变化）', async () => {
+  it('已声明判据 + 登记命令 → 同形态槽级合并注入（声明槽与表槽并存，归因 table）', async () => {
     const server = await startDzServer()
     const { service, handle } = await seamWith(server)
     try {
       handle.io.send('dz')
-      const r = await handle.io.read({ until: [/永不命中/], timeoutMs: 200 }, [])
-      expect(r.reason).toBe('timeout') // 只等声明判据，注入未发生
-      expect(r.command).toBeUndefined()
-      expect(r.source).toBeUndefined()
+      const r = await handle.io.read({
+        closeOn: 'criteria',
+        outcomes: { 自定义: { kind: 'ok', patterns: ['自定义句'] } },
+        timeoutMs: 200,
+      }, [])
+      expect(r.reason).toBe('done')
+      expect(r.hit?.outcome).toBe('完成') // 表槽完成句经合并窗口命中（DEC-5 同形态合并）
+      expect(r.command).toBe('dazuo') // 归因：同形态合并命中表条目
+      expect(r.source).toBe('table')
     } finally {
       handle.release()
       await service.disposeAll()
@@ -743,7 +748,7 @@ describe('workflowIoFor 缝侧 lastSent 查表注入（T26）', () => {
     }
   })
 
-  it('凭据命令置空 lastSent → 不查表', async () => {
+  it('凭据命令置空 lastSent → 不走表（source none，不收窗只等超时）', async () => {
     const server = await startDzServer()
     const { service, handle } = await seamWith(server)
     try {
@@ -751,7 +756,7 @@ describe('workflowIoFor 缝侧 lastSent 查表注入（T26）', () => {
       const r = await handle.io.read({ timeoutMs: 200 }, [])
       expect(r.reason).toBe('timeout')
       expect(r.command).toBeUndefined()
-      expect(r.source).toBeUndefined()
+      expect(r.source).toBe('none') // 凭据命令 sent=null → 不收窗只等超时（DEC-8）
     } finally {
       handle.release()
       await service.disposeAll()
@@ -759,7 +764,7 @@ describe('workflowIoFor 缝侧 lastSent 查表注入（T26）', () => {
     }
   })
 
-  it('未登记命令（fallback）→ 不注入（现役透传）', async () => {
+  it('未登记命令 → 不收窗只等超时（source none，DEC-4 终态）', async () => {
     const server = await startDzServer()
     const { service, handle } = await seamWith(server)
     try {
@@ -767,7 +772,7 @@ describe('workflowIoFor 缝侧 lastSent 查表注入（T26）', () => {
       const r = await handle.io.read({ timeoutMs: 200 }, [])
       expect(r.reason).toBe('timeout')
       expect(r.command).toBeUndefined()
-      expect(r.source).toBeUndefined()
+      expect(r.source).toBe('none')
     } finally {
       handle.release()
       await service.disposeAll()

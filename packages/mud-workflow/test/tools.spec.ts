@@ -27,19 +27,23 @@ function fakeRegistrar(): { registrar: ToolRegistrar; defs: Map<string, MudToolD
   }
 }
 
-/** 最小合法流程（单步直出 success）。 */
+/** 最小合法流程（单步直出 success；T26.6 新词汇）。 */
 const simpleFlow = {
   entry: 'a',
   steps: [{
     id: 'a',
-    wait: { until: ['完成'], timeoutMs: 1000 },
+    wait: {
+      closeOn: 'criteria' as const,
+      outcomes: { 完成: { kind: 'ok' as const, patterns: ['完成'] } },
+      timeoutMs: 1000,
+    },
     next: { exit: { stage: 'success', ok: true } },
   }],
 }
 
 const CREDS = { name: 'hero', pass: 'p' }
 
-/** 脚本化 fake IO（单窗 done；命中帧与 simpleFlow 的 until[0] 一致）。 */
+/** 脚本化 fake IO（单窗 done；命中帧与 simpleFlow 的槽一致）。 */
 function fakeIO(): WorkflowIO {
   return {
     send: () => true,
@@ -47,7 +51,8 @@ function fakeIO(): WorkflowIO {
     read: async () => ({
       lines: [{ text: '完成' }],
       reason: 'done',
-      hit: { by: 'until', index: 0, groups: [] },
+      closeOn: 'criteria',
+      hit: { by: 'criteria', index: 0, groups: [], outcome: '完成', kind: 'ok' },
     }),
     recentLines: () => [],
     awaitCaptcha: async () => ({ kind: 'closed' }),

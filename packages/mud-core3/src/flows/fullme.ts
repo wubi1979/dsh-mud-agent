@@ -4,7 +4,7 @@
  * 流程实体归 core3（login 同款裁定）：经 `ctx.provide('mudCore3', { builtinFlows })`
  * 交 mud-workflow 注册表挂载（registry.registerBuiltins，fail-loud 校验）。
  *
- * 主链四段 + stale 自愈环（T13 计划 D2；落地后同步 §8.15；T26 具名槽词汇 DEC-19）：
+ * 主链四段 + stale 自愈环（T13 计划 D2；落地后同步 §8.15；T26.6 两级路由词汇）：
  *   request    发 `fullme` 引子（触发 = 被动处置：agent 判系统提示/降级后跑本流程）
  *   urlwait    等 robot.php URL 行（仅首轮锚定）：captureFrom 槽「验证码地址」
  *              捕获组按 T14 提取 URL 入 run 级槽 captchaUrl——答错重入 judge →
@@ -14,15 +14,17 @@
  *              本次 fullme 被拒）→ abandon1–3 三连 `fullme 1` 放弃悬挂态 →
  *              结构化 fail 收束**不重试**（服务端事实：放弃后约 15 分钟冷却，
  *              立即重试必再 stale）；fail 槽「冷却中」→ cooldown 出口（冷却未完，
- *              agent 等下次服务器提示再触发）；
+ *              agent 等下次服务器提示再触发）。两个 fail 分支不同 ⇒ when 细化。
  *   answer     纯动作步：captcha 动作收 url 参数（`{captchaUrl}` 槽，T14 D9）→
  *              抓图 → 推帧 → 挂起等人工码
  *              （预算 = Config captchaTimeoutMs，缺省 180s）；
  *   send-code  发 `fullme {captcha}`（引擎注入槽替换，{captcha} 非敏感不掩码）；
- *   judge      等判据：答对句 → success 出口 / 答错句 → 缺省 goto answer 重入
- *              （不重发 fullme 引子——服务端事实：每次 fullme 只回一次 URL 无重发，
- *              同 URL 继续作答；弹窗重现缓存图不重抓）；失效句 fail 槽「失效」→
- *              expired 出口（URL 有效期 3 分钟 / 刷新超配额后页面失效）。
+ *   judge      等判据：答对句 → success 出口；答错句（**fail**——信号视角改判
+ *              T26.6/DEC-19：被拒/未达成是 fail，重入 answer 用 when 表达）→
+ *              缺省 goto answer 重入（不重发 fullme 引子——服务端事实：每次
+ *              fullme 只回一次 URL 无重发，同 URL 继续作答；弹窗重现缓存图不
+ *              重抓）；失效句 fail 槽「失效」→ expired 出口（URL 有效期 3 分钟 /
+ *              刷新超配额后页面失效）。
  *
  * 判据语料（v1 实录七常量起步；v1 §11 `doc/archive/mud-core/flows/fullme.md`），
  * 宽匹配起步，实机触发时按 U2 校准（stale 句与失效句原文待实录）。
@@ -47,7 +49,7 @@ const STALE_SRC = '你之前请求的fullme还没有完成'
 const COOLDOWN_SRC = '^你刚刚用过这个命令不久，还要[^。]*才能再用。'
 /** 槽「答对」：答对句（v1 实录，去尾句号宽匹配）。 */
 const OK_SRC = '你突然感到精神一振，浑身似乎又充满了力量'
-/** 槽「答错」：答错句（v1 实录，去尾句号宽匹配）。 */
+/** 槽「答错」（fail——信号视角改判 T26.6/DEC-19：被拒是 fail，重入用 when 表达）：答错句（v1 实录，去尾句号宽匹配）。 */
 const WRONG_SRC = '好像什么都没有发生，但是又好像有什么事情做错了'
 /** 槽「失效」（fail）：失效句宽匹配起步（URL 过期/刷新超配额；原文待 U2 语料校准）。 */
 const EXPIRED_SRC = '还没完成|失效|过期'
@@ -78,10 +80,14 @@ export const fullme: WorkflowRecord = {
           timeoutMs: STEP_MS,
         },
         onOutcome: {
-          // stale → 三连 fullme 1 放弃悬挂态 → fail 收束不重试（15 分钟冷却）
-          已挂起: { goto: 'abandon1' },
-          // 冷却未完 → 结构化失败，agent 等下次服务器提示再触发
-          冷却中: { exit: { stage: 'cooldown', ok: false } },
+          // 两个 fail 分支不同 ⇒ when 细化：stale → 三连 fullme 1 放弃悬挂态 →
+          // fail 收束不重试（15 分钟冷却）；冷却未完 → 结构化失败，agent 等下次提示。
+          fail: {
+            when: {
+              已挂起: { goto: 'abandon1' },
+              冷却中: { exit: { stage: 'cooldown', ok: false } },
+            },
+          },
         },
         // 验证码地址（ok 未覆盖）→ next
         next: { goto: 'answer' },
@@ -98,17 +104,21 @@ export const fullme: WorkflowRecord = {
           outcomes: {
             失效: { kind: 'fail', patterns: [EXPIRED_SRC] },
             答对: { kind: 'ok', patterns: [OK_SRC] },
-            答错: { kind: 'ok', patterns: [WRONG_SRC] },
+            答错: { kind: 'fail', patterns: [WRONG_SRC] },
           },
           flags: 'm',
           timeoutMs: STEP_MS,
         },
         onOutcome: {
-          失效: { exit: { stage: 'expired', ok: false } },
-          答对: { exit: { stage: 'success', ok: true } },
+          ok: { exit: { stage: 'success', ok: true } },
+          fail: {
+            when: {
+              // 答错（fail，信号视角）→ 重入 answer：缓存图重现，不重发引子
+              答错: { goto: 'answer' },
+              失效: { exit: { stage: 'expired', ok: false } },
+            },
+          },
         },
-        // 答错（ok 未覆盖）→ 重入 answer：缓存图重现，不重发引子
-        next: { goto: 'answer' },
       },
       // stale 自愈环：三连发（服务端事实：三连 fullme 1 才真放弃），然后 fail 收束。
       { id: 'abandon1', action: { send: 'fullme 1' }, next: { goto: 'abandon2' } },

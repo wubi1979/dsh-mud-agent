@@ -183,7 +183,7 @@ TCP 字节 → link/telnet（协商 / GMCP 子协商 / GA·EOR 边界）
         → link/line（ANSI 解析 → 行化 → MudLine{text, abs}，abs 单调递增）
         → SessionRuntime.pendingLines（环形入队，断线清空）+ 边界事件
         → 消费者（§5）：
-             ① ReadMachine：read 在途则 acc + 判定（failOn > until > gaCount > maxLines）
+             ① ReadMachine：read 在途则 acc + 判定（fail 槽 > ok 槽 > GA 计数 > maxLines）
              ② Deliverer：按 seen 拉取 → 静默窗口聚合 → 用户消息投递进本会话
              ③ GameScreen：写入无头屏（供画面 tab follow）
              ④ World：GMCP / 状态写入（不消费行、不推进水位）
@@ -207,7 +207,7 @@ agent 工具调用 mud_send{cmd, listen}
    → 任务书回合（根读状态自行规划）
    → 根委派子 agent（宿主原生 subagent，一次性前台）→ 子调 mud_workflow_run{name:'login'}
    → 归属解析 → workflowIoFor（凭据 resolve → acquireSend → io 原语）
-   → 解释器逐步：wait 读窗 → failOn 出口 → action 发送 → 路由
+   → 解释器逐步：wait 读窗 → fail 负面出口 → action 发送 → 两级路由（onOutcome/next）
    → 出口过 pass 掩码 → 子写现场并收尾 → 收尾文本作为工具结果回到根 → 根消化后收尾
 ```
 

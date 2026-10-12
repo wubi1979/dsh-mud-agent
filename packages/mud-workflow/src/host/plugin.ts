@@ -26,7 +26,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { WorkflowRegistry } from '../core/registry.ts'
 import {
   mudWorkflowDomainSpec,
-  type HostStorageDomain, type HostTable, type WorkflowRecord, type WorkflowSnapshot,
+  type FlowSlotsPort, type HostStorageDomain, type HostTable, type WorkflowRecord, type WorkflowSnapshot,
 } from '../contract/index.ts'
 
 /** 插件名。 */
@@ -97,11 +97,12 @@ export function apply(ctx: Context, config: MudWorkflowConfig = {}): void {
   // 无害（幂等覆盖同名校验过的预制）。窄结构代位读（本包零 core3 运行时依赖；
   // 类型面由契约 WorkflowIoSeam 单点声明，core3 侧编译期断言）。
   const attachBuiltins = (core: unknown): void => {
-    // 命令总表槽名查询（T26.5）：先注端口再挂预制——保存门/视图校验据此把
-    // onOutcome/captureFrom 引用对到表槽集（窄结构代位读，同 builtinFlows）。
+    // 命令总表喂令信息查询（T26.5/26.6）：先注端口再挂预制——保存门/视图校验
+    // 据此把 when/captureFrom 引用对到表槽集并做 kind 一致性与 DEC-13 告警
+    //（窄结构代位读，同 builtinFlows）。
     const slotsOf = (core as { tableSlotsOf?: unknown }).tableSlotsOf
     if (typeof slotsOf === 'function') {
-      registry.setSlotsOf(slotsOf as (command: string) => readonly string[] | null)
+      registry.setSlotsOf(slotsOf as FlowSlotsPort)
     }
     const flows = (core as { builtinFlows?: unknown }).builtinFlows
     if (!Array.isArray(flows) || flows.length === 0) return

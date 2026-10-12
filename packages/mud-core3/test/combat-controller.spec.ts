@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CombatController, COMBAT_ENDING_RES } from '../src/combat/controller.ts'
+import { CombatController } from '../src/combat/controller.ts'
 import { CombatEdgeDetector } from '../src/combat/state.ts'
 import { CombatRuleEngine } from '../src/combat/rules.ts'
 import { CombatReporter } from '../src/combat/report.ts'
@@ -82,8 +82,11 @@ describe('CombatController（T21.4 行流接管）', () => {
     expect(e.io.holder).toBe('combat')
     expect(e.controller.currentPhase).toBe('held')
     await until(() => e.io.reads.length === 1)
-    expect(e.io.reads[0]?.until).toBe(COMBAT_ENDING_RES)
+    // T26.6：监听窗不是命令应答窗——裸读（quietMs/timeout/maxLines），无判据词汇；
+    // 结局行判定下沉回本层（收束后 isEndingLine 自测）。
+    expect(e.io.reads[0]?.quietMs).toBe(3000)
     expect(e.io.reads[0]?.timeoutMs).toBeGreaterThan(0)
+    expect(e.io.reads[0]?.maxLines).toBe(500)
   })
 
   it('W3 被占 → pending + 保命直发；在途释放后重试接管转 held', async () => {
@@ -122,11 +125,13 @@ describe('CombatController（T21.4 行流接管）', () => {
     expect(e.writes.some(([k, v]) => k === '干预' && v === 1)).toBe(true)
   })
 
-  it('结局行收束释放：until 命中 → 释放 + 清目标/敌人数 + 结算日志', async () => {
+  it('结局行收束释放：结局行自测命中 → 释放 + 清目标/敌人数 + 结算日志', async () => {
     const e = makeEnv({ world: { combat: { 目标: '大狼狗', 敌人数: 1 } } })
+    // 裸读收束带结局行（T26.6：判定下沉回本层——isEndingLine 逐行自测）。
     e.io.scripted.push({
-      lines: [], reason: 'done',
-      hit: { by: 'until', index: 0, groups: [] },
+      lines: [{ text: '你的眼前一黑……', raw: '', style: [], abs: 1, time: 0, isPrompt: false, kind: null }],
+      reason: 'quiet',
+      hit: undefined,
     })
     e.controller.onWorldChange()
     await until(() => e.controller.currentPhase === 'idle')

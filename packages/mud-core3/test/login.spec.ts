@@ -97,7 +97,32 @@ function makeIO(rt: SessionRuntime): WorkflowIO {
   return {
     send: cmd => rt.send(cmd),
     sendCredential: cmd => rt.sendCredential(cmd),
-    read: (opts, initial) => rt.read(opts, (initial ?? []) as readonly MudLine[]),
+    // raw 判据声明 → ReadSlot 编译（镜像 service.workflowIoFor read 缝的单点转换；
+    // 契约 IoReadOpts 是 raw 判据，ReadMachine 只认编译槽——转换属于缝的职责，
+    // fail 槽排前 = 判定序，flags 随行）。
+    read: (opts, initial) => {
+      const slots = opts.outcomes === undefined
+        ? undefined
+        : Object.entries(opts.outcomes)
+          .map(([name, slot]) => ({
+            name,
+            kind: slot.kind,
+            res: slot.patterns.map(p => new RegExp(p, opts.flags ?? '')),
+          }))
+          .sort((a, b) => (a.kind === 'fail' ? 0 : 1) - (b.kind === 'fail' ? 0 : 1))
+      return rt.read({
+        ...(opts.closeOn !== undefined ? { closeOn: opts.closeOn } : {}),
+        ...(slots !== undefined && slots.length > 0 ? { slots } : {}),
+        ...(opts.count !== undefined ? { count: opts.count } : {}),
+        ...(opts.maxLines !== undefined ? { maxLines: opts.maxLines } : {}),
+        timeoutMs: opts.timeoutMs ?? 30_000,
+      }, (initial ?? []) as readonly MudLine[]).then(r => ({
+        ...r,
+        // 归因（镜像缝侧：生效收窗形态随结果返回——解释器按 r.closeOn 识别
+        // ga 关窗豁免，DEC-4/§3.6）。
+        ...(opts.closeOn !== undefined ? { closeOn: opts.closeOn } : {}),
+      }))
+    },
     recentLines: n => rt.recentLines(n),
     // login 不消费 captcha（T13）；stub 满足 io 接口（B2 双侧同形后必填）。
     awaitCaptcha: async () => ({ kind: 'closed' }),

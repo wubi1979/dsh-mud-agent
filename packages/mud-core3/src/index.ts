@@ -43,7 +43,7 @@ import type { MudCore3Handle } from './tools.ts'
 import { MAX_TIMEOUT_MS } from './tools.ts'
 // 流程实体（数据归 core3；mud-workflow 是纯架构）。type-only：词汇表类型引用
 // 走契约子路径（A1 契约层单点）。
-import type { WorkflowRecord } from 'mud-workflow/contract'
+import type { FlowSlotsInfo, WorkflowRecord } from 'mud-workflow/contract'
 import { login } from './flows/login.ts'
 import { fullme } from './flows/fullme.ts'
 import { tableSlotsOf } from './command-profiles.ts'
@@ -291,9 +291,9 @@ export interface MudCore3Service extends MudCore3Handle {
   runtimeFor(agent: { id: unknown }): SessionRuntime | null
   /** 流程实体（locked login 等；mud-workflow 注册表启动期挂载，fail-loud 校验）。 */
   readonly builtinFlows: readonly WorkflowRecord[]
-  /** 命令总表槽名查询（T26.5；契约层 FlowSlotsPort 实现，宿主插件注入注册表）：
-   * 命令命中总表条目返回槽名序列（fail 先行），未登记返回 null。 */
-  readonly tableSlotsOf: (sent: string) => readonly string[] | null
+  /** 命令总表喂令信息查询（T26.5/26.6；契约层 FlowSlotsPort 实现，宿主插件注入
+   * 注册表）：命令命中总表条目返回形态+槽位（含 kind）+条目 flags，未登记返回 null。 */
+  readonly tableSlotsOf: (sent: string) => FlowSlotsInfo | null
 }
 
 // ── Remote 服务 ─────────────────────────────────────────────────

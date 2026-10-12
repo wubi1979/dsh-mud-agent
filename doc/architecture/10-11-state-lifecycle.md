@@ -166,7 +166,7 @@ mud_workflow_run { name }
   → workflowIoFor：未登记/未连接 ⇒ 可读错
        → 凭据解析（失败 fail-loud，报引用名）
        → acquireSend(holder)（流程独占 send+read）
-  → 解释器逐步：wait → failOn 出口 → action → 路由（步转移上限 256）
+  → 解释器逐步：wait → fail 负面出口 → action → 两级路由（步转移上限 256）
   → 终态：exit(success | stage) 或 结构化 timeout（点名步骤）
   → 出口过 pass 掩码（凭据零泄露）
   → finally：release（释放持有者）

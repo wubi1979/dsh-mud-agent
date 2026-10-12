@@ -1,23 +1,31 @@
 /**
- * command-profiles — 命令判据总表**装配器**（T26.1；DEC-1 / DEC-15 / DEC-18 / DEC-21）。
+ * command-profiles — 命令判据总表**装配器**（T26.1；DEC-1 / DEC-15 / DEC-18 /
+ * DEC-21；T26.6 三形态与形态比对合并终态 2026-10-12）。
  *
  * 表落 core3 数据面（纯层零宿主 import；§8.8 纯度裁定）：收集五个分组文件
  *（`commands/std|skill|usr|stunt|profession.ts`）导出的**构建期数组** → 把
- * `Judge` 编译为「正则数组 + 并行名表」（CompiledSlot；fail 槽在前 = 判定序
- * `failOn > until`）→ 装配期自检 fail-loud → 导出只读总表。**无运行期注册面**：
- * 条目是仓库维护的资产，agent 不可修缮（DEC-18），调用点显式声明是唯一逃生口。
+ * `Judge` 编译为「正则数组 + 并行名表」（CompiledSlot；fail 槽在前 = 判定序）→
+ * 装配期自检 fail-loud → 导出只读总表。**无运行期注册面**：条目是仓库维护的
+ * 资产，agent 不可修缮（DEC-18），调用点显式声明是唯一逃生口。
  *
- * **解析单点**（DEC-21）：`resolveAwaitPlan(sent, decl) → AwaitPlan` 是工具面
+ * **解析单点（DEC-21）**：`resolveAwaitPlan(sent, decl) → AwaitPlan` 是工具面
  *（mud_send / mud_walk）与流程缝（workflowIoFor 的 io.read 注入）**唯一**的
- * 收束解析入口——行为一致性由构造保证，不靠「两处都查同一张表」的纪律。
- * 三档：explicit（调用点显式声明）> table（表条目）> fallback（翻转前兜底，
- * T26.7 翻转后删除）；特例：`sent === ''` 归 `'ga'`（A.2 1:1 事实直接覆盖），
- * 凭据命令不走表（缝侧以 `sent = null` 表达）。
+ * 收束解析入口——行为一致性由构造保证。三档与合并（DEC-5 形态比对）：
+ *   - **声明（decl）**：调用点声明了判据（closeOn/outcomes）——与表条目**形态
+ *     比对**：同形态 ⇒ **槽级合并**（同名槽后声明整体替换、异名追加；数值参数
+ *     步声明优先、表填缺省）；异形态 ⇒ **整体替换**（「换判据形态 = 接管全部
+ *     槽位」）。合并槽一律按**调用点 flags**（默认无）编译——不使用条目 flags
+ *     （用户裁定 2026-10-12：flags 是覆盖；失活风险由保存门告警④点名）；
+ *   - **表条目（table）**：未声明判据 ⇒ 整条采用（条目 flags 编译）；
+ *   - **无（none）**：未声明且未登记（或凭据命令 sent=null）⇒ **不收窗只等
+ *     超时**（DEC-4 终态——无兜底档；超时文案兼语料工单，DEC-22）。
+ *   - 特例：`sent === ''` 归 `'ga'`（A.2 1:1 事实，不是「需要登记的命令」）；
+ *     凭据命令不走表（缝侧以 `sent = null` 表达，DEC-8）。
  */
 
-import { CLOSURE_KINDS, OUTCOME_NAMES } from 'mud-workflow/contract'
-import type { ClosureKind, OutcomeKind, OutcomeName } from 'mud-workflow/contract'
-import type { CommandProfile, Judge } from './commands/define.ts'
+import { CLOSURE_KINDS, RESERVED_SLOT_NAMES } from 'mud-workflow/contract'
+import type { ClosureKind, FlowSlotsInfo, OutcomeKind } from 'mud-workflow/contract'
+import type { CommandProfile, Judge, SlotTable } from './commands/define.ts'
 import { STD_COMMANDS } from './commands/std.ts'
 import { SKILL_COMMANDS } from './commands/skill.ts'
 import { USR_COMMANDS } from './commands/usr.ts'
@@ -26,28 +34,33 @@ import { PROFESSION_COMMANDS } from './commands/profession.ts'
 
 // ── 编译产物（正则数组 + 并行名表；读窗机匹配模型零变化，§5.2）────────
 
-/** 编译后的结局槽：并行名表单元（fail 槽排在 ok 槽之前 = 判定序 failOn > until）。 */
+/** 编译后的结局槽：并行名表单元（fail 槽排在 ok 槽之前 = 判定序）。
+ * `patterns` 保留 raw 源——同形态合并时按**调用点 flags** 重编译（DEC-5/裁定 6）。 */
 export interface CompiledSlot {
-  readonly name: OutcomeName
+  readonly name: string
   readonly kind: OutcomeKind
-  /** 与槽 patterns 一一对应的编译正则（推定槽为空数组）。 */
+  /** 与槽 patterns 一一对应的编译正则（整条采用档 = 条目 flags；合并档重编译）。 */
   readonly res: readonly RegExp[]
+  /** raw 判据源（合并重编译用）。 */
+  readonly patterns: readonly string[]
 }
 
-/** 编译后的判定器形态（数据面即契约层 `ClosureKind` 四值）。 */
+/** 编译后的判定器形态（数据面即契约层 `ClosureKind` 三值）。 */
 export interface CompiledJudge {
   readonly closeOn: ClosureKind
-  /** 静默毫秒（race/quiet 形态）。 */
-  readonly quietMs?: number
-  /** 槽表（fail 槽在前；推定槽 patterns 为空）。 */
+  /** GA 计数（ga 形态；缺省 1）。 */
+  readonly count?: number
+  /** 槽表（fail 槽在前）。 */
   readonly slots: readonly CompiledSlot[]
+  /** 条目级 flags（整条采用档的编译 flags；告警④与合并档重编译参照）。 */
+  readonly flags?: string
 }
 
 /** 编译后的命令条目（总表单元；只读）。 */
 export interface CompiledProfile {
   readonly id: string
   readonly aliases: readonly string[]
-  /** 查询/豁免子形态：命中即不套用本条目。 */
+  /** 查询/豁免子形态：命中即不套用本条目（测试对象 = 完整发送串）。 */
   readonly exempt?: RegExp
   /** 命令头匹配（对 trim 后的整条 cmd 测：首词 + 词边界）。 */
   readonly match: RegExp
@@ -60,36 +73,44 @@ export interface CompiledProfile {
 
 // ── 装配（构建期自检 fail-loud；DEC-18）────────────────────────────
 
-const OUTCOME_NAME_SET: ReadonlySet<string> = new Set<string>(OUTCOME_NAMES)
-
 function escapeHead(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-function compileSlot(name: string, slotValue: { kind: OutcomeKind; patterns: readonly string[] }, where: string, closeOn: ClosureKind): CompiledSlot {
-  if (!OUTCOME_NAME_SET.has(name)) {
-    throw new Error(`命令条目装配失败：${where} 引用枚举外结局名「${name}」（枚举见 mud-workflow/contract OUTCOME_NAMES）`)
-  }
-  if (slotValue.kind !== 'ok' && slotValue.kind !== 'fail') {
-    throw new Error(`命令条目装配失败：${where} 槽「${name}」kind 非法：${String(slotValue.kind)}`)
-  }
-  if (!Array.isArray(slotValue.patterns)) {
-    throw new Error(`命令条目装配失败：${where} 槽「${name}」patterns 必须是数组`)
-  }
-  const res = slotValue.patterns.map((src) => {
-    if (typeof src !== 'string') throw new Error(`命令条目装配失败：${where} 槽「${name}」含非字符串判据`)
-    try {
-      return new RegExp(src)
-    } catch (e) {
-      throw new Error(`命令条目装配失败：${where} 槽「${name}」判据正则非法: ${src}（${(e as Error).message}）`)
+/** raw 槽表 → CompiledSlot（fail 槽排前 = 判定序；flags 应用于全部判据）。 */
+function compileSlots(
+  outcomes: SlotTable, where: string, closeOn: ClosureKind, flags: string,
+): CompiledSlot[] {
+  const slots: CompiledSlot[] = []
+  for (const [name, slotValue] of Object.entries(outcomes)) {
+    if (RESERVED_SLOT_NAMES.includes(name)) {
+      throw new Error(`命令条目装配失败：${where} 槽名「${name}」是保留字（ok/fail 是 kind 寻址键）`)
     }
-  })
-  // 推定槽（patterns: []）只允许出现在 race/quiet（静默机制填）；判据收窗形态
-  // 下空槽永不命中 = 配置错误，装配期 fail-loud（§3.2 / §3.5 第 3 档）。
-  if (res.length === 0 && closeOn !== 'race' && closeOn !== 'quiet') {
-    throw new Error(`命令条目装配失败：${where} 槽「${name}」patterns 为空（推定槽只允许出现在 race/quiet 形态）`)
+    if (slotValue.kind !== 'ok' && slotValue.kind !== 'fail') {
+      throw new Error(`命令条目装配失败：${where} 槽「${name}」kind 非法：${String(slotValue.kind)}`)
+    }
+    if (!Array.isArray(slotValue.patterns) || slotValue.patterns.length === 0) {
+      // patterns ≥ 1（DP 审阅 10）：推定槽已退役，空槽永不命中 = 配置错误。
+      throw new Error(`命令条目装配失败：${where} 槽「${name}」patterns 为空（登记槽必给判据，待实录的槽不登记）`)
+    }
+    const res = slotValue.patterns.map((src) => {
+      if (typeof src !== 'string') throw new Error(`命令条目装配失败：${where} 槽「${name}」含非字符串判据`)
+      try {
+        return new RegExp(src, flags)
+      } catch (e) {
+        throw new Error(`命令条目装配失败：${where} 槽「${name}」判据正则非法: ${src}（${(e as Error).message}）`)
+      }
+    })
+    slots.push({ name, kind: slotValue.kind, res, patterns: [...slotValue.patterns] })
   }
-  return { name: name as OutcomeName, kind: slotValue.kind, res }
+  // 判定序 fail > ok（fail 槽先测，同帧 fail 收束防误判）。
+  const weight = (s: CompiledSlot): number => (s.kind === 'fail' ? 0 : 1)
+  slots.sort((a, b) => weight(a) - weight(b))
+  // 判据收窗形态必须至少有一条可命中判据（否则只剩超时收场 = 配置错误）。
+  if (closeOn === 'criteria' && slots.length === 0) {
+    throw new Error(`命令条目装配失败：${where}（criteria）没有任何判据槽`)
+  }
+  return slots
 }
 
 function compileJudge(profile: CommandProfile): CompiledJudge {
@@ -98,26 +119,29 @@ function compileJudge(profile: CommandProfile): CompiledJudge {
   if (!(CLOSURE_KINDS as readonly string[]).includes(j.closeOn)) {
     throw new Error(`命令条目装配失败：${where} closeOn 非法：${String((j as { closeOn: unknown }).closeOn)}`)
   }
-  if ((j.closeOn === 'race' || j.closeOn === 'quiet') && (!Number.isInteger(j.quietMs) || j.quietMs < 1)) {
-    throw new Error(`命令条目装配失败：${where}（${j.closeOn}）quietMs 必须为正整数`)
+  const flags = profile.flags ?? ''
+  if (j.closeOn === 'quiet') {
+    // quiet：无槽（Judge 类型已挡）；窗长即条目 timeoutMs。
+    return { closeOn: 'quiet', slots: [] }
   }
-  const slots: CompiledSlot[] = []
-  for (const [name, slotValue] of Object.entries(j.outcomes ?? {})) {
-    if (slotValue === undefined) continue
-    slots.push(compileSlot(name, slotValue, where, j.closeOn))
+  if (j.closeOn === 'ga') {
+    if (j.count !== undefined && (!Number.isInteger(j.count) || j.count < 1)) {
+      throw new Error(`命令条目装配失败：${where}（ga）count 必须为正整数`)
+    }
+    const slots = j.outcomes !== undefined ? compileSlots(j.outcomes, where, 'ga', flags) : []
+    return {
+      closeOn: 'ga',
+      ...(j.count !== undefined ? { count: j.count } : {}),
+      slots,
+      ...(profile.flags !== undefined ? { flags: profile.flags } : {}),
+    }
   }
-  // 判定序 fail > ok（对应 failOn > until）：fail 槽稳定排前。
-  const weight = (s: CompiledSlot): number => (s.kind === 'fail' ? 0 : 1)
-  slots.sort((a, b) => weight(a) - weight(b))
-  // 判据收窗形态必须至少有一条可命中判据（否则只剩超时收场 + 失配 error = 配置错误）。
-  if ((j.closeOn === 'criteria' || j.closeOn === 'race')
-    && !slots.some(s => s.res.length > 0)) {
-    throw new Error(`命令条目装配失败：${where}（${j.closeOn}）没有任何非空判据槽`)
-  }
+  // criteria
+  const slots = compileSlots(j.outcomes, where, 'criteria', flags)
   return {
-    closeOn: j.closeOn,
-    ...(j.closeOn === 'race' || j.closeOn === 'quiet' ? { quietMs: j.quietMs } : {}),
+    closeOn: 'criteria',
     slots,
+    ...(profile.flags !== undefined ? { flags: profile.flags } : {}),
   }
 }
 
@@ -177,93 +201,147 @@ export function matchCommandProfile(sent: string): CompiledProfile | null {
 
 /**
  * 表槽名查询（T26.5；mud-workflow 注册表校验端口 FlowSlotsPort 的实现）：
- * 命令命中总表条目时返回其槽名序列（fail 槽在前 = 判定序），未登记（含空串/
- * exempt 命中）返回 null。经 MudCore3Service 面交宿主插件注入注册表，
- * checkFlow 据此把 onOutcome/captureFrom 引用对到表槽集。
+ * 命令命中总表条目时返回其喂令信息（形态 + 槽位含 kind + 条目 flags），未登记
+ *（含空串/exempt 命中）返回 null。经 MudCore3Service 面交宿主插件注入注册表，
+ * checkFlow 据此做 when 键双重校验与 DEC-13 告警（①②④）。
  */
-export function tableSlotsOf(sent: string): readonly string[] | null {
+export function tableSlotsOf(sent: string): FlowSlotsInfo | null {
   const profile = matchCommandProfile(sent)
-  return profile === null ? null : profile.judge.slots.map(s => s.name)
+  if (profile === null) return null
+  return {
+    closeOn: profile.judge.closeOn,
+    slots: profile.judge.slots.map(s => ({ name: s.name, kind: s.kind })),
+    ...(profile.judge.flags !== undefined ? { flags: profile.judge.flags } : {}),
+  }
 }
 
-// ── 解析单点（DEC-21）：explicit > table > fallback 三档 ─────────────
+// ── 解析单点（DEC-21）：声明（形态比对合并）> 表条目 > 无 三档 ─────────
 
-/** 调用点显式判据（listen 编译产物；T26 保留现役 listen 形态——机制数组是
- * 工具面既有词汇，槽表收敛随 T26.6 流程侧词汇一并定稿）。 */
-export interface ListenDecl {
-  until?: readonly RegExp[]
-  failOn?: readonly RegExp[]
-  gaCount?: number
-  quietMs?: number
-  maxLines?: number
-}
-
-/** 调用点声明（resolveAwaitPlan 第二参）。 */
+/** 调用点判据声明（raw——与流程 `wait` / 工具 `listen` 同一语法，DEC-21；
+ * 由消费方从模型参数/步骤声明原样传入，编译在本函数单点完成）。 */
 export interface CallerDecl {
-  /** 非空 = 调用点显式声明（整体走遗留判据形态，语义与现役显式 listen 一致）。 */
-  listen?: ListenDecl
+  closeOn?: ClosureKind
+  outcomes?: Readonly<Record<string, { kind: OutcomeKind; patterns: readonly string[] }>>
+  count?: number
+  maxLines?: number
+  timeoutMs?: number
+  flags?: string
 }
 
 /**
- * 收束解析计划（三档，DEC-21）：消费方（工具面 / 流程缝）据此构造 ReadOpts。
+ * 收束解析计划（DEC-21/DEC-5）：消费方（工具面 / 流程缝）据此构造 ReadOpts。
  *
- * - `explicit`：调用点显式声明（遗留判据形态：until/failOn/gaCount/quietMs/maxLines）；
- * - `empty`：空命令特例——`sent === ''` 归 `'ga'`（A.2 1:1，不是「需要登记的命令」）；
- * - `table`：命中表条目（形态 + 槽表 + 条目预算；`timeoutMs` 为条目建议值）；
- * - `fallback`：未登记命令的**翻转前兜底**（DEC-4 第一步：暂按 `gaCount: 1`
- *   边界收窗；T26.7 覆盖审计通过后翻转为「不收窗只等超时」并给语料工单文案）。
- *
- * 归因：`command` = 命中的表条目 id（empty 档 = ''；explicit/fallback 档缺省）。
- * 凭据命令不走表：流程缝以 `sent = null` 表达，不进入本函数。
+ * - `declared`：调用点显式声明（异形态整体替换或无表条目时）；
+ * - `table`：表条目参与（整条采用或同形态合并——`command` = 条目 id）；
+ * - `empty`：空命令特例——`sent === ''` 归 `'ga'`（A.2 1:1）；
+ * - `none`：未登记且未声明（或凭据命令 sent=null）⇒ **不收窗只等超时**
+ *   （DEC-4 终态；超时文案兼语料工单 DEC-22 由工具面附注）。
  */
 export type AwaitPlan = {
-  readonly source: 'explicit' | 'empty' | 'table' | 'fallback'
-  /** 形态（table/empty 档；explicit/fallback 档缺省 = 遗留判据语义）。 */
+  readonly source: 'declared' | 'table' | 'empty' | 'none'
   readonly closeOn?: ClosureKind
-  /** 槽表编译产物（table/empty 档）。 */
   readonly slots?: readonly CompiledSlot[]
-  /** 遗留判据（explicit 档 = 调用点 listen；fallback 档 = gaCount:1 兜底）。 */
-  readonly until?: readonly RegExp[]
-  readonly failOn?: readonly RegExp[]
-  readonly gaCount?: number
-  readonly quietMs?: number
+  readonly count?: number
   readonly maxLines?: number
-  /** 条目建议预算（table 档；explicit/fallback 档缺省 = 调用方标准缺省）。 */
+  /** 建议预算（table 档 = 条目法定值；调用方显式值优先）。 */
   readonly timeoutMs?: number
   /** 归因：命中的表条目 id（empty 档 = ''）。 */
   readonly command?: string
 }
 
-/** 解析单点（DEC-21）：工具面与流程缝共用；纯函数（查只读总表，无可变状态）。 */
-export function resolveAwaitPlan(sent: string, decl?: CallerDecl): AwaitPlan {
-  const listen = decl?.listen
-  if (listen !== undefined && Object.keys(listen).length > 0) {
+/** raw 槽表 → CompiledSlot（按给定 flags 编译；非法正则 throw 可读错）。
+ * 声明未带 outcomes 视为空槽表（ga 形态分类槽可选——closeOn:'ga' 无分类 =
+ * 关窗即 next；criteria 缺 outcomes 由下方「没有任何判据槽」检查 fail-loud）。 */
+function compileDeclSlots(
+  decl: CallerDecl, where: string,
+): CompiledSlot[] {
+  const flags = decl.flags ?? ''
+  return compileSlots(
+    (decl.outcomes ?? {}) as Record<string, { kind: OutcomeKind; patterns: readonly string[] }>,
+    where, decl.closeOn ?? 'criteria', flags,
+  )
+}
+
+/**
+ * 解析单点（DEC-21）：工具面与流程缝共用；纯函数（查只读总表，无可变状态）。
+ *
+ * @param sent - 实际发送的最终字符串（null = 凭据命令/无发送——不走表）。
+ * @param decl - 调用点判据声明（closeOn/outcomes 任一存在 = 已声明）。
+ * @throws 调用点声明判据正则非法（可读上下文）。
+ */
+export function resolveAwaitPlan(sent: string | null, decl?: CallerDecl): AwaitPlan {
+  const declared = decl !== undefined && (decl.closeOn !== undefined || decl.outcomes !== undefined)
+
+  // ① 调用点声明（形态比对，DEC-5）。
+  if (declared && decl !== undefined) {
+    if (decl.closeOn === undefined) {
+      throw new Error('已拒绝：判据声明必须搭配 closeOn（收窗形态必填）')
+    }
+    const own = compileDeclSlots(decl, '调用点声明')
+    const profile = sent !== null ? matchCommandProfile(sent) : null
+    if (profile !== null && profile.judge.closeOn === decl.closeOn) {
+      // 同形态 ⇒ 槽级合并：同名槽后声明整体替换、异名追加；合并槽一律按
+      // **调用点 flags**（默认无）重编译——不使用条目 flags（裁定 6）。
+      const byName = new Map(own.map(s => [s.name, s]))
+      for (const slot of profile.judge.slots) {
+        if (byName.has(slot.name)) continue // 同名：后声明为准（已在 own）
+        byName.set(slot.name, {
+          name: slot.name,
+          kind: slot.kind,
+          patterns: slot.patterns,
+          res: slot.patterns.map(src => new RegExp(src, decl.flags ?? '')),
+        })
+      }
+      const merged = [...byName.values()]
+        .sort((a, b) => (a.kind === 'fail' ? 0 : 1) - (b.kind === 'fail' ? 0 : 1))
+      return {
+        source: 'table',
+        closeOn: decl.closeOn,
+        slots: merged,
+        ...(decl.closeOn === 'ga' ? { count: decl.count ?? profile.judge.count ?? 1 } : {}),
+        ...(decl.maxLines !== undefined || profile.maxLines !== undefined
+          ? { maxLines: decl.maxLines ?? profile.maxLines }
+          : {}),
+        ...(decl.timeoutMs !== undefined || profile.timeoutMs !== undefined
+          ? { timeoutMs: decl.timeoutMs ?? profile.timeoutMs }
+          : {}),
+        command: profile.id,
+      }
+    }
+    // 异形态（整体替换——「换判据形态 = 接管全部槽位」）或无表条目：声明即全部配方。
     return {
-      source: 'explicit',
-      ...(listen.until !== undefined ? { until: listen.until } : {}),
-      ...(listen.failOn !== undefined ? { failOn: listen.failOn } : {}),
-      ...(listen.gaCount !== undefined ? { gaCount: listen.gaCount } : {}),
-      ...(listen.quietMs !== undefined ? { quietMs: listen.quietMs } : {}),
-      ...(listen.maxLines !== undefined ? { maxLines: listen.maxLines } : {}),
+      source: 'declared',
+      closeOn: decl.closeOn,
+      slots: own,
+      ...(decl.closeOn === 'ga' && decl.count !== undefined ? { count: decl.count } : {}),
+      ...(decl.maxLines !== undefined ? { maxLines: decl.maxLines } : {}),
+      ...(decl.timeoutMs !== undefined ? { timeoutMs: decl.timeoutMs } : {}),
+      ...(profile !== null ? { command: profile.id } : {}), // 归因：命中但被整体替换
     }
   }
-  const trimmed = sent.trim()
-  if (trimmed === '') {
-    // 空命令特例（DEC-4）：显式归 'ga'，回 prompt+GA 立即收束。
-    return { source: 'empty', closeOn: 'ga', slots: [], command: '' }
+
+  // ② 凭据命令 / 无发送：不走表（DEC-8），不收窗只等超时。
+  if (sent === null) return { source: 'none' }
+
+  // ③ 空命令特例（DEC-4）：显式归 'ga'（A.2 1:1），回 prompt+GA 立即收束。
+  if (sent.trim() === '') {
+    return { source: 'empty', closeOn: 'ga', count: 1, slots: [], command: '' }
   }
-  const profile = matchCommandProfile(trimmed)
+
+  // ④ 表条目（未声明判据 ⇒ 整条采用；条目 flags 编译）。
+  const profile = matchCommandProfile(sent)
   if (profile !== null) {
     return {
       source: 'table',
       closeOn: profile.judge.closeOn,
       slots: profile.judge.slots,
-      ...(profile.judge.quietMs !== undefined ? { quietMs: profile.judge.quietMs } : {}),
+      ...(profile.judge.count !== undefined ? { count: profile.judge.count } : {}),
       ...(profile.maxLines !== undefined ? { maxLines: profile.maxLines } : {}),
       timeoutMs: profile.timeoutMs,
       command: profile.id,
     }
   }
-  // 翻转前兜底（DEC-4 第一步）：未登记命令暂按 gaCount:1 边界收窗（现状行为）。
-  return { source: 'fallback', gaCount: 1 }
+
+  // ⑤ 未登记：不收窗只等超时（DEC-4 终态——无兜底档；DEC-22 工单由调用方附注）。
+  return { source: 'none' }
 }

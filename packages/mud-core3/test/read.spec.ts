@@ -1,20 +1,20 @@
 /**
  * read 测试 — ReadMachine 判定序/异步收束/失配记错/swallow + runtime 集成（水位线）。
  *
- * 单测（§5.2 设计）：
- *   1. 判定序（写死）：failOn > until > gaCount > maxLines；
- *   2. 异步收束源各一例：quiet / timeout / signal / disconnected / danger；
- *   3. until 失配（quiet/timeout/maxLines 收场）记 error；gaCount 关窗不算失配；
- *   4. initial 立即命中（先到先结算）；
- *   5. 并发 start fail-loud；
- *   6. swallow 钩子：返回 'swallow' 的行不进 acc。
+ * T26.6 终态词汇（DEC-3/7/19/21/23）：closeOn 三形态（ga/criteria/quiet）+ 槽表
+ *（fail 槽在前 = 判定序）+ count（ga 等第 N 个）+ maxLines（各形态通用兜底）。
+ * until/failOn/gaCount/race/quietMs（命令判据面）/静默计时器/推定槽已退役；
+ * quietMs 仅裸读（closeOn 缺省）保留。
  *
- * 集成（真实 TCP）：
- *   - read 端到端（until 命中返回原文）；
- *   - 未连接 read 直接 disconnected 收束；
- *   - GA 边界关窗（gaCount）；
- *   - 断线中断在途 read；
- *   - 水位线：read 消费的行不再被投递（readAbs 推进），失败批次重试不丢行。
+ * 语义要点（§3.2）：
+ *   - criteria：fail 槽 > ok 槽（槽内 pattern 序）；GA 不武装；失配（timeout/
+ *     maxLines 收场）记 error；
+ *   - ga：GA/EOR 计数关窗（count ?? 1）；声明分类槽而无一命中 ⇒ 断言失败
+ *     合成 fail 帧（by:'ga' 无 outcome——「收窗成功，分支未知」）；未声明分类槽
+ *     ⇒ 无帧（关窗即 next）；ga 关窗不算失配；
+ *   - quiet：固定采样窗——唯一计时器 timeoutMs，行只累积不重置；到点按行数
+ *     合成帧（有行 ⇒ ok reason:'quiet'；零行 ⇒ fail reason:'timeout'）；
+ *     maxLines 剪断 ⇒ by:'maxLines'。
  */
 
 import { describe, expect, it } from 'vitest'
@@ -58,29 +58,40 @@ async function startServer(onData: (data: string, socket: net.Socket) => void): 
 
 // ── ReadMachine 单测 ──────────────────────────────────────────
 
-describe('ReadMachine 判定序', () => {
-  it('failOn 优先于 until（两者同帧命中时 failOn 收束）', async () => {
+describe('ReadMachine 判定次序', () => {
+  it('criteria：fail 槽先于 ok 槽（同帧两槽命中 → fail 收束）', async () => {
     const m = new ReadMachine()
-    const p = m.start({ until: [/完成/], failOn: [/爆炸/], timeoutMs: 500 })
+    const p = m.start({
+      closeOn: 'criteria',
+      slots: [
+        { name: '完成', kind: 'ok', res: [/完成/] },
+        { name: '爆炸', kind: 'fail', res: [/爆炸/] },
+      ],
+      timeoutMs: 500,
+    })
     m.onLine(line('爆炸且完成'))
     const r = await p
-    expect(r.reason).toBe('failOn')
-    expect(r.lines.map(l => l.text)).toEqual(['爆炸且完成'])
+    expect(r.reason).toBe('done')
+    expect(r.hit).toMatchObject({ by: 'criteria', outcome: '爆炸', kind: 'fail' })
   })
 
-  it('until 优先于 gaCount（同帧 until 命中即收，不等边界）', async () => {
+  it('criteria：判据命中优先于 maxLines（同批到达即收，行数未满）', async () => {
     const m = new ReadMachine()
-    const p = m.start({ until: [/完成/], gaCount: 3, timeoutMs: 500 })
+    const p = m.start({
+      closeOn: 'criteria',
+      slots: [{ name: '完成', kind: 'ok', res: [/完成/] }],
+      maxLines: 10,
+      timeoutMs: 500,
+    })
     m.onLine(line('完成'))
-    m.onBoundary()
     const r = await p
     expect(r.reason).toBe('done')
     expect(r.lines).toHaveLength(1)
   })
 
-  it('gaCount 优先于 maxLines（边界先到即收，行数未满）', async () => {
+  it('ga：边界优先于 maxLines（边界先到即收，行数未满）', async () => {
     const m = new ReadMachine()
-    const p = m.start({ gaCount: 1, maxLines: 10, timeoutMs: 500 })
+    const p = m.start({ closeOn: 'ga', count: 1, maxLines: 10, timeoutMs: 500 })
     m.onLine(line('a'))
     m.onBoundary()
     const r = await p
@@ -88,7 +99,7 @@ describe('ReadMachine 判定序', () => {
     expect(r.lines).toHaveLength(1)
   })
 
-  it('maxLines 剪断：行数达到即 done 收束', async () => {
+  it('maxLines 剪断：行数达到即 done 收束（裸读）', async () => {
     const m = new ReadMachine()
     const p = m.start({ maxLines: 2, timeoutMs: 500 })
     m.onLine(line('a'))
@@ -98,9 +109,13 @@ describe('ReadMachine 判定序', () => {
     expect(r.lines.map(l => l.text)).toEqual(['a', 'b'])
   })
 
-  it('until 可跨批命中（累积文本上测）', async () => {
+  it('criteria 可跨批命中（累积文本上测）', async () => {
     const m = new ReadMachine()
-    const p = m.start({ until: [/第一.*第二/s], timeoutMs: 500 })
+    const p = m.start({
+      closeOn: 'criteria',
+      slots: [{ name: '跨行', kind: 'ok', res: [/第一.*第二/s] }],
+      timeoutMs: 500,
+    })
     m.onLine(line('这是第一'))
     m.onLine(line('行，第二在下一行'))
     const r = await p
@@ -108,7 +123,7 @@ describe('ReadMachine 判定序', () => {
   })
 })
 
-describe('ReadMachine closeOn 分档（T26，§3.2）', () => {
+describe('ReadMachine closeOn 分档（T26.6，§3.2）', () => {
   it("'criteria'：受理帧 GA 不关窗，完成句槽命中收窗并给结局帧（outcome/kind）", async () => {
     const m = new ReadMachine()
     const p = m.start({
@@ -125,10 +140,10 @@ describe('ReadMachine closeOn 分档（T26，§3.2）', () => {
     m.onLine(line('你将内息收回丹田，完成'))
     const r = await p
     expect(r.reason).toBe('done')
-    expect(r.hit).toEqual({ by: 'until', index: 0, groups: [], outcome: '完成', kind: 'ok' })
+    expect(r.hit).toEqual({ by: 'criteria', index: 0, groups: [], outcome: '完成', kind: 'ok' })
   })
 
-  it("'criteria'：fail 槽先于 ok 槽（声明序无关，fail 槽摊平进 failOn 判定序）", async () => {
+  it("'criteria'：fail 槽先于 ok 槽（声明序无关，fail 槽摊平进判定序）", async () => {
     const m = new ReadMachine()
     const p = m.start({
       closeOn: 'criteria',
@@ -140,8 +155,8 @@ describe('ReadMachine closeOn 分档（T26，§3.2）', () => {
     })
     m.onLine(line('气太少且完成')) // 两槽同帧命中
     const r = await p
-    expect(r.reason).toBe('failOn')
-    expect(r.hit).toEqual({ by: 'failOn', index: 0, groups: [], outcome: '内息不足', kind: 'fail' })
+    expect(r.reason).toBe('done')
+    expect(r.hit).toEqual({ by: 'criteria', index: 0, groups: [], outcome: '内息不足', kind: 'fail' })
   })
 
   it("'criteria'：判据未命中 timeout 收场 → 失配记 error（分档：criteria 只判 timeout/maxLines）", async () => {
@@ -177,10 +192,10 @@ describe('ReadMachine closeOn 分档（T26，§3.2）', () => {
     const r = await p
     expect(r.reason).toBe('done')
     expect(r.hit).toEqual({ by: 'ga', index: 0, groups: [], outcome: '完成', kind: 'ok' })
-    expect(errors).toHaveLength(0) // 'ga' 槽仅分类：无 until 声明，天然不判失配
+    expect(errors).toHaveLength(0) // 'ga' 槽仅分类：无判据失配可言
   })
 
-  it("'ga'：GA 收窗无分类命中 → 裸收窗（hit undefined）", async () => {
+  it("'ga'：声明分类槽而无一命中 ⇒ 断言失败合成帧（by 'ga' 无 outcome，kind fail）", async () => {
     const m = new ReadMachine()
     const p = m.start({
       closeOn: 'ga',
@@ -191,97 +206,88 @@ describe('ReadMachine closeOn 分档（T26，§3.2）', () => {
     m.onBoundary()
     const r = await p
     expect(r.reason).toBe('done')
+    expect(r.hit).toEqual({ by: 'ga', index: -1, groups: [], kind: 'fail' })
+  })
+
+  it("'ga'：未声明分类槽 → 关窗无帧（关窗即 next）", async () => {
+    const m = new ReadMachine()
+    const p = m.start({ closeOn: 'ga', timeoutMs: 500 })
+    m.onLine(line('普通应答'))
+    m.onBoundary()
+    const r = await p
+    expect(r.reason).toBe('done')
     expect(r.hit).toBeUndefined()
   })
 
-  it("'race'：判据先到先收（判据赢静默竞速）", async () => {
+  it("'quiet'：固定采样窗——timeout 到点有行 ⇒ 合成 ok 帧（reason 'quiet'）", async () => {
     const m = new ReadMachine()
-    const p = m.start({
-      closeOn: 'race',
-      quietMs: 40,
-      slots: [{ name: '到达', kind: 'ok', res: [/^你到达了/] }],
-      timeoutMs: 500,
-    })
-    m.onLine(line('你到达了荆州府。'))
+    const p = m.start({ closeOn: 'quiet', timeoutMs: 60 })
+    m.onLine(line('回显一'))
+    const r = await p
+    expect(r.reason).toBe('quiet')
+    expect(r.hit).toEqual({ by: 'quiet', index: -1, groups: [], kind: 'ok' })
+  })
+
+  it("'quiet'：到点零行 ⇒ 合成 fail 帧（reason 'timeout'，等同 timeout）", async () => {
+    const m = new ReadMachine()
+    const p = m.start({ closeOn: 'quiet', timeoutMs: 60 })
+    const r = await p
+    expect(r.reason).toBe('timeout')
+    expect(r.hit).toEqual({ by: 'quiet', index: -1, groups: [], kind: 'fail' })
+  })
+
+  it("'quiet'：行只累积不重置（quiet 无静默计时器，新行不延长采样窗）", async () => {
+    const m = new ReadMachine()
+    const p = m.start({ closeOn: 'quiet', timeoutMs: 80 })
+    m.onLine(line('a'))
+    await new Promise(r => setTimeout(r, 30))
+    m.onLine(line('b'))
+    const r = await p // 仍在原 timeoutMs 时刻关窗
+    expect(r.reason).toBe('quiet')
+    expect(r.lines.map(l => l.text)).toEqual(['a', 'b'])
+  })
+
+  it("'quiet'：maxLines 剪断 → 合成帧按 by 'maxLines'（reason 'done'）", async () => {
+    const m = new ReadMachine()
+    const p = m.start({ closeOn: 'quiet', maxLines: 1, timeoutMs: 2000 })
+    m.onLine(line('x'))
     const r = await p
     expect(r.reason).toBe('done')
-    expect(r.hit).toEqual({ by: 'until', index: 0, groups: [], outcome: '到达', kind: 'ok' })
-  })
-
-  it("'race'：静默先到 → by 'silence'，推定槽填充（walk 形态，DEC-5）；静默收束不判失配", async () => {
-    const m = new ReadMachine()
-    const errors: string[] = []
-    m.onLog = (_level, text) => { errors.push(text) }
-    const p = m.start({
-      closeOn: 'race',
-      quietMs: 40,
-      slots: [
-        { name: '到达', kind: 'ok', res: [/^你到达了/] },
-        { name: '软阻断', kind: 'fail', res: [/停了下来/] },
-        { name: '推定完成', kind: 'ok', res: [] },
-      ],
-      timeoutMs: 500,
-    })
-    m.onLine(line('你决定开始前往襄阳方向走去……')) // 出受理行：无判据命中
-    const r = await p
-    expect(r.reason).toBe('quiet')
-    expect(r.hit).toEqual({ by: 'silence', index: -1, groups: [], outcome: '推定完成', kind: 'ok' })
-    expect(errors).toHaveLength(0) // 'race' 的静默是合法收束者（推定完成），不判失配
-  })
-
-  it("'quiet'：静默是唯一收窗者，收束时扫窗分类（by 'silence' 正常出口）", async () => {
-    const m = new ReadMachine()
-    const p = m.start({
-      closeOn: 'quiet',
-      quietMs: 40,
-      slots: [{ name: '完成', kind: 'ok', res: [/醒来/] }],
-      timeoutMs: 500,
-    })
-    m.onLine(line('你一觉醒来，精神抖擞')) // 'quiet' 槽不收窗：行到达时只累积
-    expect(m.inFlight).toBe(true)
-    const r = await p
-    expect(r.reason).toBe('quiet')
-    expect(r.hit).toEqual({ by: 'silence', index: 0, groups: [], outcome: '完成', kind: 'ok' })
-  })
-
-  it("'quiet'：无分类命中 → 裸 silence 帧（index -1，无 outcome）", async () => {
-    const m = new ReadMachine()
-    const p = m.start({
-      closeOn: 'quiet',
-      quietMs: 40,
-      slots: [{ name: '完成', kind: 'ok', res: [/不出现/] }],
-      timeoutMs: 500,
-    })
-    m.onLine(line('普通应答'))
-    const r = await p
-    expect(r.reason).toBe('quiet')
-    expect(r.hit).toEqual({ by: 'silence', index: -1, groups: [] })
+    expect(r.hit).toEqual({ by: 'maxLines', index: -1, groups: [], kind: 'ok' })
   })
 })
 
 describe('ReadMachine 命中帧（T15：命中判据 + 捕获组由读窗机返回）', () => {
-  it('① until 按声明序定位命中下标（until[1] 命中 ⇒ index 1）', async () => {
+  it('① 槽内 pattern 声明序定位命中下标（槽内第 2 条命中 ⇒ index 1）', async () => {
     const m = new ReadMachine()
-    const p = m.start({ until: [/甲/, /乙/], timeoutMs: 500 })
+    const p = m.start({
+      closeOn: 'criteria',
+      slots: [{ name: '标记', kind: 'ok', res: [/甲/, /乙/] }],
+      timeoutMs: 500,
+    })
     m.onLine(line('无关行'))
     m.onLine(line('乙出现'))
     const r = await p
     expect(r.reason).toBe('done')
-    expect(r.hit).toMatchObject({ by: 'until', index: 1, groups: [] })
+    expect(r.hit).toMatchObject({ by: 'criteria', outcome: '标记', kind: 'ok', index: 1, groups: [] })
   })
 
-  it('② failOn 命中 ⇒ by=failOn + 正确下标', async () => {
+  it('② fail 槽命中 ⇒ by=criteria + 槽内正确下标', async () => {
     const m = new ReadMachine()
-    const p = m.start({ until: [/完成/], failOn: [/无关/, /爆炸/], timeoutMs: 500 })
+    const p = m.start({
+      closeOn: 'criteria',
+      slots: [{ name: '失败', kind: 'fail', res: [/无关/, /爆炸/] }],
+      timeoutMs: 500,
+    })
     m.onLine(line('爆炸了'))
     const r = await p
-    expect(r.reason).toBe('failOn')
-    expect(r.hit).toMatchObject({ by: 'failOn', index: 1 })
+    expect(r.reason).toBe('done')
+    expect(r.hit).toMatchObject({ by: 'criteria', kind: 'fail', outcome: '失败', index: 1 })
   })
 
-  it('③ gaCount 关窗 ⇒ hit 为 undefined（无判据命中，供 D11 判空）', async () => {
+  it('③ ga 关窗无分类槽 ⇒ hit 为 undefined（关窗即 next，供 D11 判空）', async () => {
     const m = new ReadMachine()
-    const p = m.start({ until: [/完成/], gaCount: 1, timeoutMs: 2000 })
+    const p = m.start({ closeOn: 'ga', timeoutMs: 2000 })
     m.onLine(line('普通行'))
     m.onBoundary()
     const r = await p
@@ -291,7 +297,11 @@ describe('ReadMachine 命中帧（T15：命中判据 + 捕获组由读窗机返�
 
   it('④ 捕获组按序返回：未参与组为 undefined、参与但空串为 ""', async () => {
     const m = new ReadMachine()
-    const p = m.start({ until: [/(甲)?(\S+)对(\S*)说/], timeoutMs: 500 })
+    const p = m.start({
+      closeOn: 'criteria',
+      slots: [{ name: '捕获', kind: 'ok', res: [/(甲)?(\S+)对(\S*)说/] }],
+      timeoutMs: 500,
+    })
     m.onLine(line('张三对说'))
     const r = await p
     expect(r.hit?.groups).toEqual([undefined, '张三', ''])
@@ -299,52 +309,63 @@ describe('ReadMachine 命中帧（T15：命中判据 + 捕获组由读窗机返�
 
   it('⑤ 无组判据 ⇒ groups 为空数组', async () => {
     const m = new ReadMachine()
-    const p = m.start({ until: [/完成/], timeoutMs: 500 })
+    const p = m.start({
+      closeOn: 'criteria',
+      slots: [{ name: '完成', kind: 'ok', res: [/完成/] }],
+      timeoutMs: 500,
+    })
     m.onLine(line('完成'))
     const r = await p
-    expect(r.hit).toEqual({ by: 'until', index: 0, groups: [] })
+    expect(r.hit).toEqual({ by: 'criteria', index: 0, groups: [], outcome: '完成', kind: 'ok' })
   })
 
   it('⑥a 同一正则实例跨两次 read 复用：lastIndex 重置生效（不重置则第二次丢命中）', async () => {
     const reused = /第二/g // 调用方缓存编译结果的场景（g 有状态起点会跨 read 残留）
     const m1 = new ReadMachine()
-    const p1 = m1.start({ until: [reused], timeoutMs: 500 })
+    const p1 = m1.start({ closeOn: 'criteria', slots: [{ name: 'x', kind: 'ok', res: [reused] }], timeoutMs: 500 })
     m1.onLine(line('第二'))
     expect((await p1).reason).toBe('done')
 
     const m2 = new ReadMachine()
-    const p2 = m2.start({ until: [reused], timeoutMs: 500 })
+    const p2 = m2.start({ closeOn: 'criteria', slots: [{ name: 'x', kind: 'ok', res: [reused] }], timeoutMs: 500 })
     m2.onLine(line('第二'))
     const r2 = await p2
     expect(r2.reason).toBe('done')
-    expect(r2.hit).toMatchObject({ by: 'until', index: 0 })
+    expect(r2.hit).toMatchObject({ by: 'criteria', index: 0 })
   })
 
   it('⑥b 取组不因“先找下标”而丢：含 g 声明也拿到组（exec 单次调用）', async () => {
     const m = new ReadMachine()
-    const p = m.start({ until: [/^第二(\d+)/g], timeoutMs: 500 })
+    const p = m.start({
+      closeOn: 'criteria',
+      slots: [{ name: 'x', kind: 'ok', res: [/^第二(\d+)/g] }],
+      timeoutMs: 500,
+    })
     m.onLine(line('第二42'))
     const r = await p
-    expect(r.hit).toMatchObject({ by: 'until', index: 0, groups: ['42'] })
+    expect(r.hit).toMatchObject({ by: 'criteria', index: 0, groups: ['42'] })
   })
 
   it('⑥c y（sticky）语义保留：只在窗口起点命中，不向后搜', async () => {
     const atStart = new ReadMachine()
-    const p1 = atStart.start({ until: [/第二/y], timeoutMs: 500 })
+    const p1 = atStart.start({ closeOn: 'criteria', slots: [{ name: 'x', kind: 'ok', res: [/第二/y] }], timeoutMs: 500 })
     atStart.onLine(line('第二在后面'))
-    expect((await p1).hit).toMatchObject({ by: 'until', index: 0 })
+    expect((await p1).hit).toMatchObject({ by: 'criteria', index: 0 })
 
     const later = new ReadMachine()
-    const p2 = later.start({ until: [/第二/y], quietMs: 30, timeoutMs: 2000 }, [line('无关')])
-    later.onLine(line('第二在后面'))
+    const p2 = later.start(
+      { closeOn: 'criteria', slots: [{ name: 'x', kind: 'ok', res: [/第二/y] }], timeoutMs: 60 },
+      [line('无关')],
+    )
+    later.onLine(line('第二在后面')) // 非窗口起点：sticky 不命中
     const r2 = await p2
-    expect(r2.reason).toBe('quiet')
+    expect(r2.reason).toBe('timeout')
     expect(r2.hit).toBeUndefined()
   })
 })
 
 describe('ReadMachine 异步收束源', () => {
-  it('quiet：行后静默到期收束', async () => {
+  it('裸读 quietMs：行后静默到期收束', async () => {
     const m = new ReadMachine()
     const r = await m.start({ quietMs: 50, timeoutMs: 2000 }, [line('预取')])
     expect(r.reason).toBe('quiet')
@@ -392,31 +413,31 @@ describe('ReadMachine 异步收束源', () => {
 })
 
 describe('ReadMachine 失配记错', () => {
-  it('until 未命中而 quiet 收场 → 记 error', async () => {
+  it('criteria 判据未命中而 timeout 收场 → 记 error（语料可见）', async () => {
     const m = new ReadMachine()
     const errors: string[] = []
     m.onLog = (level, text) => { if (level === 'error') errors.push(text) }
-    await m.start({ until: [/完成/], quietMs: 40, timeoutMs: 2000 }, [line('无关行')])
+    await m.start({ closeOn: 'criteria', slots: [{ name: '完成', kind: 'ok', res: [/完成/] }], timeoutMs: 40 })
     expect(errors).toHaveLength(1)
-    expect(errors[0]).toContain('until')
+    expect(errors[0]).toContain('criteria')
   })
 
-  it('gaCount 边界关窗不算失配（不记 error）', async () => {
+  it('ga 边界关窗不算失配（不记 error，含断言失败合成帧）', async () => {
     const m = new ReadMachine()
     const errors: string[] = []
     m.onLog = (level, text) => { if (level === 'error') errors.push(text) }
-    const p = m.start({ until: [/完成/], gaCount: 1, timeoutMs: 2000 })
+    const p = m.start({ closeOn: 'ga', slots: [{ name: '完成', kind: 'ok', res: [/完成/] }], timeoutMs: 2000 })
     m.onLine(line('普通行'))
     m.onBoundary()
     await p
     expect(errors).toEqual([])
   })
 
-  it('until 命中收场不记 error', async () => {
+  it('criteria 命中收场不记 error', async () => {
     const m = new ReadMachine()
     const errors: string[] = []
     m.onLog = (level, text) => { if (level === 'error') errors.push(text) }
-    const p = m.start({ until: [/完成/], timeoutMs: 2000 })
+    const p = m.start({ closeOn: 'criteria', slots: [{ name: '完成', kind: 'ok', res: [/完成/] }], timeoutMs: 2000 })
     m.onLine(line('完成'))
     await p
     expect(errors).toEqual([])
@@ -426,7 +447,7 @@ describe('ReadMachine 失配记错', () => {
 describe('ReadMachine 生命周期', () => {
   it('initial 立即命中（先到先结算，不等新行）', async () => {
     const m = new ReadMachine()
-    const r = await m.start({ until: [/欢迎/], timeoutMs: 2000 }, [line('欢迎光临')])
+    const r = await m.start({ closeOn: 'criteria', slots: [{ name: '欢迎', kind: 'ok', res: [/欢迎/] }], timeoutMs: 2000 }, [line('欢迎光临')])
     expect(r.reason).toBe('done')
     expect(r.lines.map(l => l.text)).toEqual(['欢迎光临'])
   })
@@ -462,7 +483,7 @@ describe('ReadMachine 生命周期', () => {
 // ── runtime 集成（真实 TCP + 水位线）──────────────────────────
 
 describe('SessionRuntime.read（集成）', () => {
-  it('read 端到端：send 后等应答，until 命中返回原文', async () => {
+  it('read 端到端：send 后等应答，criteria 命中返回原文', async () => {
     const server = await startServer((data, s) => {
       if (data.includes('look')) s.write('你看到一座小屋\n')
     })
@@ -470,7 +491,7 @@ describe('SessionRuntime.read（集成）', () => {
     await rt.connect({ host: '127.0.0.1', port: server.port })
     await new Promise(r => setTimeout(r, 50)) // 欢迎横幅到达
 
-    const p = rt.read({ until: [/小屋/], timeoutMs: 2000 })
+    const p = rt.read({ closeOn: 'criteria', slots: [{ name: '小屋', kind: 'ok', res: [/小屋/] }], timeoutMs: 2000 })
     rt.send('look')
     const r = await p
     expect(r.reason).toBe('done')
@@ -488,7 +509,7 @@ describe('SessionRuntime.read（集成）', () => {
     expect(r.lines).toEqual([])
   })
 
-  it('GA 边界关窗：gaCount=1 命中即收', async () => {
+  it('GA 边界关窗：ga 形态 count=1 命中即收', async () => {
     const server = await startServer((data, s) => {
       if (data.includes('hp')) {
         s.write('气血 100/100\n')
@@ -499,7 +520,7 @@ describe('SessionRuntime.read（集成）', () => {
     await rt.connect({ host: '127.0.0.1', port: server.port })
     await new Promise(r => setTimeout(r, 50))
 
-    const p = rt.read({ gaCount: 1, timeoutMs: 2000 })
+    const p = rt.read({ closeOn: 'ga', count: 1, timeoutMs: 2000 })
     rt.send('hp')
     const r = await p
     expect(r.reason).toBe('done')
@@ -513,7 +534,7 @@ describe('SessionRuntime.read（集成）', () => {
     const rt = new SessionRuntime('s1')
     await rt.connect({ host: '127.0.0.1', port: server.port })
 
-    const p = rt.read({ until: [/永不出现/], timeoutMs: 5000 })
+    const p = rt.read({ closeOn: 'criteria', slots: [{ name: '永不出现', kind: 'ok', res: [/永不出现/] }], timeoutMs: 5000 })
     rt.disconnect()
     const r = await p
     expect(r.reason).toBe('disconnected')
@@ -578,7 +599,7 @@ describe('SessionRuntime.read（集成）', () => {
     d.admit()
 
     // read 消费 look 应答
-    const p = rt.read({ until: [/房间描述/], timeoutMs: 2000 })
+    const p = rt.read({ closeOn: 'criteria', slots: [{ name: '房间', kind: 'ok', res: [/房间描述/] }], timeoutMs: 2000 })
     rt.send('look')
     const r = await p
     expect(r.reason).toBe('done')

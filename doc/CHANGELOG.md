@@ -797,3 +797,20 @@
 - **文档**：§8.7 长程预设行补 failOn 口径与现役条目、A.3 登记 dz/sleep 受理被拒原句；tools.spec 同步（dz until 2→3 形态断言修正 + dz/sleep failOn 命中与不误命中断言）。
 
 > AI生成
+
+## [v0.0.69]命令判据总表 + 流程词汇收敛全面整改（T26）(2026-10-12)
+> 总结：五轮设计对齐（PLAN T26 起草区 DEC 表 2026-10-12 二次修订版定稿，DP 审阅 12 项裁定全落）后按「不将就原有代码」全面整改：判据词汇收敛为三形态封闭（ga/criteria/quiet）+ 命令判据总表（构建期数组、解析单点）+ 契约模式（kind=契约、槽名=条目数据）+ 两级路由（kind 直达/when 细化）；旧词汇 until/failOn/branch/onFailOn/gaCount（命令判据面）/quietMs（命令判据面）/race/ListenDecl/normalizeFlow 全线退役，存量数据不管（DEC-25，测试期用户裁定）。
+
+- **命令判据总表**（T26.1，`commands/define.ts` + `std/skill` 分组 + `command-profiles.ts` 装配器，§8.7）：条目构建期数组、无运行期注册面（agent 不可修缮）；`resolveAwaitPlan(sent, decl)` **解析单点**（DEC-21）供 mud_send/mud_walk 与流程缝共用——声明（形态比对合并：同形态槽级合并、异形态整体替换）> 表条目（整条采用）> 空命令特例（归 ga）> **未登记不收窗只等超时**（DEC-4 终态，无 gaCount:1 兜底；超时文案兼语料工单 DEC-22）；`tableSlotsOf` 交宿主注入注册表（保存门槽集校验端口）。
+- **三形态封闭**（DEC-3，schema superRefine）：`ga`（count 缺省 1；分类槽可选——声明即断言，未命中 ⇒ 合成 fail 帧「收窗成功，分支未知」）、`criteria`（判据收窗 GA 不武装，fail 槽先于 ok 槽）、`quiet`（固定采样窗：唯一计时器 timeoutMs，行只累积不重置，到点有行 ok/零行 fail）；race 退役（「读窗竞速是伪命题，根因是 timeout 过短」用户裁定）——walk 条目改判 `'criteria'` + flags `'m'`（实证死判据修复：无 'm' 时 `^你到达了` 在多行行走窗永不命中）+ 超时按已知边步数 sizing（10s+3s/步，钳 [30s,60s]）。
+- **契约模式**（DEC-23）：kind（ok/fail）= 契约（判定序 + 粗路由缺省）；槽名 = 条目数据自由命名（OUTCOME_NAMES 枚举退役；保留字 ok/fail 拒用防撞名；patterns ≥ 1，推定槽退役）。
+- **两级路由**（DEC-19）：`onOutcome` = `{ok, fail}` 两键，kind 直达常态、`when` 按槽名细化（键 ⊆ 合并槽集 + kind 一致、不跨键位查找）；ok 未覆盖 ⇒ next、fail 未覆盖 ⇒ timeout 出口 + 未覆盖槽名注记（DEC-13 ③）；kind 判定标准：达成/推进 = ok，被拒/中断/未达成 = fail（fullme 答错改判 fail，重入用 when 表达）。
+- **保存门与告警**（§8.11）：checkFlow 校验保留字/kind 一致性/捕获配对/when 键 ⊆ 合并槽集（字面量喂令拒死引用，动态命令查表后移运行期，DP 裁定 4 分档）；DEC-13 告警四处（①未登记未声明 ②when 未覆盖同 kind 槽 ③运行期 timeout 附注记 ④同形态合并带 flags 表条目而步未声明 flags）；`save` 返回 `{record, warnings}` 工具面透出。
+- **净删**（用户裁定「不要将就原有代码」）：`normalizeFlow`/`ListenDecl`/流程 legacy 分支/`branch`/`onFailOn`/`onFailOn` 越界门——存储即新词汇（as-written，零迁移零兼容层，DEC-25）；mud-workflow 契约 `IoReadOpts` 改 **raw 判据声明**（内核不持正则，编译单点在缝侧 `resolveAwaitPlan` + workflowIoFor read 缝，结果带归因 closeOn/command/source 四档）。
+- **战斗长读窗迁移**（T21.4）：监听窗不是命令应答窗——controller 弃 `until` 改裸读（quietMs/timeout/maxLines）+ 收束后本层 `isEndingLine` 自测结局行（判定下沉回监听方）。
+- **quiet 注释纪律**：quiet 与 timeout 配合使用、timeout 需谨慎选择时长（编写责任非设计代价，用户裁定）落 defineCommand 参数注释与工具描述。
+- **流程实体与 persona**：login（prompt-pass/confirm fail 直达、wait-ga 显式 `closeOn:'ga'+count:1`）/fullme（urlwait fail.when 细化、judge 答错改 fail）改写，判据原文不动；persona 长程等待纪律改 listen 全量拼写（DEC-24 无简写）。
+- **测试三套同步**：mud-workflow 96 全绿（interpreter 两级路由全路径 + raw 透传 + 去重测扩展；registry 契约模式保存门 + 告警 + as-written；tools 新词汇）；core3 483/485 绿（read 三形态全语义、tools listen/合并/工单/walk criteria、service 缝归因四档、login E2E 五路径（makeIO 镜像缝侧 raw→编译转换 + 归因）、combat 监听窗迁移；仅 wake 2 例 v0.0.66 登记历史遗留，与本版无关）；typecheck 两包零错。
+- **文档**：§8.3/§8.7（工具面与命令总表全面改口径）、§8.10–§8.15（词汇表契约模式/保存门/解释器语义/缝执行序/login·fullme 步表）、§5.2（ReadMachine 三形态）、§13/§14（留痕与结构化失败）、§16.2/§16.3/§16.5（用例账目与切片表 T26 行）、附录 A.3/A.9 勘误注、doc/flows/{login,fullme}.md 同步、§8.16 口径不变。
+
+> AI生成

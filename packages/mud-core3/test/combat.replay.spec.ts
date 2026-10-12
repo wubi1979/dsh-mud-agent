@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CombatController, COMBAT_ENDING_RES } from '../src/combat/controller.ts'
+import { CombatController } from '../src/combat/controller.ts'
 import { CombatEdgeDetector } from '../src/combat/state.ts'
 import { CombatRuleEngine } from '../src/combat/rules.ts'
 import { CombatReporter } from '../src/combat/report.ts'
@@ -65,14 +65,11 @@ function makeReplay() {
   let controller: CombatController
 
   // 假 IO：行队列 + 挂起读窗（无行即挂起，abortWait 以 danger 收束并收编触发行）。
+  // T26.6：接管读窗是裸读（无 until）——结局行判定在控制器 isEndingLine 自测。
   const queue: MudLine[] = []
   let pendingRead: ((r: ReadResult) => void) | null = null
-  const take = (o: ReadOpts): ReadResult => {
+  const take = (): ReadResult => {
     const taken = queue.splice(0)
-    const idx = taken.findIndex(l => (o.until ?? []).some(re => re.test(l.text)))
-    if (idx >= 0) {
-      return { lines: taken.slice(0, idx + 1), reason: 'done', hit: { by: 'until', index: idx, groups: [] } }
-    }
     return { lines: taken, reason: 'done', hit: undefined }
   }
   const io = {
@@ -93,7 +90,7 @@ function makeReplay() {
     },
     async read(o: ReadOpts) {
       io.reads.push(o)
-      if (queue.length > 0) return take(o)
+      if (queue.length > 0) return take()
       return new Promise<ReadResult>(resolve => { pendingRead = resolve })
     },
   }
@@ -128,9 +125,9 @@ function makeReplay() {
       controller.onThreatLine(line)
       tracker.observe(line)
     }
-    // 行到达推进在途读窗（镜像 readMachine.onLine 的累积判定收束）。
+    // 行到达推进在途读窗（镜像 readMachine.onLine 的累积收束；裸读无判据命中，攒批交控制器）。
     const resolve = pendingRead
-    if (resolve !== null && queue.length > 0) { pendingRead = null; resolve(take(io.reads[io.reads.length - 1] ?? {} as ReadOpts)) }
+    if (resolve !== null && queue.length > 0) { pendingRead = null; resolve(take()) }
   }
   return { controller, io, world, logs, feed }
 }
@@ -152,7 +149,8 @@ describe('A.8 实录回放（T21.7 D15）', () => {
     expect(e.logs.some(l => l.includes('危险抢占'))).toBe(true)
     expect(e.logs.some(l => l.includes('未配置退路'))).toBe(true) // D14 告警一条
     expect(e.controller.suppressDelivery).toBe(true) // D4：接管期零投递（观测面）
-    expect(e.io.reads[0]?.until).toBe(COMBAT_ENDING_RES)
+    // T26.6：裸读（无判据词汇，quietMs/timeout/maxLines）——结局行判定下沉回本层。
+    expect(e.io.reads[0]?.quietMs).toBe(3000)
 
     // ── 11 拍受击戳 + 一拍未受击（A.8.2/A.8.6 账目重建）────────────
     // 气血比全程：99%→98%→97%→96%（cap 受损跨变）→79%→63%→46%（五成跨变）
@@ -201,7 +199,8 @@ describe('A.8 实录回放（T21.7 D15）', () => {
     expect(e.world.get('combat', '敌档')?.value).toBe('大狼狗已经伤痕累累，正在勉力支撑著不倒下去。')
     expect(e.world.get('combat', '气势')?.value).toBe(16)
 
-    // ── 结局行释放（接管与释放）：until 命中 → 释放 + 清遭遇键 + 结算。
+    // ── 结局行释放（接管与释放）：死亡行在窗内被本层 isEndingLine 自测命中 →
+    // 释放 + 清遭遇键 + 结算。
     await until(() => e.controller.currentPhase === 'idle')
     expect(e.io.holder).toBeNull()
     expect(e.controller.inDanger).toBe(false)
