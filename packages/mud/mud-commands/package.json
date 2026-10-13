@@ -1,0 +1,60 @@
+{
+  "name": "mud-commands",
+  "description": "MUD 命令判据总表（T28 拆包）：五分组条目（std/skill/usr/stunt/profession/task）+ 装配器 assembler（构建期 fail-loud 自检）+ 解析单点 resolveAwaitPlan（DEC-21）+ matchCommandProfile/tableSlotsOf。判据逐条实录（A.6 纪律）。",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./define": {
+      "types": "./lib/define.d.ts",
+      "default": "./lib/define.js"
+    },
+    "./assembler": {
+      "types": "./lib/assembler.d.ts",
+      "default": "./lib/assembler.js"
+    },
+    "./std": {
+      "types": "./lib/std.d.ts",
+      "default": "./lib/std.js"
+    },
+    "./skill": {
+      "types": "./lib/skill.d.ts",
+      "default": "./lib/skill.js"
+    },
+    "./usr": {
+      "types": "./lib/usr.d.ts",
+      "default": "./lib/usr.js"
+    },
+    "./stunt": {
+      "types": "./lib/stunt.d.ts",
+      "default": "./lib/stunt.js"
+    },
+    "./profession": {
+      "types": "./lib/profession.d.ts",
+      "default": "./lib/profession.js"
+    },
+    "./task": {
+      "types": "./lib/task.d.ts",
+      "default": "./lib/task.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib"
+  ],
+  "devDependencies": {
+    "mud-workflow": "workspace:^"
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\"",
+    "build": "pnpm run clean && tsc -p tsconfig.json",
+    "test": "pnpm exec vitest run tests",
+    "typecheck": "tsc -p tsconfig.test.json"
+  }
+}

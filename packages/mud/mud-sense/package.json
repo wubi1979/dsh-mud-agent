@@ -1,0 +1,54 @@
+{
+  "name": "mud-sense",
+  "description": "MUD 行流感知 Provider（T28 拆包，纯层）：读窗机 ReadMachine · 行分类 Classifier · 进程遮蔽 elide · 状态追踪 StateTracker · 世界状态 World · 静默唤醒 Wake。判据词汇表单点引用 mud-workflow/contract；MudLine 由 mud-link 生产者所有（type-only）。",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./read": {
+      "types": "./lib/read.d.ts",
+      "default": "./lib/read.js"
+    },
+    "./classify": {
+      "types": "./lib/classify.d.ts",
+      "default": "./lib/classify.js"
+    },
+    "./elide": {
+      "types": "./lib/elide.d.ts",
+      "default": "./lib/elide.js"
+    },
+    "./tracker": {
+      "types": "./lib/tracker.d.ts",
+      "default": "./lib/tracker.js"
+    },
+    "./world": {
+      "types": "./lib/world.d.ts",
+      "default": "./lib/world.js"
+    },
+    "./wake": {
+      "types": "./lib/wake.d.ts",
+      "default": "./lib/wake.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib"
+  ],
+  "devDependencies": {
+    "@deepseek-ai/dsh-goal": "^0.2.0-rc.2",
+    "mud-link": "workspace:^",
+    "mud-workflow": "workspace:^"
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\"",
+    "build": "pnpm run clean && tsc -p tsconfig.json",
+    "test": "pnpm exec vitest run tests",
+    "typecheck": "tsc -p tsconfig.test.json"
+  }
+}

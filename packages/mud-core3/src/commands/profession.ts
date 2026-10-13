@@ -1,9 +1,3 @@
-/**
- * commands/profession — 职业技能命令族条目（T26.1 骨架；DEC-18 构建期数组）。
- *
- * 成员归属以 79 命令清单实录为准（§6.1 第 7 项，T26.7 覆盖审计门）；A.6
- * 纪律：判据必须逐条实录（附录 A），不得凭印象写正则。
- */
-
-/** 职业技能命令族（待 79 清单实录后回填）。 */
-export const PROFESSION_COMMANDS = []
+/** T28.2 薄壳（A1 兼容期纪律）：实现迁入 packages/mud/mud-commands（src/profession.ts），本文件仅 re-export。
+ * T28.5 随 mud-core3 删除。 */
+export * from 'mud-commands/profession'
