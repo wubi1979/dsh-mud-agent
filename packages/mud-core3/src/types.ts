@@ -1,19 +1,3 @@
-/**
- * mud-core3 — Remote 边界类型（非根子路径导出）。
- *
- * typert 生成器要求：任何跨 Remote 边界的具名类型必须从包的**公开非根子路径**导出
- * （消费者才能从 `mud-core3/types` 引入同一符号）。此文件只做转发，不承载运行时代码。
- *
- * @module mud-core3/types
- */
-
-export type { AccountRecord, ServerRecord } from './roster.ts'
-export type { LogChannel, LogEntry, LogLevel } from './log/log-service.ts'
-export type { CaptchaFrame, CaptchaRow, SessionStatus, StatusFrame, StatusRow } from './service.ts'
-export type {
-  LoggedInState, WorldConfidence, WorldEntry, WorldSnapshot, WorldSource,
-} from './world.ts'
-export type {
-  GameFrame, GameOutputFrame, GameSnapshotFrame, GameStateFrame,
-  GameViewInfo, GameViewOptions,
-} from './view/screen.ts'
+/** T28.4 薄壳（A1 兼容期纪律）：实现迁入 packages/mud/mud（src/types.ts），本文件仅 re-export。
+ * 迁移期 core3 深路径 import（'./types.ts'）经此转发，同一模块实例、无副本。T28.5 随 mud-core3 删除。 */
+export * from 'mud/types'

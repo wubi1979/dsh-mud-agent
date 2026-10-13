@@ -39,8 +39,6 @@
     "typecheck": "tsc -p tsconfig.test.json"
   },
   "dependencies": {
-    "@xterm/addon-serialize": "^0.14.0",
-    "@xterm/headless": "^6.0.0",
     "zod": "^4.4.3"
   },
   "peerDependencies": {
@@ -59,6 +57,7 @@
     "@deepseek-ai/dsh-typert-generator": "0.2.0-rc.2",
     "@deepseek-ai/dsh-typert-protocol": "workspace:*",
     "mud-link": "workspace:^",
+    "mud": "workspace:^",
     "mud-commands": "workspace:^",
     "mud-combat": "workspace:^",
     "mud-flows": "workspace:^",

@@ -16,7 +16,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { Deliverer, type DelivererConfig, type DeliverySource } from '../src/deliver.ts'
-import type { MudLine } from '../src/link/line.ts'
+import type { MudLine } from 'mud-link/line'
 
 // ── 工具 ──────────────────────────────────────────────────────
 

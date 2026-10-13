@@ -7,6 +7,6 @@
     "sourceMap": false,
     "rootDir": ".."
   },
-  "include": ["src", "test"],
+  "include": ["src", "test", "../mud/mud/src/typert.d.ts"],
   "exclude": ["src/index.ts"]
 }

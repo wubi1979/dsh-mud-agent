@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_STAMINA_FLOOR_PCT, belowStaminaFloor, staminaRatio,
-} from '../src/nav/stamina.ts'
+} from 'mud-nav/stamina'
 
 describe('nav/stamina 精力闸（T23.10）', () => {
   it('占比 = 精力 / 最大精力；精力可为上限的 200%（A.7.1 结论 4）', () => {

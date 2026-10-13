@@ -14,8 +14,8 @@
 import { describe, expect, it } from 'vitest'
 import { createServer, type AddressInfo, type Server } from 'node:net'
 
-import { Classifier, DEFAULT_CLASSIFY_RULES } from '../src/classify.ts'
-import { AnsiStreamParser, type MudLine } from '../src/link/line.ts'
+import { Classifier, DEFAULT_CLASSIFY_RULES } from 'mud-sense/classify'
+import { AnsiStreamParser, type MudLine } from 'mud-link/line'
 import { SessionRuntime } from '../src/runtime.ts'
 
 /** 实录聊天行（logs/mud-20261003-session-a076….log stream 通道，逐字摘录）。 */

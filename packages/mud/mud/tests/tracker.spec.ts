@@ -10,11 +10,11 @@
 import { describe, expect, it } from 'vitest'
 import net from 'node:net'
 import type { AddressInfo } from 'node:net'
-import { StateTracker, STATUS_KIND, DEFAULT_TRACK_SPEC } from '../src/tracker.ts'
-import type { TrackSpec, TrackRule, TrackEntry, RowContext } from '../src/tracker.ts'
-import { World } from '../src/world.ts'
+import { StateTracker, STATUS_KIND, DEFAULT_TRACK_SPEC } from 'mud-sense/tracker'
+import type { TrackSpec, TrackRule, TrackEntry, RowContext } from 'mud-sense/tracker'
+import { World } from 'mud-sense/world'
 import { SessionRuntime } from '../src/runtime.ts'
-import type { MudLine } from '../src/link/line.ts'
+import type { MudLine } from 'mud-link/line'
 
 let absSeq = 0
 function line(text: string): MudLine {

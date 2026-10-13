@@ -20,11 +20,11 @@
 
 import { describe, expect, it } from 'vitest'
 import net from 'node:net'
-import { ReadMachine } from '../src/read.ts'
+import { ReadMachine } from 'mud-sense/read'
 import { SessionRuntime } from '../src/runtime.ts'
 import { Deliverer } from '../src/deliver.ts'
 import type { AddressInfo } from 'node:net'
-import type { MudLine } from '../src/link/line.ts'
+import type { MudLine } from 'mud-link/line'
 
 // ── 工具 ──────────────────────────────────────────────────────
 

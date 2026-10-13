@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest'
 import net from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { SessionRuntime } from '../src/runtime.ts'
-import { World } from '../src/world.ts'
+import { World } from 'mud-sense/world'
 import { MudService } from '../src/service.ts'
 
 /** 构造 GMCP 子协商字节：IAC SB GMCP <pkg SP payload> IAC SE。 */

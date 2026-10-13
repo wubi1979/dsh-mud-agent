@@ -15,7 +15,7 @@ import net from 'node:net'
 import type { AddressInfo } from 'node:net'
 
 import { SessionRuntime, type MudLine } from '../src/runtime.ts'
-import { login } from '../src/flows/login.ts'
+import { login } from 'mud-flows/login'
 
 // 内核（解释器）与契约（词汇表/端口）按子路径引用（A1 分层）。
 import { runFlow } from 'mud-workflow/core'

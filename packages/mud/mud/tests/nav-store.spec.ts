@@ -7,8 +7,8 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createJsonNavStore } from '../src/nav/json-store.ts'
-import { NavService } from '../src/nav/service.ts'
+import { createJsonNavStore } from 'mud-nav/json-store'
+import { NavService } from 'mud-nav/service'
 import { SessionRuntime } from '../src/runtime.ts'
 
 /** A.9 荆州府路线表（摘 3 条）。 */

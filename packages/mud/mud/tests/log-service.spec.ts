@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SessionLog, purgeSessionLogs, resolveLogDir } from '../../src/log/log-service.ts'
+import { SessionLog, purgeSessionLogs, resolveLogDir } from '../src/log.ts'
 
 function tempDir(tag: string): string {
   return mkdtempSync(join(tmpdir(), `mud-log-${tag}-`))

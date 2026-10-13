@@ -16,9 +16,9 @@
 import { describe, expect, it } from 'vitest'
 import { createServer, type AddressInfo, type Server } from 'node:net'
 
-import { GameScreen } from '../src/view/screen.ts'
+import { GameScreen } from '../src/screen.ts'
 import { SessionRuntime } from '../src/runtime.ts'
-import type { GameFrame } from '../src/view/screen.ts'
+import type { GameFrame } from '../src/screen.ts'
 
 /** 等 n 个宏任务 tick（合批 setImmediate + 写操作链落定）。 */
 async function ticks(n = 3): Promise<void> {

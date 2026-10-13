@@ -1,0 +1,80 @@
+{
+  "name": "mud",
+  "description": "MUD 引擎（T28 拆包，引擎域整域迁入）：MudService 多会话管理 · SessionRuntime 会话运行时 · roster/store/accounts 名册与凭据 · Deliverer 投递 · llm-gate LLM 否决 · SessionLog 会话日志 · GameScreen 终端屏面 · types 公共类型。编排 mud-link/mud-sense/mud-commands/mud-combat/mud-flows（D9 矩阵：不含 mud-nav，nav 只被 tool-mud 消费）。",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./service": {
+      "types": "./lib/service.d.ts",
+      "default": "./lib/service.js"
+    },
+    "./runtime": {
+      "types": "./lib/runtime.d.ts",
+      "default": "./lib/runtime.js"
+    },
+    "./accounts": {
+      "types": "./lib/accounts.d.ts",
+      "default": "./lib/accounts.js"
+    },
+    "./store": {
+      "types": "./lib/store.d.ts",
+      "default": "./lib/store.js"
+    },
+    "./roster": {
+      "types": "./lib/roster.d.ts",
+      "default": "./lib/roster.js"
+    },
+    "./deliver": {
+      "types": "./lib/deliver.d.ts",
+      "default": "./lib/deliver.js"
+    },
+    "./llm-gate": {
+      "types": "./lib/llm-gate.d.ts",
+      "default": "./lib/llm-gate.js"
+    },
+    "./log": {
+      "types": "./lib/log.d.ts",
+      "default": "./lib/log.js"
+    },
+    "./screen": {
+      "types": "./lib/screen.d.ts",
+      "default": "./lib/screen.js"
+    },
+    "./types": {
+      "types": "./lib/types.d.ts",
+      "default": "./lib/types.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib"
+  ],
+  "dependencies": {
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-llm": "^0.2.0-rc.2",
+    "mud-commands": "workspace:^",
+    "mud-combat": "workspace:^",
+    "mud-flows": "workspace:^",
+    "mud-link": "workspace:^",
+    "mud-nav": "workspace:^",
+    "mud-sense": "workspace:^",
+    "mud-workflow": "workspace:^"
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\"",
+    "build": "pnpm run clean && tsc -p tsconfig.json",
+    "test": "pnpm exec vitest run tests",
+    "typecheck": "tsc -p tsconfig.test.json"
+  }
+}
