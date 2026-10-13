@@ -13,10 +13,16 @@
 
 | 包 | 目录 | 角色 | 状态 |
 |---|---|---|---|
-| `mud-core3` | `packages/mud-core3/` | **宿主引擎插件**：`remote.mud.*` 动词、名册、连接与行流、投递与工具面、状态面、唤醒 | ✅ 在役 |
+| `tool-mud` | `packages/mud/tool-mud/` | **组合根 + 唯一可安装 bundle**：宿主装配接线、工具面、preset 行、`cordis.patch.yml` | ✅ 在役 |
+| `mud` | `packages/mud/mud/` | **会话引擎核心**：runtime / 名册存储 / 投递 / LLM 闸门 / 状态屏 / 日志 | ✅ 在役 |
+| `mud-link` | `packages/mud/mud-link/` | 连接层：telnet / 行化 / `MudLine` / 探活 / 语料 | ✅ 在役 |
+| `mud-sense` | `packages/mud/mud-sense/` | 感知纯层：read / classify / tracker / world / elide / wake | ✅ 在役 |
+| `mud-commands` | `packages/mud/mud-commands/` | 命令总表库：契约 + 分组 + 装配器（直接 import，无 service） | ✅ 在役 |
+| `mud-combat` / `mud-nav` / `mud-flows` | `packages/mud/*/` | 特性 provider：战斗 / 导航 / 流程实体（对 mud 引擎零 import） | ✅ 在役 |
 | `mud-workflow` | `packages/mud-workflow/` | **纯流程架构包**：声明式流程 schema / 注册表 / 解释器 / 五工具（零宿主 import） | ✅ 在役 |
 | `mud-webui` | `packages/mud-webui/` | **Web 壳**：名册管理、MUD 日志 tab、只读画面 tab、状态订阅 | ✅ 在役 |
 | `typert-protocol` | `packages/typert-protocol/` | remote 工件（`gen:typert`）协议镜像，与宿主检出对齐 | ✅ 在役 |
+| `mud-core3` | ~~`packages/mud-core3/`~~ | T28 拆分前的单包引擎——已拆为 `packages/mud/` 组 + 8 包 | ⛔ 2026-10-13 拆分删除（git 历史 / T28.1–T28.5 提交可溯） |
 | `mud-core`（v1） | ~~`packages/mud-core/`~~ | 初版引擎 | ⛔ 2026-09-27 退役；2026-10-08 删除（git 历史 / tag `retired-v1-v2` 可溯） |
 | `mud-core2`（v2） | ~~`packages/mud-core2/`~~ | 自主玩家 / 五层心智版 | ⛔ 2026-09-28 整体作废；2026-10-08 删除（git 历史 / tag `retired-v1-v2` 可溯） |
 
@@ -27,7 +33,7 @@
 ```
 人（浏览器）── L7 呈现层 mud-webui ── remote.mud.* ── 宿主 deepseek-harness（L0 底座）
                                                         │ 回合 / 工具调用 / 存储 / 凭据
-   mud-core3 引擎：L1 接入 → L2 行流 → L3 消费 → L4 通路（闸门）→ L5 agent → L6 执行层
+   tool-mud 组合根 + mud 引擎（packages/mud/ 组）：L1 接入 → L2 行流 → L3 消费 → L4 通路（闸门）→ L5 agent → L6 执行层
    MUD 服务器（pkuxkx）◀── telnet ── L1
 ```
 
@@ -55,14 +61,14 @@ pnpm install        # 首次：装全部依赖
 
 pnpm gen:typert     # 生成 remote 工件（改 remote 面后必跑）
 pnpm build          # pnpm -r build：构建全部在役包 → lib/
-pnpm test           # mud-core3 vitest
-pnpm dev            # gen:typert + build(core3, webui) + 启动 harness web profile（--port 3082）
+pnpm test           # 全 workspace vitest（8 包分账，§16.2）
+pnpm dev            # build(mud-workflow) + gen:typert + build(tool-mud, webui) + 启动 harness web profile（--port 3082）
 ```
 
 **要点**
 
 - patch 的 `name` 指向**构建产物**（绝对路径）；**改码后必须重建**，否则跑的是旧 `lib/`。
-- 播放器 preset 行分别加载 `mud-core3` 与 `mud-workflow` 的产物：**首次或改动流程包后先跑 `pnpm build`**（`pnpm dev` 只构建 core3 与 webui）。
+- 播放器 preset 行分别加载 `tool-mud` 与 `mud-workflow` 的产物：**首次或改动后先跑 `pnpm build`**（`pnpm dev` 只构建 workflow、tool-mud 与 webui；**tool-mud build 后必须重跑 `gen:typert`**——tsc 清 lib 会抹掉生成工件）。
 - 插件包在宿主 profile 之外时，活动 profile 的 `node_modules` 里必须有指向本包的链接（junction/symlink），`peerDependencies` 的 dsh 包才会解析到运行中的安装；`dsh plugin add` 会建该链接，`--patch` 直挂**不建**，需手工建。**链接在启动时一次性读取，改动后需重启**（§2.2）。
 - `pnpm dev` 的 harness 路径与端口写在根 `package.json`，环境不同请改脚本。
 - 登录凭据由页面写入宿主凭据域（只存引用名），**不落在本仓**（§11.6、§12.2）。

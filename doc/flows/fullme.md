@@ -2,7 +2,7 @@
 sections: []
 status: active
 deps: ["§8.8", "§8.10", "§8.13", "§8.17"]
-impl: packages/mud-core3/src/flows/fullme.ts
+impl: packages/mud/mud-flows/src/fullme.ts
 note: fullme 流程实体声明（locked）；词汇表扩展与链路机制见 §8.17，呈现见 §9.7，判据依据同源附录 A（v1 实录）
 ---
 
@@ -10,7 +10,7 @@ note: fullme 流程实体声明（locked）；词汇表扩展与链路机制见 
 
 - **归属**：§8.17 的从属声明文件。**§8 的规则优先**；本文件只细化步表、判据原文与语料依据。
 - **性质**：**locked**（拒改拒删，§8.11）；与 `login` 并列第二个 locked-only `captcha` 动作流程（§8.12 红线双闸）。
-- **实现**：`packages/mud-core3/src/flows/fullme.ts`（流程实体归 core3；`mud-workflow` 是纯架构，§8.8）。
+- **实现**：`packages/mud/mud-flows/src/fullme.ts`（流程实体归 mud-flows，T28 拆分；`mud-workflow` 是纯架构，§8.8）。
 - **触发**：**被动处置**——agent 判系统提示/信息降级后跑 `fullme`（不发周期探针，§8.17 口径）。
 - **判据原文**：v1 实录七常量起步（v1 §11 `doc/archive/mud-core/flows/fullme.md`），宽匹配起步，**实机触发时按语料校准**（stale 句与失效句原文待实录，§13.4 纪律）。
 

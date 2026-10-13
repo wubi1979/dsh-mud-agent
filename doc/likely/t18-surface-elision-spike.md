@@ -1,6 +1,7 @@
 # T18 会话上下文「进程级收口」——surfaceOp 遮蔽 spike（已执行 2026-10-06）
 
 > **状态（2026-10-06）**：**spike 已完成，三问全部有实测证据**（用户授权直接做 spike）。结论：宿主提供的「表面替换」（`surfaceOp: { op:'replace' }`）可以在**不换会话身份**的前提下把"本进程之前的 model-visible 历史"从对话请求里彻底移除，且该遮蔽**持久**（下一进程重放后仍生效）。同时实测出一条**硬不变量**：在会话 `system/message` head 就位之前追加任何 message 事件，append 当场成功、日志照写，但**下一次进程重放直接判 corrupt**（`system/message requires a protected first surface head`）——会话被写坏。
+> **路径注记（T28.6，2026-10-13）**：本文为 T18 交付期的**历史实测档案**，文中 `mud-core3` 路径/包名均指当时现役单包引擎——T28（v0.0.72）已拆分为 `packages/mud/` 组 + 8 包（组合根 `tool-mud`），路径不再有效，正文按实测档案原样保留。
 > **可复现资产**：[`spike/surface-spike.mjs`](../../spike/surface-spike.mjs)（零依赖插件）、[`spike/surface-spike.patch.yml`](../../spike/surface-spike.patch.yml)、临时宿主家目录 `D:\code\_spike\dshhome`（可删）。
 
 ## 1. 做法

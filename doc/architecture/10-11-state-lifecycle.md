@@ -196,7 +196,7 @@ apply(ctx, config)
   │                   delivererConfig / log / parentLookup / onAdmit / view）
   ├─ ctx.provide('mudCore3', { … })   // 工具面引擎窄面，见 §15.2
   ├─ MudRemoteService 构造             // 构造即 ctx.provide(mudRemote)；**不再手动 provide**
-  └─ typert 工件：try-import('mud-core3/typert') → typert.register（缺席只记 info）
+  └─ typert 工件：try-import('tool-mud/typert') → typert.register（缺席只记 info）
 ctx.effect 卸载 → 拆全部 Wake + service.disposeAll()
 ```
 

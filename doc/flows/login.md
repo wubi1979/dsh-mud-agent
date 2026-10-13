@@ -2,7 +2,7 @@
 sections: []
 status: active
 deps: ["§8.8", "§8.10", "§8.13", "§8.15"]
-impl: packages/mud-core3/src/flows/login.ts
+impl: packages/mud/mud-flows/src/login.ts
 note: login 流程实体声明（locked）；机制见 §8.13、执行缝见 §8.14、判据依据见附录 A
 ---
 
@@ -10,7 +10,7 @@ note: login 流程实体声明（locked）；机制见 §8.13、执行缝见 §8
 
 - **归属**：§8.15 的从属声明文件。**§8 的规则优先**；本文件只细化步表、判据原文与语料依据。
 - **性质**：**locked**（拒改拒删，§8.11）；**全系统唯一允许使用 `sendCredential` 的流程**（§8.12 凭据红线双闸）。
-- **实现**：`packages/mud-core3/src/flows/login.ts`（流程实体归 core3；`mud-workflow` 是纯架构，§8.8）。
+- **实现**：`packages/mud/mud-flows/src/login.ts`（流程实体归 mud-flows，T28 拆分；`mud-workflow` 是纯架构，§8.8）。
 - **入口**：**匹配服务端提示行**，不是定时器。
 - **机制**：解释器语义见 §8.13（动作在路由前执行；`initial` 取 `pendingLines` 尾部快照 ⇒ **提示符先到先结算**）。
 - **判据原文**：全部取自 [附录 A](../appendices/A-capture-facts.md) 实测记录（不得凭印象改正则）。

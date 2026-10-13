@@ -11,7 +11,7 @@ note: 横切面（索引章）：对外契约 + Config 总表；权威条款在�
 
 ## 15.1 `remote.mud.*` 动词表
 
-服务键：`mudRemote`（命名空间 `mud`）；实现 `MudRemoteService`（构造即 `ctx.provide`）。Remote 边界类型从**非根子路径** `mud-core3/types` 导出（typert 要求）。
+服务键：`mudRemote`（命名空间 `mud`）；实现 `MudRemoteService`（构造即 `ctx.provide`）。Remote 边界类型从**非根子路径** `tool-mud/types` 导出（typert 要求；T28.5 起归属 tool-mud，`tool-mud/types` 为 `mud/types` 转发件）。
 
 | 动词 | 入参 | 返回 | 权威章节 |
 |---|---|---|---|
@@ -74,14 +74,14 @@ ctx.provide('mudNav', NavService)      // 插件级单例（知识图全局；�
 
 ## 15.3 preset 行清单
 
-`packages/mud-core3/cordis.patch.yml` 定义 `mud-player` preset：
+`packages/mud/tool-mud/cordis.patch.yml` 定义 `mud-player` preset：
 
 | 行 | 作用 |
 |---|---|
 | 宿主 `standard` 插件面 | 基础能力（**不覆盖** registry 的 `default`；建账号时显式选 preset）；含 T24 启用的 `command-goal`（玩家 /goal 命令面）与 `tool-goal`（agent 侧 get_goal/create_goal/update_goal，blockedAfterConsecutiveRounds=3）；含 T25 启用的 `skill-filesystem`（customSkillDirs → 本仓 knowledge、includeDefaultRoots: false）与 `tool-skill`（目录注入 + skill 加载工具） |
 | **`dsh-goal` 服务行**（T24） | goal 服务（每 agent 会话一个持久 goal；上游 Web 组合只挂消费件不挂服务，需自行提供）。goal-round-driver 不挂：静默唤醒已是驱动器，挂则双驱动冲突 |
-| **引擎行** | `mud-core3`（`lib/index.js`）：名册 / 连接 / 投递 / 服务面 / 流程实体 |
-| **preset 行**（`src/preset.ts` → `lib/preset.js`） | 工具注册（preset 作用域，执行期解析引擎窄面，§8.1–§8.2） |
+| **组合根行** | `tool-mud`（`lib/index.js`）：装配接线 + 名册 / 连接 / 投递 / 服务面 / 流程实体 |
+| **preset 行**（`tool-mud/src/preset.ts` → `lib/preset.js`） | 工具注册（preset 作用域，执行期解析引擎窄面，§8.1–§8.2） |
 | **`mud-workflow` 行** | 流程注册表 + 七工具（§8.14） |
 | persona | 玩家身份 + 工具说明 + **知识库使用指引**（T25）+ **分工协议五条**（§7.1、§7.6）+ 优先目标决策节奏（T24） |
 
@@ -89,7 +89,7 @@ ctx.provide('mudNav', NavService)      // 插件级单例（知识图全局；�
 - **T25 知识库资产面**：`corpus/wiki/`（源数据：201 篇 JSON + 索引，只读）与 `knowledge/`（生成物：190 篇 `wiki-<title>` + `mud-basics`，入库）均随 git 版本化；生成器 `scripts/build-wiki-skills.mjs` 幂等重跑（源数据更新后重跑即刷新，自校验红门：数量对账/frontmatter/kebab-case/正文完整性）。
 - **声明合并自扩**：`MessageSourceMap` 增加 `'mud'`（行批次）与 `'mud-wake'`（任务书/唤醒）两种 kind（§6.2、§7.4）；`'goal'` kind 由宿主 dsh-goal 声明（非本仓）。
 - 加载形态：patch 的 `name` 指向构建产物；`headless` 屏 cols 等视图参数成组（§15.5）。
-- **启动链**（根 `package.json`）：build `mud-workflow`（契约产物——core3 类型面依赖它）→ `gen:typert` → build `mud-core3` → build `mud-webui` → `dsh web --patch <patch>`（§2.2、§8.8）。
+- **启动链**（根 `package.json`）：build `mud-workflow`（契约产物——tool-mud 类型面依赖它）→ `gen:typert`（tool-mud）→ build `tool-mud` → build `mud-webui` → `dsh web --patch <patch>`（§2.2、§8.8；**构建序固定 tool-mud build → gen:typert**，T28.5）。
 
 ## 15.4 流程词汇表与保存门（索引）
 
@@ -141,7 +141,7 @@ ctx.provide('mudNav', NavService)      // 插件级单例（知识图全局；�
 | 27 | `captchaTimeoutMs` | 180_000 | 验证码挂起预算（**独立预算**，不受 MAX_TIMEOUT_MS/silenceMs 校验约束；**正整数 fail-loud**） | §8.17 |
 | 28 | `staminaFloorPct` | 0.2 | **精力闸比值**（T23.10 D16）：`精力/最大精力` 低于此值不发 `walk`；战斗规则（收加力）**共用同一键**；须为 `(0,1]` 的比值，fail-loud | §8.7、§10.3 |
 
-> 上表与 `packages/mud-core3/src/index.ts` 的 `MudCore3Config` 一一对应（**27 项现役 + 1 已退役**）。探活三项 + `silenceMs` 受启动期校验式约束（`probeStartMs + probeMaxAttempts × probeRetryMs ≤ silenceMs`，fail-loud，§3.2）。变更 Config 必须同时改本表与 §0.1 版本号语义（Y/Z 级）。
+> 上表与 `packages/mud/tool-mud/src/index.ts` 的 `MudCore3Config` 一一对应（**27 项现役 + 1 已退役**；类型名沿用，T28.5 裁决）。探活三项 + `silenceMs` 受启动期校验式约束（`probeStartMs + probeMaxAttempts × probeRetryMs ≤ silenceMs`，fail-loud，§3.2）。变更 Config 必须同时改本表与 §0.1 版本号语义（Y/Z 级）。
 
 ### 硬编码项（**不进 Config**，附理由）
 

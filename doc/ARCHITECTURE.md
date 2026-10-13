@@ -4,7 +4,7 @@ status: active
 note: 入口文件：只承载文档规则与导航，不承载设计事实
 ---
 
-# dsh-mud-agent 设计事实源（入口）· mud-core3（分层架构版）
+# dsh-mud-agent 设计事实源（入口）· tool-mud 组合根 + packages/mud/ 组（分层架构版）
 
 > **状态：v0.2.0 设计基线（分层重排）**。本文只含 §0 规则与导航，**不承载设计事实**。
 > 实施进度看 [CHANGELOG.md](CHANGELOG.md)（只追加）；当前待办与切片状态看 [PLAN.md](PLAN.md)。**本页不维护状态摘要**。

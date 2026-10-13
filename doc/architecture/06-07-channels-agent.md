@@ -95,7 +95,7 @@ MUD 行流 → 聚合（静默窗口，§5.4）→ 一条用户消息投递进�
 
 ## 7.1 preset 装配与 persona
 
-- **能力面由 preset 决定**：`mud-player` preset 行 = 宿主 `standard` 的插件面 + MUD persona + **本包 preset 行**（引擎 `mud-core3`）+ **`mud-workflow` 行**（流程七工具）+ **知识库两行**（T25：`skill-filesystem` 本地知识提供方 + `tool-skill` 目录注入与加载工具）。**建账号时显式传 `agentPreset`**，**不覆盖** registry 默认。
+- **能力面由 preset 决定**：`mud-player` preset 行 = 宿主 `standard` 的插件面 + MUD persona + **本包 preset 行**（组合根 `tool-mud`）+ **`mud-workflow` 行**（流程七工具）+ **知识库两行**（T25：`skill-filesystem` 本地知识提供方 + `tool-skill` 目录注入与加载工具）。**建账号时显式传 `agentPreset`**，**不覆盖** registry 默认。
 - 账号可选 `standard`/`mud-player`：**选 `standard` 的账号没有 MUD 工具**（agent 只能接消息、不能发命令）——这是使用者的显式选择，不是缺陷；归属不按 preset 排除（§1.4）。
 - **MUD 知识库（T25）**：`knowledge/`（仓库内，git 版本化）= **190 篇 wiki 技能**（`wiki-<title>` 命名，北侠 wiki 全量转换，源数据在 `corpus/wiki/`）+ **`mud-basics` 常驻浓缩版**（基础知识 11 篇重新归纳，~5K chars）。token 模型 = 目录常驻（191 条 ≈ 5K tokens，仅 name+description，digest 变更才重发）+ 正文按需 `skill` 工具加载（compaction 可回收后重载）；persona 决策节奏第 0 步开局引导加载 mud-basics。`customSkillDirs` 指向本仓 knowledge、`includeDefaultRoots: false`（游戏会话知识面确定性集合）；chokidar 热更保留（改文件 → 目录自动重发）。知识时效：抓取于 2026-01-12，每篇头部标注来源 URL 与日期，**实机行为为准，wiki 是参考不是权威**。生成器 `scripts/build-wiki-skills.mjs`（幂等重跑，自校验红门）。
 - **persona 是书写约定、无代码解析**，包含四块：

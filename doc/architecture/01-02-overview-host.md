@@ -15,7 +15,7 @@ note: 全局视图 + 宿主底座；任何任务必读本文（§1 分层模型�
 |---|---|
 | **人** | 浏览器里的使用者。全程只面对「**服务器 → 账号**」两级实体，不感知会话/连接/流程 |
 | **宿主**（deepseek-harness） | 提供工作区、会话与 agent 回合、preset、凭据、存储域、工具、模型、remote RPC、子 agent（一次性委派）（§2） |
-| **插件**（本仓） | `mud-core3` 引擎 + `mud-workflow` 流程包 + `mud-webui` 壳；把一条 MUD 连接接进 agent 的回合与工具面 |
+| **插件**（本仓） | `packages/mud/` 组（`tool-mud` 组合根 + `mud` 引擎 + 六域包，§1.6）+ `mud-workflow` 流程包 + `mud-webui` 壳；把一条 MUD 连接接进 agent 的回合与工具面 |
 | **MUD 服务器** | 提供游戏世界：telnet 行流、GA/EOR 边界、GMCP 状态包 |
 
 一句话：**把 MUD 行流以"等同人工提问"的方式送进 agent 的会话，把 agent 的回答以工具调用的方式送回 MUD**，并让这件事在多账号、可接入/停止、可诊断、凭据不泄露的前提下成立。
@@ -99,7 +99,7 @@ note: 全局视图 + 宿主底座；任何任务必读本文（§1 分层模型�
  ═══════════╤═══════════════════════════════════════╤════════════════════════════
             │ 插件装配（apply / provide / on）       │ 回合 · 工具调用
    ┌────────┴───────────────────────────────────────▼──────────────────────────┐
-   │                            mud-core3 引擎                                  │
+   │              tool-mud 组合根 + mud 引擎（packages/mud/ 组）                 │
    │  L1 接入层          L2 行流层                L3 消费层                     │
    │  telnet / GMCP  →   pendingLines 环形   →    ReadMachine（工具·流程读）    │
    │  行化 / MudLine     abs + 双水位线            GameScreen（画面无头屏）      │
@@ -132,34 +132,42 @@ note: 全局视图 + 宿主底座；任何任务必读本文（§1 分层模型�
 
 | 包 | 目录 | 角色 |
 |---|---|---|
-| `mud-core3` | `packages/mud-core3/` | **宿主引擎插件**：`remote.mud.*` 动词、名册、连接与行流、投递与工具面、状态面、唤醒；`ctx.provide('mudCore3')` 服务窄面 |
+| `tool-mud` | `packages/mud/tool-mud/` | **组合根 + 唯一可安装 bundle**：宿主装配接线（`index.ts`）、工具面（`tools.ts`）、preset 行（`preset.ts`）、`cordis.patch.yml`；`ctx.provide('mudCore3')` 服务窄面（**键名沿用**）；`remote.mud.*` 动词与 `./typert`/`./remote`/`./types` exports 归属 |
+| `mud` | `packages/mud/mud/` | **会话引擎核心**：`service` / `runtime` / `roster` / `store` / `accounts` / `deliver` / `llm-gate` / `log` / `screen` / `types`；对上游域包只 import 不被依赖 |
+| `mud-link` | `packages/mud/mud-link/` | **连接层**（§3）：telnet / 行化 / `MudLine` / 探活 / 语料 |
+| `mud-sense` | `packages/mud/mud-sense/` | **感知纯层**（§5.2、§6.3、§7.4–§7.5、§10.3）：`read` / `classify` / `tracker` / `world` / `elide` / `wake` |
+| `mud-commands` | `packages/mud/mud-commands/` | **命令总表库**（§8.7）：契约 + 分组 + 装配器；直接 import，不做 service |
+| `mud-combat` | `packages/mud/mud-combat/` | **战斗 provider**（T21）：state / rules / controller / danger / report；对 mud 引擎零 import |
+| `mud-nav` | `packages/mud/mud-nav/` | **导航 provider**（T23.10）：stamina / route / graph / service / json-store / blocker；对 mud 引擎零 import |
+| `mud-flows` | `packages/mud/mud-flows/` | **流程实体 provider**：`login` / `fullme` / `captcha` 纯件；对 mud 引擎零 import |
 | `mud-workflow` | `packages/mud-workflow/` | **纯流程架构包**（三层：契约 `./contract` / 内核 `./core` / 适配 `host/*`，前两层零宿主 import，§8.8）；`ctx.provide` 出 `mudWorkflow` 注册表面 |
 | `mud-webui` | `packages/mud-webui/` | **Web 壳**（浏览器侧插件）：名册管理、MUD 日志 tab、只读画面 tab、状态订阅 |
 | `typert-protocol` | `packages/typert-protocol/` | remote 工件（`gen:typert`）的协议镜像，与宿主检出对齐 |
 | `mud-core`（v1） | `packages/mud-core/` | **已退役**（2026-09-27）：代码留存不删、不再演进 |
 | `mud-core2`（v2） | `packages/mud-core2/` | **已退役**（2026-09-28）：原位保留、不再演进 |
 
-`mud-core3/src` 模块 → 章节映射：
+模块 → 章节映射（T28 拆分后按新包路径，`packages/mud/` 组内）：
 
 | 模块 | 职责 | 章节 |
 |---|---|---|
-| `link/telnet.ts` | telnet 协商 / GMCP 子协商 | §3.3 |
-| `link/line.ts` | ANSI 解析 / 行化 / `MudLine` / `abs` / flush | §3.4 |
-| `link/mud.ts` | 连接管理（连接代次、硬收尾、分发） | §3.2 |
-| `link/corpus.ts` | 行流语料 JSONL 落盘 | §3.5 |
-| `runtime.ts` | `SessionRuntime`：录制、水位线、读、发送、状态 | §4、§10 |
-| `read.ts` | `ReadMachine`：判定序与收束 | §5.2 |
-| `screen.ts` | 无头屏与画面帧 | §5.3 |
-| `deliver.ts` | `Deliverer`：聚合与水位拉取 | §5.4、§6.2 |
-| `service.ts` | `MudService`：runtime 注册表与生命周期编排 | §11、§15.2 |
-| `tools.ts` / `preset.ts` | 工具纯层与 preset 作用域注册 | §8.1–§8.7 |
-| `flows/login.ts` | login 流程实体（locked） | §8.14 + [flows/login.md](../flows/login.md) |
-| `wake.ts` | 任务书模板与静默唤醒器 | §7.4、§7.5 |
-| `world.ts` | 世界状态（分区 / 置信度 / 来源） | §10.3 |
-| `store.ts` / `roster.ts` / `accounts.ts` | 名册存储域、记录类型、写路径 | §11.2、§15.1 |
-| `elide.ts` | 会话上下文的进程级收口：进程 epoch / 起点标记 / 遮蔽判定与适配（纯层） | §11.2 |
-| `log/log-service.ts` | 会话日志（内存环 + JSONL） | §13.1 |
-| `index.ts` | 宿主装配：事件接线、remote 注册、`provide`、`kickoff` | §2.3、§7.3、§15 |
+| `mud-link/src/telnet.ts` | telnet 协商 / GMCP 子协商 | §3.3 |
+| `mud-link/src/line.ts` | ANSI 解析 / 行化 / `MudLine` / `abs` / flush | §3.4 |
+| `mud-link/src/mud.ts` | 连接管理（连接代次、硬收尾、分发） | §3.2 |
+| `mud-link/src/corpus.ts` | 行流语料 JSONL 落盘 | §3.5 |
+| `mud/src/runtime.ts` | `SessionRuntime`：录制、水位线、读、发送、状态 | §4、§10 |
+| `mud-sense/src/read.ts` | `ReadMachine`：判定序与收束 | §5.2 |
+| `mud/src/screen.ts` | 无头屏与画面帧 | §5.3 |
+| `mud/src/deliver.ts` | `Deliverer`：聚合与水位拉取 | §5.4、§6.2 |
+| `mud/src/service.ts` | `MudService`：runtime 注册表与生命周期编排 | §11、§15.2 |
+| `tool-mud/src/tools.ts` / `preset.ts` | 工具纯层与 preset 作用域注册 | §8.1–§8.7 |
+| `mud-commands/src/` | 命令总表：契约 + 分组 + 装配器 | §8.7 |
+| `mud-flows/src/login.ts` | login 流程实体（locked） | §8.14 + [flows/login.md](../flows/login.md) |
+| `mud-sense/src/wake.ts` | 任务书模板与静默唤醒器 | §7.4、§7.5 |
+| `mud-sense/src/world.ts` | 世界状态（分区 / 置信度 / 来源） | §10.3 |
+| `mud/src/store.ts` / `roster.ts` / `accounts.ts` | 名册存储域、记录类型、写路径 | §11.2、§15.1 |
+| `mud-sense/src/elide.ts` | 会话上下文的进程级收口：进程 epoch / 起点标记 / 遮蔽判定与适配（纯层） | §11.2 |
+| `mud/src/log.ts` | 会话日志（内存环 + JSONL） | §13.1 |
+| `tool-mud/src/index.ts` | 宿主装配：事件接线、remote 注册、`provide`、`kickoff` | §2.3、§7.3、§15 |
 
 ## 1.7 状态载体与单一真相
 
@@ -271,7 +279,7 @@ agent 工具调用 mud_send{cmd, listen}
 - 因此本包必须在活动 profile 的 `node_modules` 里有一条指向本包真实目录的链接（junction/symlink）：`peerDependencies` 里的 dsh 包才会解析到**运行中的安装**（与宿主共用一份实例）；`devDependencies` 那份只服务 `tsc` 与单测。
 - `dsh plugin add` 就是"建立该链接 + 登记 bundle 层"的封装；`--patch` 直挂时**不建立链接**，需手工建。
 - **链接在启动时一次性读取，改动后必须重启。**
-- 本仓启动链（根 `package.json`）：`gen:typert` → `build mud-core3` → `build mud-webui` → `dsh web --patch packages/mud-core3/cordis.patch.yml`。
+- 本仓启动链（根 `package.json`）：`build mud-workflow` → `gen:typert`（tool-mud）→ `build tool-mud` → `build mud-webui` → `dsh web --patch packages/mud/tool-mud/cordis.patch.yml`。**构建序固定：tool-mud build 在 `gen:typert` 之前**（tsc 清 lib 会抹掉生成工件，T28.5）。
 
 ## 2.3 宿主依赖面
 

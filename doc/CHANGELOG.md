@@ -1,4 +1,4 @@
-# mud-core3 变更记录
+# dsh-mud-agent 变更记录
 
 > 只追加，不回改历史行。仅正式实施的里程碑登记新条目；设计修订的最终结果并入对应条目，不单列。
 
@@ -829,6 +829,18 @@
 - **任务专用命令骨架 + 阵法首用例语料**（2026-10-12 用户裁定方向）：新增第六分组 `commands/task.ts`（`TASK_COMMANDS = []` 骨架，头注释载明 2026-10-12 裁定——生效判定 = 会话谱系标记、语义边界 = 只做收窗判据不拦发送）；机制实施（派发面标记写入 / resolveAwaitPlan 任务上下文 / 装配器分离）立 **T27** 待办池（判据原句实录前不接机制，避免无例证建机制）；武当阵法任务语料（`zhenfa`/`zouwei`，唯一实录句「这个房间里正有人在演练阵法」，走位决策型特性）登记**附录 A.10**。
 
 > AI生成
+## [v0.0.72]mud-core3 包拆分重组：`packages/mud/` 组 + 8 包（T28）(2026-10-13)
+
+> 总结：纯组织重构（T28.1–T28.6 六切片，当日立项当日交付）——按 DSH 官方插件组织规则将 `mud-core3` 单包拆为 `packages/mud/` 组 + 8 包，运行时行为与判据语义零变更。迁移全程走 A1 薄壳兼容期（core3 旧路径 re-export 新包、同一模块实例无副本），`plugin-load.e2e` 工件面在各切片照常绿，T28.5 删包后改从 tool-mud lib 加载。
+
+- **组 + 8 包结构**（§1.6 包表同步）：组 = 纯容器；`mud-link`（连接层）/ `mud-sense`（感知纯层：read·classify·tracker·world·elide·wake）/ `mud-commands`（命令总表库，`command-profiles.ts` 改名 `assembler.ts`，直接 import 不做 service）/ `mud-combat` / `mud-nav` / `mud-flows`（三特性 provider，对 mud 引擎零 import）/ `mud`（会话引擎核心：service·runtime·roster·store·accounts·deliver·llm-gate·log·screen·types）/ `tool-mud`（组合根 + 唯一可安装 bundle：index 装配·tools·preset·cordis.patch.yml）。依赖单向、role-first 命名。
+- **B4**：跨包深路径 import 全部改包名导入（含测试面）；helpers.ts 随引擎集成测试归 `mud/tests`。
+- **typert 归属同步**（3.4/B5）：ambient 模块名 `'mud-core3/typert'` → `'tool-mud/typert'`；exports `./typert`/`./remote`/`./types` 归 tool-mud（`tool-mud/types` 为 `mud/types` 转发件）；`gen:typert` PACKAGES → `['tool-mud']`；**构建序固定：tool-mud build → gen:typert**（tsc 清 lib 会抹掉生成工件）。
+- **沿用药（宿主换代复核）**：patch 行 id `mud-core3`/`mud-core3-tools`（宿主 profile 按 id 幂等替换，改名会插重复行）；服务键 `ctx.mudCore3` 与 `MudCore3Config` 类型名（workflow host 消费，破坏性 API）。插件 name/日志前缀/wake plugin 标识/错误文案已同步 `tool-mud`。
+- **引用面同步**：mud-webui（workspace dep + `tool-mud/remote`/`tool-mud/types`）、root scripts（typecheck/test/gen:typert/dev）、`tsconfig.host.json`。
+- **测试按 8 包重新分账**（§16.2，2026-10-13 实测）：link 79 + sense 38（36 绿 + wake 2 例 v0.0.66 登记历史遗留）+ commands 17 + combat 54 + nav 23 + mud 234 + tool-mud 59 + flows 0（无自有单测，E2E 归 mud）= **504 例 / 36 文件**（502 绿 + 2 遗留）+ workflow 96 + webui 7；typecheck 零错。计划外勘误三件：`nav.spec`（stamina 纯单测）系 T28.3 计划缺口，补归 `mud-nav/tests/nav-stamina.spec.ts`（+4 例）；`mud` devDeps 增 `mud-nav`（nav-store.spec 引擎×nav 集成测试，D9 矩阵指 src 面不变）；`mud-flows` vitest 加 `passWithNoTests`。
+- **文档收口**（T28.6）：§16.5 切片表 T28 行、§16.2 分账、§1.6 包表与模块映射、§2.2/§15.3 启动链与 preset 行表、§8.x 路径锚点、附录 A/B 路径、`doc/flows/*.md` impl 指针、ARCHITECTURE 标题；全仓 grep `mud-core3` 零残留（doc/archive、CHANGELOG 历史条目、patch 行 id 与 spike/ 豁免）。宿主真机冒烟待重启（`--patch` 无 `did not activate` / `dsh plugin add` 流程切换 / junction 链接目标改 tool-mud）。
+
 ## [v0.0.71]复审勘误（§16.2 计数表 + B-audit C4 + 缝侧 maxLines 防护）(2026-10-13)
 
 > 总结：拉取 v0.0.70 后全面复审——勘误声明全部落地实证（§8.7 重写、两表同构、gaCount 改名、exercise/walk 归属、task 骨架、typecheck 构建序），测试三套复核（mud-workflow 96 全绿 + core3 485/487 绿 + typecheck 零错）；上轮报告三项遗留经用户裁定（2026-10-13）本次收口。环境注记：拉取后须先 `pnpm --filter mud-workflow build` 再跑 core3 测试——lib 陈旧会使 listen 校验走旧 schema，tools.spec 4 例假失败（已实证复现并重建消除）。

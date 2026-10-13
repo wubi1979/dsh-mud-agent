@@ -32,7 +32,6 @@ T28.5 归 tool-mud。
 
 ## Known Limitations
 
-- typert 工件（`lib/typert.host.js`/`lib/typert.remote-client.js` + exports
-  `./typert`/`./remote`）T28.5 前仍由 mud-core3 提供（3.4/B5：动词面 index.ts
-  尚在 core3，ambient 模块名 `'mud-core3/typert'` 暂保持，随 T28.5 同步）。
+- typert 工件与 exports `./typert`/`./remote` 自 T28.5（v0.0.72）起归
+  `tool-mud`（ambient 模块名 `'tool-mud/typert'`）；本包不再持有 typert 面。
 - 对宿主零依赖：cordis 接线、remote 通道、storage 域全部由装配方注入。

@@ -8,7 +8,7 @@ note: 代码审计规约（可执行检查表）；只约束审阅方法，不�
 # 附录 B：审计规约（可执行检查表）
 
 - **性质**：**方法规约**——只约束"怎么审"，**不改设计**、不承载设计事实。与 §1–§17 各章节并列使用。
-- **适用**：`packages/mud-core3/`、`packages/mud-workflow/` 下全部产物（`src/`、`test/`、`tsconfig*`、`package.json`、`cordis.patch.yml`）。
+- **适用**：`packages/mud/` 组八包（`tool-mud` / `mud` / `mud-link` / `mud-sense` / `mud-commands` / `mud-combat` / `mud-nav` / `mud-flows`，T28 拆分后）与 `packages/mud-workflow/` 下全部产物（`src/`、`tests/`、`tsconfig*`、`package.json`、`cordis.patch.yml`）。
 - **本规约自身的编号（0./1./C1–C7…）独立于设计 `§N`**，不得混写：引用设计一律写**现役 `§N`**；引用归档写 `v1 §N` / `v2 §N`（§0.6）。
 
 ## 0. 证据分级（决定一条意见能不能提交）
@@ -113,16 +113,16 @@ note: 代码审计规约（可执行检查表）；只约束审阅方法，不�
 ## 4. 可重复执行的证据命令
 
 ```powershell
-# 类型检查
-pnpm --filter mud-core3 exec tsc --noEmit
+# 类型检查（T28 拆分后按包逐个；root `pnpm typecheck` 一键全量）
+pnpm --filter mud-link --filter mud-sense --filter mud-commands --filter mud-combat --filter mud-nav --filter mud-flows --filter mud --filter tool-mud build
 pnpm --filter mud-workflow exec tsc --noEmit
 
 # 测试（例数以当次实测登记，不硬编码历史值）
-pnpm --filter mud-core3 test
+pnpm --filter mud-link --filter mud-sense --filter mud-commands --filter mud-combat --filter mud-nav --filter mud-flows --filter mud --filter tool-mud test
 pnpm --filter mud-workflow test
 
 # 产物清单（判定"不存在"前必须先跑）
-Get-ChildItem -Recurse -File -Include *.ts packages\mud-core3\src,packages\mud-core3\test
+Get-ChildItem -Recurse -File -Include *.ts packages\mud\*\src,packages\mud\*\tests
 ```
 
 > 具体脚本以仓根 `package.json` 当次实际内容为准；E3 证据必须附命令与输出。

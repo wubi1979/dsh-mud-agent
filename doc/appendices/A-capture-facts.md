@@ -94,7 +94,7 @@ note: 抓包与语料事实（MUD 侧实录）；现役登录流程与读窗口�
    - **已确认（A.8.2 结论 3，2026-10-06 战斗实录）**：`气血上限` = **基准上限（不变）**、`最大气血` = **生效上限（被 `wound` 削减）**、`气血` = 当前值（被 `damage` 削减）。两个分母含义不同，危险判据见 A.8.2 结论 5。
 4. **`内力` / `精力` 可超过 `最大内力` / `最大精力`，百分比上限 = 200%**（用户确认 2026-10-06：上限 200%，平时一般不会打坐到 200%）。同刻实录即有对照：`324,648`（=100% / 200%）、`311,622`（=100% / 200%）。"内力充足"一类判据按 `内力 / 最大内力` 的**百分比**取阈，`最大值` 不是 100%。
 
-写入映射（`vitals.*` 16 键 + `combat.战斗中`/`combat.忙` 布尔）见 §10.3 与 [tracker.ts](../../packages/mud-core3/src/tracker.ts) `hpbriefRow`。
+写入映射（`vitals.*` 16 键 + `combat.战斗中`/`combat.忙` 布尔）见 §10.3 与 [tracker.ts](../../packages/mud/mud-sense/src/tracker.ts) `hpbriefRow`。
 
 ### A.7.2 hp（框线表格，片段先行）
 
@@ -157,7 +157,7 @@ note: 抓包与语料事实（MUD 侧实录）；现役登录流程与读窗口�
 5. **写入时机**：分区行跨行合并，块收口（`└`）统一写（同 exp 对照行积攒模式）。
 6. **声明序门控**：`i` 规则先于 `skills` 声明，物品行与技能行同为 `中文(id)` 形态 ⇒ 装备/饰品/其它解析**按 section 门控**（技能表 section 为 `基本功夫` 等，永不误抢）。
 
-写入映射见 [tracker.ts](../../packages/mud-core3/src/tracker.ts) `inventoryRow`/`iSlotRow`/`iOtherItems`；判据覆盖：`inventory.{件数,负重,负重比,财物,装备,饰品,其它}`。
+写入映射见 [tracker.ts](../../packages/mud/mud-sense/src/tracker.ts) `inventoryRow`/`iSlotRow`/`iOtherItems`；判据覆盖：`inventory.{件数,负重,负重比,财物,装备,饰品,其它}`。
 
 ## A.8 战斗实录（2026-10-06，pkuxkx 实机：`夫差` 对大狼狗）
 

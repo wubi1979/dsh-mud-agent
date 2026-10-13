@@ -13,7 +13,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 |---|---|
 | **纯层可单测** | `link/*`、`src/tools.ts`、`read.ts`、`world.ts`、`wake.ts`、`deliver.ts`、`mud-workflow/{contract,core}` 均零宿主 import ⇒ 直接单测（适配层 `host/*` 由工件面 e2e 覆盖，§8.8） |
 | **装配层抽策略** | 装配层（`index.ts`）不内联业务分支；可测逻辑抽成独立模块（如 `accounts.ts` 的名册写路径），装配层只做接线 |
-| **装配层必过宿主组合加载冒烟** | 纯层用例**不加载插件**：`index.ts` 改动后必须真加载一次（自动化见下行；手工 = 真启动宿主，§2.2 启动链），确认 `mud-core3` 条目**已激活**（无 `1 entry did not activate`）且 `remote.mud` 动词在册。**`apply` 抛错 = 全部 `mud/*` 动词 404**——页面侧只表现为名册操作失败（建服务器那步的错误被状态行吞掉），极易误判为路由/前端问题 |
+| **装配层必过宿主组合加载冒烟** | 纯层用例**不加载插件**：`index.ts` 改动后必须真加载一次（自动化见下行；手工 = 真启动宿主，§2.2 启动链），确认 `tool-mud` 条目**已激活**（无 `1 entry did not activate`）且 `remote.mud` 动词在册。**`apply` 抛错 = 全部 `mud/*` 动词 404**——页面侧只表现为名册操作失败（建服务器那步的错误被状态行吞掉），极易误判为路由/前端问题 |
 | **插件的加载冒烟走工件面** | `test/plugin-load.e2e.ts` 导入 **`lib/index.js`（宿主实际加载的产物）**，不导入 `src/`：插件源用**标准装饰器**（`@Remote`），vitest 的 esbuild 转译不支持（`Invalid or unexpected token`）⇒ 源码面根本不可加载；工件面同时对齐宿主行为，代价是**依赖最新构建**（§2.2「改码后必须重建」）。用例只提供 `typert`（唯一必需服务），`agents`/`credentials`/`sessionController`/`storageDomain` 全缺席 |
 | **先红后绿** | 行为变更**必须自带会红的用例**（先证明旧实现失败，再改）——缺陷都是无声的，没有会红的用例不算修完 |
 | **回放用例** | `link/` 层以语料回放为主测试手段（§13.4） |
@@ -25,9 +25,18 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 
 | 包 | 用例 | 文件 |
 |---|---|---|
-| **`mud-core3`** | **487 例 / 35 文件**（485 绿 + wake 2 例 v0.0.66 登记历史遗留，2026-10-13 实测） | `link/`：`line` · `telnet` · `mud` · `keepalive` · `corpus`；`src/`：`store` · `accounts` · `runtime`（含 T19 tracker 接线）· `deliver` · `read`（含 T15 命中帧）· `tools`（含 T19 `wait:false`、T23 `mud_walk` 判据预设 / `outcome` 分类 / 意图式 `action` / 精力闸 / `departures`）· `tracker`（T19；T23.6 位置感知 `location.*`）· **`nav`（T23.10 精力闸纯层）** · `service`（含 `statusRowOf`）· `world` · `wake`（T24：goal 节选/源分派/事件分派纯层 + 既有唤醒器与模板）· `screen` · `classify` · `llm-gate` · `reconnect` · `workflow` · `elide`（T18 遮蔽判定与适配）· `log/log-service`；战斗（T21）：`combat/state` · `combat/rules` · `combat/controller` · `combat/danger` · `combat/report` · `combat.replay`（A.8 实录回放）；装配层：`plugin-load`（工件面 e2e）· `login`（流程 E2E 五路径）· `fullme`（流程 E2E 主链/stale 自愈/abort/三退出路径/URL 槽化断言） |
+| **`mud-link`** | **79 例 / 5 文件**（2026-10-13 实测，T28 拆分） | `line` · `telnet` · `mud` · `keepalive` · `corpus` |
+| **`mud-sense`** | **38 例 / 2 文件**（36 绿 + wake 2 例 v0.0.66 登记历史遗留） | `elide`（T18 遮蔽判定与适配）· `wake`（T24：goal 节选/源分派/事件分派纯层 + 既有唤醒器与模板） |
+| **`mud-commands`** | **17 例 / 1 文件** | `assembler`（T26 装配单测：`resolveAwaitPlan` 解析单点 / 保留字拒用 / 槽名跨 kind 禁重名 / 表条目槽级合并与声明整体替换） |
+| **`mud-combat`** | **54 例 / 5 文件**（T21） | `combat-state` · `combat-rules` · `combat-controller` · `combat-report` · `combat.replay`（A.8 实录回放；危险抢占判定随 controller/rules 用例覆盖） |
+| **`mud-nav`** | **23 例 / 4 文件**（T23.10） | `nav-stamina`（精力闸纯层）· `nav-route`（路线表解析 / 方向序列 / 跨区分段）· `nav-graph`（`NavGraph` 初始为空 / 同键后到覆盖 / suggest / 快照）· `nav-blocker`（软阻断连击 ≥2 ⇒ 硬阻断档案） |
+| **`mud`** | **234 例 / 17 文件** | `service`（含 `statusRowOf`）· `runtime`（含 T19 tracker 接线）· `reconnect` · `accounts` · `deliver` · `store` · `llm-gate` · `screen` · `log-service`；**引擎集成四套**：`read`（含 T15 命中帧）· `classify` · `tracker`（T19；T23.6 位置感知 `location.*`）· `world`；`nav-store`（T23.10 JSON 持久化 × 引擎集成）· `workflow`（缝：`workflowIoFor` + login E2E 五路径）· `fullme`（流程 E2E 主链/stale 自愈/abort/三退出路径/URL 槽化断言） |
+| **`tool-mud`** | **59 例 / 2 文件** | `tools`（T19 `wait:false`、T23 `mud_walk` 判据预设 / `outcome` 分类 / 意图式 `action` / 精力闸 / `departures`）· `plugin-load`（工件面 e2e，从 `tool-mud/lib` 加载） |
+| **`mud-flows`** | 无自有单测（login/fullme E2E 归 `mud` 引擎集成，见上行） | — |
 | **`mud-workflow`** | **96 例 / 4 文件**（2026-10-13 实测） | `registry`（含捕获槽保存门四校验、名册冲突裁决与来源标记策略 A、T16 迁入取新/账本/回滚/强审计）· `interpreter`（含捕获槽语义、命中帧消费与"去重测"结构断言）· `tools`（含来源/遮蔽呈现、遮蔽修订 delete、history/rollback 贯通）· `plugin-load`（工件面 e2e，T17） |
 | **`mud-webui`** | **7 例 / 1 文件** | `mud-captcha`（控制器：订阅/帧 diff/提交/中止/刷新配额/防串帧） |
+
+> **T28（2026-10-13）按 8 包重新分账**：`packages/mud/` 组合计 **504 例 / 36 文件**（502 绿 + wake 2 例遗留）+ `mud-workflow` 96 + `mud-webui` 7；原 `mud-core3` 单包 487 例 / 35 文件账目废止。`read`/`classify`/`tracker`/`world` 源码归 `mud-sense`，但其用例是引擎集成测试（反向依赖 `mud` runtime），随 `mud` 包分账。
 
 | 用例组 | 覆盖章节 |
 |---|---|
@@ -41,8 +50,8 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | `store` · `accounts` | §11.1–§11.2、§14.3（内存/域表、记录 schema、降级、先落名册顺序、失败回滚、`admitted` 持久化） |
 | `world` | §10.3–§10.4（分区/来源、断线复位） |
 | `wake` | §7.5（re-arm、三守卫、fire 后不重复） |
-| `workflow`（core3 侧） | §8.8、§8.14（`workflowIoFor` 缝、login E2E 五路径） |
-| `fullme`（core3 侧） | §8.17（captcha 双闸、`awaitCaptcha(url)` 原语、`{captcha}` 槽与 pass 掩码排除、stale 自愈环、等待注册表三退出路径；T14：URL 经捕获槽传入、答错重入沿缓存图不重抓、URL 行未出现 → 结构化 timeout、`io.recentLines` 水位过滤回归） |
+| `workflow`（mud 缝侧） | §8.8、§8.14（`workflowIoFor` 缝、login E2E 五路径） |
+| `fullme`（mud 侧 E2E） | §8.17（captcha 双闸、`awaitCaptcha(url)` 原语、`{captcha}` 槽与 pass 掩码排除、stale 自愈环、等待注册表三退出路径；T14：URL 经捕获槽传入、答错重入沿缓存图不重抓、URL 行未出现 → 结构化 timeout、`io.recentLines` 水位过滤回归） |
 | `mud-workflow/{registry,interpreter,tools}` | §8.8（包内三层与契约单点；宿主入口 `lib/index.js` 与契约子路径）、§8.10–§8.15、§8.17（`awaitCaptcha(url)` 端口单点声明 + core3 缝实现 = 编译期断言；T14：捕获槽语义①–⑧ + 保存门校验；2026-10-05 语义澄清⑨–⑪：捕获与路由同源、整窗 exec（跨行判据可捕获）、非捕获判据路径不吞分类出口；策略 A：locked 内置优先 + `shadowed` 标记 + 遮蔽修订 delete 放行 + `origin` 来源标记；T15（§5.2/§8.13）：解释器消费命中帧、源码级"去重测"结构断言；T16（§8.11/§14.3）：迁入取新与归档、变更账本（上限剪枝）、回滚写新版本、强审计提交、`flags` 白名单收紧。`login` 用例已随实体归 core3，见上行） |
 | `mud-webui/mud-captcha` | §9.7（弹窗呈现：订阅恢复、帧边界 diff、提交/中止/刷新） |
 | `plugin-load`（工件面 e2e） | §16.1（装配层加载冒烟：`apply` 不得失败，引擎窄面与 remote 命名空间在册）。**mud-workflow 同款**（T17）：导入 `lib/index.js` / `lib/preset.js`，断言 `mudWorkflow` 服务面在册、七工具过注册面（谓词函数 + `output.schema` 对象根与真实字段） |
@@ -119,6 +128,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 | **T24 短期优先目标（DSH goal 接入）** | **装配**：patch 顶层增 `dsh-goal` 服务行（上游 Web 组合只挂消费件不挂服务）+ preset 启用 `command-goal`（玩家 /goal 命令面：设/改/pause/resume/clear/查看）与 `tool-goal`（agent 侧 get_goal/create_goal/update_goal）；`goal-round-driver` 不挂（静默唤醒已是驱动器）。**kickoff**（§7.4）：`{{goal}}` 占位符 + `goalBriefText` 节选（无/paused/complete ⇒ 「无」，active ⇒ objective，blocked ⇒ +阻塞说明）+ **源分派 D8**（active/blocked ⇒ 宿主原生 goal-round 源，解锁 tool-goal `completionAuthority` 与 complete/blocked 的 wrapup 收尾注入；其余保持 mud-wake）。**事件接线（§7.4 触发点③）**：`goal/changed` 的 create/edit/resume 对已接入账号触发 kickoff（守卫只查「已接入」，差异于 Wake 三守卫——玩家指令级优先）。**权限面收敛**（上游 authority.ts）：create/edit/pause/resume 需直接人类回合（目标生命周期归玩家），complete/blocked 走 goal-round 回合；无 driver ⇒ roundsStarted 恒 0 ⇒ blocked 轮门槛不可达（接受项，升级路径 §17.3）。**persona**：决策节奏新增优先目标步（优先执行 + update_goal complete 收尾 + 不自行创建/修改目标） | ✅（v0.0.60；回归全绿：core3 462 + workflow 77 + webui 7，§16.2；实机验收待重启宿主：/goal 设目标 → 任务书含优先目标 + goal 源 → agent 优先执行 → update_goal(complete) + wrapup 收尾报告） |
 | **T25 MUD 知识库（wiki 全量接入 skill 体系）** | **机制考古**：上游知识注入 6 通道对照（skill/persona/agent-instructions/time-context/MCP 资源/taskBrief），skill 是大体积可路由静态知识的唯一匹配通道——目录常驻（name+description，digest 变更才重发）+ 正文按需 `skill` 工具加载（compaction 回收后可重载），全白拿不自建。**数据**：本地 wiki 全量 201 篇（4.7MB 纯文本，15 类目含子目录）拷入 `corpus/wiki/`（只读源数据）；`scripts/build-wiki-skills.mjs` 幂等生成 `knowledge/` 190 篇 `wiki-<title>`（title 即 wiki 命名空间 id，`:`→`-`，全局唯一已验证；中文标题取 url_details 映射；每篇头部时效标注 D9；基础知识 11 篇排除不转单篇）。**常驻层**：`mud-basics` 手工编撰浓缩版（用户裁定：11 篇原文 42K 有重复混乱重新归纳）——六节（角色机制/技能提升全途径/生存常识/新手福利与经验时间线/环境规则/帮派社交），~5K chars（原文 1/8），逐条可溯源，剔除人类客户端指南/帮派库房/宠物等 agent 边缘内容。**装配**：preset 启用 `skill-filesystem`（customSkillDirs → knowledge/，includeDefaultRoots: false）+ `tool-skill`；persona 知识库使用指引（行动前查对应 wiki 技能不凭空猜测，查不到再 web 在线 wiki 兜底）+ 决策节奏第 0 步开局加载 mud-basics。**目录成本实测**：191 条 ≈ 5.1K chars（D6 预算内） | ✅（v0.0.61；回归全绿：core3 462 + workflow 77 + webui 7 + typecheck 两包零错 + patch 解析校验通过；实机验收待重启宿主：目录注入可见 / 首步加载 mud-basics / 任务攻略按需加载 / 子级可达性 / chokidar 热更） |
 | **T26 命令判据总表 + 词汇收敛全面整改（T26.1–26.6，2026-10-12 定稿实施）** | **命令判据总表**（T26.1）：`commands/define.ts` 契约 + `std/skill` 等分组构建期数组 + `command-profiles.ts` 装配器（fail-loud 自检；无运行期注册面）；`resolveAwaitPlan` 解析单点（DEC-21：声明合并/表条目/空命令特例/不收窗四档）+ `tableSlotsOf` 保存门端口。**词汇收敛（T26.6，五轮对齐后全面整改）**：三形态封闭（ga/criteria/quiet，race/quietMs 命令判据面退役，walk 改判 criteria + flags 'm' 实证死判据修复）；契约模式（DEC-23：kind=契约、槽名=条目数据，OUTCOME_NAMES 枚举退役，保留字 ok/fail）；两级路由（DEC-19：kind 直达/when 细化，不跨键位查找）； ListenDecl/normalizeFlow/branch/onFailOn 净删（DEC-25 存量不管，as-written）；告警档 DEC-13 四处；超时工单 DEC-22；步数 sizing（walk 超时按 A.9 路线表步数 10s+3s/步）；login/fullme 改写、persona 措辞、测试三套同步（workflow 96 + core3 485 含遗留 2 例遗留绿） | ✅（v0.0.69；回归全绿：core3 483 + workflow 96 + webui 7，§16.2；wake 2 例 v0.0.66 登记历史遗留与本任务无关；实机验收待重启宿主：登录/打坐/睡眠/行走判据链路 + 未登记命令超时工单） |
+| **T28 mud-core3 包拆分重组（组 + 8 包，T28.1–T28.6，2026-10-13）** | 按 DSH 官方插件组织规则将 `mud-core3` 拆为 `packages/mud/` **组 + 8 包**：`mud-link` / `mud-sense` / `mud-commands` / `mud-combat` / `mud-nav` / `mud-flows` / `mud`（引擎核心）/ `tool-mud`（组合根 + 唯一可安装 bundle）；**A1 薄壳兼容期**（core3 旧路径 `export * from '新包'` 转发、同一模块实例无副本）贯穿 T28.1–T28.4，随 T28.5 删包终结；**B4** 跨包深路径 import 全改包名导入；typert 归属同步（ambient 模块名 `'tool-mud/typert'`、`gen:typert` PACKAGES→`['tool-mud']`、构建序固定 **tool-mud build → gen:typert**）；webui / root scripts / tsconfig.host 引用面同步；**patch 行 id `mud-core3*` 与服务键 `ctx.mudCore3` 沿用**（宿主 profile 按 id 幂等替换 / 破坏性 API，随宿主换代按 §2.5 复核）；运行时行为与判据语义零变更 | ✅（v0.0.72；回归全绿按 8 包分账：link 79 + sense 38（含遗留 2）+ commands 17 + combat 54 + nav 23 + mud 234 + tool-mud 59 + flows 0 = **504 例 / 36 文件** + workflow 96 + webui 7，§16.2；typecheck 零错；`plugin-load.e2e` 从 tool-mud lib 加载绿；宿主真机冒烟待重启：`--patch` 无 `did not activate` / `dsh plugin add` 流程切换 / junction 链接目标改 tool-mud） |
 
 **完成定义（每个切片）**
 
@@ -132,7 +142,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 
 | # | 矛盾 | 处置 |
 |---|---|---|
-| 1 | `packages/mud-core3/src/index.ts` 中 `viewCols` 注释写"缺省 80"，实际与文档均为 **120** | 已清（注释现为「缺省 120（§5.3）」） |
+| 1 | `packages/mud/tool-mud/src/index.ts`（T28 拆分前为 `packages/mud-core3/src/index.ts`）中 `viewCols` 注释写"缺省 80"，实际与文档均为 **120** | 已清（注释现为「缺省 120（§5.3）」） |
 | 2 | `src/wake.ts` 注释"缺省 120_000 对齐 **§19**"——`§19` 是 v1 归档编号 | 已清（改指 §7.5） |
 | 3 | `src/link/corpus.ts` 注释标 **§16**——v1 归档编号 | 已清（改指 §13.4） |
 | 4 | 根 `README.md` 仍称 `packages/mud-core2` 是"当前唯一生产路径"并提供 `pnpm dev:core2` | 已清（改写为在役/退役表，§17.2） |
