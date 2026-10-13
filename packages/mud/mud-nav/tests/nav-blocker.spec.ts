@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { HARD_STOP_ATTEMPTS, nextBlocker } from '../src/nav/blocker.ts'
+import { HARD_STOP_ATTEMPTS, nextBlocker } from '../src/blocker.ts'
 
 describe('nav/blocker 软阻断连击 ⇒ 硬阻断（T23.11）', () => {
   it('同位置连续两次软阻断 ⇒ 硬阻断（阈值 = A.9 结论 12 的"连续两次"）', () => {

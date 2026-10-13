@@ -1,0 +1,49 @@
+{
+  "name": "mud-combat",
+  "description": "MUD 战斗特性 Provider（T28 拆包，整域迁入）：CombatEdgeDetector 状态分档 · CombatRuleEngine 规则引擎 · danger 危险判定 · CombatReporter 战报 · CombatController 监听窗控制器（裸读 + isEndingLine 自测）。判据词汇引用 mud-sense/mud-link，零 mud 引擎依赖。",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./state": {
+      "types": "./lib/state.d.ts",
+      "default": "./lib/state.js"
+    },
+    "./rules": {
+      "types": "./lib/rules.d.ts",
+      "default": "./lib/rules.js"
+    },
+    "./danger": {
+      "types": "./lib/danger.d.ts",
+      "default": "./lib/danger.js"
+    },
+    "./report": {
+      "types": "./lib/report.d.ts",
+      "default": "./lib/report.js"
+    },
+    "./controller": {
+      "types": "./lib/controller.d.ts",
+      "default": "./lib/controller.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib"
+  ],
+  "devDependencies": {
+    "mud-link": "workspace:^",
+    "mud-sense": "workspace:^"
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\"",
+    "build": "pnpm run clean && tsc -p tsconfig.json",
+    "test": "pnpm exec vitest run tests",
+    "typecheck": "tsc -p tsconfig.test.json"
+  }
+}

@@ -6,8 +6,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { NavGraph } from '../src/nav/graph.ts'
-import { parseCrossRegionHint, parseWalkTable } from '../src/nav/route.ts'
+import { NavGraph } from '../src/graph.ts'
+import { parseCrossRegionHint, parseWalkTable } from '../src/route.ts'
 
 const JINGZHOU_TABLE = [
   '┌───荆州府─────────────┬────────────┬─────┐',

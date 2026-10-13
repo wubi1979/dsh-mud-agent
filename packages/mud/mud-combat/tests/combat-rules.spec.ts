@@ -8,9 +8,9 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { CombatRuleEngine, SEED_RULES, COMBAT_COMMANDS } from '../src/combat/rules.ts'
-import { computeTiers } from '../src/combat/state.ts'
-import type { CombatVitals } from '../src/combat/state.ts'
+import { CombatRuleEngine, SEED_RULES, COMBAT_COMMANDS } from '../src/rules.ts'
+import { computeTiers } from '../src/state.ts'
+import type { CombatVitals } from '../src/state.ts'
 
 /** A.8 实录拍（hpbrief L1+L2 拼合；内力全程 325/325 = 100%）。 */
 const BEAT_99: CombatVitals = { 气血: 281, 最大气血: 283, 气血上限: 313, 内力: 325, 最大内力: 325 }

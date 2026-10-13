@@ -60,6 +60,9 @@
     "@deepseek-ai/dsh-typert-protocol": "workspace:*",
     "mud-link": "workspace:^",
     "mud-commands": "workspace:^",
+    "mud-combat": "workspace:^",
+    "mud-flows": "workspace:^",
+    "mud-nav": "workspace:^",
     "mud-sense": "workspace:^",
     "mud-workflow": "workspace:^"
   }

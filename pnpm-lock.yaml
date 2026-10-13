@@ -55,12 +55,21 @@ importers:
       '@deepseek-ai/dsh-typert-protocol':
         specifier: workspace:*
         version: link:../typert-protocol
+      mud-combat:
+        specifier: workspace:^
+        version: link:../mud/mud-combat
       mud-commands:
         specifier: workspace:^
         version: link:../mud/mud-commands
+      mud-flows:
+        specifier: workspace:^
+        version: link:../mud/mud-flows
       mud-link:
         specifier: workspace:^
         version: link:../mud/mud-link
+      mud-nav:
+        specifier: workspace:^
+        version: link:../mud/mud-nav
       mud-sense:
         specifier: workspace:^
         version: link:../mud/mud-sense
@@ -160,13 +169,30 @@ importers:
         specifier: ^0.2.0-rc.2
         version: 0.2.0-rc.2(52b5a8ab481be2b3d891c22a71641755)
 
+  packages/mud/mud-combat:
+    devDependencies:
+      mud-link:
+        specifier: workspace:^
+        version: link:../mud-link
+      mud-sense:
+        specifier: workspace:^
+        version: link:../mud-sense
+
   packages/mud/mud-commands:
     devDependencies:
       mud-workflow:
         specifier: workspace:^
         version: link:../../mud-workflow
 
+  packages/mud/mud-flows:
+    devDependencies:
+      mud-workflow:
+        specifier: workspace:^
+        version: link:../../mud-workflow
+
   packages/mud/mud-link: {}
+
+  packages/mud/mud-nav: {}
 
   packages/mud/mud-sense:
     devDependencies:

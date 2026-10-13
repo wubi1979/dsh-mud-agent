@@ -1,0 +1,40 @@
+{
+  "name": "mud-flows",
+  "description": "MUD 流程定义 Provider（T28 拆包）：login 流程 E2E 五路径 · fullme 主链/stale 自愈/abort/三退出 · captcha 取图纯件。步表数据 + 编译纯层，仅 type-only 引用 mud-workflow/contract；状态面（captchaWaits/emitCaptcha/resolveCaptcha）留 mud 引擎（D7）。",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./login": {
+      "types": "./lib/login.d.ts",
+      "default": "./lib/login.js"
+    },
+    "./fullme": {
+      "types": "./lib/fullme.d.ts",
+      "default": "./lib/fullme.js"
+    },
+    "./captcha": {
+      "types": "./lib/captcha.d.ts",
+      "default": "./lib/captcha.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib"
+  ],
+  "devDependencies": {
+    "mud-workflow": "workspace:^"
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\"",
+    "build": "pnpm run clean && tsc -p tsconfig.json",
+    "test": "pnpm exec vitest run tests",
+    "typecheck": "tsc -p tsconfig.test.json"
+  }
+}

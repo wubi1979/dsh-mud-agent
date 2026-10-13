@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { CombatController } from '../src/combat/controller.ts'
-import { CombatEdgeDetector } from '../src/combat/state.ts'
-import { CombatRuleEngine } from '../src/combat/rules.ts'
-import { CombatReporter } from '../src/combat/report.ts'
-import { StateTracker } from '../src/tracker.ts'
-import { World } from '../src/world.ts'
-import type { MudLine } from '../src/link/line.ts'
-import type { ReadOpts, ReadResult } from '../src/read.ts'
+import { CombatController } from '../src/controller.ts'
+import { CombatEdgeDetector } from '../src/state.ts'
+import { CombatRuleEngine } from '../src/rules.ts'
+import { CombatReporter } from '../src/report.ts'
+import { StateTracker } from 'mud-sense/tracker'
+import { World } from 'mud-sense/world'
+import type { MudLine } from 'mud-link/line'
+import type { ReadOpts, ReadResult } from 'mud-sense/read'
 
 /**
  * A.8 实录回放（T21.7，D15/W1–W12 端到端；纯层，不需真连游戏）。

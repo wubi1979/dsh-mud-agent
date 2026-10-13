@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   expandShortPath, parseCrossRegionHint, parseDirectionPath, parseWalkTable, pickNextHop,
-} from '../src/nav/route.ts'
+} from '../src/route.ts'
 
 /** A.9 荆州府路线表（实录，含表头与边框行）。 */
 const JINGZHOU_TABLE = [

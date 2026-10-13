@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { CombatController } from '../src/combat/controller.ts'
-import { CombatEdgeDetector } from '../src/combat/state.ts'
-import { CombatRuleEngine } from '../src/combat/rules.ts'
-import { CombatReporter } from '../src/combat/report.ts'
-import type { ReadOpts, ReadResult } from '../src/read.ts'
-import type { WorldEntry } from '../src/world.ts'
+import { CombatController } from '../src/controller.ts'
+import { CombatEdgeDetector } from '../src/state.ts'
+import { CombatRuleEngine } from '../src/rules.ts'
+import { CombatReporter } from '../src/report.ts'
+import type { ReadOpts, ReadResult } from 'mud-sense/read'
+import type { WorldEntry } from 'mud-sense/world'
 
 const tick = async (n = 1): Promise<void> => {
   for (let i = 0; i < n; i++) await new Promise(r => setTimeout(r, 0))

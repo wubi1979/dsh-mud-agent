@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CombatReporter } from '../src/combat/report.ts'
+import { CombatReporter } from '../src/report.ts'
 
 /** 捕获型依赖：记录 World 写入（key→value，后到覆盖）与日志行。 */
 function makeDeps() {
