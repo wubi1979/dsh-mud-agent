@@ -1,5 +1,5 @@
 /**
- * mud-core3 link/mud — 连接层核心：连接、行流分发。
+ * mud-link/mud — 连接层核心：连接、行流分发。
  *
  * 从 mud-core2 link/mud.ts 瘦身而来：去掉 read 竞速机（Holder / WaitOpts /
  * ReadResult / read / abortWait / 有界缓冲 / 判定序），只保留连接管理与行流

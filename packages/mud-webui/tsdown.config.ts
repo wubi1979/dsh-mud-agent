@@ -33,7 +33,7 @@ const PLATFORM_MODULES: readonly string[] = [
 const isPlatformModule = (specifier: string): boolean => PLATFORM_MODULES.includes(specifier)
 
 /** Inline-safe @deepseek-ai wire/utility packages (browser-safe values).
- *  mud-core3/remote 是工作区内包 (纯数据 + zod schema, 浏览器安全), tsdown 直接内联。 */
+ *  tool-mud/remote 是工作区内包 (纯数据 + zod schema, 浏览器安全), tsdown 直接内联。 */
 const INLINE_SAFE = /^(?:@deepseek-ai\/dsh-(?:file-reference|session|llm|tools|brand|util-crypto|util-workspace-path)(?:\/|$)|@deepseek-ai\/dsh-token-meter\/client$)/
 
 /** Vendored framework libraries, safe to inline. */

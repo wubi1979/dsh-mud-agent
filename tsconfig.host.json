@@ -29,6 +29,6 @@
   "files": [],
   "references": [
     { "path": "./packages/typert-protocol" },
-    { "path": "./packages/mud-core3" }
+    { "path": "./packages/mud/tool-mud" }
   ]
 }

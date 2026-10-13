@@ -2,17 +2,17 @@
   "name": "dsh-mud-agent",
   "version": "0.1.0",
   "private": true,
-  "description": "MUD agent plugin for deepseek-harness (pkuxkx): mud-core3 (host engine) + mud-webui (web shell), hosted as an independent npm package workspace",
+  "description": "MUD agent plugin for deepseek-harness (pkuxkx): tool-mud (bundle) + mud-webui (web shell), hosted as an independent npm package workspace",
   "type": "module",
   "license": "MIT",
   "packageManager": "pnpm@11.7.0",
   "scripts": {
     "build": "pnpm -r build",
     "clean": "pnpm -r run clean",
-    "typecheck": "pnpm --filter mud-link --filter mud-sense --filter mud-commands --filter mud-combat --filter mud-nav --filter mud-flows --filter mud build && pnpm --filter mud-workflow build && pnpm --filter mud-workflow --filter mud --filter mud-core3 typecheck",
-    "test": "pnpm --filter mud-link --filter mud-sense --filter mud-commands --filter mud-combat --filter mud-nav --filter mud-flows --filter mud --filter mud-workflow --filter mud-core3 --filter @deepseek-ai/dsh-mud-webui test",
-    "gen:typert": "pnpm --filter mud-core3 gen:typert",
-    "dev": "pnpm --filter mud-workflow build && pnpm --filter mud-core3 gen:typert && pnpm --filter mud-core3 build && pnpm --filter @deepseek-ai/dsh-mud-webui build && pnpm --dir D:/Code/deepseek-harness dsh web --patch D:/Code/dsh-mud-agent/packages/mud-core3/cordis.patch.yml --port 3082"
+    "typecheck": "pnpm --filter mud-link --filter mud-sense --filter mud-commands --filter mud-combat --filter mud-nav --filter mud-flows --filter mud --filter tool-mud build && pnpm --filter mud-workflow build && pnpm --filter mud-workflow --filter mud --filter tool-mud typecheck",
+    "test": "pnpm --filter mud-link --filter mud-sense --filter mud-commands --filter mud-combat --filter mud-nav --filter mud-flows --filter mud --filter tool-mud --filter mud-workflow --filter @deepseek-ai/dsh-mud-webui test",
+    "gen:typert": "pnpm --filter tool-mud gen:typert",
+    "dev": "pnpm --filter mud-workflow build && pnpm --filter tool-mud gen:typert && pnpm --filter tool-mud build && pnpm --filter @deepseek-ai/dsh-mud-webui build && pnpm --dir D:/Code/deepseek-harness dsh web --patch D:/Code/dsh-mud-agent/packages/mud/tool-mud/cordis.patch.yml --port 3082"
   },
   "devDependencies": {
     "@types/node": "^22.20.0",

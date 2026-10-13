@@ -1,5 +1,5 @@
 /**
- * mud-core3 combat/controller — 交战接管状态机（T21.4）：遭遇开始接管行流，整场持有。
+ * mud-combat/controller — 交战接管状态机（T21.4）：遭遇开始接管行流，整场持有。
  *
  * 状态机（PLAN T21 3.4，D4/D6/D12）：
  *
@@ -18,7 +18,7 @@
  *
  * 依赖注入为窄接口（CombatIO/CombatWorld）：纯层可测，service 装配真实 runtime。
  *
- * @module mud-core3/combat/controller
+ * @module mud-combat/controller
  */
 
 import { computeTiers, type CombatEdge, CombatEdgeDetector, type CombatTiers, type CombatVitals } from './state.ts'

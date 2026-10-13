@@ -1,5 +1,5 @@
 /**
- * mud-core3 store — 名册存储：宿主 storage 域（持久）与内存（降级）两种实现。
+ * mud store — 名册存储：宿主 storage 域（持久）与内存（降级）两种实现。
  *
  * 名册 = 服务器（键 = workspaceId）+ 账号（键 = accountId = sessionId），设计 §1.4/§15.1。
  * 记录 schema 是持久化边界的唯一事实源（zod），域 spec 交给宿主 `ctx.storageDomain.open`；
@@ -156,7 +156,7 @@ export async function openDomainRosterStore(domain: HostStorageDomain): Promise<
     })
   } catch (error) {
     // 失败原因必须可见：吞掉后调用方只能看到「退回内存」，无从定位（排查实录）。
-    console.error('[mud-core3] 名册 storage 域打开失败:', error instanceof Error ? error.stack : error)
+    console.error('[mud] 名册 storage 域打开失败:', error instanceof Error ? error.stack : error)
     return null
   }
 }

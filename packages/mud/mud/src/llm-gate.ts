@@ -1,5 +1,5 @@
 /**
- * mud-core3 — LLM 调用面闸门（`llm/stream` 瀑布终审）。
+ * mud — LLM 调用面闸门（`llm/stream` 瀑布终审）。
  *
  * 模型调用面的准入终审（2026-10-02 裁定，接入语义规格的第 4 层「保险面」）：
  * 宿主 `LlmRuntime.stream()` 走 cordis 瀑布 `llm/stream`（监听器不调 `next()` 即
@@ -16,7 +16,7 @@
  *   - 已接入 → 放行（admit 同步先置 admitted 再点火，时序上必放行）。
  *   - 非本插件会话（sessionId 缺省或不在名册）→ 放行（一次 Map 查找的开销）。
  *
- * @module mud-core3/llm-gate
+ * @module mud/llm-gate
  */
 
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'

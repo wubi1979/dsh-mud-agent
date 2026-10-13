@@ -1,5 +1,5 @@
 /**
- * mud-core3 link/telnet — telnet 协议层。
+ * mud-link/telnet — telnet 协议层。
  *
  * 沿用 mud-core 实录验证过的实现（Node `net` + `zlib`），只做协议解码：
  *   - RFC 854 协商: ECHO / SGA / NAWS / TTYPE / CHARSET / BINARY

@@ -1,5 +1,5 @@
 /**
- * mud-core3 combat/danger — 危险抢占通道判据（T21.5）：纯判定，零副作用。
+ * mud-combat/danger — 危险抢占通道判据（T21.5）：纯判定，零副作用。
  *
  * 通道本体（两处判定点 + 危险态 + 退出）在 controller 内实现（同一条同步栈），
  * 本文件单点承载**判据与跨变语义**：
@@ -14,7 +14,7 @@
  * 动作序（D5）：先 abortWait（打断在途读窗与流程，reason='danger'），再直发
  * 危险规则集（engine.evaluateDanger：flee/heal，绕过节流）；接管不等锁（stealSend）。
  *
- * @module mud-core3/combat/danger
+ * @module mud-combat/danger
  */
 
 import { COMBAT_ENGAGE_RE, COMBAT_HOSTILE_RE } from 'mud-sense/tracker'

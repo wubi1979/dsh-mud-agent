@@ -12,7 +12,7 @@
  *
  * 纯层（零宿主 import）：只依赖 `nav/{route,graph}`。
  *
- * @module mud-core3/nav/service
+ * @module mud-nav/service
  */
 
 import { NavGraph, type NavGraphSnapshot } from './graph.ts'

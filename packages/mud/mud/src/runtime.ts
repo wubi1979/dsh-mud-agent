@@ -1,5 +1,5 @@
 /**
- * mud-core3 runtime — 每会话运行时：持有 MUD 连接 + 行流状态。
+ * mud runtime — 每会话运行时：持有 MUD 连接 + 行流状态。
  *
  * 每个账号（= 会话）一个 SessionRuntime 实例，随会话生命周期产生/消亡。
  * C2 只管连接管理（connect/disconnect + 简单 login）；投递/接入在 C3。

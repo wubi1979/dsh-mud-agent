@@ -5,7 +5,7 @@
  * 读 `ctx.mudCore3.builtinFlows` 挂预制、开 storage 域挂修缮层、provide
  * `mudWorkflow` 服务面。本层是唯一认识 cordis 的地方。
  *
- * 声明式流程子包（与 mud-core3 并列）：**纯架构**——流程本体 = JSON 步骤表
+ * 声明式流程子包（与 tool-mud 并列）：**纯架构**——流程本体 = JSON 步骤表
  *（contract/schema），注册表（core/registry，locked 预制 + agent 修缮），
  * 解释器（core/interpreter）与工具面（host/tools）。**不含任何具体流程实体**
  *（2026-10-01 裁定：数据归 core3——core3 经 `builtinFlows` 提供流程实体，本插件

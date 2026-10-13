@@ -1,5 +1,5 @@
 /**
- * mud-core3 combat/report — 战斗模块观测面（T21.3）：World 计数 + 会话日志，零决策逻辑。
+ * mud-combat/report — 战斗模块观测面（T21.3）：World 计数 + 会话日志，零决策逻辑。
  *
  * 职责（PLAN T21 D8/D10/3.7）：
  *   1. World 计数：模块写入的计数（拍数 / 干预 / 最后动作 / 规则命中）落 zone='combat'、
@@ -12,7 +12,7 @@
  * 本模块不理解战斗语义。begin() 开新遭遇清零；end() 只结算日志、计数保留
  * （遭遇间的历史计数可读，下一场 begin 再归零）。
  *
- * @module mud-core3/combat/report
+ * @module mud-combat/report
  */
 
 import type { CombatDispatch } from './rules.ts'

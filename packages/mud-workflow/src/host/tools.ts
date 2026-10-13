@@ -128,7 +128,7 @@ function reject(error: string): { ok: false; error: string } {
 export const ENGINE_ABSENT_ERROR = '已拒绝：mud-workflow 引擎服务缺席（ctx.mudWorkflow 未装配），工具仅注册未接线'
 
 /** core3 缝缺席时的可读拒绝（run 需要 IO 原语；管理工具不受影响）。 */
-export const CORE_ABSENT_ERROR = '已拒绝：mud-core3 引擎服务缺席（ctx.mudCore3 未装配），无法执行流程'
+export const CORE_ABSENT_ERROR = '已拒绝：tool-mud 引擎服务缺席（ctx.mudCore3 未装配），无法执行流程'
 
 /** 归属未命中的可读拒绝。 */
 export const NOT_BOUND_ERROR = '已拒绝：本会话未绑定 MUD 账号'

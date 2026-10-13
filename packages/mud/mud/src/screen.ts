@@ -1,5 +1,5 @@
 /**
- * mud-core3 view/screen — 游戏画面通道（C5）：服务端无头屏 + 只读流扇出。
+ * mud view/screen — 游戏画面通道（C5）：服务端无头屏 + 只读流扇出。
  *
  * 对齐宿主 BrowserTerminal 的同型机制（terminal-controller/src/terminal.ts）：
  *   - 服务端维护 @xterm/headless 无头屏（行到达即写入，跨重连不清屏）；
@@ -24,7 +24,7 @@
  *
  * 纯度纪律：本文件不 import 宿主；@xterm 两包为纯 JS，可在 Node 运行。
  *
- * @module mud-core3/view/screen
+ * @module mud/view/screen
  */
 
 import { createRequire } from 'node:module'

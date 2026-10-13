@@ -10,7 +10,7 @@
  *
  * 只依赖 `node:fs`（非宿主依赖，纯 Node 层）。
  *
- * @module mud-core3/nav/json-store
+ * @module mud-nav/json-store
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'

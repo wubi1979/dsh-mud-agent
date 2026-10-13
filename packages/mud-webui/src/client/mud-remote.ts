@@ -2,24 +2,24 @@
  * dsh-mud-webui — MUD remote RPC surface (client half, core3).
  *
  * core3 的 remote.mud 命名空间只有 5 个方法：connect/disconnect/admit/stop/status。
- * 全部走 typert 生成的官方 RPC envelope（'mud-core3/remote' 工件）：mount 一次进
+ * 全部走 typert 生成的官方 RPC envelope（'tool-mud/remote' 工件）：mount 一次进
  * 页面 fiber，namespace 读取走 ctx.inject(['remote.mud'])，每个方法解包
  * RemoteResult（失败分支抛 RemoteError），调用点沿用 try/catch 语义。
  * @module @deepseek-ai/dsh-mud-webui/client/mud-remote
  */
 
-import TYPERT_REMOTE from 'mud-core3/remote'
+import TYPERT_REMOTE from 'tool-mud/remote'
 // Type-only: pulls the TypertRemoteNamespaceMap augmentation (mud namespace) into the program.
-import type {} from 'mud-core3/remote'
+import type {} from 'tool-mud/remote'
 // Type-only: Remote 边界类型（日志条目、名册记录、画面帧、状态帧、验证码帧）由非根子路径导出。
-import type { AccountRecord, CaptchaFrame, CaptchaRow, GameFrame, LogEntry, ServerRecord } from 'mud-core3/types'
+import type { AccountRecord, CaptchaFrame, CaptchaRow, GameFrame, LogEntry, ServerRecord } from 'tool-mud/types'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { RemoteResult, TypertClientRemote } from '@deepseek-ai/dsh-typert-protocol'
 
 /** 生成客户端的 mud 命名空间（名册 CRUD + connect/disconnect/admit/stop/status/logs，全类型化）。 */
 export type MudNamespace = TypertClientRemote['mud']
 
-/** 一条 MUD 会话日志条目（与宿主 mud-core3/types 同源）。 */
+/** 一条 MUD 会话日志条目（与宿主 tool-mud/types 同源）。 */
 export type MudLogEntry = LogEntry
 
 /** 宿主名册里的服务器记录（键 = workspaceId）。 */

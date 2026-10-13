@@ -1,5 +1,5 @@
 /**
- * mud-core3 elide —— 会话上下文的**进程级收口**：表面遮蔽（surfaceOp replace）的纯层判定（T18.1）。
+ * mud-sense elide —— 会话上下文的**进程级收口**：表面遮蔽（surfaceOp replace）的纯层判定（T18.1）。
  *
  * 解决的问题：`sessionId = accountId` 随名册持久，宿主冷启动按 id 恢复会话 ⇒ 上一进程的上下文
  * （行批次 / 任务书 / 委派收尾）成为过期断言污染新连接。运行时世界状态已是进程级（§4 断线硬收尾），

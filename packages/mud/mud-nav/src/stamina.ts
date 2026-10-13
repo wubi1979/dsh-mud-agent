@@ -12,7 +12,7 @@
  *
  * 纯层，零宿主依赖。
  *
- * @module mud-core3/nav/stamina
+ * @module mud-nav/stamina
  */
 
 /** 精力闸缺省阈值（20%，用户裁定；Config 键 `staminaFloorPct` 可覆盖）。 */

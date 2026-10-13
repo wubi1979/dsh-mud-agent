@@ -1,5 +1,5 @@
 /**
- * mud-core3 deliver — 聚合投递器（pull 模型，§5.4）。
+ * mud deliver — 聚合投递器（pull 模型，§5.4）。
  *
  * **单一真相 = runtime.pendingLines**（环形录制缓冲）：投递器不再自持缓冲，
  * 投递 = 从源按水位线拉取 —— `takeAfter(seen)` 取已见线之后的行，拆条投出，

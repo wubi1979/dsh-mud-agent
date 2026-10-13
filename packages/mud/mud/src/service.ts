@@ -1,5 +1,5 @@
 /**
- * mud-core3 service — 多会话管理：registry + connect/disconnect/status + admit/stop。
+ * mud service — 多会话管理：registry + connect/disconnect/status + admit/stop。
  *
  * 纯 TS，零宿主依赖。宿主接线层（index.ts）注入：
  *   - serverLookup: sessionId → ServerRecord
@@ -324,7 +324,7 @@ export class MudService {
     // MAX_TIMEOUT_MS/silenceMs 校验）。
     const captchaTimeoutMs = deps.captchaTimeoutMs ?? DEFAULT_CAPTCHA_TIMEOUT_MS
     if (!Number.isSafeInteger(captchaTimeoutMs) || captchaTimeoutMs <= 0) {
-      throw new Error(`mud-core3 配置 captchaTimeoutMs 必须为正整数，got ${String(captchaTimeoutMs)}`)
+      throw new Error(`mud 配置 captchaTimeoutMs 必须为正整数，got ${String(captchaTimeoutMs)}`)
     }
     this.captchaTimeoutMs = captchaTimeoutMs
   }

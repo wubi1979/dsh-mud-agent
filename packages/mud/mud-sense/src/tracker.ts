@@ -1,5 +1,5 @@
 /**
- * mud-core3 tracker — 状态追踪器（T19）：游戏文本 → World 结构化状态（判据解析，零 LLM）。
+ * mud-sense tracker — 状态追踪器（T19）：游戏文本 → World 结构化状态（判据解析，零 LLM）。
  *
  * 每会话一个实例，在 runtime 行路径 `classifier.mark(line)` 之后 `observe(line)`（D1，
  * 与 C5.2 打标同一单点）。三类形状（D3）：
@@ -23,7 +23,7 @@
  *
  * 纯 TS，零宿主依赖。
  *
- * @module mud-core3/tracker
+ * @module mud-sense/tracker
  */
 
 import type { MudLine } from 'mud-link/line'

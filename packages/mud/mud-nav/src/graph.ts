@@ -15,7 +15,7 @@
  *
  * 纯层，零宿主依赖；持久化（进程重启后仍留）留后置（需要时挂存储域）。
  *
- * @module mud-core3/nav/graph
+ * @module mud-nav/graph
  */
 
 import type { CrossRegionHint, WalkEdge } from './route.ts'

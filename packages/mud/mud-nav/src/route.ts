@@ -13,7 +13,7 @@
  *
  * 纯层，零宿主依赖；不建持久图（D20：运行期现查）。
  *
- * @module mud-core3/nav/route
+ * @module mud-nav/route
  */
 
 /** 路径表一条边。 */

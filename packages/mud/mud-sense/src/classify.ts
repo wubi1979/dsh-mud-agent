@@ -1,5 +1,5 @@
 /**
- * mud-core3 classify — 行分类器（C5.2）：MudLine.kind 的**全系统唯一分类写入点**
+ * mud-sense classify — 行分类器（C5.2）：MudLine.kind 的**全系统唯一分类写入点**
  * （T19 状态追踪器是第二个写入点——在同一行路径、本模块 mark 之后只对 kind===null
  * 的行补 `status` 标，不覆盖分类结果，见 tracker.ts）。
  *
@@ -29,7 +29,7 @@
  *
  * 纯 TS，零宿主依赖。
  *
- * @module mud-core3/classify
+ * @module mud-sense/classify
  */
 
 import type { MudLine } from 'mud-link/line'

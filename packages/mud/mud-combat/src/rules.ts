@@ -1,5 +1,5 @@
 /**
- * mud-core3 combat/rules — 战斗规则引擎（T21.2）：条件（档位）→ 动作，纯计算零副作用。
+ * mud-combat/rules — 战斗规则引擎（T21.2）：条件（档位）→ 动作，纯计算零副作用。
  *
  * 规则形态（PLAN T21 D3/3.3）：
  *   - 条件 = 各维档位集合（state.ts 分档），维间 OR、维内任一档命中；
@@ -14,7 +14,7 @@
  *
  * 撤离规则（D14）：`halt` + move 需退路数据；构造未注入 `retreatMove` ⇒ 不启用。
  *
- * @module mud-core3/combat/rules
+ * @module mud-combat/rules
  */
 
 import type { BufferTier, CapTier, CombatTiers, ForceTier, MomentumTier } from './state.ts'

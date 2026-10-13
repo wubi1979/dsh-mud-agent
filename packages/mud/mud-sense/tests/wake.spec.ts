@@ -177,7 +177,7 @@ describe('goal 节选与源分派（T24）', () => {
   })
 
   it('goalBriefSource：恒 mud-wake（2026-10-09 回流——goal 源消息必须是上游严格回放的受理轮，kickoff 带源必毒）', () => {
-    expect(goalBriefSource()).toEqual({ kind: 'mud-wake', plugin: 'mud-core3' })
+    expect(goalBriefSource()).toEqual({ kind: 'mud-wake', plugin: 'tool-mud' })
   })
 
   it('shouldKickoffOnGoalChange：create/edit/resume 触发，pause/complete/clear/block 不触发', () => {

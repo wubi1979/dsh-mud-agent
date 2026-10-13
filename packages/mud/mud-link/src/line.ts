@@ -1,5 +1,5 @@
 /**
- * mud-core3 link/line — 流式行解析器。
+ * mud-link/line — 流式行解析器。
  *
  * 沿用 mud-core 实录验证过的单遍状态机（对齐 Mudlet mIncompleteSequenceBytes
  * 的取舍）：把 telnet 解码后的文本流切成"完整逻辑行"，跨块的不完整 ESC 序列与

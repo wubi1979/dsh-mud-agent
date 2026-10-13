@@ -1,5 +1,5 @@
 /**
- * mud-core3 read — ReadMachine：读窗机（从 mud-core2 link/mud.ts 拆出独立类）。
+ * mud-sense read — ReadMachine：读窗机（从 mud-core2 link/mud.ts 拆出独立类）。
  *
  * 工具面（mud_send）与流程缝的等待引擎：send 后等新行（或裸读带 initial），
  * 判据命中即收束，返回累积行原文。挂载点 = SessionRuntime（行流多消费者模型里

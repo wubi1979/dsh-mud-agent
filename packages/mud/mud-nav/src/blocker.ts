@@ -11,7 +11,7 @@
  * 计数是**会话相关**的（"我在这个区域连着没走成"），由调用方落 World `nav.*`
  * （`kind:'nav'`；断线随 §10.4 复位）——本模块只做纯计算。
  *
- * @module mud-core3/nav/blocker
+ * @module mud-nav/blocker
  */
 
 /** 硬阻断阈值：**连续两次**（A.9 结论 12 的用户定义；无例证不进 Config）。 */

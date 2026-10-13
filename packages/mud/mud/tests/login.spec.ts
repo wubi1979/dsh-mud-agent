@@ -5,7 +5,7 @@
  *   - 凭据零泄露：结果 JSON、画面 view（snapshot 帧）均无 pass 明文。
  *
  * 迁移缘由：login 实体归 core3（纯架构裁定），本规格是唯一使用 core3 devDep 的
- * mud-workflow 测试——迁回后 workflow 可删 `mud-core3` 依赖边，workspace 环消解。
+ * mud-workflow 测试——迁回后 workflow 可删 `mud` 依赖边，workspace 环消解。
  *
  * 短超时：流程数据超时可克隆替换（失败路径不等满 30s）。
  */

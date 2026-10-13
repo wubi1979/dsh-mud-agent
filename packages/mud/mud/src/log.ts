@@ -1,5 +1,5 @@
 /**
- * mud-core3 log — 会话日志：内存环形缓冲 + 按天 JSONL 落盘。
+ * mud log — 会话日志：内存环形缓冲 + 按天 JSONL 落盘。
  *
  * 每个已登记的 SessionRuntime 挂一个 SessionLog 实例，全链路可观察事件经唯一入口
  * `append()` 进入本服务：

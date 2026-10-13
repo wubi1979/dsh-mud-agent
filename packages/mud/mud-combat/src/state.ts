@@ -1,5 +1,5 @@
 /**
- * mud-core3 combat/state — 战斗分档与边沿（T21.1）：纯计算，零依赖、零副作用。
+ * mud-combat/state — 战斗分档与边沿（T21.1）：纯计算，零依赖、零副作用。
  *
  * 职责（PLAN T21 第 3.2 节，D1/D2）：
  *   1. 比值：气血比（当前/生效上限）、容量比（生效上限/基准上限）、内力比（当前/最大，
@@ -13,7 +13,7 @@
  * 数据源 = tracker 写入的 `vitals.*` / `combat.气势`（hpbrief 与气势行，A.8.3）。
  * 缺数据的维返回 null（不猜）；`combat.敌档`/`敌人数` 原样透传（阶梯待实录，不档位化）。
  *
- * @module mud-core3/combat/state
+ * @module mud-combat/state
  */
 
 /** 战斗状态输入（World 的 vitals/combat 相关键快照；缺省 = 该维不可测）。 */

@@ -1,5 +1,5 @@
 /**
- * mud-core3 wake — 静默唤醒器（T4a，参照 core2 wake 形态裁剪）。
+ * mud-sense wake — 静默唤醒器（T4a，参照 core2 wake 形态裁剪）。
  *
  * 单 timer、到期驱动：行到达即 re-arm（runtime.onActivity 喂 `arm()`），
  * 静默满 silenceMs 到期时检查守卫。守卫分两层（T5.1 守卫分工）：
@@ -193,8 +193,8 @@ export function goalBriefText(view: GoalView | undefined): string {
  * goal-round-driver；本插件不再代开轮。完成权限（completionAuthority）在
  * kickoff 回合随之收窄到人类回合 / driver 轮——接受的取舍。
  */
-export function goalBriefSource(): { readonly kind: 'mud-wake'; readonly plugin: 'mud-core3' } {
-  return { kind: 'mud-wake', plugin: 'mud-core3' } as const
+export function goalBriefSource(): { readonly kind: 'mud-wake'; readonly plugin: 'tool-mud' } {
+  return { kind: 'mud-wake', plugin: 'tool-mud' } as const
 }
 
 /**
