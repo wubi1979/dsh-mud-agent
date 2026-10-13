@@ -829,3 +829,10 @@
 - **任务专用命令骨架 + 阵法首用例语料**（2026-10-12 用户裁定方向）：新增第六分组 `commands/task.ts`（`TASK_COMMANDS = []` 骨架，头注释载明 2026-10-12 裁定——生效判定 = 会话谱系标记、语义边界 = 只做收窗判据不拦发送）；机制实施（派发面标记写入 / resolveAwaitPlan 任务上下文 / 装配器分离）立 **T27** 待办池（判据原句实录前不接机制，避免无例证建机制）；武当阵法任务语料（`zhenfa`/`zouwei`，唯一实录句「这个房间里正有人在演练阵法」，走位决策型特性）登记**附录 A.10**。
 
 > AI生成
+## [v0.0.71]复审勘误（§16.2 计数表 + B-audit C4 + 缝侧 maxLines 防护）(2026-10-13)
+
+> 总结：拉取 v0.0.70 后全面复审——勘误声明全部落地实证（§8.7 重写、两表同构、gaCount 改名、exercise/walk 归属、task 骨架、typecheck 构建序），测试三套复核（mud-workflow 96 全绿 + core3 485/487 绿 + typecheck 零错）；上轮报告三项遗留经用户裁定（2026-10-13）本次收口。环境注记：拉取后须先 `pnpm --filter mud-workflow build` 再跑 core3 测试——lib 陈旧会使 listen 校验走旧 schema，tools.spec 4 例假失败（已实证复现并重建消除）。
+
+- **§16.2 用例账目计数表勘误**（`doc/architecture/16-17-acceptance-roadmap.md`；2026-10-13 用户裁定）：v0.0.61 写入的 462/77 一直未随版更新，违反 §16.1「账目以当次实测为准」纪律——改 2026-10-13 实测值（core3 487 例 / 35 文件，485 绿 + wake 2 例 v0.0.66 登记历史遗留；mud-workflow 96 例 / 4 文件）并标注实测日期。
+- **附录 B-audit-checklist C4 判定序勘误**（2026-10-13 用户裁定）：现役硬约束示例仍写退役判定序 `failOn > until > gaCount > maxLines`——改为现役口径「fail 槽 > ok 槽（criteria）> GA 计数（`gaCount`，仅 ga 形态）> `maxLines`」并注记退役词汇。
+- **缝侧 none/empty 档 maxLines 防护**（`service.ts workflowIoFor` read 缝；2026-10-13 用户裁定）：未登记/空命令不收窗只等超时（DEC-4）的 30s 窗内行流可无界累积（战斗刷屏尤甚）——新增 `FLOW_SEAM_MAX_LINES = 50` 缝侧兜底（与工具面 `sendMaxLines` 缺省同值）；`maxLines` 兜底链：表条目 > 步半声明（只声明 `maxLines` 未声明 `closeOn`，此前 decl 未成形被静默丢弃——直传防丢）> 缝侧兜底；`exactOptionalPropertyTypes` 下条件展开不改 `ReadOpts` 形。测试 +2（service.spec：none 档 50 行提前收束实证、半声明 3 行直传实证）——core3 485 绿 + 2 wake 遗留（487 例）+ typecheck 两包零错。

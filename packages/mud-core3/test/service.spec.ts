@@ -779,4 +779,58 @@ describe('workflowIoFor 缝侧 lastSent 查表注入（T26）', () => {
       await server.close()
     }
   })
+
+  /** 脚本化 mock：连接后每次收到数据即连写 60 行（无 GA）——行流刷屏场。 */
+  async function startFloodServer(): Promise<MockServer> {
+    let sock: net.Socket | null = null
+    const server = net.createServer((s) => {
+      sock = s
+      s.on('data', () => {
+        for (let i = 0; i < 60; i++) s.write(`刷屏行 ${i}\n`)
+      })
+      s.write('欢迎\n')
+      s.write(GA)
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const port = (server.address() as AddressInfo).port
+    return {
+      port,
+      received: [],
+      close() {
+        sock?.destroy()
+        return new Promise(resolve => server.close(() => resolve()))
+      },
+    }
+  }
+
+  it('none 档缝侧 maxLines 兜底：未登记命令行流刷屏在 50 行收束（防无界累积，不等到超时）', async () => {
+    const server = await startFloodServer()
+    const { service, handle } = await seamWith(server)
+    try {
+      handle.io.send('foobar') // 未登记 → source none
+      const r = await handle.io.read({ timeoutMs: 5000 }, [])
+      expect(r.reason).toBe('done') // maxLines 提前收束（非 timeout——防护生效）
+      expect(r.source).toBe('none') // 归因仍是 plan.source（缝侧覆盖语义）
+      expect(r.lines.length).toBe(50) // 缝侧 FLOW_SEAM_MAX_LINES=50 兜底
+    } finally {
+      handle.release()
+      await service.disposeAll()
+      await server.close()
+    }
+  })
+
+  it('步半声明 maxLines（未声明 closeOn）不再被静默丢弃：按声明行数收束', async () => {
+    const server = await startFloodServer()
+    const { service, handle } = await seamWith(server)
+    try {
+      handle.io.sendCredential('p1') // source none；步只声明 maxLines=3（无 closeOn）
+      const r = await handle.io.read({ timeoutMs: 5000, maxLines: 3 }, [])
+      expect(r.reason).toBe('done') // 按声明行数提前收束（非 timeout）
+      expect(r.lines.length).toBe(3) // 半声明直传生效（缝侧不再丢弃）
+    } finally {
+      handle.release()
+      await service.disposeAll()
+      await server.close()
+    }
+  })
 })

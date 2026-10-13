@@ -291,6 +291,11 @@ export function sessionNotRegistered(sessionId: string): Error {
  * 由缝侧最终保证；30s = 状态拉取类应答的安全上限量级。 */
 const FLOW_SEAM_TIMEOUT_MS = 30_000
 
+/** 流程缝读窗行数兜底（DEC-4/DEC-5）：none/empty 档（未登记/空命令——不收窗只等
+ * 超时）在超时内行流可无界累积（战斗刷屏场景尤甚），与工具面 `sendMaxLines`
+ * 缺省同值兜底；`maxLines` 兜底链：步声明 > 表条目 > 本值。 */
+const FLOW_SEAM_MAX_LINES = 50
+
 /** 多会话管理服务。 */
 export class MudService {
   private readonly runtimes = new Map<string, SessionRuntime>()
@@ -601,7 +606,8 @@ export class MudService {
     // 未声明 ⇒ 整条采用；同形态 ⇒ 槽级合并；异形态 ⇒ 整体替换；都无 ⇒ 不
     // 收窗只等超时，DEC-4/DEC-5），结果带归因（closeOn/command/source）。
     // 会话级持有者独占（§8.6）⇒ 窗口内无第二执行体发送，lastSent 推断在结构
-    // 上成立。timeoutMs 兜底链：步声明 > 表条目 > FLOW_SEAM_TIMEOUT_MS。
+    // 上成立。timeoutMs 兜底链：步声明 > 表条目 > FLOW_SEAM_TIMEOUT_MS；
+    // maxLines 兜底链：步声明 > 表条目 > FLOW_SEAM_MAX_LINES（none/empty 档防无界累积）。
     let lastSent: string | null = null
     const io: WorkflowIO<MudLine> = {
       send: cmd => {
@@ -629,12 +635,18 @@ export class MudService {
           }
           : undefined
         const plan = resolveAwaitPlan(lastSent, decl)
+        // maxLines 兜底链：表条目（plan）> 步半声明（只声明 maxLines 未声明
+        // closeOn——decl 未成形，直传防静默丢弃）> 缝侧 none/empty 档兜底
+        //（防行流无界累积，与工具面同责）。
+        const maxLines = plan.maxLines
+          ?? (decl === undefined ? opts.maxLines : undefined)
+          ?? (plan.source === 'none' || plan.source === 'empty' ? FLOW_SEAM_MAX_LINES : undefined)
         const ro: ReadOpts = {
           timeoutMs: opts.timeoutMs ?? plan.timeoutMs ?? FLOW_SEAM_TIMEOUT_MS,
           ...(plan.closeOn !== undefined ? { closeOn: plan.closeOn } : {}),
           ...(plan.slots !== undefined && plan.slots.length > 0 ? { slots: plan.slots } : {}),
           ...(plan.gaCount !== undefined ? { gaCount: plan.gaCount } : {}),
-          ...(plan.maxLines !== undefined ? { maxLines: plan.maxLines } : {}),
+          ...(maxLines !== undefined ? { maxLines } : {}),
         }
         const r = await rt.read(ro, initial ?? [])
         return {
