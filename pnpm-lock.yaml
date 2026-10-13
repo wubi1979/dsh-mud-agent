@@ -55,6 +55,9 @@ importers:
       '@deepseek-ai/dsh-typert-protocol':
         specifier: workspace:*
         version: link:../typert-protocol
+      mud-link:
+        specifier: workspace:^
+        version: link:../mud/mud-link
       mud-workflow:
         specifier: workspace:^
         version: link:../mud-workflow
@@ -150,6 +153,8 @@ importers:
       '@deepseek-ai/dsh-tools':
         specifier: ^0.2.0-rc.2
         version: 0.2.0-rc.2(52b5a8ab481be2b3d891c22a71641755)
+
+  packages/mud/mud-link: {}
 
   packages/typert-protocol:
     devDependencies:

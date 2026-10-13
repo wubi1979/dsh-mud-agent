@@ -58,6 +58,7 @@
     "@deepseek-ai/dsh-tools": "^0.2.0-rc.2",
     "@deepseek-ai/dsh-typert-generator": "0.2.0-rc.2",
     "@deepseek-ai/dsh-typert-protocol": "workspace:*",
+    "mud-link": "workspace:^",
     "mud-workflow": "workspace:^"
   }
 }

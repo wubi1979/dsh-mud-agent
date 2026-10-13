@@ -1,0 +1,45 @@
+{
+  "name": "mud-link",
+  "description": "MUD 连接协议 Provider（T28 拆包，叶子包）：telnet 串流 · MudLine 行货币（生产者所有）· AnsiStreamParser · Keepalive · CorpusWriter。纯 node 内建，零外部依赖。",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./line": {
+      "types": "./lib/line.d.ts",
+      "default": "./lib/line.js"
+    },
+    "./telnet": {
+      "types": "./lib/telnet.d.ts",
+      "default": "./lib/telnet.js"
+    },
+    "./mud": {
+      "types": "./lib/mud.d.ts",
+      "default": "./lib/mud.js"
+    },
+    "./keepalive": {
+      "types": "./lib/keepalive.d.ts",
+      "default": "./lib/keepalive.js"
+    },
+    "./corpus": {
+      "types": "./lib/corpus.d.ts",
+      "default": "./lib/corpus.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\"",
+    "build": "pnpm run clean && tsc -p tsconfig.json",
+    "test": "pnpm exec vitest run tests",
+    "typecheck": "tsc -p tsconfig.test.json"
+  }
+}

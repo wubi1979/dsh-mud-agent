@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest'
 import net from 'node:net'
 import type { AddressInfo } from 'node:net'
-import { Mud } from '../../src/link/mud.ts'
+import { Mud } from '../src/mud.ts'
 
 const IAC = 255
 const GA = 249

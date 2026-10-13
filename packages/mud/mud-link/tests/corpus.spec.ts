@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CorpusWriter, readCorpus } from '../../src/link/corpus.ts'
+import { CorpusWriter, readCorpus } from '../src/corpus.ts'
 
 describe('CorpusWriter', () => {
   it('行与事件全量落 JSONL, readCorpus 可回放读取', () => {

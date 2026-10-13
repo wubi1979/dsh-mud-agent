@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { AnsiStreamParser, stripAnsi, isPromptText, MAX_SEQUENCE_BUF } from '../../src/link/line.ts'
+import { AnsiStreamParser, stripAnsi, isPromptText, MAX_SEQUENCE_BUF } from '../src/line.ts'
 
 describe('分行', () => {
   it('按 \\n 拆分, 保留空行', () => {

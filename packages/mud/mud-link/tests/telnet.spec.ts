@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest'
 import net from 'node:net'
 import type { AddressInfo } from 'node:net'
 import zlib from 'node:zlib'
-import { TelnetClient } from '../../src/link/telnet.ts'
+import { TelnetClient } from '../src/telnet.ts'
 
 const IAC = 255
 const DONT = 254

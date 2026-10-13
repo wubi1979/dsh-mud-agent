@@ -1,5 +1,6 @@
 packages:
   - 'packages/*'
+  - 'packages/mud/*'
 minimumReleaseAge: 0
 minimumReleaseAgeStrict: false
 overrides:

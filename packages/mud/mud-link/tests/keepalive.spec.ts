@@ -23,9 +23,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import net from 'node:net'
 import type { AddressInfo } from 'node:net'
-import { Keepalive, AYT_ALIVE_RE } from '../../src/link/keepalive.ts'
-import { Mud } from '../../src/link/mud.ts'
-import { TelnetClient } from '../../src/link/telnet.ts'
+import { Keepalive, AYT_ALIVE_RE } from '../src/keepalive.ts'
+import { Mud } from '../src/mud.ts'
+import { TelnetClient } from '../src/telnet.ts'
 
 // ── Keepalive 纯层 ───────────────────────────────────────────────
 
