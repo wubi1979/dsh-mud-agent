@@ -2,153 +2,177 @@
   "nodes": [
     {
       "region": "扬州",
+      "updatedAt": 1791597981009,
       "edges": [
         {
-          "dest": "六合丁家  ◇ 庄门",
+          "region": "六合丁家",
+          "room": "庄门",
           "pinyin": "dingjia",
           "steps": 11
         },
         {
-          "dest": "丐帮分舵  ◇ 土地庙",
+          "region": "丐帮分舵",
+          "room": "土地庙",
           "pinyin": "gaibang",
           "steps": 13
         },
         {
-          "dest": "濠州府  ◇ 广场",
+          "region": "濠州府",
+          "room": "广场",
           "pinyin": "haozhou",
           "steps": 11
         },
         {
-          "dest": "建康府  ◇ 长江渡口",
+          "region": "建康府",
+          "room": "长江渡口",
           "pinyin": "jiankang",
           "steps": 12
         },
         {
-          "dest": "庐州  ◇ 石板桥",
+          "region": "庐州",
+          "room": "石板桥",
           "pinyin": "luzhou",
           "steps": 11
         },
         {
-          "dest": "往生堂  ◇ 往生堂广场",
+          "region": "往生堂",
+          "room": "往生堂广场",
           "pinyin": "shashou",
           "steps": 14
         },
         {
-          "dest": "信阳  ◇ 小广场",
+          "region": "信阳",
+          "room": "小广场",
           "pinyin": "xinyang",
           "steps": 10
         },
         {
-          "dest": "徐州  ◇ 戏马台",
+          "region": "徐州",
+          "room": "戏马台",
           "pinyin": "xuzhou",
           "steps": 14
         },
         {
-          "dest": "镇江  ◇ 扬子津",
+          "region": "镇江",
+          "room": "扬子津",
           "pinyin": "zhenjiang",
           "steps": 8
         }
-      ],
-      "updatedAt": 1791597981009
+      ]
     },
     {
       "region": "信阳",
+      "updatedAt": 1791597060776,
       "edges": [
         {
-          "dest": "汉口镇  ◇ 市集",
+          "region": "汉口镇",
+          "room": "市集",
           "pinyin": "hankou",
           "steps": 11
         },
         {
-          "dest": "濠州府  ◇ 广场",
+          "region": "濠州府",
+          "room": "广场",
           "pinyin": "haozhou",
           "steps": 10
         },
         {
-          "dest": "江州  ◇ 半壁山古渡",
+          "region": "江州",
+          "room": "半壁山古渡",
           "pinyin": "jiangzhou",
           "steps": 6
         },
         {
-          "dest": "庐州  ◇ 石板桥",
+          "region": "庐州",
+          "room": "石板桥",
           "pinyin": "luzhou",
           "steps": 9
         },
         {
-          "dest": "南阳  ◇ 集市",
+          "region": "南阳",
+          "room": "集市",
           "pinyin": "nanyang",
           "steps": 15
         },
         {
-          "dest": "往生堂  ◇ 往生堂广场",
+          "region": "往生堂",
+          "room": "往生堂广场",
           "pinyin": "shashou",
           "steps": 18
         },
         {
-          "dest": "许昌  ◇ 许昌城",
+          "region": "许昌",
+          "room": "许昌城",
           "pinyin": "xuchang",
           "steps": 10
         },
         {
-          "dest": "扬州  ◇ 中央广场",
+          "region": "扬州",
+          "room": "中央广场",
           "pinyin": "yangzhou",
           "steps": 10
         }
-      ],
-      "updatedAt": 1791597060776
+      ]
     },
     {
       "region": "南阳城",
+      "updatedAt": 1791597069560,
       "edges": [
         {
-          "dest": "白河东岸  ◇ 白河东岸",
+          "region": "白河东岸",
+          "room": "白河东岸",
           "pinyin": "baihe",
           "steps": 4
         },
         {
-          "dest": "伏牛山  ◇ 木扎岭",
+          "region": "伏牛山",
+          "room": "木扎岭",
           "pinyin": "funiu",
           "steps": 13
         },
         {
-          "dest": "老河口  ◇ 老河口",
+          "region": "老河口",
+          "room": "老河口",
           "pinyin": "laohekou",
           "steps": 7
         },
         {
-          "dest": "商州  ◇ 北街",
+          "region": "商州",
+          "room": "北街",
           "pinyin": "shangzhou",
           "steps": 14
         },
         {
-          "dest": "襄阳  ◇ 北渡口",
+          "region": "襄阳",
+          "room": "北渡口",
           "pinyin": "xiangyang",
           "steps": 8
         },
         {
-          "dest": "信阳  ◇ 小广场",
+          "region": "信阳",
+          "room": "小广场",
           "pinyin": "xinyang",
           "steps": 15
         },
         {
-          "dest": "许昌  ◇ 许昌城",
+          "region": "许昌",
+          "room": "许昌城",
           "pinyin": "xuchang",
           "steps": 8
         }
-      ],
-      "updatedAt": 1791597069560
+      ]
     },
     {
       "region": "樊城北渡口",
+      "updatedAt": 1791597290850,
       "edges": [
         {
-          "dest": "南阳城  ◇ 集市",
+          "region": "南阳城",
+          "room": "集市",
           "pinyin": "nanyangcheng",
           "steps": 8
         }
-      ],
-      "updatedAt": 1791597290850
+      ]
     }
-  ],
-  "hints": []
+  ]
 }

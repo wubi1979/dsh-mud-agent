@@ -848,3 +848,36 @@
 - **§16.2 用例账目计数表勘误**（`doc/architecture/16-17-acceptance-roadmap.md`；2026-10-13 用户裁定）：v0.0.61 写入的 462/77 一直未随版更新，违反 §16.1「账目以当次实测为准」纪律——改 2026-10-13 实测值（core3 487 例 / 35 文件，485 绿 + wake 2 例 v0.0.66 登记历史遗留；mud-workflow 96 例 / 4 文件）并标注实测日期。
 - **附录 B-audit-checklist C4 判定序勘误**（2026-10-13 用户裁定）：现役硬约束示例仍写退役判定序 `failOn > until > gaCount > maxLines`——改为现役口径「fail 槽 > ok 槽（criteria）> GA 计数（`gaCount`，仅 ga 形态）> `maxLines`」并注记退役词汇。
 - **缝侧 none/empty 档 maxLines 防护**（`service.ts workflowIoFor` read 缝；2026-10-13 用户裁定）：未登记/空命令不收窗只等超时（DEC-4）的 30s 窗内行流可无界累积（战斗刷屏尤甚）——新增 `FLOW_SEAM_MAX_LINES = 50` 缝侧兜底（与工具面 `sendMaxLines` 缺省同值）；`maxLines` 兜底链：表条目 > 步半声明（只声明 `maxLines` 未声明 `closeOn`，此前 decl 未成形被静默丢弃——直传防丢）> 缝侧兜底；`exactOptionalPropertyTypes` 下条件展开不改 `ReadOpts` 形。测试 +2（service.spec：none 档 50 行提前收束实证、半声明 3 行直传实证）——core3 485 绿 + 2 wake 遗留（487 例）+ typecheck 两包零错。
+
+## [v0.0.73]nav 包收窄为纯记录服务 + walk 收窗重定义（用户口径 2026-10-14）(2026-10-14)
+
+> 总结：按用户五点口述收窄——mud-nav 完全不进入 agent（删 suggest/hintOf/-q 参考链，face 只留 `record`/`snapshot`，快照改 `nodes+paths`）；命令总表 `walk` 条目重定义为四槽（fail `阻塞`/`不在出发点` + ok `到达`/`出发点表`，exempt 只留 `-c`，超时 30s 无 sizing）；mud_walk 删 `speed`/`-q`/`hint`/`suggest`，outcome 改 `arrived/blocked/unaccepted/atNode/incomplete`，取消软/硬阻断说法（同位置阻塞连击 ≥2 ⇒ 阻断需人工干预），unaccepted 改由显式判据槽给出、departures 优先行文解析，工具描述载入"出发前先 walk -c 查路径"纪律。测试：mud-nav 18 / mud 234 / mud-commands 17 / tool-mud 59 全绿（packages/mud 组合计 499 例）。
+
+- **mud-nav 收窄**（§15.2）：`MudNavFace` 只留 `record`（路径表 ⇒ 边、`-c` ⇒ 方向路径，有增量才落盘）与 `snapshot`；`graph.ts` 删 hints 面、新增 `paths` 存储（region+to 后到覆盖，region 缺省不记）；`route.ts` 删 `-q` 参考链解析（`parseCrossRegionHint`/`pickNextHop`/`matchEdge`）；`blocker.ts` 改 `BLOCK_MANUAL_ATTEMPTS = 2`，`BlockerVerdict.hard` 改名 `blocked`；`README` 定位改"只提供记录服务"。
+- **命令总表 walk 条目**（§8.7）：`byOutcomes` 四槽（用户口径实录：`你因为种种原因停了下来` / `当前区域的系统内建路径出发点在` / `^你到达了` / `^┌`——出现表格 = 处于 walk 节点）；`exempt` 只留 `/^walk\s+-c(\s|$)/`；条目 `timeoutMs: 30s`，步数 sizing 退役。
+- **mud_walk 工具面**（§8.7）：`action` 只留 `walk`（`speed` 删除）；`-q` 显式拒绝（错误注明已退役，可改用 `walk -c`）；阻塞连击落 World `nav.*` 新键名（`阻塞连击`/`阻塞位置`/`阻断`，§10.3），`blocked:{attempts,needsManual,at}` 回给 agent；超时 = 表条目预算（豁免钳制）；nav 只调 `record`，结果不回建议。
+- **文档同步**：§8.7 mud_walk 小节重写、§15.2 mudNav 窄面收窄、§10.3 阻断档案键改名、§16.2 分账重计（mud-nav 23→18，组合计 504→499）。
+- **测试**：mud-nav 18 例（route/graph/blocker 重写）、mud-commands assembler 槽名同步、tool-mud tools.spec mud_walk 段重写（59 例）——四包全绿。
+
+## [v0.0.74]nav 知识图持久化落定：项目内文件 `data/nav-graph.json`（用户裁定 2026-10-14）(2026-10-14)
+
+> 总结：行走知识图持久化落点当日三次裁定收敛——初版 `<logDir>/nav-graph.json`（与按天滚动的会话日志混放，"可随手清理"语义错位）→ 宿主 storage 域 `mud_nav`（落点 `$DSH_HOME/storages/` 用户目录，不满足"伴随项目累积"）→ **项目内文件 `<cwd>/data/nav-graph.json`**（用户裁定："跟数据库文件一样存在项目中"；项目根新建 `data/`，耐久数据语义，与 logs / knowledge / corpus 分列）。既有图数据已手工迁到新落点。测试：mud-nav 23 / mud-commands 17 / mud 234 / tool-mud 59 全绿（packages/mud 组合计 504 例 / 37 文件）。
+
+- **mud-nav `./store`**：`createFileNavStore(file, onError?)`（纯 `node:fs`，沿初版 json-store 的 fail-soft 纪律）——读失败（文件不存在 = 首次运行 / JSON 坏 / 非对象含数组）⇒ `null` + `onError` 上报；写失败 ⇒ 上报不影响行走；save 自动建父目录、整图快照 JSON（人可读）。浅检拒绝数组（typeof object 漏洞）；逐条校验在 `NavGraph.loadSnapshot`（坏数据逐条丢弃）。**storage 域方案整体退役**（`mudNavDomainSpec`/`openDomainNavStore`/zod 依赖移除，`HostTable`/`HostStorageDomain` 结构面不再由本包声明）。
+- **`NavService`**：回到**构造注入**端口（文件存储同步构造，`attachStore` 域就绪挂载随之退役）；store 字段复归 readonly。
+- **`graph.recordTable` 修复**：全坏边/空表不再创建空节点桶（先 filter valid，零有效边直接返回 0）——防 `loadSnapshot` 坏数据留空桶。
+- **tool-mud 装配**：`new NavService(createFileNavStore(join(process.cwd(), 'data', 'nav-graph.json'), warn))`；`rosterStorage:false` 同一开关管"持久化与否"（§15 #16）——强制内存档知识图也强制内存（三态挂载接线删除，名册域照旧）。
+- **文档同步**：§15.2 持久化 bullet（含落点演进三案）、§1.7 状态载体表行走知识图行、§16.2 重账（mud-nav 18→23，mud 236→234，组合计 499→504 / 37 文件）。
+- **测试**：mud-nav `nav-store.spec` 重写（缺失读 null / 落盘读回 / 坏文件上报 / 写失败上报 / 浅检边界，18→23）；`mud/tests/nav-store.spec` 重写为文件持久化引擎集成（记录即落盘+重启读回、坏数据逐条丢弃、强制内存纯内存，236→234）。
+
+## [v0.0.75]nav 边结构化改版：◇ 拆区域/房间 + ◇ 分隔段颜色可直达性 + dirs 并边（用户口径 + 实录 2026-10-14）(2026-10-14)
+
+> 总结：知识图边从 `dest:"区域  ◇ 房间"` 原文升级为结构化 `{region, room, pinyin, steps, direct?, dirs?}`——`◇` 必须匹配（前段 = 目的**区域**名中文，后段 = 该区域内**房间**名，区域唯一；无 `◇` 不猜丢弃）；**`◇` 分隔段颜色 = 可直达性**（用户口径 + 实录 2026-10-14：着色的是 ` ◇ ` 分隔段本身——红 `[31m ◇ ` = false 不可直达 / 绿 `[1;32m ◇ ` = true 可直达；区域名 [1;33 黄、房间 [2;37 白，cell 其它部分不可靠；xterm 标准色 1/9 红、2/10 绿）；`walk -c <拼音名>` 方向序列**按拼音并入对应边 `dirs`**（兜底按答复前缀匹配；独立 `paths` 数组退役）。`data/nav-graph.json` 旧数据已一次性迁移（4 节点/25 边；direct 待实走覆盖），且 `loadSnapshot` 支持**读时归一**（旧 `dest`/`paths` 就地折算）。
+
+- **route.ts**：`WalkEdge` 换新 schema；`parseWalkTable` 入参升级为 `WalkLine {text, fg?}`（逐字符前景色，消费方从 `MudLine.style` 展开，真彩不映射按无色）——cell 切分改带坐标（`cellSpans`），`direct` 取 **`◇` 字符本位色**（实录校准：着色段 = ` ◇ `，红 1/9 ⇒ false、绿 2/10 ⇒ true、其余不猜；本位未着色再看分隔段，cell 其它部分不进判据）；无 `◇` 的目的地行丢弃；`parseDirectionPath` 同面升级（逻辑不变）。`walkLine(text)` 辅助导出。
+- **graph.ts**：`recordPath`/`NavPathSnapshot`/`paths` 数组整体退役，代以 `recordDirs(region, {pinyin?, to?}, dirs)`（后到覆盖；找不到对应边不猜不立）；`recordTable` 合并时**新边未带 `dirs` 保留旧 dirs**（方向序列是 `-c` 学来的，不吃表覆盖）；`loadSnapshot` 读时归一（旧格式折算 + 旧 `paths[].directions` 并边）。
+- **service.ts**：`record` 入参 `lines: WalkLine[]` + 可选 `pinyin`（`-c` 查询参数）；返回 `{edges, dirs}`（原 `path` 改名）。
+- **tool-mud**：`mud_walk` 记录点改传带色行（新增 `fgPerChar`：`MudLine.style` run-length ⇒ 逐字符前景色）；`-c <拼音名>` 的查询参数随 `record` 传入（dirs 按唯一 id 匹配）。
+- **数据迁移**：`data/nav-graph.json` 旧格式一次性迁移为新格式（25 边全部折算，`dirs` 原本就无存量、`direct` 无颜色信息留空待实走覆盖）。
+- **文档同步**：§15.2 `mudNav` 服务面（record 签名/边形状 bullet）、§8.7 记录行、mud-nav README API 面。
+- **测试**：mud-nav `nav-route.spec` 重写（◇ 拆分 / 颜色三态 / 坐标段隔离 / 无 ◇ 丢弃）；`nav-graph.spec` 重写（dirs 并边 / 表覆盖保 dirs / 读时归一）；`mud/tests/nav-store.spec` 旧格式归一用例；tool-mud `tools.spec` 记录用例随 schema（mud-nav 23→27，tool-mud 59，mud 234）。

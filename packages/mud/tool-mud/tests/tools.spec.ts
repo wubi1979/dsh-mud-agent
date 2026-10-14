@@ -432,34 +432,34 @@ describe('mud_send 空命令与命令总表判据（§8.7，A.3，T26）', () =>
   })
 })
 
-describe('mud_walk 判据预设特化（T23/T26.6，stub）', () => {
-  it('缺省 args：发裸 walk，走表条目 criteria 判据收窗（无静默窗），超时下限 30s', async () => {
+describe('mud_walk 判据预设特化（T23/T26.6，用户口径 2026-10-14，stub）', () => {
+  it('缺省 args：发裸 walk，走表条目 criteria 判据收窗（无静默窗），缺省超时 = 条目预算 30s', async () => {
     const sent: string[] = []
     const { call, readCapture } = setup({}, { send: (cmd: string) => { sent.push(cmd); return true } })
     await expect(call('mud_walk', {})).resolves.toMatchObject({ ok: true, reason: 'quiet' })
     expect(sent).toEqual(['walk'])
     expect(readCapture().initial).toEqual([])
-    expect(readCapture().opts.closeOn).toBe('criteria') // 到达/软阻断判据收窗（GA 不武装）
+    expect(readCapture().opts.closeOn).toBe('criteria') // 到达/阻塞/不在出发点/出发点表判据收窗（GA 不武装）
     expect(readCapture().opts.quietMs).toBeUndefined() // 行走判据面无静默窗
     expect(readCapture().opts.gaCount).toBeUndefined()
     expect(readCapture().opts.maxLines).toBe(50)
-    expect(readCapture().opts.timeoutMs).toBe(30000) // max(15000, WALK_MIN_TIMEOUT_MS)
+    expect(readCapture().opts.timeoutMs).toBe(30000) // plan.timeoutMs = walk 条目兜底（无 sizing）
   })
 
-  it('args 透传：拼音名 / -c / -q 区域 / -p 各发一条 walk 命令', async () => {
+  it('args 透传：拼音名 / -c / -p 各发一条 walk 命令；-q 已退役（显式拒绝）', async () => {
     const sent: string[] = []
     const { call } = setup({}, { send: (cmd: string) => { sent.push(cmd); return true } })
     await call('mud_walk', { args: 'xiangyang' })
     await call('mud_walk', { args: ' -c ' })
-    await call('mud_walk', { args: '-q 扬州' })
     await call('mud_walk', { args: '-p' })
-    expect(sent).toEqual(['walk xiangyang', 'walk -c', 'walk -q 扬州', 'walk -p'])
+    expect(sent).toEqual(['walk xiangyang', 'walk -c', 'walk -p'])
+    await expect(call('mud_walk', { args: '-q 扬州' })).resolves.toMatchObject({ ok: false, error: /-q 已退役/ })
   })
 
   it('拼接注入拒绝：分号/换行不行，60 字上限', async () => {
     const sent: string[] = []
     const { call } = setup({}, { send: (cmd: string) => { sent.push(cmd); return true } })
-    await expect(call('mud_walk', { args: '-q 扬州;suicide' })).resolves.toMatchObject({
+    await expect(call('mud_walk', { args: 'xiangyang;suicide' })).resolves.toMatchObject({
       ok: false, error: /单条 walk 参数/,
     })
     await expect(call('mud_walk', { args: 'a\nb' })).resolves.toMatchObject({ ok: false })
@@ -467,7 +467,7 @@ describe('mud_walk 判据预设特化（T23/T26.6，stub）', () => {
     expect(sent).toEqual([]) // 全部拒在 send 之前
   })
 
-  it('timeoutMs 钳制：缺省下限 30s、显式值上限 60s、非正整数拒绝', async () => {
+  it('timeoutMs 钳制：显式值上限 60s、非正整数拒绝（缺省 = 表条目预算）', async () => {
     const { call, readCapture } = setup()
     await expect(call('mud_walk', { timeoutMs: 0 })).resolves.toMatchObject({ ok: false })
     await call('mud_walk', { timeoutMs: 999_999 })
@@ -483,10 +483,12 @@ describe('mud_walk 判据预设特化（T23/T26.6，stub）', () => {
     await expect(busy.call('mud_walk', {})).resolves.toEqual({ ok: false, error: HOLDER_BUSY_ERROR })
   })
 
-  it('行原文返回 + 收束后释放持有者（未受理：判据超时无正向证据 ⇒ unaccepted）', async () => {
+  it('行原文返回 + 收束后释放持有者（判据超时无正向证据 ⇒ incomplete，就绪写 false）', async () => {
     let released = false
+    const writes: unknown[][] = []
     const { call } = setup({}, {
       releaseSend: () => { released = true },
+      writeNavWorld: (zone: string, key: string, value: unknown) => { writes.push([zone, key, value]) },
       read: async () => ({
         lines: [
           { text: '你要往哪里走？', raw: '', style: [], abs: 1, time: 0, isPrompt: false, kind: null },
@@ -495,49 +497,59 @@ describe('mud_walk 判据预设特化（T23/T26.6，stub）', () => {
       }),
     })
     await expect(call('mud_walk', { args: 'jiming' })).resolves.toEqual({
-      ok: true, reason: 'timeout', outcome: 'unaccepted', lines: ['你要往哪里走？'],
+      ok: true, reason: 'timeout', outcome: 'incomplete', lines: ['你要往哪里走？'],
     })
     expect(released).toBe(true)
+    // incomplete 保持连击原状（无前值 ⇒ 0/false）；nav.* 状态同步照写（初值落 World）。
+    expect(writes).toEqual([
+      ['location', '出发点就绪', false],
+      ['nav', '阻塞连击', 0],
+      ['nav', '阻断', false],
+    ])
   })
 
-  it('T26.6 行走判据注入：walk 条目 "criteria" 形态（flags m）——到达/软阻断槽收窗（A.9 结论 5）', async () => {
+  it('T26.6 行走判据注入：walk 条目 "criteria" 形态（flags m）——四槽收窗（用户口径 2026-10-14）', async () => {
     const { call, readCapture } = setup()
     await call('mud_walk', { args: 'xiangyang' })
     const opts = readCapture().opts
-    expect(opts.closeOn).toBe('criteria') // 逐步输出不断流；到达句命中即收
+    expect(opts.closeOn).toBe('criteria') // 逐步输出不断流；判据命中即收
     expect(opts.quietMs).toBeUndefined()
     expect(opts.gaCount).toBeUndefined() // 每步都出提示符，GA 计数会第一步关窗——不武装
     const slots = opts.slots ?? []
-    expect(slots.map(s => `${s.name}:${s.kind}`)).toEqual(['软阻断:fail', '到达:ok']) // fail 槽排前
+    expect(slots.map(s => `${s.name}:${s.kind}`))
+      .toEqual(['阻塞:fail', '不在出发点:fail', '到达:ok', '出发点表:ok']) // fail 槽排前
     expect(slots.find(s => s.name === '到达')!.res[0]!.test('你到达了荆州府。')).toBe(true)
-    expect(slots.find(s => s.name === '软阻断')!.res[0]!.test('你因为种种原因停了下来，可以用walk继续进行。')).toBe(true)
+    expect(slots.find(s => s.name === '阻塞')!.res[0]!.test('你因为种种原因停了下来，可以用walk继续进行。')).toBe(true)
+    expect(slots.find(s => s.name === '不在出发点')!.res[0]!.test('当前区域的系统内建路径出发点在：中央广场、土地庙，请查询localmaps获得具体方位。')).toBe(true)
+    expect(slots.find(s => s.name === '出发点表')!.res[0]!.test('┌───信阳──────────────┬────────────┬─────┐')).toBe(true)
     // 缺省 args（恢复行走）同属"行走类"，同样走表条目
     await call('mud_walk', {})
     expect(readCapture().opts.closeOn).toBe('criteria')
     expect((readCapture().opts.slots ?? []).map(s => s.name)).toContain('到达')
   })
 
-it('T23.5 查询类参数（-c / -q）不注入行走判据——其答复含"未受理"同族句', async () => {
+it('T23.5 查询类参数（-c）不注入行走判据——其答复与行走判据无关', async () => {
     const { call, readCapture } = setup()
     await call('mud_walk', { args: '-c' })
     expect(readCapture().opts.closeOn).toBeUndefined()
     expect(readCapture().opts.slots).toBeUndefined()
     expect(readCapture().opts.quietMs).toBe(1500)
-    await call('mud_walk', { args: '-q 扬州' })
-    expect(readCapture().opts.closeOn).toBeUndefined()
-    expect(readCapture().opts.slots).toBeUndefined()
   })
 
-  it('T23.5 结果分类：到达 / 软阻断 / 未判定（按命中帧 outcome 分类）', async () => {
+  it('T23.5 结果分类：到达 / 阻塞 / 不在出发点 / 出发点表 / 未判定（按命中帧 outcome 分类）', async () => {
     const hit = (outcome: string, kind: 'ok' | 'fail') => async () => ({
       lines: [], reason: 'done' as const,
       hit: { by: 'criteria' as const, index: 0, groups: [], outcome, kind },
     })
     const arrived = setup({}, { read: hit('到达', 'ok') })
     await expect(arrived.call('mud_walk', {})).resolves.toMatchObject({ ok: true, outcome: 'arrived' })
-    const soft = setup({}, { read: hit('软阻断', 'fail') })
-    await expect(soft.call('mud_walk', {})).resolves.toMatchObject({ ok: true, outcome: 'soft-stop' })
-    // 有受理行 ⇒ 在出发点，超时收束即"未判定"（不被反证误判为 unaccepted）
+    const blocked = setup({}, { read: hit('阻塞', 'fail') })
+    await expect(blocked.call('mud_walk', {})).resolves.toMatchObject({ ok: true, outcome: 'blocked' })
+    const unaccepted = setup({}, { read: hit('不在出发点', 'fail') })
+    await expect(unaccepted.call('mud_walk', {})).resolves.toMatchObject({ ok: true, outcome: 'unaccepted' })
+    const atNode = setup({}, { read: hit('出发点表', 'ok') })
+    await expect(atNode.call('mud_walk', {})).resolves.toMatchObject({ ok: true, outcome: 'atNode' })
+    // 有受理行 ⇒ 在出发点，超时收束即"未判定"
     const started = setup({}, {
       read: async () => ({
         lines: [{ text: '你决定开始前往襄阳方向走去……', raw: '', style: [], abs: 1, time: 0, isPrompt: false, kind: null }],
@@ -552,20 +564,16 @@ it('T23.5 查询类参数（-c / -q）不注入行走判据——其答复含"�
     const { call } = setup({}, { send: (cmd: string) => { sent.push(cmd); return true } })
     await call('mud_walk', {})
     await call('mud_walk', { action: 'walk', args: 'xiangyang' })
-    await call('mud_walk', { args: '-q 扬州' })
-    expect(sent).toEqual(['walk', 'walk xiangyang', 'walk -q 扬州'])
+    expect(sent).toEqual(['walk', 'walk xiangyang'])
   })
 
-  it('T23.9 action:speed ⇒ set walk_speed <值>；值域 -1..3，缺值/越界/未知动作拒', async () => {
+  it('T23.9 speed / -q 已退役（用户口径 2026-10-14）；未知动作照旧拒', async () => {
     const sent: string[] = []
     const { call } = setup({}, { send: (cmd: string) => { sent.push(cmd); return true } })
-    await call('mud_walk', { action: 'speed', value: '2' })
-    await call('mud_walk', { action: 'speed', value: '-1' })
-    expect(sent).toEqual(['set walk_speed 2', 'set walk_speed -1'])
-    await expect(call('mud_walk', { action: 'speed' })).resolves.toMatchObject({ ok: false, error: /需要 value/ })
-    await expect(call('mud_walk', { action: 'speed', value: '9' })).resolves.toMatchObject({ ok: false, error: /取值须在/ })
-    await expect(call('mud_walk', { action: 'speed', value: 'x' })).resolves.toMatchObject({ ok: false })
+    await expect(call('mud_walk', { action: 'speed', value: '2' })).resolves.toMatchObject({ ok: false, error: /未知 action/ })
     await expect(call('mud_walk', { action: 'nope' })).resolves.toMatchObject({ ok: false, error: /未知 action/ })
+    await expect(call('mud_walk', { args: '-q 襄阳' })).resolves.toMatchObject({ ok: false, error: /-q 已退役/ })
+    expect(sent).toEqual([])
   })
 
   it('T23.9 node 三动词只留槽位：执行可读拒绝，且不出现在工具描述里', async () => {
@@ -576,7 +584,7 @@ it('T23.5 查询类参数（-c / -q）不注入行走判据——其答复含"�
     expect(defs.get('mud_walk')!.description).not.toMatch(/node/)
   })
 
-  it('T23.10b 记录与建议：走出来的节点入图，`-q` 回 hint/suggest/region（不加动词）', async () => {
+  it('T23.10b 记录（用户口径：nav 只记录，完全不进入 agent）：路径表 ⇒ 边、`-c` ⇒ 方向路径；不回 hint/suggest', async () => {
     const w = new World()
     w.set('location', '区域', '荆州府')
     const navFace = new NavService()
@@ -595,33 +603,32 @@ it('T23.5 查询类参数（-c / -q）不注入行走判据——其答复含"�
     const first = await table.call('mud_walk', { args: 'xiangyang' })
     expect(first).toMatchObject({ ok: true, region: '荆州府' })
     expect(navFace.snapshot().nodes[0]).toMatchObject({ region: '荆州府' })
-    expect(navFace.snapshot().nodes[0]!.edges[0]).toMatchObject({ pinyin: 'xiangyang', steps: 15 })
-    // ② 再查 `-q 武当山`：参考链只有参考意义 ⇒ 用已记录的边给出**下一跳建议**
+    expect(navFace.snapshot().nodes[0]!.edges[0]).toMatchObject({ region: '襄阳', room: '城中心', pinyin: 'xiangyang', steps: 15 })
+    // ② `walk -c <拼音名>` 方向序列 ⇒ 按拼音并入对应边的 dirs（用户口径 2026-10-14）
     const query = setup({}, {
       worldEntry,
-      read: async () => ({ lines: [mkLine('从这里到武当山途径襄阳、武当山。')], reason: 'quiet' }),
+      read: async () => ({ lines: [mkLine('襄阳 长版本：west,north')], reason: 'quiet' }),
     }, { nav: () => navFace })
-    await expect(query.call('mud_walk', { args: '-q 武当山' })).resolves.toMatchObject({
-      ok: true,
-      region: '荆州府',
-      hint: { to: '武当山', via: ['襄阳', '武当山'] },
-      suggest: { dest: '襄阳  ◇ 城中心', pinyin: 'xiangyang', steps: 15 },
-    })
-    // ③ 无 nav 服务 ⇒ 不记录、不给建议，行为退回本期之前（不报错）
-    const noNav = setup({}, { worldEntry, read: async () => ({ lines: [mkLine('从这里到武当山途径襄阳、武当山。')], reason: 'quiet' }) })
-    const bare = await noNav.call('mud_walk', { args: '-q 武当山' })
+    const second = await query.call('mud_walk', { args: '-c xiangyang' })
+    expect(second).toMatchObject({ ok: true, region: '荆州府', path: { to: '襄阳', directions: ['west', 'north'] } })
+    expect(navFace.snapshot().nodes[0]!.edges.find(e => e.pinyin === 'xiangyang')).toMatchObject({ dirs: ['west', 'north'] })
+    // ③ 不回给 agent 任何 nav 派生信息（hint/suggest 字段已退役）
+    expect((first as { hint?: unknown }).hint).toBeUndefined()
+    expect((first as { suggest?: unknown }).suggest).toBeUndefined()
+    // ④ 无 nav 服务 ⇒ 不记录，行为退回（不报错）
+    const noNav = setup({}, { worldEntry, read: async () => ({ lines: [mkLine('信阳 长版本：west')], reason: 'quiet' }) })
+    const bare = await noNav.call('mud_walk', { args: '-c xinyang' })
     expect(bare).toMatchObject({ ok: true })
-    expect((bare as { suggest?: unknown }).suggest).toBeUndefined()
-    expect((bare as { hint?: unknown }).hint).toBeUndefined()
+    expect((bare as { path?: unknown }).path).toMatchObject({ to: '信阳' })
   })
 
-  it('T23.10b 在出发点判定用**反证**（用户裁定）：表类无表 ⇒ false、有表 ⇒ true、`-q` 不判定', async () => {
+  it('T23.10b 在出发点判定（用户口径）：表/受理行 ⇒ true、无证据 ⇒ false；`-c <拼音名>` 不判定', async () => {
     const writes: unknown[][] = []
     const writeNavWorld = (zone: string, key: string, value: unknown) => { writes.push([zone, key, value]) }
-    /** 只看 location 面（nav.* 的阻断计数另有断言）。 */
+    /** 只看 location 面（nav.* 的阻塞计数另有断言）。 */
     const locWrites = (): unknown[][] => writes.filter(w => w[0] === 'location')
     const mkLine = (text: string): MudLine => ({ text, raw: text, style: [], abs: 1, time: 0, isPrompt: false, kind: null })
-    // 表类（无参 walk / -c）：**没出表** ⇒ 不在出发点（不依赖"拒绝行文"单行判据）
+    // 表类（无参 walk / -c）：**没出表** ⇒ 不在出发点
     const bare = setup({}, {
       writeNavWorld,
       read: async () => ({ lines: [mkLine('你现在无法恢复使用内建路径。')], reason: 'quiet' }),
@@ -638,16 +645,20 @@ it('T23.5 查询类参数（-c / -q）不注入行走判据——其答复含"�
     })
     await tabled.call('mud_walk', { args: '-c' })
     expect(locWrites()[1]).toEqual(['location', '出发点就绪', true])
-    // `-q`（区域链与出发点无关）⇒ 不参与判定
-    await tabled.call('mud_walk', { args: '-q 襄阳' })
+    // `-c <拼音名>`（路径与出发点无关）⇒ 不参与判定
+    await tabled.call('mud_walk', { args: '-c xinyang' })
     expect(locWrites()).toHaveLength(2)
   })
 
-  it('T23.10b 行走类超时且无受理行 ⇒ **反证**为 unaccepted + 就绪 false', async () => {
+  it('T23.10b 不在出发点 = **显式判据槽**（用户口径）：命中 ⇒ unaccepted（不再走超时反证）', async () => {
     const writes: unknown[][] = []
     const { call } = setup({}, {
       writeNavWorld: (zone: string, key: string, value: unknown) => { writes.push([zone, key, value]) },
-      read: async () => ({ lines: [], reason: 'timeout' }),
+      read: async () => ({
+        lines: [{ text: '当前区域的系统内建路径出发点在：中央广场、土地庙，请查询localmaps获得具体方位。', raw: '', style: [], abs: 1, time: 0, isPrompt: false, kind: null }],
+        reason: 'done',
+        hit: { by: 'criteria', index: 0, groups: [], outcome: '不在出发点', kind: 'fail' },
+      }),
     })
     await expect(call('mud_walk', { args: 'xiangyang' })).resolves.toMatchObject({ ok: true, outcome: 'unaccepted' })
     expect(writes.filter(w => w[0] === 'location')).toEqual([['location', '出发点就绪', false]])
@@ -667,44 +678,44 @@ it('T23.5 查询类参数（-c / -q）不注入行走判据——其答复含"�
     })
   })
 
-  it('T23.11 阻断档案：同位置连续两次软阻断 ⇒ hard-stop（回 agent 停手，不硬重试）', async () => {
+  it('T23.11 阻塞连击（用户口径：取消软/硬）：同位置连续两次阻塞 ⇒ needsManual（需人工干预，停手）', async () => {
     const w = new World()
     w.set('location', '区域', '襄阳')
     const worldEntry = (zone: string, key: string) => w.get(zone, key)
     const writeNavWorld = (zone: string, key: string, value: unknown) => { w.set(zone, key, value, 'measured', { kind: 'nav', time: 0 }) }
     const mkLine = (text: string): MudLine => ({ text, raw: text, style: [], abs: 1, time: 0, isPrompt: false, kind: null })
-const softStop = {
+const blockStop = {
       worldEntry, writeNavWorld,
       read: async () => ({
         lines: [
-          mkLine('你决定开始前往襄阳方向走去……'), // 有受理行 ⇒ 在出发点（不被反证误判）
+          mkLine('你决定开始前往襄阳方向走去……'), // 有受理行 ⇒ 在出发点
           mkLine('你因为种种原因停了下来，可以用walk继续进行。'),
         ],
         reason: 'done',
-        hit: { by: 'criteria', index: 0, groups: [], outcome: '软阻断', kind: 'fail' },
+        hit: { by: 'criteria', index: 0, groups: [], outcome: '阻塞', kind: 'fail' },
       }),
     }
-    await expect(setup({}, softStop).call('mud_walk', { args: 'xiangyang' })).resolves.toMatchObject({
-      ok: true, outcome: 'soft-stop', blocked: { attempts: 1, hard: false, at: '襄阳' },
+    await expect(setup({}, blockStop).call('mud_walk', { args: 'xiangyang' })).resolves.toMatchObject({
+      ok: true, outcome: 'blocked', blocked: { attempts: 1, needsManual: false, at: '襄阳' },
     })
-    await expect(setup({}, softStop).call('mud_walk', { args: 'xiangyang' })).resolves.toMatchObject({
-      ok: true, outcome: 'hard-stop', blocked: { attempts: 2, hard: true, at: '襄阳' },
+    await expect(setup({}, blockStop).call('mud_walk', { args: 'xiangyang' })).resolves.toMatchObject({
+      ok: true, outcome: 'blocked', blocked: { attempts: 2, needsManual: true, at: '襄阳' },
     })
     // 档案落 World（kind='nav'）
-    expect(w.get('nav', '软阻断连击')?.value).toBe(2)
-    expect(w.get('nav', '硬阻断')?.value).toBe(true)
-    expect(w.get('nav', '硬阻断')?.source.kind).toBe('nav')
+    expect(w.get('nav', '阻塞连击')?.value).toBe(2)
+    expect(w.get('nav', '阻断')?.value).toBe(true)
+    expect(w.get('nav', '阻断')?.source.kind).toBe('nav')
     // 到达 ⇒ 清零
     const arrived = setup({}, {
       worldEntry, writeNavWorld,
       read: async () => ({ lines: [mkLine('你到达了襄阳。')], reason: 'done', hit: { by: 'criteria', index: 0, groups: [], outcome: '到达', kind: 'ok' } }),
     })
     await arrived.call('mud_walk', { args: 'xiangyang' })
-    expect(w.get('nav', '软阻断连击')?.value).toBe(0)
-    expect(w.get('nav', '硬阻断')?.value).toBe(false)
+    expect(w.get('nav', '阻塞连击')?.value).toBe(0)
+    expect(w.get('nav', '阻断')?.value).toBe(false)
   })
 
-  it('T23.10 精力闸：<20% 拒（不发命令），充足/未知放行；查询与 speed 不受闸门', async () => {
+  it('T23.10 精力闸：<20% 拒（不发命令），充足/未知放行；查询（-c）不受闸门', async () => {
     const mkEntry = (cur: number, max: number) => {
       const w = new World()
       w.set('vitals', '精力', cur)
@@ -717,23 +728,37 @@ const softStop = {
     expect(sent).toEqual([]) // 拒在 send 之前
     // 查询类不受闸门（答复不是行动）
     await low.call('mud_walk', { args: '-c' })
-    await low.call('mud_walk', { action: 'speed', value: '1' })
-    expect(sent).toEqual(['walk -c', 'set walk_speed 1'])
+    expect(sent).toEqual(['walk -c'])
     // 充足（精力可为上限的 200%）与未知（World 尚未写入）都放行
     const rich = setup({}, { worldEntry: mkEntry(150, 100), send: (cmd: string) => { sent.push(cmd); return true } })
     await rich.call('mud_walk', { args: 'xiangyang' })
     const unknown = setup({}, { send: (cmd: string) => { sent.push(cmd); return true } })
     await unknown.call('mud_walk', { args: 'xiangyang' })
-    expect(sent).toEqual(['walk -c', 'set walk_speed 1', 'walk xiangyang', 'walk xiangyang'])
+    expect(sent).toEqual(['walk -c', 'walk xiangyang', 'walk xiangyang'])
   })
 
-  it('T23.10 unaccepted（反证）结果附 departures（World location.出发点）；到达不带', async () => {
+  it('T23.10 unaccepted 结果附 departures（应答行文解析；行文没给退回 World）；到达不带', async () => {
     const w = new World()
     w.set('location', '出发点', ['当铺', '中央广场', '客店', '土地庙', '醉仙楼二楼'])
     const worldEntry = (zone: string, key: string) => w.get(zone, key)
-    // 行走类判据未命中等到超时（无受理行）⇒ 反证为 unaccepted ⇒ 附本区域起点
-    const unaccepted = setup({}, { worldEntry, read: async () => ({ lines: [], reason: 'timeout' }) })
-    await expect(unaccepted.call('mud_walk', { args: 'xiangyang' }))
+    const mkLine = (text: string): MudLine => ({ text, raw: text, style: [], abs: 1, time: 0, isPrompt: false, kind: null })
+    // 显式判据槽命中，应答行文自带出发点列表 ⇒ 直接解析回给 agent
+    const fromLines = setup({}, {
+      worldEntry,
+      read: async () => ({
+        lines: [mkLine('当前区域的系统内建路径出发点在：当铺、土地庙，请查询localmaps获得具体方位。')],
+        reason: 'done',
+        hit: { by: 'criteria', index: 0, groups: [], outcome: '不在出发点', kind: 'fail' },
+      }),
+    })
+    await expect(fromLines.call('mud_walk', { args: 'xiangyang' }))
+      .resolves.toMatchObject({ ok: true, outcome: 'unaccepted', departures: ['当铺', '土地庙'] })
+    // 行文没给列表（桩直供 hit）⇒ 退回 World location.出发点
+    const fromWorld = setup({}, {
+      worldEntry,
+      read: async () => ({ lines: [], reason: 'done', hit: { by: 'criteria', index: 0, groups: [], outcome: '不在出发点', kind: 'fail' } }),
+    })
+    await expect(fromWorld.call('mud_walk', { args: 'xiangyang' }))
       .resolves.toMatchObject({ ok: true, outcome: 'unaccepted', departures: ['当铺', '中央广场', '客店', '土地庙', '醉仙楼二楼'] })
     const arrived = setup({}, { worldEntry, read: async () => ({ lines: [], reason: 'done', hit: { by: 'criteria', index: 0, groups: [], outcome: '到达', kind: 'ok' } }) })
     const res = await arrived.call('mud_walk', { args: 'xiangyang' })

@@ -68,7 +68,7 @@ import { applyElision, processEpoch } from 'mud-sense/elide'
 import type { ElisionSession } from 'mud-sense/elide'
 import { DEFAULT_STAMINA_FLOOR_PCT } from 'mud-nav/stamina'
 import { NavService } from 'mud-nav/service'
-import { createJsonNavStore } from 'mud-nav/json-store'
+import { createFileNavStore } from 'mud-nav/store'
 
 /** 插件名。 */
 export const name = 'tool-mud'
@@ -971,16 +971,20 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     return vetoStopStream()
   })
 
-  // ── 行走知识服务（T23.10b）：插件级单例（知识图全局）──
-  // 记录 agent 走出来的 walk 节点（路径表 ⇒ 边、`-q` ⇒ 参考链）并回答下一跳建议；
+  // ── 行走知识服务（T23.10b；用户口径 2026-10-14：只提供记录服务）──
+  // 后端挂载的插件级单例（知识图全局）：walk 收集到行文时写入
+  //（路径表 ⇒ 边、`walk -c` ⇒ 区域方向路径），**不回答、不进入 agent**。
   // 由工具面经 `ctx.get('mudNav')` 取用（§8.7、§15.2）。
-  // 持久化（用户裁定 2026-10-08）：**JSON 文件**，落点与会话日志同目录；读坏即空图（fail-soft）。
-  // 未落盘（`logDir` 未配置）⇒ 纯内存（不另找目录乱写）。
-  const navFile = logOptions.logDir === undefined ? null : join(logOptions.logDir, 'nav-graph.json')
-  const navService = new NavService(navFile === null ? null : createJsonNavStore(
-    navFile,
-    message => ctx.logger.warn(`tool-mud: ${message}`),
-  ))
+  // 持久化（用户裁定 2026-10-14 三次）：**项目内文件** `<cwd>/data/nav-graph.json`——
+  // 知识图是伴随项目累积的耐久资产（"跟数据库文件一样存在项目中"），既不与按天
+  // 滚动的会话日志混放，也不进宿主用户目录（storage 域落点 `$DSH_HOME/storages/`
+  // 不满足"项目内"，故弃用）。`rosterStorage:false` 同一开关管"持久化与否"（§15 #16）。
+  const navService = config.rosterStorage === false
+    ? new NavService()
+    : new NavService(createFileNavStore(
+        join(process.cwd(), 'data', 'nav-graph.json'),
+        message => ctx.logger.warn(`tool-mud: ${message}`),
+      ))
   ctx.provide('mudNav', navService)
 
   // ── 引擎窄面（工具面，T2b）：归属解析 / 建连 / 状态快照 / 缺省参数 ──

@@ -170,7 +170,7 @@ describe('生产总表与匹配面', () => {
   it('tableSlotsOf：喂令信息含形态 + 槽位 kind + 条目 flags（walk flags=m）', () => {
     expect(tableSlotsOf('walk')).toEqual({
       closeOn: 'criteria',
-      slots: [{ name: '软阻断', kind: 'fail' }, { name: '到达', kind: 'ok' }],
+      slots: [{ name: '阻塞', kind: 'fail' }, { name: '不在出发点', kind: 'fail' }, { name: '到达', kind: 'ok' }, { name: '出发点表', kind: 'ok' }],
       flags: 'm',
     })
     expect(tableSlotsOf('foobar')).toBeNull()

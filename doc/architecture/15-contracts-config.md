@@ -57,19 +57,18 @@ interface MudCore3Service extends MudCore3Handle {
 - **取用走 `ctx.get`（不写进 `inject`）**：`agents` 是**可选依赖**——缺席/提供方 fiber 未 ACTIVE ⇒ `undefined` ⇒ 上溯终止（§2.3）；且必须在**调用期**解析（apply 期未必就绪，与 `storageDomain` 同一课，§14.3）。写成 `ctx.agents` 会因未声明 inject 直接抛错并使 `apply` 整体失败 ⇒ `remote.mud` 全动词 404。
 - `MudService`（内部服务面）：`register` / `connect` / `disconnect` / `admit` / `stop` / `status` / `statuses` / `subscribeStatus` / `watchStatusStream` / `subscribeCaptcha` / `watchCaptchaStream` / `captchaAnswer` / `captchaAbort` / `captchaRefresh` / `get` / `getDeliverer` / `screenOf` / `logOf` / `flushPending` / `turnStart` / `turnEnd` / `dispose` / `disposeAll`（§11.4、§11.7、§8.17）。
 
-**`ctx.provide('mudNav')` 行走知识服务（T23.10b）**
+**`ctx.provide('mudNav')` 行走知识服务（T23.10b；用户口径 2026-10-14 收窄）**
 
 ```
 ctx.provide('mudNav', NavService)      // 插件级单例（知识图全局；重启即空）
-  record({ region?, lines })           // 记录一段行走行文：路径表 ⇒ 边（region+pinyin 后到覆盖）、`-q` ⇒ 参考链（按 to 去重）
-  suggest(from, to)                    // 下一跳建议（Edge = {dest, pinyin, steps}）；无解 ⇒ null（不猜）
-  hintOf(lines)                        // 解析 `-q` 参考链 {to, via}（只有参考意义）
-  snapshot()                           // { nodes[{region, edges, updatedAt}], hints[] }
+  record({ region?, lines, pinyin? })  // 记录一段行走行文：路径表 ⇒ 边（region+pinyin 后到覆盖，新边未带 dirs 保留旧 dirs）、`-c` 方向序列按拼音（兜底按答复前缀）并入对应边 dirs；有增量才落盘
+  snapshot()                           // { nodes[{region, edges, updatedAt}] }
 ```
 
-- **定位**：记录 agent 走出来的 `walk` 节点（初始为空），回答"当前区域到 X 的下一跳"；**不持有分段进度**（"每到一个新地点重新查询"，会话状态仍在 World）。
-- **取用**：工具面经 `MudToolDeps.nav`（`preset.ts` 里 `ctx.get('mudNav')`）；**缺席 ⇒ 不记录、不给建议**，工具行为退回本期之前（可选依赖，§2.3 同款纪律）。
-- **持久化（用户裁定 2026-10-08："先使用 json 数据持久化，后期再考虑优化"）**：**JSON 文件** `<logDir>/nav-graph.json`（与会话日志同目录，复用既有 `logDir` 配置、不新增 Config 键）；构造时加载、每次有增量记录后落盘；**fail-soft**——读坏/缺文件 ⇒ 空图并 `warn` 一条，写失败只 `warn`（知识是增益不是前置）；`logDir` 未配置 ⇒ 纯内存。快照形状 = `{ nodes:[{region, edges, updatedAt}], hints:[{to, via}] }`，人可读、可手工清理。
+- **定位**：**只提供记录服务——不回答、不进入 agent**（用户口径 2026-10-14：建议/下一跳全删，`walk` 收集到的信息只向后端写入）；行走知识只做后端积累（agent 出发前先 `walk -c <拼音名>` 查询实际路径，结果自动并入图与之前的区域图同步）。**不持有分段进度**（会话状态仍在 World）。
+- **边形状（用户口径 2026-10-14 二次 + 实录校准）**：`{region, room, pinyin, steps, direct?, dirs?}`——目的地按 `◇` 拆**目的区域**（前段）与该区域内**房间**（后段，区域唯一）；`pinyin` 是唯一 id；`direct` = **`◇` 分隔段颜色**的可直达性（实录 2026-10-14：着色的是 ` ◇ ` 分隔段本身——**红 `[31m ◇ ` = false 不可直达 / 绿 `[1;32m ◇ ` = true 可直达**；区域名 [1;33 黄、房间 [2;37 白，cell 其它部分不可靠；xterm 标准色 1/9 红、2/10 绿；无色不记 = 未知）；`dirs` = `walk -c` 方向序列（按拼音并入，后到覆盖；独立 paths 数组退役）。旧格式文件（`dest:"区域  ◇ 房间"` + `paths[]`）在 `loadSnapshot` **读时归一**。
+- **取用**：工具面经 `MudToolDeps.nav`（`preset.ts` 里 `ctx.get('mudNav')`）；**缺席 ⇒ 不记录**，工具行为退回本期之前（可选依赖，§2.3 同款纪律）。
+- **持久化（用户裁定 2026-10-14 三次：**项目内文件**，"跟数据库文件一样存在项目中"）**：`<cwd>/data/nav-graph.json`（`mud-nav/src/store.ts` 的 `createFileNavStore`，纯 `node:fs`）。落点演进：初版 `<logDir>/nav-graph.json`（与按天滚动的会话日志混放，"可随手清理"语义错位）→ storage 域 `mud_nav`（落点 `$DSH_HOME/storages/` 用户目录，不满足"项目内累积"，弃用）→ **项目根 `data/`**（耐久数据语义，与 logs / knowledge / corpus 分列）。**整图快照 JSON**——知识量小、总是整体读写；`rosterStorage:false` 同一开关管"持久化与否"（§15 #16）。fail-soft：读失败（文件不存在 = 首次运行 / JSON 坏 / 结构不符）⇒ 空图 + `onError` 上报；写失败 ⇒ 上报不影响行走（知识是增益不是前置）；逐条校验在 `NavGraph.loadSnapshot`（坏数据逐条丢弃），store 只做浅层结构检查。
 - **负判断写入**：行走结果 `unaccepted` 时落 `location.出发点就绪 = false`（World `kind:'nav'`，经 `runtime.writeNavWorld`，§10.3）。
 
 ## 15.3 preset 行清单
@@ -127,7 +126,7 @@ ctx.provide('mudNav', NavService)      // 插件级单例（知识图全局；�
 | 13 | `logFile` | `true` | 是否落盘 JSONL | §13.1 |
 | 14 | `logDir` | `<cwd>/mud-logs` | 日志落盘目录 | §13.1 |
 | 15 | `logBufferMax` | 2000 | 日志内存环上限（`logs` 的可读窗口） | §13.1 |
-| 16 | `rosterStorage` | `true` | 是否挂宿主 storage 域（`false` = 强制内存） | §14.3 |
+| 16 | `rosterStorage` | `true` | 是否挂宿主 storage 域（`false` = 强制内存）——同一开关管行走知识图文件持久化（§15.2） | §14.3 |
 | 17 | ~~`bootstrapOnCreate`~~ | — | **已退役**（2026-10-02）：建账号 = 纯登记不投任务书，接入 = 唯一点火点（§7.4、§7.4.1） | §11.2、§7.4 |
 | 18 | `taskBrief` | `DEFAULT_TASK_BRIEF` | 任务书模板（占位符 `{{serverName}}`/`{{endpoint}}`/`{{account}}`/`{{conn}}`/`{{loggedIn}}`/`{{goal}}`——T24 优先目标节选） | §7.4 |
 | 19 | `silenceMs` | 120_000 | 静默唤醒时长（**正整数 fail-loud**） | §7.5 |

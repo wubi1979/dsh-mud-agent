@@ -15,7 +15,7 @@ mud_workflow_* 注册；mud-player preset 行；typert 工件生成与消费。�
 ## 装配（唯一 bundle）
 
 - 引擎行：全局加载本包（agent/created 监听、session/disposed 监听、remote 服务、投递、日志）
-- 装配注册：mud（引擎）+ mud-workflow（流程）+ nav 三件（NavService/json-store/stamina）
+- 装配注册：mud（引擎）+ mud-workflow（流程）+ nav 三件（NavService/项目内文件持久化 data/nav-graph.json/stamina）
 - 工具面：mud_connect/mud_send/mud_walk/mud_state 四工具 + mud_workflow_* 五工具
 - 见 cordis.patch.yml（本包唯一归属；行 id 沿用 mud-core3 期命名，宿主 profile 按 id 幂等替换）
 
