@@ -231,7 +231,7 @@ describe('mud_send 拒绝序（stub）', () => {
 
   it('wait 缺省行为不变：send + read（应答原文返回）', async () => {
     const { call, readCapture } = setup()
-    await expect(call('mud_send', { cmd: 'look' })).resolves.toMatchObject({ ok: true, reason: 'quiet' })
+    await expect(call('mud_send', { cmd: 'foobar' })).resolves.toMatchObject({ ok: true, reason: 'quiet' })
     expect(readCapture().opts.closeOn).toBeUndefined() // 有 cmd 缺省判据：未登记不收窗只等超时（DEC-4）
   })
 
@@ -260,11 +260,11 @@ describe('mud_send 读后投影（§8.7 状态拉取命令）', () => {
     connState: 'connected', loggedIn: 'in-game', admitted: true, world, recording: 0, dropped: 0,
   })
 
-  it('STATE_PULL_CMD_RE：规则 id 单点识别（id/inventory/look 不误伤）', () => {
-    for (const cmd of ['hpbrief', 'hp', 'sc', 'i', 'skills', 'hp ', 'skills all']) {
+  it('STATE_PULL_CMD_RE：命令总表 capture 条目命令头推导（T29；score/inventory 修正入列）', () => {
+    for (const cmd of ['hpbrief', 'hp', 'score', 'sc', 'inventory', 'i', 'skills', 'cha', 'sk', 'exp', 'hp ', 'skills all', 'sk tom', 'inventory 2']) {
       expect(STATE_PULL_CMD_RE.test(cmd)).toBe(true)
     }
-    for (const cmd of ['look', 'id', 'inventory', 'save', 'sk tom', 'dazuo 100']) {
+    for (const cmd of ['look', 'l', 'id', 'save', 'dazuo 100']) {
       expect(STATE_PULL_CMD_RE.test(cmd)).toBe(false)
     }
   })
@@ -302,14 +302,23 @@ describe('mud_send 判据与 initial（stub）', () => {
   it('有 cmd：send 后 read，initial 为空；未登记命令不收窗只等超时（maxLines 兜底，DEC-4）', async () => {
     const sent: string[] = []
     const { call, readCapture } = setup({}, { send: (cmd: string) => { sent.push(cmd); return true } })
-    const r = await call('mud_send', { cmd: 'look' })
+    const r = await call('mud_send', { cmd: 'foobar' })
     expect(r).toMatchObject({ ok: true, reason: 'quiet' })
-    expect(sent).toEqual(['look'])
+    expect(sent).toEqual(['foobar'])
     expect(readCapture().initial).toEqual([])
     expect(readCapture().opts.closeOn).toBeUndefined()
     expect(readCapture().opts.slots).toBeUndefined()
     expect(readCapture().opts.gaCount).toBeUndefined()
     expect(readCapture().opts.maxLines).toBe(50)
+    expect(readCapture().opts.timeoutMs).toBe(15000)
+  })
+
+  it('登记命令 look（T29）：按表 ga 收窗（gaCount 缺省由读层收 1），条目法定 timeout 15s', async () => {
+    const { call, readCapture } = setup()
+    await call('mud_send', { cmd: 'look' })
+    expect(readCapture().opts.closeOn).toBe('ga')
+    expect(readCapture().opts.gaCount).toBeUndefined() // byBoundary() 无显式 gaCount ⇒ 读层缺省收 1
+    expect(readCapture().opts.maxLines).toBeUndefined()
     expect(readCapture().opts.timeoutMs).toBe(15000)
   })
 

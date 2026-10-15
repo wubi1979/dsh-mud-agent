@@ -12,7 +12,7 @@
     "typecheck": "pnpm --filter mud-link --filter mud-sense --filter mud-commands --filter mud-combat --filter mud-nav --filter mud-flows --filter mud --filter tool-mud build && pnpm --filter mud-workflow build && pnpm --filter mud-workflow --filter mud --filter tool-mud typecheck",
     "test": "pnpm --filter mud-link --filter mud-sense --filter mud-commands --filter mud-combat --filter mud-nav --filter mud-flows --filter mud --filter tool-mud --filter mud-workflow --filter @deepseek-ai/dsh-mud-webui test",
     "gen:typert": "pnpm --filter tool-mud gen:typert",
-    "dev": "pnpm --filter mud-workflow build && pnpm --filter tool-mud gen:typert && pnpm --filter tool-mud build && pnpm --filter @deepseek-ai/dsh-mud-webui build && pnpm --dir D:/Code/deepseek-harness dsh web --patch D:/Code/dsh-mud-agent/packages/mud/tool-mud/cordis.patch.yml --port 3082"
+    "dev": "pnpm --filter mud-workflow --filter tool-mud run build && pnpm --filter tool-mud gen:typert && pnpm --filter @deepseek-ai/dsh-mud-webui build && pnpm --dir D:/Code/deepseek-harness dsh web --patch D:/Code/dsh-mud-agent/packages/mud/tool-mud/cordis.patch.yml --port 3082"
   },
   "devDependencies": {
     "@types/node": "^22.20.0",

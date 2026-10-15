@@ -1,12 +1,23 @@
 /**
  * mud-sense tracker — 状态追踪器（T19）：游戏文本 → World 结构化状态（判据解析，零 LLM）。
  *
+ * **T29 分工（格式归命令条目，机制留本文件）**：六套命令应答格式（hpbrief/hp/
+ * sc/i/skills/exp）已迁 mud-commands **随命令条目就地定义**（条目 capture 登记，
+ * D7 登记原则），捕获契约类型归 `mud-commands` 的 define（条目契约单点）；
+ * 本文件只保留**机制**（块/序列/lines 三形状消费、打标、
+ * 写入）与**非命令触发路径**的本地规则（walk-region/walk-departure/walk-started、
+ * combat、id——战斗行、walk 受理行、id 别称表不经命令窗；clears 同理留本地，
+ * T29 边界纪律：capture 只承载命令应答格式，状态追踪独立于命令表）。
+ *
  * 每会话一个实例，在 runtime 行路径 `classifier.mark(line)` 之后 `observe(line)`（D1，
  * 与 C5.2 打标同一单点）。三类形状（D3）：
  *   - `table`：框线表格块（`┌` 开、`└` 闭；`├` 边框行可携带中文节标题）。块内每行
  *     **就地打 `status` 标**（D8 剔除投递 + 副屏行环；kind 必须在 observe 内同步定案
  *     —— screen.write 在行路径随行路由，事后补标对画面无效）。World 写入仍需
  *     **规则命中**（行级 match，声明序首个命中者独占该行）；无命中的块只剔不写。
+ *     挂**块归约器**（`CaptureRule.block`，T29 D5）的规则（i/exp）：命中产出过
+ *     `step`（立即写部分随返即写 + 块内积攒按 rule id 存 accum），块收口（└ 或
+ *     失控止损）`flush` 一次性写终产出；无 block 的表规则维持命中直写。
  *   - `lines`：块外逐行规则（`id` 别称表）；命中即打标即写。
  *   - `sequence`：`^#` 起连续 N 行定长位置映射（hpbrief）。首行命中规则 head 即开序
  *     列并逐行打标；凑齐 length 行后**逐行 match 全部成功才写**（D5 完整性校验，
@@ -21,65 +32,34 @@
  * 打标语义（用户裁定 2026-10-06）：只对 `kind === null` 的行打标（C5.2 规则优先，
  * 聊天/动作行不误剔）；已有标行仍参与块状态机（框线边界不漏）。
  *
- * 纯 TS，零宿主依赖。
+ * 纯 TS，零宿主依赖（mud-commands 为构建期规则源，T29 D2 新包边）。
  *
  * @module mud-sense/tracker
  */
 
 import type { MudLine } from 'mud-link/line'
+import { COMMAND_CAPTURE_RULES } from 'mud-commands'
+import type { AnyCaptureRule, RowContext, SequenceCaptureRule, CaptureEntry, CaptureRule, CaptureShape } from 'mud-commands'
+
+/** 捕获契约类型自 mud-commands（define 条目契约单点）type-only 引入（T29 D2）；
+ *  re-export 保持本模块既有公开面稳定（既有消费者按旧路径取型不受影响）。 */
+export type { AnyCaptureRule, RowContext, SequenceCaptureRule, CaptureEntry, CaptureRule, CaptureShape }
 
 /** 追踪打标 kind（D8）：打此标的行不进 agent 投递（deliver 剔除）、进副屏行环。 */
 export const STATUS_KIND = 'status'
 
-/** 追踪形状（D3）。 */
-export type TrackShape = 'table' | 'lines' | 'sequence'
-
-/** 单条追踪产出（zone 缺省 = 所属规则的 zone）。 */
-export interface TrackEntry {
-  readonly key: string
-  readonly value: unknown
-  readonly zone?: string
+/** 追踪规则集（可注入覆盖；缺省 DEFAULT_TRACK_SPEC）。 */
+export interface TrackSpec {
+  readonly rules: readonly AnyCaptureRule[]
+  readonly clears?: readonly TrackClearRule[]
 }
 
-/** 规则匹配的行上下文。raw = 本行 text（无 ANSI 变体，同 classify 判据匹配面）。 */
-export interface RowContext {
-  readonly cells: readonly string[]
-  readonly raw: string
-  readonly section?: string
-  /** 块开行（`┌…`）携带的事实（T23.6：walk 路线表表头即区域名）。 */
-  readonly blockHeader?: string
-  readonly index: number
-}
-
-/** 追踪规则：match 返回 0..n 条产出（`undefined` = 本规则不匹配该行）。 */
-export interface TrackRule {
-  readonly id: string
-  readonly shape: TrackShape
-  readonly zone: string
-  readonly match: (row: RowContext) => TrackEntry[] | undefined
-}
-
-/** 全形状规则联合（sequence 附带 head/length）。 */
-export type AnyTrackRule = TrackRule | SequenceTrackRule
-
-/** sequence 规则：head 命中即开序列，连续 length 行凑齐后逐行 match，全成才写（D5）。 */
-export interface SequenceTrackRule extends TrackRule {
-  readonly shape: 'sequence'
-  readonly head: RegExp
-  readonly length: number
-}
-
-/** clear 规则（D9）：行文命中即消解 World 条目（按例证逐条加）。 */
+/** clear 规则（D9）：行文命中即消解 World 条目（按例证逐条加）。
+ *  **留 tracker 本地**（T29 边界纪律：存在非命令触发路径，不入命令表）。 */
 export interface TrackClearRule {
   readonly pattern: RegExp
   readonly zone: string
   readonly key: string
-}
-
-/** 追踪规则集（可注入覆盖；缺省 DEFAULT_TRACK_SPEC）。 */
-export interface TrackSpec {
-  readonly rules: readonly AnyTrackRule[]
-  readonly clears?: readonly TrackClearRule[]
 }
 
 /** 追踪器写/消解回调（runtime 薄封装进 World + onWorldChange 广播）。 */
@@ -121,13 +101,13 @@ const WALK_DEPARTURES_RE = /当前区域共有\d+处内建玩家路径起点，�
 const WALK_STARTED_RE = /^你决定开始前往/
 
 /** walk 路线表 ⇒ `location.区域`（块开行的中文串，实录 `┌───荆州府──…`）。 */
-function walkRegionRow(row: RowContext): TrackEntry[] | undefined {
+function walkRegionRow(row: RowContext): CaptureEntry[] | undefined {
   if (!row.cells.some(c => WALK_TABLE_HEADER_RE.test(c)) || !row.cells.some(c => WALK_TABLE_STEPS_RE.test(c))) return undefined
   return row.blockHeader !== undefined ? [{ key: '区域', value: row.blockHeader }] : undefined
 }
 
 /** 出发点答复 ⇒ `location.出发点`（本区域起点列表；未受理与 `-c` 同族，事实一致）。 */
-function walkDepartureRow(row: RowContext): TrackEntry[] | undefined {
+function walkDepartureRow(row: RowContext): CaptureEntry[] | undefined {
   const m = WALK_DEPARTURES_RE.exec(row.raw)
   if (m === null) return undefined
   const list = (m[1] ?? '').split('、').map(s => s.trim()).filter(s => s !== '')
@@ -135,7 +115,7 @@ function walkDepartureRow(row: RowContext): TrackEntry[] | undefined {
 }
 
 /** 受理行 ⇒ `location.出发点就绪` = true（正向证据；**负判断走反证**：见工具面"没出表/没出受理行"）。 */
-function walkStartedRow(row: RowContext): TrackEntry[] | undefined {
+function walkStartedRow(row: RowContext): CaptureEntry[] | undefined {
   return WALK_STARTED_RE.test(row.raw) ? [{ key: '出发点就绪', value: true }] : undefined
 }
 
@@ -150,386 +130,6 @@ function splitRowCells(text: string): string[] {
   return parts
 }
 
-// ── hpbrief：定长 3 行位置映射（§2.2 已定稿 18 位表；实录 2026-10-06 同刻校准）──
-
-/** hpbrief 单行判据：恰好 6 个纯数字 cell（D5 完整性校验的一部分；不满足整组不写）。
- *  负号合法：气血可为 -1（A.8.1 死亡断面实录 `#313,193,-1,…`；A.8.4：气血 <= 0
- *  不是死亡判据，状态须照写）。 */
-const HPBRIEF_CELL_RE = /^-?\d+$/
-
-/**
- * hpbrief 行映射（按行序 index）：
- *   L1 经验/潜能/最大内力/内力/最大精力/精力；L2 气血上限/最大气血/气血/精神上限/最大精神/精神；
- *   L3 真气/战意/食物/饮水/战斗中(0/1)/忙(0/1)。战斗中/忙是布尔枚举 → combat 分区。
- */
-function hpbriefRow(row: RowContext): TrackEntry[] | undefined {
-  if (row.cells.length !== 6) return undefined
-  const nums: number[] = []
-  for (const c of row.cells) {
-    if (!HPBRIEF_CELL_RE.test(c)) return undefined
-    nums.push(Number.parseInt(c, 10))
-  }
-  switch (row.index) {
-    case 0:
-      return [
-        { key: '经验', value: nums[0] }, { key: '潜能', value: nums[1] },
-        { key: '最大内力', value: nums[2] }, { key: '内力', value: nums[3] },
-        { key: '最大精力', value: nums[4] }, { key: '精力', value: nums[5] },
-      ]
-    case 1:
-      return [
-        { key: '气血上限', value: nums[0] }, { key: '最大气血', value: nums[1] }, { key: '气血', value: nums[2] },
-        { key: '精神上限', value: nums[3] }, { key: '最大精神', value: nums[4] }, { key: '精神', value: nums[5] },
-      ]
-    case 2:
-      return [
-        { key: '真气', value: nums[0] }, { key: '战意', value: nums[1] },
-        { key: '食物', value: nums[2] }, { key: '饮水', value: nums[3] },
-        { key: '战斗中', value: nums[4] !== 0, zone: 'combat' }, { key: '忙', value: nums[5] !== 0, zone: 'combat' },
-      ]
-    default:
-      return undefined
-  }
-}
-
-// ── hp：框线表格规则（§2.3 兜底 + 只有表格才有的文本状态；片段先行，待实录校准）──
-
-const NUM_RE = /\s*(\d+)\s*/
-/** `X / Y` 共用片段（校准结论①：X = 当前，Y = 最大）。 */
-const CUR_MAX = `${NUM_RE.source}\\/\\s*(\\d+)`
-/** 可选括号加成 `(+ N)`（括号前允许空格）。 */
-const OPT_BONUS = `(?:\\s*\\(\\s*\\+\\s*(\\d+)\\s*\\))?`
-/** 可选方括号状态 `[文本]`（括号前允许空格）。 */
-const OPT_STATE = `(?:\\s*\\[([^\\]]*)\\])?`
-
-/** hp 行解析模式表：对行 text（无 ANSI）逐式扫描，一行可命中多式（一行可两事实）。 */
-interface HpPattern {
-  readonly re: RegExp
-  readonly build: (m: RegExpExecArray) => TrackEntry[]
-}
-
-function n(s: string | undefined): number {
-  return Number.parseInt(s ?? '0', 10)
-}
-
-const HP_PATTERNS: readonly HpPattern[] = [
-  { re: new RegExp(`【精神】${CUR_MAX}`), build: m => [{ key: '精神', value: n(m[1]) }, { key: '最大精神', value: n(m[2]) }] },
-  { re: new RegExp(`【气血】${CUR_MAX}`), build: m => [{ key: '气血', value: n(m[1]) }, { key: '最大气血', value: n(m[2]) }] },
-  // §2.3：真气只写当前值（括号百分比/上限按需后补）。
-  { re: new RegExp(`【真气】${CUR_MAX}`), build: m => [{ key: '真气', value: n(m[1]) }] },
-  { re: new RegExp(`【精力】${CUR_MAX}${OPT_BONUS}`), build: m => [
-      { key: '精力', value: n(m[1]) }, { key: '最大精力', value: n(m[2]) },
-      ...(m[3] !== undefined ? [{ key: '精力加成', value: n(m[3]) } as TrackEntry] : []),
-    ] },
-  { re: new RegExp(`【内力】${CUR_MAX}${OPT_BONUS}`), build: m => [
-      { key: '内力', value: n(m[1]) }, { key: '最大内力', value: n(m[2]) },
-      ...(m[3] !== undefined ? [{ key: '内力加成', value: n(m[3]) } as TrackEntry] : []),
-    ] },
-  // 【静气】80% ≡ hpbrief 战意 80（校准结论②，合一个键）。
-  { re: /【静气】\s*(\d+)\s*%/, build: m => [{ key: '战意', value: n(m[1]) }] },
-  { re: new RegExp(`【食物】${CUR_MAX}${OPT_STATE}`), build: m => [
-      { key: '食物', value: n(m[1]) }, { key: '最大食物', value: n(m[2]) },
-      ...(m[3] !== undefined && m[3] !== '' ? [{ key: '食物状态', value: m[3] } as TrackEntry] : []),
-    ] },
-  { re: new RegExp(`【饮水】${CUR_MAX}${OPT_STATE}`), build: m => [
-      { key: '饮水', value: n(m[1]) }, { key: '最大饮水', value: n(m[2]) },
-      ...(m[3] !== undefined && m[3] !== '' ? [{ key: '饮水状态', value: m[3] } as TrackEntry] : []),
-    ] },
-  { re: /【潜能】\s*(\d+)/, build: m => [{ key: '潜能', value: n(m[1]) }] },
-  { re: /【经验】\s*(\d+)/, build: m => [{ key: '经验', value: n(m[1]) }] },
-  // 【状态】健康、极度疲倦 → 数组（只有 hp 表格有的自由文本；捕获止于 cell 边界）。
-  { re: /【状态】\s*([^│\]]+)/, build: m => [{
-      key: '状态',
-      value: (m[1] ?? '').split('、').map(s => s.trim()).filter(s => s !== ''),
-    }] },
-]
-
-/** hp 表格行解析：所有模式扫一遍，收集全部命中（0 命中 = 不匹配该行）。 */
-function hpRow(row: RowContext): TrackEntry[] | undefined {
-  const out: TrackEntry[] = []
-  for (const p of HP_PATTERNS) {
-    const m = p.re.exec(row.raw)
-    if (m !== null) out.push(...p.build(m))
-  }
-  return out.length > 0 ? out : undefined
-}
-
-// ── sc（character，§2.4 分批①：八维 + 存款/杀气/门派履历/上榜差经验；待实录校准）──
-
-/** 八维（允许 `?`——D7「未知」本身是有用信息，保留不猜）。 */
-const SC_OCTA_RE = /(膂力|悟性|根骨|身法|福缘|容貌|灵性|胆识)[:：]\s*\[([^\]]*)\]/g
-/** 数字型标签：存款/杀气/门忠/上榜差经验（千分位逗号剥除后取整）。 */
-const SC_NUM_RE = /(存款|杀气|门忠|上榜差经验)[:：=]?\s*([\d,，]+)/g
-/** 文本型标签：门派履历（门派/师承/出师/叛师 → 原文）。 */
-const SC_TEXT_RE = /(门派|师承|出师|叛师)[:：]\s*([^│\]]+)/g
-/** 头衔与姓名：`武当派第四代弟子 夫差(Vicrly)`（待实录校准）。 */
-const SC_TITLE_RE = /([\u4e00-\u9fff]+第.{1,6}弟子)\s+([\u4e00-\u9fff]{1,8})\(([^)]+)\)/
-
-/** 标签值收口：纯数字取整，其余原文（trim）。 */
-function scValue(raw: string): number | string {
-  return /^[\d,，]+$/.test(raw) ? Number.parseInt(raw.replace(/[,，]/g, ''), 10) : raw.trim()
-}
-
-function scRow(row: RowContext): TrackEntry[] | undefined {
-  const out: TrackEntry[] = []
-  for (const re of [SC_OCTA_RE, SC_NUM_RE, SC_TEXT_RE]) {
-    re.lastIndex = 0
-    let m: RegExpExecArray | null
-    while ((m = re.exec(row.raw)) !== null) {
-      const key = m[1] ?? ''
-      const val = m[2] ?? ''
-      // 八维 `?` 保留原样（D7：「未知」本身是有用信息）；其余取整或原文。
-      out.push({ key, value: val.trim() === '?' ? '?' : scValue(val) })
-    }
-  }
-  const t = SC_TITLE_RE.exec(row.raw)
-  if (t !== null) {
-    out.push({ key: '头衔', value: t[1] ?? '' })
-    out.push({ key: '姓名', value: t[2] ?? '' })
-    out.push({ key: '英文名', value: t[3] ?? '' })
-  }
-  return out.length > 0 ? out : undefined
-}
-
-// ── i（inventory，§10.3；实录校准 2026-10-08，A.7.4：四分区框线表）──
-
-/** 携带件数：中文数字先不解析（存原文，PLAN 未决 3）。 */
-const I_CARRY_RE = /你共携带(.+?)件器物/
-/** 负重：原文（约十斤）。 */
-const I_BURDEN_RE = /(?:总负重|负重)[:：]?\s*(约?[一二三四五六七八九十百千零\d]+斤)/
-/** 负重比：`接近一成`（原句尾锚定，堵正文误配；原文存档）。 */
-const I_BURDEN_RATIO_RE = /(?:接近|超过|已达)?\s*[一二三四五六七八九十百零\d]+成[。，]?\s*$/
-/** 财物：黄金×4 白银×70 铜板×81 → { gold, silver, copper }。 */
-const I_GOLD_RE = /黄金[×x*]\s*(\d+)/
-const I_SILVER_RE = /白银[×x*]\s*(\d+)/
-const I_COPPER_RE = /铜板[×x*]\s*(\d+)/
-
-/** 装备/饰品槽位标签：`[帽子]`（1–6 字非方括号文本）。 */
-const I_SLOT_RE = /\[([^\[\]]{1,6})\]/g
-/** 背包物品：`北侠战甲(Pkuxkx zhanjia)` → {name, id}（实录 A.7.4）。 */
-const I_ITEM_RE = /([\u4e00-\u9fff]{1,12})\(([a-z][a-z0-9' -]*)\)/gi
-/** 槽位段含物品判据：段内有中文即视为物品名（画框字符 `▄▅█` 与 `--` 均非中文）。 */
-const I_HAS_CJK_RE = /[\u4e00-\u9fff]/
-
-/** 槽位段净化：先剥 `--` 空槽记号，再判中文（无中文 = 空槽不写；有中文收空白，
- *  `青色道袍   (+2)` → `青色道袍(+2)`，`珍珠   --` → `珍珠`）。 */
-function iSlotItem(segment: string): string | undefined {
-  const s = segment.replace(/-{2,}/g, ' ').trim()
-  if (s === '' || !I_HAS_CJK_RE.test(s)) return undefined
-  return s.replace(/\s+/g, '')
-}
-
-/**
- * 装备/饰品行（实录 A.7.4）：槽位标签成对（左右两列镜像）。行切成段
- * （S0=首 tag 前、Si=tag 间、Sn=末 tag 后），**每段只能被一个槽认领**：
- * 左列槽（偶位）物品优先前段、右列槽（奇位）优先后段，本位段无中文再取
- * 中间段（兼容 `[项链]珍珠` 布局）；段内无中文（`--`/画框）= 空槽不写。
- */
-function iSlotRow(cells: readonly string[]): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const cell of cells) {
-    const tags: { name: string; start: number; end: number }[] = []
-    I_SLOT_RE.lastIndex = 0
-    let m: RegExpExecArray | null
-    while ((m = I_SLOT_RE.exec(cell)) !== null) {
-      tags.push({ name: m[1] ?? '', start: m.index, end: m.index + m[0].length })
-    }
-    if (tags.length === 0) continue
-    // 段切分：segs[i] = tag i 的前段（i=0 即行首），segs[n] = 末 tag 后段。
-    const segs = tags.map((t, i) => cell.slice(i === 0 ? 0 : tags[i - 1]!.end, t.start))
-    segs.push(cell.slice(tags[tags.length - 1]!.end))
-    const used = new Set<number>()
-    for (let i = 0; i < tags.length; i++) {
-      const own = i % 2 === 0 ? i : i + 1
-      const fallback = i % 2 === 0 ? i + 1 : i
-      let claimed = -1
-      let item: string | undefined
-      if (!used.has(own)) {
-        item = iSlotItem(segs[own] ?? '')
-        if (item !== undefined) claimed = own
-      }
-      if (item === undefined && !used.has(fallback)) {
-        item = iSlotItem(segs[fallback] ?? '')
-        if (item !== undefined) claimed = fallback
-      }
-      if (item !== undefined && claimed >= 0) {
-        out[tags[i]!.name] = item
-        used.add(claimed)
-      }
-    }
-  }
-  return out
-}
-
-/** 其它（背包）行：中文名(英文id) 对列表（一行可多件）。 */
-function iOtherItems(cells: readonly string[]): { name: string; id: string }[] {
-  const out: { name: string; id: string }[] = []
-  for (const c of cells) {
-    I_ITEM_RE.lastIndex = 0
-    let m: RegExpExecArray | null
-    while ((m = I_ITEM_RE.exec(c)) !== null) {
-      out.push({ name: m[1] ?? '', id: m[2] ?? '' })
-    }
-  }
-  return out
-}
-
-/** i 表分区积攒合并：数组（其它）按序追加、对象（装备/饰品/财物）按键合并、标量覆盖。 */
-function mergeInvEntries(
-  acc: Record<string, unknown> | undefined,
-  entries: readonly TrackEntry[],
-): Record<string, unknown> {
-  const out = { ...(acc ?? {}) }
-  for (const e of entries) {
-    const prev = out[e.key]
-    if (Array.isArray(prev) && Array.isArray(e.value)) {
-      out[e.key] = [...prev, ...e.value]
-    } else if (prev !== undefined && prev !== null && typeof prev === 'object'
-      && e.value !== null && typeof e.value === 'object') {
-      out[e.key] = { ...(prev as object), ...(e.value as object) }
-    } else {
-      out[e.key] = e.value
-    }
-  }
-  return out
-}
-
-function inventoryRow(row: RowContext): TrackEntry[] | undefined {
-  const out: TrackEntry[] = []
-  const carry = I_CARRY_RE.exec(row.raw)
-  if (carry !== null) out.push({ key: '件数', value: carry[1] ?? '' })
-  const burden = I_BURDEN_RE.exec(row.raw)
-  if (burden !== null) out.push({ key: '负重', value: burden[1] ?? '' })
-  const ratio = row.cells.map(c => I_BURDEN_RATIO_RE.exec(c)).find(m => m !== null)?.[0]
-  if (ratio !== undefined) out.push({ key: '负重比', value: ratio.replace(/[。，\s]/g, '') })
-  const gold = I_GOLD_RE.exec(row.raw)?.[1]
-  const silver = I_SILVER_RE.exec(row.raw)?.[1]
-  const copper = I_COPPER_RE.exec(row.raw)?.[1]
-  if (gold !== undefined || silver !== undefined || copper !== undefined) {
-    out.push({ key: '财物', value: {
-      ...(gold !== undefined ? { gold: Number.parseInt(gold, 10) } : {}),
-      ...(silver !== undefined ? { silver: Number.parseInt(silver, 10) } : {}),
-      ...(copper !== undefined ? { copper: Number.parseInt(copper, 10) } : {}),
-    } })
-  }
-  // 分区行按 section 门控（堵 skills 的 中文(id) 行被本规则抢走——i 先于 skills 声明）。
-  if (row.section === '装备' || row.section === '饰品') {
-    const slots = iSlotRow(row.cells)
-    if (Object.keys(slots).length > 0) out.push({ key: row.section, value: slots })
-  }
-  if (row.section === '其它') {
-    const items = iOtherItems(row.cells)
-    if (items.length > 0) out.push({ key: '其它', value: items })
-  }
-  return out.length > 0 ? out : undefined
-}
-
-// ── skills（§2.4；实录校准 2026-10-08，A.7.3：中文名+英文id 同 cell 括号形式）──
-
-/**
- * 技能行名称 cell：`＋医道(medicine)` / `□太极拳(taiji-quan)` / `  招魂术(evocation)`——
- * 可选 ＋/□ 前缀（已激发/未激发）+ 中文名 + 同 cell 括号内英文 id（实录 A.7.3）。
- */
-const SKILL_NAME_RE = /^\s*([＋□])?\s*([\u4e00-\u9fff]{1,12})\(([a-z][a-z0-9-]{1,})\)\s*$/
-/** 等级 cell：`16.00/78`，cap 为 `-`（无上限，如知识类）时保留 `-`（D12/§2.4）。 */
-const SKILL_LEVEL_RE = /^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?|-)$/
-/**
- * 槽位汇总行（全句单 cell，实录 A.7.3）：
- * `共使用了17.5个技能槽位，空余槽位(12.5)。级别上限：-5.56%。`
- */
-const SKILL_SLOT_RE = /共使用了(\d+(?:\.\d+)?)个技能槽位，空余槽位\((\d+(?:\.\d+)?)\)。级别上限：(-?\d+(?:\.\d+)?)%/
-const HAS_CJK_RE = /[\u4e00-\u9fff]/
-
-function skillsRow(row: RowContext): TrackEntry[] | undefined {
-  // 槽位汇总行：全句 cell 命中即写（used / free / capDelta 原文含 %）。
-  for (const c of row.cells) {
-    const slot = SKILL_SLOT_RE.exec(c)
-    if (slot !== null) {
-      return [{ key: '槽位', value: { used: Number(slot[1]), free: Number(slot[2]), capDelta: `${slot[3]}%` } }]
-    }
-  }
-  // 技能行：名称 cell（flag + 中文名 + 英文 id）与等级 cell 必备（缺一不写不猜）。
-  let name: { flag?: string; cn: string; id: string } | undefined
-  let level: { value: string; cap: string } | undefined
-  let tier: string | undefined
-  for (const c of row.cells) {
-    if (name === undefined) {
-      const nm = SKILL_NAME_RE.exec(c)
-      if (nm !== null) {
-        name = { cn: (nm[2] ?? '').trim(), id: nm[3] ?? '', ...(nm[1] !== undefined ? { flag: nm[1] } : {}) }
-        continue
-      }
-    }
-    if (level === undefined) {
-      const lm = SKILL_LEVEL_RE.exec(c)
-      if (lm !== null) { level = { value: lm[1] ?? '', cap: lm[2] ?? '' }; continue }
-    }
-    // 描述（境界）cell：其余中文 cell（不堪一击/初窥门径…；名称 cell 已 continue 不重复计）。
-    if (tier === undefined && HAS_CJK_RE.test(c)) tier = c.trim()
-  }
-  if (name === undefined || level === undefined) return undefined
-  return [{
-    key: name.id,
-    value: {
-      name: name.cn,
-      level: Number(level.value),
-      ...(level.cap !== '-' && level.cap !== '' ? { cap: Number(level.cap) } : {}),
-      ...(tier !== undefined ? { tier } : {}),
-      ...(name.flag !== undefined ? { flag: name.flag } : {}),
-      ...(row.section !== undefined ? { category: row.section } : {}),
-    },
-  }]
-}
-
-// ── id（items 别称表，§2.4：lines 形状；待实录校准）─────────────────
-
-// ── exp（character，实录 2026-10-08：级别/经验对照 + 连线时长）────────
-
-/**
- * 对照行 cell：纯数字（级别或经验值）。一行最多 6 个数字 cell（三列对：
- * 级别/经验 ×3），按 cell 序偶数位 = 级别、奇数位 = 经验（实录列序固定）。
- */
-const EXP_NUM_RE = /^\d+$/
-/** 连线时长句：`你连线进入北侠已经有四十八分三十九秒了。`（中文时长原文）。 */
-const EXP_ONLINE_RE = /^你连线进入北侠已经有(.+?)了。$/
-
-/**
- * exp 表行判据（table 形状，块内逐行）：
- *   - 对照行（≥2 个纯数字 cell，级别/经验 列对）→ 追加进块内积攒 `pairs`；
- *   - 连线时长句（单 cell 全句命中）→ `character.连线时长`（中文时长原文；
- *     「经验没有变化」句不稳定不抓）。
- * 对照行的合并写由块收口完成（`finishTableBlock`，见下）——表头/框线行零写入。
- */
-function expRow(row: RowContext): TrackEntry[] | undefined {
-  for (const c of row.cells) {
-    const online = EXP_ONLINE_RE.exec(c)
-    if (online !== null) return [{ key: '连线时长', value: (online[1] ?? '').trim() }]
-  }
-  const nums = row.cells.filter(c => EXP_NUM_RE.test(c))
-  if (nums.length < 2 || nums.length % 2 !== 0) return undefined
-  // 全数字 cell 行也须在 exp 表内（块节标题或表头行文佐证）——由调用方
-  // （StateTracker.matchTableRow 的块上下文）保证：本规则只在表格块内被调用，
-  // 其他表格（hp/sc/i/skills）的行已先被声明序更前的规则独占。
-  return []
-}
-
-/**
- * exp 对照行积攒（块内状态）：{tracker 内部用}。一行三列对 = 6 个数字 cell，
- * 按「偶位=级别、奇位=经验」配对；块收口时整体写一次 `character.经验表`
- *（数组后到覆盖——新表刷新旧表）。
- */
-function expPairsOf(cells: readonly string[]): { level: number; exp: number }[] {
-  const nums = cells.filter(c => EXP_NUM_RE.test(c))
-  const out: { level: number; exp: number }[] = []
-  for (let i = 0; i + 1 < nums.length; i += 2) {
-    const level = Number.parseInt(nums[i] ?? '', 10)
-    const exp = Number.parseInt(nums[i + 1] ?? '', 10)
-    if (!Number.isFinite(level) || !Number.isFinite(exp)) continue
-    out.push({ level, exp })
-  }
-  return out
-}
-
 // ── id（items 别称表，§2.4：lines 形状；待实录校准）─────────────────
 
 /** 别称表头（PLAN §2.4：一并打标剔除，只标不写）。 */
@@ -542,7 +142,7 @@ const ALIAS_HEADER_RE = /^你身上携带物品的别称如下/
 const ALIAS_ENTRY_RE = /^([\u4e00-\u9fff]{1,12})\s:\s+(.+)$/
 const ALIAS_TOKEN_RE = /^[a-z][a-z0-9' -]*$/i
 
-function aliasRow(row: RowContext): TrackEntry[] | undefined {
+function aliasRow(row: RowContext): CaptureEntry[] | undefined {
   const m = ALIAS_ENTRY_RE.exec(row.raw)
   if (m === null) return undefined
   const aliases = (m[2] ?? '')
@@ -572,7 +172,7 @@ export const COMBAT_HOSTILE_RE = /^看起来(.{1,20}?)想杀死你！$/
 const COMBAT_ENEMY_TIER_RE = /^\(\s*([\u4e00-\u9fff]{2,12})已经(.+?)\s*\)\s*$/
 
 /** 战斗行判据（lines 形状，块外逐行；zone 固定 combat）。 */
-function combatRow(row: RowContext): TrackEntry[] | undefined {
+function combatRow(row: RowContext): CaptureEntry[] | undefined {
   const m = COMBAT_MOMENTUM_RE.exec(row.raw)
   if (m !== null) return [{ key: '气势', value: Number.parseInt(m[1] ?? '0', 10) }]
   const engage = COMBAT_ENGAGE_RE.exec(row.raw)
@@ -589,19 +189,15 @@ function combatRow(row: RowContext): TrackEntry[] | undefined {
 // ── 缺省规则集 ──────────────────────────────────────────────────────
 
 /**
- * 缺省追踪规则（D13 落地序：hpbrief → hp → skills → id/i → sc）。
- * 声明序 = 行匹配优先序（表格行声明序首个命中者独占）：标签锚特异的规则
- * （hp/sc/i）先于启发式规则（skills）；id（lines）与表格不争行。
- * sc/i/skills/id 规则**待实录校准**（片段先行），按 §2.4 逐块补入。
+ * 缺省追踪规则（T29 全序 = 现役全序）：walk-region 居首 → **命令捕获格式**
+ *（COMMAND_CAPTURE_RULES，装配规范序 hpbrief→hp→sc→i→skills→exp，D4——i 先于
+ * skills 堵技能行抢装备表行；hp/sc/i/skills 先于 exp）→ id/combat/walk 行流
+ * 规则（tracker 本地，非命令触发路径）。声明序 = 行匹配优先序（表格行声明序
+ * 首个命中者独占）；id（lines）与表格不争行。
  */
-export const DEFAULT_TRACK_RULES: readonly AnyTrackRule[] = [
+export const DEFAULT_TRACK_RULES: readonly AnyCaptureRule[] = [
   { id: 'walk-region', shape: 'table', zone: 'location', match: walkRegionRow },
-  { id: 'hpbrief', shape: 'sequence', zone: 'vitals', head: /^#/, length: 3, match: hpbriefRow },
-  { id: 'hp', shape: 'table', zone: 'vitals', match: hpRow },
-  { id: 'sc', shape: 'table', zone: 'character', match: scRow },
-  { id: 'i', shape: 'table', zone: 'inventory', match: inventoryRow },
-  { id: 'skills', shape: 'table', zone: 'skills', match: skillsRow },
-  { id: 'exp', shape: 'table', zone: 'character', match: expRow },
+  ...COMMAND_CAPTURE_RULES,
   { id: 'id-header', shape: 'lines', zone: 'items', match: (row) => (ALIAS_HEADER_RE.test(row.raw) ? [] : undefined) },
   { id: 'id', shape: 'lines', zone: 'items', match: aliasRow },
   { id: 'combat', shape: 'lines', zone: 'combat', match: combatRow },
@@ -609,7 +205,7 @@ export const DEFAULT_TRACK_RULES: readonly AnyTrackRule[] = [
   { id: 'walk-started', shape: 'lines', zone: 'location', match: walkStartedRow },
 ]
 
-/** 缺省 clear 规则（D9；按例证逐条加）。 */
+/** 缺省 clear 规则（D9；按例证逐条加；**tracker 本地**，T29 边界纪律）。 */
 export const DEFAULT_TRACK_CLEARS: readonly TrackClearRule[] = [
   // PLAN §2.4 例证：饥饿消解（hp 表 [缺食] 写入的 食物状态 消失）。
   { pattern: /你不再感到饥饿/, zone: 'vitals', key: '食物状态' },
@@ -622,21 +218,20 @@ export const DEFAULT_TRACK_SPEC: TrackSpec = {
 
 // ── 状态追踪器 ──────────────────────────────────────────────────────
 
-/** 块内最小状态（§2.1）：「当前节标题 + 已见行数（护栏用）」；exp 表块内加对照对积攒。 */
+/** 块内最小状态（§2.1）：「当前节标题 + 已见行数（护栏用）」；挂块归约器的规则
+ *  （i/exp）按 rule id 存积攒（T29 D5 泛化，消除 id 特例字段）。 */
 interface BlockState {
   section?: string
   rows: number
   /** 块开行（`┌…`）的中文串（T23.6：walk 路线表开行即区域名；hp 等无中文开行为空）。 */
   header?: string
-  /** exp 表对照对积攒（行序追加；块收口时整体写一次 `character.经验表`）。 */
-  expPairs?: { level: number; exp: number }[]
-  /** i 表分区积攒（装备/饰品按槽位合并、其它按序追加、汇总覆盖；块收口统一写，A.7.4）。 */
-  inv?: Record<string, unknown>
+  /** 块归约器积攒：规则首次命中时 init，逐行 step，收口 flush（键 = 规则 id）。 */
+  accums?: Map<string, { rule: CaptureRule; value: unknown }>
 }
 
 /** 序列状态：所属规则 + 已攒行（打标随到随打，写入等凑齐全量校验）。 */
 interface SeqState {
-  rule: SequenceTrackRule
+  rule: SequenceCaptureRule
   rows: MudLine[]
 }
 
@@ -707,8 +302,8 @@ export class StateTracker {
 
     // 序列开始：首个 head 命中的 sequence 规则拥有该序列。
     for (const r of this.spec.rules) {
-      if (r.shape === 'sequence' && (r as SequenceTrackRule).head.test(text)) {
-        const rule = r as SequenceTrackRule
+      if (r.shape === 'sequence' && (r as SequenceCaptureRule).head.test(text)) {
+        const rule = r as SequenceCaptureRule
         this.seq = { rule, rows: [line] }
         this.tag(line)
         if (rule.length <= 1) this.finishSequence()
@@ -744,7 +339,8 @@ export class StateTracker {
   }
 
   /** 表格行匹配：声明序首个命中规则独占该行（产出经其 zone 写入）。
-   *  exp 规则特殊：对照行返回空产出（占位独占）+ 对照对积攒进块，块收口统一写。 */
+   *  挂块归约器的规则（T29 D5，现役 = i/exp）：产出过 step——立即写部分随返即写、
+   *  块内积攒按 rule id 留块状态；无 block 的表规则维持命中直写。 */
   private matchTableRow(text: string): void {
     const block = this.block
     if (block === null) return
@@ -758,16 +354,14 @@ export class StateTracker {
       }
       const entries = r.match(ctx)
       if (entries !== undefined) {
-        if (r.id === 'exp' && entries.length === 0) {
-          // exp 对照行（空产出占位独占）：纯数字 cell 列对积攒进块，块收口统一写；
-          // 其余产出（连线时长句）照常写。
-          const first = cells[0] ?? ''
-          if (EXP_NUM_RE.test(first)) {
-            block.expPairs = [...(block.expPairs ?? []), ...expPairsOf(cells)]
+        if (r.block !== undefined) {
+          const accums = block.accums ?? (block.accums = new Map())
+          let holder = accums.get(r.id)
+          if (holder === undefined) {
+            holder = { rule: r, value: r.block.init() }
+            accums.set(r.id, holder)
           }
-        } else if (r.id === 'i') {
-          // i 表分区行：块内积攒（装备/饰品跨行合并、其它跨行追加），块收口统一写。
-          block.inv = mergeInvEntries(block.inv, entries)
+          this.write(r.block.step(holder.value, ctx, entries), r.zone)
         } else {
           this.write(entries, r.zone)
         }
@@ -776,16 +370,15 @@ export class StateTracker {
     }
   }
 
-  /** 表格块收口（└ 或失控止损）：exp 对照对 / i 表分区积攒非空 ⇒ 统一写。 */
+  /** 表格块收口（└ 或失控止损）：块归约器积攒 flush 统一写（T29 D5 泛化，
+   *  语义与旧 expPairs/inv 特例字段逐键等价）。 */
   private finishTableBlock(): void {
     const block = this.block
     if (block === null) return
-    if (block.expPairs !== undefined && block.expPairs.length > 0) {
-      this.deps.onWrite('character', '经验表', block.expPairs)
-    }
-    if (block.inv !== undefined) {
-      for (const [key, value] of Object.entries(block.inv)) {
-        this.deps.onWrite('inventory', key, value)
+    if (block.accums !== undefined) {
+      for (const { rule, value } of block.accums.values()) {
+        if (rule.block === undefined) continue
+        this.write(rule.block.flush(value), rule.zone)
       }
     }
   }
@@ -795,7 +388,7 @@ export class StateTracker {
     const seq = this.seq
     this.seq = null
     if (seq === null) return
-    const collected: TrackEntry[] = []
+    const collected: CaptureEntry[] = []
     for (let i = 0; i < seq.rows.length; i++) {
       const ln = seq.rows[i]
       if (ln === undefined) return
@@ -808,7 +401,7 @@ export class StateTracker {
   }
 
   /** 产出写入（entry.zone 可覆盖规则 zone，如 hpbrief 的 combat 两键）。 */
-  private write(entries: readonly TrackEntry[], defaultZone: string): void {
+  private write(entries: readonly CaptureEntry[], defaultZone: string): void {
     for (const e of entries) {
       this.deps.onWrite(e.zone ?? defaultZone, e.key, e.value)
     }

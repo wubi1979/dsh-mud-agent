@@ -62,7 +62,7 @@
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\"",
     "build": "pnpm run clean && tsc -p tsconfig.json",
-    "gen:typert": "node ../../scripts/gen-typert.mjs",
+    "gen:typert": "node ../../../scripts/gen-typert.mjs",
     "test": "pnpm exec vitest run tests",
     "typecheck": "tsc -p tsconfig.test.json"
   }

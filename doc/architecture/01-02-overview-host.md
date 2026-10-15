@@ -136,7 +136,7 @@ note: 全局视图 + 宿主底座；任何任务必读本文（§1 分层模型�
 | `mud` | `packages/mud/mud/` | **会话引擎核心**：`service` / `runtime` / `roster` / `store` / `accounts` / `deliver` / `llm-gate` / `log` / `screen` / `types`；对上游域包只 import 不被依赖 |
 | `mud-link` | `packages/mud/mud-link/` | **连接层**（§3）：telnet / 行化 / `MudLine` / 探活 / 语料 |
 | `mud-sense` | `packages/mud/mud-sense/` | **感知纯层**（§5.2、§6.3、§7.4–§7.5、§10.3）：`read` / `classify` / `tracker` / `world` / `elide` / `wake` |
-| `mud-commands` | `packages/mud/mud-commands/` | **命令总表库**（§8.7）：契约 + 分组 + 装配器；直接 import，不做 service |
+| `mud-commands` | `packages/mud/mud-commands/` | **命令总表库**（§8.7）：契约（含捕获契约）+ 分组 + 装配器（`capture`，T29——**捕获 = 通用形态**，格式随条目定义于分组文件）；直接 import，不做 service |
 | `mud-combat` | `packages/mud/mud-combat/` | **战斗 provider**（T21）：state / rules / controller / danger / report；对 mud 引擎零 import |
 | `mud-nav` | `packages/mud/mud-nav/` | **导航 provider**（T23.10）：stamina / route / graph / service / json-store / blocker；对 mud 引擎零 import |
 | `mud-flows` | `packages/mud/mud-flows/` | **流程实体 provider**：`login` / `fullme` / `captcha` 纯件；对 mud 引擎零 import |
@@ -160,7 +160,7 @@ note: 全局视图 + 宿主底座；任何任务必读本文（§1 分层模型�
 | `mud/src/deliver.ts` | `Deliverer`：聚合与水位拉取 | §5.4、§6.2 |
 | `mud/src/service.ts` | `MudService`：runtime 注册表与生命周期编排 | §11、§15.2 |
 | `tool-mud/src/tools.ts` / `preset.ts` | 工具纯层与 preset 作用域注册 | §8.1–§8.7 |
-| `mud-commands/src/` | 命令总表：契约 + 分组 + 装配器 | §8.7 |
+| `mud-commands/src/` | 命令总表：条目契约（含捕获契约）+ 分组 + 装配器（T29：六套捕获格式随条目就地定义于 `skill.ts`/`usr.ts`） | §8.7 |
 | `mud-flows/src/login.ts` | login 流程实体（locked） | §8.14 + [flows/login.md](../flows/login.md) |
 | `mud-sense/src/wake.ts` | 任务书模板与静默唤醒器 | §7.4、§7.5 |
 | `mud-sense/src/world.ts` | 世界状态（分区 / 置信度 / 来源） | §10.3 |

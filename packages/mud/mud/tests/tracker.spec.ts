@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest'
 import net from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { StateTracker, STATUS_KIND, DEFAULT_TRACK_SPEC } from 'mud-sense/tracker'
-import type { TrackSpec, TrackRule, TrackEntry, RowContext } from 'mud-sense/tracker'
+import type { TrackSpec, CaptureRule, CaptureEntry, RowContext } from 'mud-sense/tracker'
 import { World } from 'mud-sense/world'
 import { SessionRuntime } from '../src/runtime.ts'
 import type { MudLine } from 'mud-link/line'
@@ -195,7 +195,7 @@ describe('tracker 骨架', () => {
   /** 采集 section 的探针规则（table 形状，命中任意含「探针」的行）。 */
   function sectionProbe(): { spec: TrackSpec; seen: RowContext[] } {
     const seen: RowContext[] = []
-    const rule: TrackRule = {
+    const rule: CaptureRule = {
       id: 'probe', shape: 'table', zone: 'probe',
       match: (row) => {
         if (row.raw.includes('探针')) { seen.push(row); return [] }
@@ -214,13 +214,13 @@ describe('tracker 骨架', () => {
   })
 
   it('lines 形状：块外逐行命中即打标即写（undefined = 不匹配）', () => {
-    const rule: TrackRule = {
+    const rule: CaptureRule = {
       id: 'probe-lines', shape: 'lines', zone: 'items',
       match: (row) => {
         const m = /^(.+?) : (.+)$/.exec(row.raw)
         if (m === null) return undefined
         const aliases = (m[2] ?? '').split(',').map(s => s.trim()).filter(s => s !== '')
-        return [{ key: m[1] ?? '', value: aliases } satisfies TrackEntry]
+        return [{ key: m[1] ?? '', value: aliases } satisfies CaptureEntry]
       },
     }
     const { tracker, writes } = harness({ rules: [rule] })

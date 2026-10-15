@@ -630,7 +630,7 @@ describe('T26.6 契约模式保存门', () => {
       ],
     }
     const w2 = checkFlow(partial2, slotsOf)
-    expect(w2.some(w => w.includes('onOutcome.ok.when 未覆盖 ok 槽') && w.includes('额外'))).toBe(true)
+    expect(w2.some(w => w.includes('onOutcome.ok.when 未覆盖 ok 语义条目') && w.includes('额外'))).toBe(true)
   })
 
   it('告警④：同形态合并带 flags 表条目而步未声明 flags（锚定判据失活风险）', () => {

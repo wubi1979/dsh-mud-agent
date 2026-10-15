@@ -1,6 +1,6 @@
 {
   "name": "mud-sense",
-  "description": "MUD 行流感知 Provider（T28 拆包，纯层）：读窗机 ReadMachine · 行分类 Classifier · 进程遮蔽 elide · 状态追踪 StateTracker · 世界状态 World · 静默唤醒 Wake。判据词汇表单点引用 mud-workflow/contract；MudLine 由 mud-link 生产者所有（type-only）。",
+  "description": "MUD 行流感知 Provider（T28 拆包，纯层）：读窗机 ReadMachine · 行分类 Classifier · 进程遮蔽 elide · 状态追踪 StateTracker（T29 起抓取格式引用 mud-commands/capture，本包只留机制与 walk/combat/id/clears 本地规则） · 世界状态 World · 静默唤醒 Wake。判据词汇表单点引用 mud-workflow/contract；MudLine 由 mud-link 生产者所有（type-only）。",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -42,6 +42,7 @@
   ],
   "devDependencies": {
     "@deepseek-ai/dsh-goal": "^0.2.0-rc.2",
+    "mud-commands": "workspace:^",
     "mud-link": "workspace:^",
     "mud-workflow": "workspace:^"
   },

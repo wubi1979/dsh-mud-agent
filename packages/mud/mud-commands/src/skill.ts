@@ -6,9 +6,71 @@
  * 语料出处见各条目 meta.corpus。
  */
 
-import { byOutcomes, defineCommand } from './define.ts'
+import { byBoundary, byOutcomes, defineCommand } from './define.ts'
+import type { RowContext, CaptureEntry, CaptureRule } from './define.ts'
 
-/** 修炼/技能命令族（dazuo；xue/learn/practice 等待实录后回填）。 */
+// ── skills 捕获格式（就地定义，T29 用户裁定 2026-10-15：捕获规则随命令条目）──
+// 实录校准 2026-10-08，A.7.3：中文名+英文id 同 cell 括号形式。
+
+/**
+ * 技能行名称 cell：`＋医道(medicine)` / `□太极拳(taiji-quan)` / `  招魂术(evocation)`——
+ * 可选 ＋/□ 前缀（已激发/未激发）+ 中文名 + 同 cell 括号内英文 id（实录 A.7.3）。
+ */
+const SKILL_NAME_RE = /^\s*([＋□])?\s*([\u4e00-\u9fff]{1,12})\(([a-z][a-z0-9-]{1,})\)\s*$/
+/** 等级 cell：`16.00/78`，cap 为 `-`（无上限，如知识类）时保留 `-`（D12/§2.4）。 */
+const SKILL_LEVEL_RE = /^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?|-)$/
+/**
+ * 槽位汇总行（全句单 cell，实录 A.7.3）：
+ * `共使用了17.5个技能槽位，空余槽位(12.5)。级别上限：-5.56%。`
+ */
+const SKILL_SLOT_RE = /共使用了(\d+(?:\.\d+)?)个技能槽位，空余槽位\((\d+(?:\.\d+)?)\)。级别上限：(-?\d+(?:\.\d+)?)%/
+const HAS_CJK_RE = /[\u4e00-\u9fff]/
+
+function skillsRow(row: RowContext): CaptureEntry[] | undefined {
+  // 槽位汇总行：全句 cell 命中即写（used / free / capDelta 原文含 %）。
+  for (const c of row.cells) {
+    const slot = SKILL_SLOT_RE.exec(c)
+    if (slot !== null) {
+      return [{ key: '槽位', value: { used: Number(slot[1]), free: Number(slot[2]), capDelta: `${slot[3]}%` } }]
+    }
+  }
+  // 技能行：名称 cell（flag + 中文名 + 英文 id）与等级 cell 必备（缺一不写不猜）。
+  let name: { flag?: string; cn: string; id: string } | undefined
+  let level: { value: string; cap: string } | undefined
+  let tier: string | undefined
+  for (const c of row.cells) {
+    if (name === undefined) {
+      const nm = SKILL_NAME_RE.exec(c)
+      if (nm !== null) {
+        name = { cn: (nm[2] ?? '').trim(), id: nm[3] ?? '', ...(nm[1] !== undefined ? { flag: nm[1] } : {}) }
+        continue
+      }
+    }
+    if (level === undefined) {
+      const lm = SKILL_LEVEL_RE.exec(c)
+      if (lm !== null) { level = { value: lm[1] ?? '', cap: lm[2] ?? '' }; continue }
+    }
+    // 描述（境界）cell：其余中文 cell（不堪一击/初窥门径…；名称 cell 已 continue 不重复计）。
+    if (tier === undefined && HAS_CJK_RE.test(c)) tier = c.trim()
+  }
+  if (name === undefined || level === undefined) return undefined
+  return [{
+    key: name.id,
+    value: {
+      name: name.cn,
+      level: Number(level.value),
+      ...(level.cap !== '-' && level.cap !== '' ? { cap: Number(level.cap) } : {}),
+      ...(tier !== undefined ? { tier } : {}),
+      ...(name.flag !== undefined ? { flag: name.flag } : {}),
+      ...(row.section !== undefined ? { category: row.section } : {}),
+    },
+  }]
+}
+
+/** skills 表规则（命令 skills[cha、sk]；zone skills；A.7.3 实录；本条目就地定义）。 */
+export const SKILLS_RULE: CaptureRule = { id: 'skills', shape: 'table', zone: 'skills', match: skillsRow }
+
+/** 修炼/技能命令族（dazuo、skills；xue/learn/practice 等待实录后回填）。 */
 export const SKILL_COMMANDS = [
   defineCommand({
     // 打坐（标准命令 exercise，别名 dazuo；A.3 实录：受理帧 GA 后 57s 无 GA——
@@ -27,7 +89,12 @@ export const SKILL_COMMANDS = [
     meta: { corpus: '附录 A.3（2026-10-10 用户提供）' },
     resolve: byOutcomes({
       ok: {
-        完成: { patterns: ['你运功完毕，深深吸了口气，站了起来。'] },
+        完成: {
+          patterns: [
+            '你将运转于全身经脉间的内息收回丹田',
+            '你运功完毕，深深吸了口气，站了起来。',
+          ],
+        },
         突破: { patterns: ['你的内力增加了！！'] },
       },
       fail: {
@@ -35,5 +102,17 @@ export const SKILL_COMMANDS = [
         精神不足: { patterns: ['你现在精不够，无法控制内息的流动！'] },
       },
     }),
+  }),
+  // 技能列表（标准命令 skills，别名 cha、sk；T29 用户口径 2026-10-15 登记）：
+  // 表类即时命令——应答框线表后即 GA（A.2 1:1 同律），形态取 `'ga'`，关窗即 next
+  //（无分类语义条目）；capture 登记捕获格式（D7 登记原则：skills 表规则，
+  // A.7.3 实录——tracker 只引用本条目）。
+  defineCommand({
+    id: 'skills',
+    aliases: ['cha', 'sk'],
+    timeoutMs: 15_000,
+    meta: { corpus: '附录 A.2（即时命令 GA 1:1）+ 用户口径 2026-10-15（表类命令收束同律）' },
+    resolve: byBoundary(),
+    capture: [SKILLS_RULE],
   }),
 ]

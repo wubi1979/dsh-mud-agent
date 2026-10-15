@@ -29,7 +29,6 @@ import type { SessionRuntime } from 'mud/runtime'
 import type { ReadOpts } from 'mud-sense/read'
 import type { ConnState } from 'mud/roster'
 import type { LoggedInState, WorldEntry, WorldSnapshot } from 'mud-sense/world'
-import { DEFAULT_TRACK_RULES } from 'mud-sense/tracker'
 import type { MudLine } from 'mud-link/line'
 import {
   belowStaminaFloor, STAMINA_CUR_KEY, STAMINA_MAX_KEY, STAMINA_ZONE,
@@ -39,7 +38,7 @@ import { parseDirectionPath, parseWalkTable } from 'mud-nav/route'
 import { nextBlocker } from 'mud-nav/blocker'
 import type { WorkflowIoSeam, ReadHit, SlotTable } from 'mud-workflow/contract'
 import { waitSchema } from 'mud-workflow/contract'
-import { resolveAwaitPlan, type AwaitPlan, type CallerDecl } from 'mud-commands/assembler'
+import { COMMAND_PROFILES, resolveAwaitPlan, type AwaitPlan, type CallerDecl } from 'mud-commands/assembler'
 
 /**
  * 宿主 ToolDefinition 的窄结构（本包只用到的面；T17 与宿主真实形状对齐）：
@@ -248,24 +247,24 @@ const WALK_RESERVED_ACTIONS: readonly MudWalkAction[] = ['node', 'node-get', 'no
 // persona 旧措辞「命令不会有返回结果」的实证后果（2026-10-10）：agent 对状态
 // 拉取命令发 wait:false 盲发循环（"没有返回值 ⇒ 等待无意义"），服务器限流。
 // 读后投影 = 收窗后把追踪器（T19）**本窗口**刚写入 World 的语义分区快照附进
-// 工具结果——解析零重复（判据单点在 tracker），结果从表格原文升级为结构化状态。
-// 命令集合单点 = DEFAULT_TRACK_RULES 的 rule id（不建第二张表；A.6 语料校准
-// 随规则条目走）。
+// 工具结果——解析零重复（判据单点在 tracker，捕获格式单点在命令条目），结果从表格
+// 原文升级为结构化状态。命令集合单点 = 命令总表 capture 条目推导（T29 D7 登记
+// 原则；不建第二张表，A.6 语料校准随命令条目走）。
 
 /** 投影取的语义分区（追踪器写入面，§10.3）；location/nav/gmcp/session 不在此列。 */
 const STATE_PULL_ZONES: readonly string[] = ['vitals', 'combat', 'character', 'inventory', 'skills']
 
 /**
- * 状态拉取命令识别：**单点 = DEFAULT_TRACK_RULES 推导**，但只取「命令触发的
- * 表格/序列规则」（zone ∈ 语义分区白名单 且 shape ∈ table/sequence）——规则表
- * 同时含 walk 系列、combat、id 等行流匹配规则（非命令触发、zone 不在白名单），不能
- * 全量拼接。推导结果 ≈ `hpbrief|hp|sc|i|skills|exp`，词边界保证 `id`/`inventory`
- * 不误伤。
+ * 状态拉取命令识别：**单点 = 命令总表 capture 条目推导**（T29 D7：捕获格式归命令
+ * 条目 ⇒ 拉取面 = 带 capture 条目的命令头 id+aliases）。此前从 tracker 规则 id
+ * 推导（sc/i）与命令头（score/inventory）不对应 ⇒ 全文发法 `inventory`/`score`
+ * 漏识别（投影从未附上），T29 修正。look 无 capture 不入列；词边界由
+ * `(?:\s|$)` 锚保证（`id` 不被 `i` 误伤、`inventory` 不被 `i` 截断）。
  */
 export const STATE_PULL_CMD_RE = new RegExp(
-  `^(?:${DEFAULT_TRACK_RULES
-    .filter(r => (r.shape === 'table' || r.shape === 'sequence') && STATE_PULL_ZONES.includes(r.zone))
-    .map(r => r.id)
+  `^(?:${COMMAND_PROFILES
+    .filter(p => p.capture !== undefined && p.capture.length > 0)
+    .flatMap(p => [p.id, ...p.aliases])
     .join('|')})(?:\\s|$)`,
 )
 

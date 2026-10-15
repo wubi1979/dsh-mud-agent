@@ -19,6 +19,10 @@
       "types": "./lib/assembler.d.ts",
       "default": "./lib/assembler.js"
     },
+    "./capture": {
+      "types": "./lib/capture.d.ts",
+      "default": "./lib/capture.js"
+    },
     "./std": {
       "types": "./lib/std.d.ts",
       "default": "./lib/std.js"

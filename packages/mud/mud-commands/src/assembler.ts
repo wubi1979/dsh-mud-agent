@@ -25,7 +25,7 @@
 
 import { CLOSURE_KINDS, RESERVED_SLOT_NAMES } from 'mud-workflow/contract'
 import type { ClosureKind, FlowSlotsInfo, OutcomeKind } from 'mud-workflow/contract'
-import type { CommandProfile, Judge, SlotTable } from './define.ts'
+import type { AnyCaptureRule, CommandProfile, Judge, SlotTable } from './define.ts'
 import { STD_COMMANDS } from './std.ts'
 import { SKILL_COMMANDS } from './skill.ts'
 import { USR_COMMANDS } from './usr.ts'
@@ -67,6 +67,9 @@ export interface CompiledProfile {
   readonly timeoutMs: number
   readonly maxLines?: number
   readonly judge: CompiledJudge
+  /** 条目捕获格式的规则 id 列表（T29 D7；消费面 = tool-mud 状态拉取投影识别。
+   *  规则 id 独立于命令 id/别名——投影按**命令头**匹配，本字段只是归属索引）。 */
+  readonly capture?: readonly string[]
   /** 语料出处（A.6 纪律；观测归因带出）。 */
   readonly corpus: string
 }
@@ -161,13 +164,68 @@ function compileProfile(profile: CommandProfile): CompiledProfile {
     timeoutMs: profile.timeoutMs,
     ...(profile.maxLines !== undefined ? { maxLines: profile.maxLines } : {}),
     judge: compileJudge(profile),
+    ...(profile.capture !== undefined ? { capture: profile.capture.map(r => r.id) } : {}),
     corpus: profile.meta.corpus,
   }
 }
 
+// ── capture 装配（T29 D4：声明序由显式规范序保证，不依赖分组收集序）────
+
+/**
+ * capture 规则规范序（表格行匹配声明序 = 行匹配优先序）：i 先于 skills 堵技能行
+ * 抢装备表行、hp/sc/i/skills 先于 exp。分组收集序（STD→SKILL→USR）会把 skills
+ * 排到 sc/i 之前破坏现役序——故显式声明（D4）。clears 不经此装配（T29 PLAN
+ * §1.3：非命令触发路径的 clears/walk/combat/id 留 tracker 本地）。
+ */
+export const CAPTURE_RULE_ORDER = ['hpbrief', 'hp', 'sc', 'i', 'skills', 'exp'] as const
+
+/**
+ * capture 装配（fail-loud，T29）：① 规则 id 跨条目重复；② capture 规则未入规范序。
+ * 错误信息双写「规则 id + 所属命令 id」（两命名空间重叠且不对应——规则 'sc' 对应
+ * 命令 score、规则 'i' 对应命令 inventory 且其别名亦为 'i'——单写易错挂）。
+ * 返回按规范序排列的规则集（fixture 只登记部分规范序规则时返回子集——完整性
+ * 校验属于生产装配，见 assembleProductionCaptureRules）。
+ */
+export function assembleCaptureRules(raw: readonly CommandProfile[]): readonly AnyCaptureRule[] {
+  const byId = new Map<string, { rule: AnyCaptureRule; commandId: string }>()
+  for (const p of raw) {
+    for (const rule of p.capture ?? []) {
+      const prev = byId.get(rule.id)
+      if (prev !== undefined) {
+        throw new Error(`命令条目装配失败：capture 规则 id 重复：${rule.id}（命令 ${prev.commandId} 与命令 ${p.id}）——规则 id 独立于命令 id/别名，不得跨条目重复`)
+      }
+      byId.set(rule.id, { rule, commandId: p.id })
+    }
+  }
+  const out: AnyCaptureRule[] = []
+  for (const id of CAPTURE_RULE_ORDER) {
+    const hit = byId.get(id)
+    if (hit !== undefined) out.push(hit.rule)
+  }
+  for (const [id, hit] of byId) {
+    if (!(CAPTURE_RULE_ORDER as readonly string[]).includes(id)) {
+      throw new Error(`命令条目装配失败：capture 规则 ${id}（命令 ${hit.commandId}）未入规范序 CAPTURE_RULE_ORDER`)
+    }
+  }
+  return out
+}
+
+/** 生产 capture 装配：规范序每一条都必须有登记（缺 = CAPTURE_RULE_ORDER 与条目
+ *  capture 登记不同步，fail-loud）。 */
+function assembleProductionCaptureRules(raw: readonly CommandProfile[]): readonly AnyCaptureRule[] {
+  const rules = assembleCaptureRules(raw)
+  if (rules.length !== CAPTURE_RULE_ORDER.length) {
+    const missing = CAPTURE_RULE_ORDER.filter(id => !rules.some(r => r.id === id))
+    throw new Error(`命令条目装配失败：capture 规范序引用了不存在的规则 id：${missing.join('、')}（CAPTURE_RULE_ORDER 与条目 capture 登记不同步）`)
+  }
+  return rules
+}
+
 /** 装配：任意 raw 条目集 → 自检 → 编译（fail-loud；T28.2 起作为测试缝导出——
- * 保留字/跨槽位重名/命令头冲突等装配期自检的错误路径以受控 fixture 实证）。 */
+ * 保留字/跨槽位重名/命令头冲突/capture 重复与未入序等装配期自检的错误路径以
+ * 受控 fixture 实证）。 */
 export function assembleProfiles(raw: readonly CommandProfile[]): readonly CompiledProfile[] {
+  assembleCaptureRules(raw) // capture 自检（T29：跨条目重复 / 未入规范序 fail-loud）
   const seen = new Set<string>()
   const out: CompiledProfile[] = []
   for (const p of raw) {
@@ -184,14 +242,15 @@ export function assembleProfiles(raw: readonly CommandProfile[]): readonly Compi
 }
 
 /** 装配：五分组收集（模块加载期执行一次；失败即启动失败）。 */
-function assemble(): readonly CompiledProfile[] {
-  return assembleProfiles([
-    ...STD_COMMANDS, ...SKILL_COMMANDS, ...USR_COMMANDS, ...STUNT_COMMANDS, ...PROFESSION_COMMANDS,
-  ])
+function rawProfiles(): readonly CommandProfile[] {
+  return [...STD_COMMANDS, ...SKILL_COMMANDS, ...USR_COMMANDS, ...STUNT_COMMANDS, ...PROFESSION_COMMANDS]
 }
 
+/** 命令捕获规则总序（只读；生产装配自检通过才存在；tracker 缺省规则表引用，T29 D1）。 */
+export const COMMAND_CAPTURE_RULES: readonly AnyCaptureRule[] = assembleProductionCaptureRules(rawProfiles())
+
 /** 命令判据总表（只读；装配期自检通过才存在）。 */
-export const COMMAND_PROFILES: readonly CompiledProfile[] = assemble()
+export const COMMAND_PROFILES: readonly CompiledProfile[] = assembleProfiles(rawProfiles())
 
 /**
  * cmd 头匹配条目（缝侧对**最终发送串**匹配，DEC-8：流程命令带槽替换，必须

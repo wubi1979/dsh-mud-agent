@@ -11,12 +11,16 @@
 import { describe, expect, it } from 'vitest'
 import { byBoundary, byOutcomes, defineCommand, type CommandProfile } from '../src/define.ts'
 import {
+  assembleCaptureRules,
   assembleProfiles,
+  CAPTURE_RULE_ORDER,
+  COMMAND_CAPTURE_RULES,
   COMMAND_PROFILES,
   matchCommandProfile,
   resolveAwaitPlan,
   tableSlotsOf,
 } from '../src/assembler.ts'
+import { SC_RULE } from '../src/usr.ts'
 
 // ── 受控 fixture ────────────────────────────────────────────────────────
 
@@ -152,6 +156,28 @@ describe('装配期自检（DEC-18 fail-loud）', () => {
     const out = assembleProfiles([profile('q', { resolve: { closeOn: 'quiet' } })])
     expect(out[0]?.judge).toEqual({ closeOn: 'quiet', slots: [] })
   })
+
+  it('capture 规则 id 跨条目重复拒（错误信息双写规则 id + 所属命令 id）', () => {
+    expect(() =>
+      assembleProfiles([
+        profile('a', { capture: [SC_RULE] }),
+        profile('b', { capture: [SC_RULE] }),
+      ]),
+    ).toThrow(/capture 规则 id 重复：sc（命令 a 与命令 b）/)
+  })
+
+  it('capture 规则未入规范序拒（CAPTURE_RULE_ORDER 外的 id fail-loud）', () => {
+    const stray: CommandProfile = {
+      ...profile('a'),
+      capture: [{ id: 'stray', shape: 'table', zone: 'x', match: () => undefined }],
+    }
+    expect(() => assembleProfiles([stray])).toThrow(/capture 规则 stray（命令 a）未入规范序/)
+  })
+
+  it('fixture 部分登记规范序规则合法（完整性校验属于生产装配）', () => {
+    const out = assembleProfiles([profile('a', { capture: [SC_RULE] })])
+    expect(out[0]?.capture).toEqual(['sc'])
+  })
 })
 
 // ── ③ 生产装配 sanity + 匹配面 ──────────────────────────────────────────
@@ -183,9 +209,45 @@ describe('生产总表与匹配面', () => {
   it('tableSlotsOf：喂令信息含形态 + 槽位 kind + 条目 flags（walk flags=m）', () => {
     expect(tableSlotsOf('walk')).toEqual({
       closeOn: 'criteria',
-      slots: [{ name: '软阻断', kind: 'fail' }, { name: '到达', kind: 'ok' }],
+      slots: [
+        { name: '阻塞', kind: 'fail' }, { name: '不在出发点', kind: 'fail' },
+        { name: '到达', kind: 'ok' }, { name: '出发点表', kind: 'ok' },
+      ],
       flags: 'm',
     })
     expect(tableSlotsOf('foobar')).toBeNull()
+  })
+})
+
+// ── ④ capture 装配（T29：规范序 + 条目归属 + 七命令解析面）──────────────
+
+describe('capture 装配（T29 D4/D7）', () => {
+  it('COMMAND_CAPTURE_RULES 按规范序汇出：hpbrief→hp→sc→i→skills→exp', () => {
+    expect(COMMAND_CAPTURE_RULES.map(r => r.id)).toEqual([...CAPTURE_RULE_ORDER])
+  })
+
+  it('七条目 capture 归属：规则 id 独立于命令 id/别名（sc↔score、i↔inventory）', () => {
+    const cap = (id: string): readonly string[] | undefined =>
+      COMMAND_PROFILES.find(p => p.id === id)?.capture
+    expect(cap('look')).toBeUndefined() // look 无捕获
+    expect(cap('skills')).toEqual(['skills'])
+    expect(cap('hpbrief')).toEqual(['hpbrief'])
+    expect(cap('inventory')).toEqual(['i']) // 规则 'i' ↔ 命令 inventory
+    expect(cap('score')).toEqual(['sc']) // 规则 'sc' ↔ 命令 score
+    expect(cap('hp')).toEqual(['hp'])
+    expect(cap('exp')).toEqual(['exp'])
+  })
+
+  it('七命令（含别名）命中 table 档 ga 收束、条目法定 timeout 15s', () => {
+    for (const cmd of ['look', 'l', 'skills', 'cha', 'sk', 'hpbrief', 'inventory', 'i', 'score', 'sc', 'hp', 'exp']) {
+      const plan = resolveAwaitPlan(cmd)
+      expect(plan.source, cmd).toBe('table')
+      expect(plan.closeOn, cmd).toBe('ga')
+      expect(plan.timeoutMs, cmd).toBe(15_000)
+      expect(plan.slots, cmd).toEqual([])
+    }
+    // 词边界：未登记的相似头不误命中。
+    expect(matchCommandProfile('looks')).toBeNull()
+    expect(matchCommandProfile('hpx')).toBeNull()
   })
 })

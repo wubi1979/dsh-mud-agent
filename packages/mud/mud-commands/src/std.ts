@@ -49,6 +49,16 @@ export const STD_COMMANDS = [
       fail: { 吃太饱: { patterns: ['你已经吃太饱了，再也塞不下任何东西了'] } },
     }),
   }),
+  // 看环境（标准命令 look，别名 l；T29 用户口径 2026-10-15 登记）：即时命令——
+  // 应答后即 GA（A.2 1:1），形态取 `'ga'`，关窗即 next（无分类语义条目——房间
+  // 描述是自由文本，无结构化捕获判据；位置感知走 walk 系列本地规则，tracker 本地）。
+  defineCommand({
+    id: 'look',
+    aliases: ['l'],
+    timeoutMs: 15_000,
+    meta: { corpus: '附录 A.2（即时命令 GA 1:1）+ 用户口径 2026-10-15（表类命令收束同律）' },
+    resolve: byBoundary(),
+  }),
   // LM（无判据无 GA 的命令，用户举例）：固定采样窗——窗长即 timeoutMs（A.6：
   // 只有实录证明「无判据无 GA」之后才允许 quiet 形态；命令头与应答速度分布
   // 待实录后回填并谨慎选择窗长——注释纪律：quiet 与 timeout 配合使用，timeout
