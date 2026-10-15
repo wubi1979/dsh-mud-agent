@@ -76,6 +76,37 @@ describe('ReadMachine 判定次序', () => {
     expect(r.hit).toMatchObject({ by: 'criteria', outcome: '爆炸', kind: 'fail' })
   })
 
+  it('criteria：cooldown 槽命中 → kind=cooldown 收束（fail > cooldown > ok，2026-10-15 三分）', async () => {
+    const m = new ReadMachine()
+    const p = m.start({
+      closeOn: 'criteria',
+      slots: [
+        { name: '完成', kind: 'ok', res: [/完成/] },
+        { name: '刚查看过', kind: 'cooldown', res: [/刚查看过/] },
+      ],
+      timeoutMs: 500,
+    })
+    m.onLine(line('你不是刚查看过吗？其实也完成了'))
+    const r = await p
+    expect(r.reason).toBe('done')
+    expect(r.hit).toMatchObject({ by: 'criteria', outcome: '刚查看过', kind: 'cooldown' })
+  })
+
+  it('criteria：fail 槽位压过 cooldown 槽位（同帧命中 → fail 收束）', async () => {
+    const m = new ReadMachine()
+    const p = m.start({
+      closeOn: 'criteria',
+      slots: [
+        { name: '失败', kind: 'fail', res: [/失败/] },
+        { name: '刚查看过', kind: 'cooldown', res: [/刚查看过/] },
+      ],
+      timeoutMs: 500,
+    })
+    m.onLine(line('失败且刚查看过'))
+    const r = await p
+    expect(r.hit).toMatchObject({ by: 'criteria', outcome: '失败', kind: 'fail' })
+  })
+
   it('criteria：判据命中优先于 maxLines（同批到达即收，行数未满）', async () => {
     const m = new ReadMachine()
     const p = m.start({

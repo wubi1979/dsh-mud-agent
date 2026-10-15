@@ -305,6 +305,10 @@ export type MudConnectResult =
   | { ok: true; state: string }
 export type MudSendResult =
   | { ok: false; error: string }
+  /** 冷却命中（kind='cooldown'，2026-10-15 用户裁定）：ok=false、reason='cooldown'
+   * ——与 fail（ok=true + kind='fail'）区分；agent 得「稍后重试同一命令」信号，
+   * lines/outcome 保留原文与语义条目名供读。 */
+  | { ok: false; reason: 'cooldown'; lines: string[]; outcome?: string; kind: 'cooldown' }
   | { ok: true; reason: string; lines: string[]; outcome?: string; kind?: string; note?: string; world?: WorldSnapshot }
 /** mud_walk 行走结果分类（T23.5；用户口径 2026-10-14）：阻塞取消软/硬说法；
  * 不在出发点由**显式判据语义条目**给出；atNode = 处于 walk 节点（返回路径表）。 */
@@ -439,14 +443,14 @@ export function registerMudTools(
             + '三形态：等一句判据 {closeOn:"criteria",outcomes:{ok:{完成:{patterns:["你将运转于全身经脉间的内息收回丹田"]}}}}；'
             + '等 GA（即时命令应答）{closeOn:"ga",timeoutMs:10000}；'
             + '读无边界输出（采样窗，有行即成功）{closeOn:"quiet",timeoutMs:3000}。'
-            + 'outcomes 外层键 = kind（ok/fail；fail 先于 ok 判定，命中 fail 即失败收束），'
+            + 'outcomes 外层键 = kind（ok/fail/cooldown；判定序 fail > cooldown > ok，命中高位即收束；cooldown = 稍后重试同一命令），'
             + '内层键 = 语义条目名（按分支类目语义命名，行文变体并进同一条目的 patterns 数组，应对不同才分条目）；'
             + 'ga 形态可设 gaCount（缺省 1，如 2 = 等第 2 个 GA）；多行窗行首锚判据（^）须配 flags:"m"',
           properties: {
             closeOn: { type: 'string', enum: ['ga', 'criteria', 'quiet'], description: '收窗形态：ga = GA 边界收窗；criteria = 判据收窗（须配 outcomes）；quiet = 采样窗（有行即成功，零行失败）' },
             outcomes: {
               type: 'object',
-              description: '结局语义条目集：外层键 = kind（ok/fail），内层键 = 语义条目名（语义命名），值 = {patterns}（正则源数组，≥1 条）',
+              description: '结局语义条目集：外层键 = kind（ok/fail/cooldown），内层键 = 语义条目名（语义命名），值 = {patterns}（正则源数组，≥1 条）',
               properties: {
                 ok: {
                   type: 'object',
@@ -457,6 +461,14 @@ export function registerMudTools(
                   },
                 },
                 fail: {
+                  type: 'object',
+                  additionalProperties: {
+                    type: 'object',
+                    properties: { patterns: { type: 'array', items: { type: 'string' }, minItems: 1, description: '判据正则源（同条目多条为行文变体）' } },
+                    required: ['patterns'],
+                  },
+                },
+                cooldown: {
                   type: 'object',
                   additionalProperties: {
                     type: 'object',
@@ -481,7 +493,7 @@ export function registerMudTools(
           ok: { type: 'boolean' },
           reason: { type: 'string' },
           outcome: { type: 'string', description: '命中结局语义条目名（命令判据总表分类）：如 完成/突破/内息不足；ga 断言失败时缺省（收窗成功，分支未知）' },
-          kind: { type: 'string', description: '结局判定（ok/fail）；与 outcome 并读' },
+          kind: { type: 'string', description: '结局判定（ok/fail/cooldown；cooldown = 冷却，稍后重试同一命令）；与 outcome 并读' },
           note: { type: 'string', description: '附注（如未登记命令超时工单）' },
           lines: { type: 'array', items: { type: 'string' } },
           world: { type: 'object' },
@@ -493,7 +505,14 @@ export function registerMudTools(
         // 模型面合同：原文/可读文本，不让模型读 JSON（canonical JSON 只走
         // output.schema/持久化面）。
         const v = value as MudSendResult
-        if (!v.ok) return [{ type: 'text', text: v.error }]
+        if (!v.ok) {
+          // 冷却命中：「稍后重试同一命令」可读信号（原文 + 语义条目名照带）。
+          if ('reason' in v && v.reason === 'cooldown') {
+            const outcomeText = v.outcome !== undefined ? v.outcome : '冷却'
+            return [{ type: 'text', text: v.lines.join('\n') + `\n[结局] ${outcomeText}（冷却中：稍后重试同一命令）` }]
+          }
+          return [{ type: 'text', text: v.error }]
+        }
         // 发送即走（wait:false）：无应答行可给，明说语义并指引状态面。
         if (v.reason === 'sent') return [{ type: 'text', text: '已发送（发送即走：未等待应答；状态可用 mud_state 查看）' }]
         // 结局语义条目名（T26.6：命中帧分类）附在行文尾，模型按名读结果；ga 断言
@@ -612,10 +631,21 @@ export function registerMudTools(
           ? { timeoutMs, signal: exec.signal, maxLines: c.defaults.sendMaxLines, quietMs: BARE_READ_QUIET_MS }
           : planOpts(plan)
         const r = await tc.runtime.read(opts, initial)
+        const lines = r.lines.map(l => l.text)
+        // 冷却命中（kind='cooldown'）：ok=false + reason='cooldown'（2026-10-15
+        // 用户裁定）——「稍后重试同一命令」信号；原文与语义条目名照带。
+        if (r.hit?.kind === 'cooldown') {
+          return {
+            ok: false,
+            reason: 'cooldown',
+            lines,
+            ...(r.hit.outcome !== undefined ? { outcome: r.hit.outcome } : {}),
+            kind: 'cooldown',
+          }
+        }
         // 读后投影（§8.7）：拉取命令收窗后附 world 语义分区快照（零解析重复）；
         // 窗内零写入 ⇒ 不带字段 fail-open 回原文。wait:false 与裸读不投影
         //（前者已提前返回，后者无 cmd 不命中档案）。
-        const lines = r.lines.map(l => l.text)
         // DEC-22 超时工单：未登记命令只等超时——附可读工单（声明示例 + 维护者面）。
         const note = args.cmd !== undefined && plan.source === 'none' && r.reason === 'timeout'
           ? `（命令「${args.cmd}」未登记收窗判据：本窗只等超时。需判据请在 listen 显式声明，如 listen:{closeOn:"criteria",outcomes:{ok:{完成:{patterns:["…"]}}}}；维护者：实录语料（附录 A）并补 commands/ 条目）`

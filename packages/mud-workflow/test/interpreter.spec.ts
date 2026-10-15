@@ -3,12 +3,12 @@
  *
  * T26.6 终态词汇（DEC-3/7/19/21/23/25）：closeOn 三形态（ga / criteria / quiet）
  * + outcomes 槽表 + captureFrom/captures + 两级路由 onOutcome（kind 直达常态 /
- * when 细化）+ 契约模式（kind=契约、槽名=数据、保留字 ok/fail）。旧词汇
+ * when 细化）+ 契约模式（kind=契约、槽名=数据、保留字 ok/fail/cooldown）。旧词汇
  * until/failOn/branch/onFailOn/gaCount/quietMs/race 全部退役。
  *
  * mini-reader 与 core3 读窗机（`read.ts`）同规则：判据编译与判定在本替身内完成
- *（真实缝侧单点在 core3 `resolveAwaitPlan` + read 缝）；判定序 **fail 槽 > ok
- * 槽**（槽表内 pattern 序），ga 关窗分类断言（声明分类槽而未命中 ⇒ 合成 fail
+ *（真实缝侧单点在 core3 `resolveAwaitPlan` + read 缝）；判定序 **fail 槽 > cooldown
+ * 槽 > ok 槽**（槽表内 pattern 序），ga 关窗分类断言（声明分类槽而未命中 ⇒ 合成 fail
  * 帧），quiet 合成帧按行数定 kind。真实读窗机形状由 core3 `read.spec` 与
  * login/fullme E2E 覆盖。
  */
@@ -35,7 +35,7 @@ interface Scene {
 /**
  * mini-reader（T15 替身，与 core3 `read.ts` 同规则）：
  *  - quiet：固定采样窗合成帧（有行 ⇒ ok、零行 ⇒ fail——kind 由行数定，无槽名）；
- *  - criteria：判序 **fail 槽 > ok 槽**（槽内 pattern 序），声明序 `exec` 单次取
+ *  - criteria：判序 **fail 槽 > cooldown 槽 > ok 槽**（槽内 pattern 序），声明序 `exec` 单次取
  *    「命中 + 捕获组 + 槽名 + kind」，调用前重置 `lastIndex`；
  *  - ga：关窗分类（声明的槽表）——命中即结局帧；声明分类槽而无一命中 ⇒ 断言
  *    失败合成 fail 帧（by:'ga' 无 outcome）；未声明分类槽 ⇒ 无帧。
@@ -52,9 +52,10 @@ function hitFrame(scene: Scene, opts: IoReadOpts): ReadHit | undefined {
     re.lastIndex = 0
     return re.exec(text)
   }
-  // 槽表展平（kind 在前）：fail 组先于 ok 组（与 core3 读档判定序同——fail 先测防误判）。
+  // 槽表展平（kind 在前）：fail 组 → cooldown 组 → ok 组（与 core3 读档判定序同——高位先测防误判）。
   const ordered = [
     ...Object.entries(opts.outcomes.fail ?? {}).map(([name, slot]) => ({ name, kind: 'fail' as const, patterns: slot.patterns })),
+    ...Object.entries(opts.outcomes.cooldown ?? {}).map(([name, slot]) => ({ name, kind: 'cooldown' as const, patterns: slot.patterns })),
     ...Object.entries(opts.outcomes.ok ?? {}).map(([name, slot]) => ({ name, kind: 'ok' as const, patterns: slot.patterns })),
   ]
   for (const { name, kind, patterns } of ordered) {
@@ -200,6 +201,47 @@ describe('runFlow 执行语义', () => {
     const r = await runFlow(record(flow), io, CREDS)
     expect(r).toMatchObject({ ok: false, stage: 'timeout' })
     expect(r.lines.join('\n')).toContain('fail 结局未覆盖')
+  })
+
+  it('cooldown 槽命中 → 缺省 timeout 出口并点名（onOutcome 暂无 cooldown 键，2026-10-15 裁定）', async () => {
+    const flow = {
+      entry: 'a',
+      steps: [{
+        id: 'a',
+        wait: {
+          closeOn: 'criteria' as const,
+          outcomes: { cooldown: { 刚查看过: { patterns: ['你不是刚查看过吗'] } } },
+          timeoutMs: 1000,
+        },
+        next: { exit: { stage: 'success', ok: true } },
+      }],
+    }
+    const { io } = fakeIO([{ lines: ['你不是刚查看过吗？'], reason: 'done' }])
+    const r = await runFlow(record(flow), io, CREDS)
+    expect(r).toMatchObject({ ok: false, stage: 'timeout' })
+    expect(r.lines.join('\n')).toContain('冷却语义条目「刚查看过」')
+  })
+
+  it('判定序：fail 与 cooldown 同窗竞争时 fail 高位先收（fail > cooldown > ok）', async () => {
+    const flow = {
+      entry: 'a',
+      steps: [{
+        id: 'a',
+        wait: {
+          closeOn: 'criteria' as const,
+          outcomes: {
+            cooldown: { 冷却: { patterns: ['冷却'] } },
+            fail: { 失败: { patterns: ['失败|冷却线被失败压住'] } },
+          },
+          timeoutMs: 1000,
+        },
+        onOutcome: { fail: { exit: { stage: 'failed', ok: false } } },
+        next: { exit: { stage: 'success', ok: true } },
+      }],
+    }
+    const { io } = fakeIO([{ lines: ['冷却'], reason: 'done' }])
+    const r = await runFlow(record(flow), io, CREDS)
+    expect(r).toMatchObject({ ok: false, stage: 'timeout' }) // cooldown 命中（非 fail 路由）
   })
 
   it('分支：ok 槽命中 index → onOutcome.ok.when 细化 goto（replace 分支同型）', async () => {

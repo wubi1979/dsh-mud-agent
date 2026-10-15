@@ -12,12 +12,14 @@
  * `ClosureKind`），两者同构；工厂签名编译期挡住形态参数不合。
  *
  * **契约模式（DEC-23）+ 术语定名（2026-10-15 用户裁定）**：`closeOn` 三值与
- * kind 二分是契约层词汇。**槽位 = ok/fail 判定类型**（kind 的中文定名）；
+ * kind 三分（ok/fail/cooldown，2026-10-15 用户裁定——cooldown = 冷却/频控，语义边界：
+ * fail = agent 换行为，cooldown = 稍后重试同一命令）是契约层词汇。
+ * **槽位 = 判定类型**（kind 的中文定名）；
  * **语义条目 = 具名判据单元**（如 `完成`/`刚睡过`；旧称「槽名/槽」）——条目
  * 数据、自由命名（命名纪律：分支类目化、行文变体进同条目 patterns 不分条目、
  * 应对不同才分条目，见 PLAN DEC-7）。判据表与路由表同构——**槽位在前、
- * 语义条目在内**（outcomes 外层键 = ok/fail 槽位，语义条目不带 kind；
- * 2026-10-12 用户裁定统一）。保留字 `ok`/`fail` 由装配期自检拒。
+ * 语义条目在内**（outcomes 外层键 = ok/fail/cooldown 槽位，语义条目不带 kind；
+ * 2026-10-12 用户裁定统一）。保留字 `ok`/`fail`/`cooldown` 由装配期自检拒。
  * 代码标识符不改（`kind` = 槽位、`slots[].name` = 语义条目名）；旧措辞
  * 「X 槽」按语境读作「X 槽位的语义条目」。
  *
@@ -48,13 +50,14 @@ export type { ClosureKind, OutcomeSlot, SlotTable }
  *   - `ga`：GA/EOR 收窗（`gaCount` 缺省 1，如 2 = 等第 2 个 GA 才关窗）；
  *     **分类语义条目可选——声明即断言**：窗口关闭时无一命中 ⇒ fail 路由 +
  *     「收窗成功，分支未知」（DP 裁定 1/8）；未声明 ⇒ 关窗即 next；
- *   - `criteria`：**语义条目收窗**（fail 槽位先于 ok 槽位 = 判定序），GA 不武装
+ *   - `criteria`：**语义条目收窗**（fail > cooldown > ok 槽位 = 判定序），GA 不武装
  *     （受理帧 GA 正是要忽略的）；
  *   - `quiet`：**固定采样窗**（窗长 = 条目 `timeoutMs`，唯一计时器、行只累积
  *     不重置；到点关窗：有行 ⇒ ok、零行 ⇒ fail）——无 outcomes（要分类
  *     说明写得出判据，那是 criteria 的事）。
  *
- * `SlotTable` 形状（槽位在前）：`{ ok?: { 语义条目名: { patterns } }, fail?: { … } }`。
+ * `SlotTable` 形状（槽位在前）：`{ ok?: {…}, fail?: {…}, cooldown?: {…} }`
+ * （内层 = `语义条目名: { patterns }`）。
  */
 export type Judge =
   | { readonly closeOn: 'ga'; readonly gaCount?: number; readonly outcomes?: SlotTable }

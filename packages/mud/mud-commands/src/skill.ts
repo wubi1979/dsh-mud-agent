@@ -104,15 +104,23 @@ export const SKILL_COMMANDS = [
     }),
   }),
   // 技能列表（标准命令 skills，别名 cha、sk；T29 用户口径 2026-10-15 登记）：
-  // 表类即时命令——应答框线表后即 GA（A.2 1:1 同律），形态取 `'ga'`，关窗即 next
-  //（无分类语义条目）；capture 登记捕获格式（D7 登记原则：skills 表规则，
-  // A.7.3 实录——tracker 只引用本条目）。
+  // 表类即时命令——应答框线表后即 GA（A.2 1:1 同律），形态取 `'ga'`；capture 登记捕获格式
+  //（D7 登记原则：skills 表规则，A.7.3 实录——tracker 只引用本条目）。
+  // 分类语义条目（DEC-15 声明即断言）：cooldown 槽位 `刚查看过` = 频控冷却句（2026-10-15
+  // 用户供句；kind 三分首例——cooldown = 稍后重试同一命令，与 fail「换行为」分立）——
+  // GA 关窗时命中 ⇒ cooldown 收束，无一命中 ⇒ 收窗成功分支未知。查师傅技能
+  // = `sk|cha <师傅ID>`（同条目首词命中，应答同为技能表；`-learn` 参数已废弃，
+  // 2026-10-15 用户勘误）。
   defineCommand({
     id: 'skills',
     aliases: ['cha', 'sk'],
     timeoutMs: 15_000,
-    meta: { corpus: '附录 A.2（即时命令 GA 1:1）+ 用户口径 2026-10-15（表类命令收束同律）' },
-    resolve: byBoundary(),
+    meta: { corpus: '附录 A.2（即时命令 GA 1:1）+ 用户供句 2026-10-15（冷却模式刚查看过）' },
+    resolve: byBoundary({
+      cooldown: {
+        刚查看过: { patterns: ['你不是刚查看过吗？'] },
+      },
+    }),
     capture: [SKILLS_RULE],
   }),
 ]

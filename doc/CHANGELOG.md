@@ -905,3 +905,16 @@
 - **测试同步**：capture.spec.ts ctx 构造（tableRow/seqRow）切分知识改引声明/规则单点，断言语义不变。
 - **文档同步**：§10.3 写入源 bullet（块语法归属段）、§8.7 命令总表行（capture 括注追加块语法定义）。
 - **测试**：mud-commands 39 / mud-sense 38 / mud 234 全绿（行为等价改造，逐键回放不变）。
+
+## [v0.0.78]契约层 kind 三分：新增 cooldown 槽位（冷却/频控，用户裁定 2026-10-15）(2026-10-15)
+
+> 总结：多个命令存在冷却/频控机制（首例 skills「你不是刚查看过吗？」）——此前只有 ok/fail 二分，冷却句挤在 fail 槽位里，agent 收到「失败」信号会换行为，但冷却的正确应对是**稍后重试同一命令**。按用户裁定：kind 三分（ok/fail/cooldown），判定序 **fail > cooldown > ok**（冷却句与失败句同属即时拒绝族，fail 更重先判）；语义边界 fail = agent 换行为、cooldown = 稍后重试同一命令。
+
+- **mud-workflow `contract/schema.ts`（契约单点）**：`OUTCOME_KINDS` 增 `'cooldown'`；`SlotTable`/`waitSchema.outcomes` 增 cooldown 组（criteria slotCount 与跨槽位重名检查同步纳入）；`RESERVED_SLOT_NAMES` 增 `'cooldown'`（kind 寻址键，语义条目名禁用）。
+- **mud-commands**：`assembler.ts` compileSlots 组序改 fail → cooldown → ok（判定序）；`skill.ts` skills 条目 `刚查看过` 自 fail 槽迁 cooldown 槽（kind 三分首例，A.3 同步）；`define.ts` 注释同步。
+- **mud-sense `read.ts`**：deriveCriteria 两桶改三桶（fail/cooldown/ok），evaluate 判定序 fail > cooldown > ok；criteria 失配检查纳入 cooldown 组；ga 收束分类按 slots 序自动透传 kind。
+- **mud-workflow `interpreter.ts`**：cooldown 命中缺省收束 = timeout 出口 + 点名冷却语义条目（onOutcome 暂无 cooldown 键，Minimal——when 键 kind 一致性已把 cooldown 条目挡在 ok/fail 键外）。
+- **tool-mud `tools.ts`**：`MudSendResult` 增冷却分支 `{ok:false, reason:'cooldown', lines, outcome, kind:'cooldown'}`（与 fail 的 ok=true+kind='fail' 区分）；render 附「冷却中：稍后重试同一命令」标注；listen 参数 schema 与 output.kind 描述同步三分。
+- **测试同步**：assembler.spec 判定序 fixture + skills 断言改 cooldown；read.spec 两例（cooldown 收束 / fail 压过 cooldown）；interpreter.spec mini-reader 三组展平 + cooldown 缺省收束两例；tools.spec 冷却命中结果形态一例。
+- **文档同步**：§8.7（render 冷却分支）、§8.8（命令总表槽位三分 + skills 例外）、§8.10（kind 三分 + 判定序 + onOutcome 无 cooldown 键）、§8.11（保存门保留字）、§8.13（判定序 + 路由分流）、A.3（skills 冷却模式）。
+- **测试**：mud-workflow / mud-commands 41 / mud 236 / tool-mud 61 全绿（mud-sense 38，wake 2 例既有遗留维持）。

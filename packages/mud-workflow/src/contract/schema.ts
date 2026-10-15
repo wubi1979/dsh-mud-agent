@@ -5,14 +5,18 @@
  * 与机制侧（内核解释器 / 注册表保存门）都按此书写与校验，不再各写一份。
  * 契约层零 cordis、零宿主、零 I/O。
  *
- * **契约模式（DEC-23，2026-10-12 定稿）**：kind（ok/fail）= 契约——承担判定序
- * （fail 槽位先于 ok 槽位，同帧 fail 收束）与粗路由缺省（ok → next / fail → timeout
- * 出口）；语义条目名 = 条目数据——每命令的语料事实，自由命名（命名纪律见 DEC-7：分支
- * 类目化、行文变体进 patterns 不分条目、应对不同才分条目）。判据词汇单点（DEC-21）：
+ * **契约模式（DEC-23，2026-10-12 定稿）**：kind（ok/fail/cooldown）= 契约——承担判定序
+ * （fail > cooldown > ok，同帧高位收束）与粗路由缺省（ok → next / fail → timeout
+ * 出口 / cooldown → timeout 出口 + 记录——与 fail 同款缺省）；语义条目名 = 条目数据
+ * ——每命令的语料事实，自由命名（命名纪律见 DEC-7：分支类目化、行文变体进 patterns
+ * 不分条目、应对不同才分条目）。判据词汇单点（DEC-21）：
  * 表条目 `resolve` / 流程 `wait` / 工具 `listen` 共用本 schema 的同一形状。
  * **两表同构（2026-10-12 用户裁定统一）**：判据表 outcomes 与路由表 onOutcome
  * 同为「槽位在前、语义条目在内」——outcomes 语义条目不再自带 kind 字段，kind 由
- * 外层键表达。
+ * 外层键表达。**kind 三分（2026-10-15 用户裁定）**：cooldown = 冷却/频控（如
+ * 「你不是刚查看过吗？」）独立成槽——语义边界：fail = agent 换行为，cooldown =
+ * 稍后重试同一命令（工具面 reason='cooldown'；onOutcome 暂无 cooldown 键，
+ * 流程面缺省落 timeout 出口）。
  *
  * 词汇表（T26.6 终态，2026-10-12 全面整改）：
  *   - 读窗 wait：closeOn（三值：ga / criteria / quiet）+ outcomes 语义条目集 +
@@ -35,7 +39,7 @@ import { z } from 'zod'
 
 // ── 词汇表：收窗形态 + 结局 kind（DEC-3 三值 / DEC-7 kind=契约）────────
 //
-// closeOn 三值与 kind 二分是**词汇不是数据**（§8.8 契约层单点，DEC-23 分层）：
+// closeOn 三值与 kind 三分是**词汇不是数据**（§8.8 契约层单点，DEC-23 分层）：
 // 三配方各自封闭，无缺省、无组合自由度（quietMs 已随静默收窗退役；旧 gaCount
 // 缺省兜底档随 DEC-4「未登记不收窗只等超时」退役——现 gaCount 仅 ga 形态显式计数）。
 
@@ -52,16 +56,16 @@ import { z } from 'zod'
 export const CLOSURE_KINDS = ['ga', 'criteria', 'quiet'] as const
 export type ClosureKind = (typeof CLOSURE_KINDS)[number]
 
-/** 结局槽位判定（契约）：kind 决定判定序（fail 先于 ok）与粗路由缺省。 */
-export const OUTCOME_KINDS = ['ok', 'fail'] as const
+/** 结局槽位判定（契约）：kind 决定判定序（fail > cooldown > ok）与粗路由缺省。 */
+export const OUTCOME_KINDS = ['ok', 'fail', 'cooldown'] as const
 export type OutcomeKind = (typeof OUTCOME_KINDS)[number]
 
 /**
- * 保留语义条目名（DP 审阅裁定 7）：`ok` / `fail` 是 onOutcome 的 kind 寻址键——
- * 语义条目名与其撞名会产生「语义条目名路由还是 kind 路由」的歧义，保存门拒存。
- * （`槽N`/`拒N` 合成名随 normalizeFlow 退役不再保留。）
+ * 保留语义条目名（DP 审阅裁定 7）：`ok` / `fail` / `cooldown` 是 outcomes 的
+ * kind 寻址键——语义条目名与其撞名会产生「语义条目名路由还是 kind 路由」的歧义，
+ * 保存门拒存。（`槽N`/`拒N` 合成名随 normalizeFlow 退役不再保留。）
  */
-export const RESERVED_SLOT_NAMES: readonly string[] = ['ok', 'fail']
+export const RESERVED_SLOT_NAMES: readonly string[] = ['ok', 'fail', 'cooldown']
 
 /** 结局语义条目（DEC-7/DEC-23）：判据句内联（DEC-20 口径），A.6 语料为准。
  * patterns ≥ 1（DP 审阅 10）：空语义条目永不命中——ga 形态只会制造「分支未知」假
@@ -73,13 +77,14 @@ export interface OutcomeSlot {
 
 /**
  * 语义条目集（DEC-7 终态 + 2026-10-12 两表同构）：**槽位在前、语义条目在内**——外层键 =
- * kind（契约：判定序 fail 先于 ok、粗路由缺省），内层键 = 语义条目名（条目数据，
+ * kind（契约：判定序 fail > cooldown > ok、粗路由缺省），内层键 = 语义条目名（条目数据，
  * 自由命名，命名纪律见决策表 DEC-7）。语义条目名跨槽位禁重名（schema superRefine
- * 拒存）；保留字 ok/fail 禁作语义条目名（checkFlow / 装配自检拒存）。
+ * 拒存）；保留字 ok/fail/cooldown 禁作语义条目名（checkFlow / 装配自检拒存）。
  */
 export type SlotTable = {
   readonly ok?: Readonly<Record<string, OutcomeSlot>> | undefined
   readonly fail?: Readonly<Record<string, OutcomeSlot>> | undefined
+  readonly cooldown?: Readonly<Record<string, OutcomeSlot>> | undefined
 }
 
 // ── 读窗判据 ────────────────────────────────────────────────────
@@ -91,7 +96,7 @@ export type SlotTable = {
 export const waitSchema = z.object({
   /** 收窗形态（显式单值；缺省 = 未声明判据——缝侧按喂令查表整条注入，DEC-5）。 */
   closeOn: z.enum(CLOSURE_KINDS).optional(),
-  /** 结局语义条目集（槽位在前、语义条目在内）：外层键 = ok/fail（契约），内层键 = 语义条目名
+  /** 结局语义条目集（槽位在前、语义条目在内）：外层键 = ok/fail/cooldown（契约），内层键 = 语义条目名
    *（自由命名，保留字与跨槽位重名由校验拒存）；值 = 判据句（patterns ≥ 1，
    * 推定槽已退役）。 */
   outcomes: z.object({
@@ -99,6 +104,9 @@ export const waitSchema = z.object({
       patterns: z.array(z.string().max(512)).min(1).max(8),
     }).strict()).optional(),
     fail: z.record(z.string(), z.object({
+      patterns: z.array(z.string().max(512)).min(1).max(8),
+    }).strict()).optional(),
+    cooldown: z.record(z.string(), z.object({
       patterns: z.array(z.string().max(512)).min(1).max(8),
     }).strict()).optional(),
   }).strict().optional(),
@@ -141,18 +149,23 @@ export const waitSchema = z.object({
     const slotCount = w.outcomes === undefined
       ? 0
       : Object.keys(w.outcomes.ok ?? {}).length + Object.keys(w.outcomes.fail ?? {}).length
+        + Object.keys(w.outcomes.cooldown ?? {}).length
     if (slotCount === 0) {
       ctx.addIssue({ code: 'custom', message: 'criteria 形态必须声明 outcomes 语义条目集（否则只剩超时收场）' })
     }
   }
   // ga：outcomes 可选（未声明 ⇒ 关窗即 next）；gaCount 可选（缺省 1）。
-  // 语义条目名跨槽位禁重名（kind 在前两表同构的新增约束：同名语义条目在 ok/fail 两组各
+  // 语义条目名跨槽位禁重名（kind 在前两表同构的新增约束：同名语义条目在两组各
   // 声明一次会让 kind 寻址歧义——拒存）。
   if (w.outcomes !== undefined) {
-    const names = [...Object.keys(w.outcomes.ok ?? {}), ...Object.keys(w.outcomes.fail ?? {})]
+    const names = [
+      ...Object.keys(w.outcomes.ok ?? {}),
+      ...Object.keys(w.outcomes.fail ?? {}),
+      ...Object.keys(w.outcomes.cooldown ?? {}),
+    ]
     const dup = [...new Set(names.filter((n, i) => names.indexOf(n) !== i))]
     if (dup.length > 0) {
-      ctx.addIssue({ code: 'custom', message: `语义条目名跨槽位重名：${dup.join('、')}（语义条目名在 ok/fail 组内必须唯一）` })
+      ctx.addIssue({ code: 'custom', message: `语义条目名跨槽位重名：${dup.join('、')}（语义条目名在 ok/fail/cooldown 组内必须唯一）` })
     }
   }
 })
@@ -223,7 +236,9 @@ export const stepSchema = z.object({
   /** 动作（缺省 = 纯等待步）。 */
   action: actionSchema.optional(),
   /** 两级结局路由（DEC-19）：`ok` / `fail` kind 键 → 直达目标或 when 细化。
-   * ok 语义条目命中未覆盖 ⇒ next；fail 语义条目命中未覆盖 ⇒ 结构化 timeout 出口 + 记录。 */
+   * ok 语义条目命中未覆盖 ⇒ next；fail 语义条目命中未覆盖 ⇒ 结构化 timeout 出口 + 记录；
+   * cooldown 语义条目命中 ⇒ timeout 出口 + 记录（onOutcome 暂无 cooldown 键——
+   * 流程面缺省与 fail 同款，2026-10-15 用户裁定 Minimal）。 */
   onOutcome: z.object({
     ok: kindRouteSchema.optional(),
     fail: kindRouteSchema.optional(),
@@ -374,7 +389,7 @@ function whenKeys(route: KindRoute | undefined): readonly string[] {
  * 流程结构校验（schema 校验通过后调用；registry.save 与引擎执行共用——
  * 校验是确定性的，生效门 = 校验即生效）：
  *   - 步 id 不重复；entry 存在；goto 目标存在；stage 'success' 必须 ok:true；
- *   - 保留字语义条目名（ok/fail——kind 寻址键）拒存；判据可编译；
+ *   - 保留字语义条目名（ok/fail/cooldown——kind 寻址键）拒存；判据可编译；
  *   - 捕获配对（captures ↔ captureFrom 同声明；组数只对 captureFrom 槽
  *     patterns[0] 计，捕获组只允许出现在该处）；
  *   - **when 键校验（DP 裁定 4 分档）**：字面量喂令（经 slotsOf 端口可判）⇒
@@ -454,7 +469,7 @@ export function checkFlow(flow: Flow, slotsOf?: FlowSlotsPort): string[] {
     // 语义条目集形状：保留字 + 判据可编译（patterns ≥ 1 已由 schema 保证）。
     for (const e of outcomeEntries) {
       if (RESERVED_SLOT_NAMES.includes(e.name)) {
-        structural(`步骤 ${step.id} 的结局语义条目名是保留字：${e.name}（ok/fail 是 kind 寻址键）`)
+        structural(`步骤 ${step.id} 的结局语义条目名是保留字：${e.name}（ok/fail/cooldown 是 kind 寻址键）`)
       }
       for (const p of e.patterns) {
         try {

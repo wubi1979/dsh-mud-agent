@@ -175,7 +175,7 @@ export async function runFlow(
       }
 
       // ── 2. 负面出口（fail 命中即裁决——失败不应答，动作不执行）──
-      // fail 来源三种：criteria fail 语义条目（判定序 fail 先于 ok）/ ga 分类命中
+      // fail 来源三种：criteria fail 语义条目（判定序 fail > cooldown > ok）/ ga 分类命中
       // fail 语义条目 / ga 断言失败（by:'ga' 无 outcome——「收窗成功，分支未知」）；quiet
       // 零行（合成 fail 帧）同此。
       if (hit?.kind === 'fail') {
@@ -205,6 +205,15 @@ export async function runFlow(
         if ('outcome' in applied) return exit(applied.outcome.stage, applied.outcome.ok, assertNote !== undefined ? [assertNote] : [])
         step = applied.step
         continue
+      }
+
+      // ── 冷却收束（kind='cooldown'，2026-10-15 用户裁定）：与 fail 同款缺省——
+      // timeout 出口 + 记录（onOutcome 暂无 cooldown 键；when 键 kind 一致性已把
+      // cooldown 语义条目挡在 ok/fail 键外，故冷却命中无路由可走，直接缺省）。
+      if (hit?.kind === 'cooldown') {
+        return timeoutExit([
+          `（步骤 ${step.id} 命中冷却语义条目「${hit.outcome ?? '？'}」——稍后重试同一命令；流程落 timeout 出口）`,
+        ])
       }
 
       // ── 判据失配 / GA 未到：等待未达成，timeout 出口 ──

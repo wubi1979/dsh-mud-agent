@@ -404,6 +404,24 @@ describe('mud_send 空命令与命令总表判据（§8.7，A.3，T26）', () =>
     expect(slots.find(s => s.name === '精神不足')!.res[0]!.test('你现在精不够，无法控制内息的流动！')).toBe(true)
   })
 
+  it('冷却命中（kind=cooldown）：ok=false + reason=cooldown（2026-10-15 裁定——「稍后重试」信号）', async () => {
+    const mkLine = (text: string): MudLine => ({ text, raw: text, style: [], abs: 1, time: 0, isPrompt: false, kind: null })
+    const { call } = setup({}, {
+      read: async () => ({
+        lines: [mkLine('你不是刚查看过吗？')],
+        reason: 'done',
+        hit: { by: 'ga', index: 0, groups: [], outcome: '刚查看过', kind: 'cooldown' },
+      }),
+    })
+    await expect(call('mud_send', { cmd: 'skills' })).resolves.toEqual({
+      ok: false,
+      reason: 'cooldown',
+      lines: ['你不是刚查看过吗？'],
+      outcome: '刚查看过',
+      kind: 'cooldown',
+    })
+  })
+
   it('cmd:"dazuo 10" 同命中条目；"dazuox" 不命中（不收窗只等超时）', async () => {
     const { call, readCapture } = setup()
     await call('mud_send', { cmd: 'dazuo 10' })

@@ -34,7 +34,7 @@ import { PROFESSION_COMMANDS } from './profession.ts'
 
 // ── 编译产物（正则数组 + 并行名表；读窗机匹配模型零变化，§5.2）────────
 
-/** 编译后的结局语义条目：并行名表单元（fail 槽位排在 ok 槽位之前 = 判定序）。
+/** 编译后的结局语义条目：并行名表单元（fail/cooldown 槽位排在 ok 槽位之前 = 判定序）。
  * `patterns` 保留 raw 源——同形态合并时按**调用点 flags** 重编译（DEC-5/裁定 6）。 */
 export interface CompiledSlot {
   readonly name: string
@@ -50,7 +50,7 @@ export interface CompiledJudge {
   readonly closeOn: ClosureKind
   /** GA 计数（ga 形态；缺省 1）。 */
   readonly gaCount?: number
-  /** 语义条目集（fail 槽位在前）。 */
+  /** 语义条目集（fail/cooldown 槽位在前）。 */
   readonly slots: readonly CompiledSlot[]
   /** 条目级 flags（整条采用档的编译 flags；告警④与合并档重编译参照）。 */
   readonly flags?: string
@@ -80,20 +80,21 @@ function escapeHead(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-/** raw 语义条目集（kind 在前）→ CompiledSlot（fail 组先编译 = 判定序；flags 应用于全部判据）。
- * 语义条目名跨槽位重名与保留字语义条目名在此 fail-loud（构建期自检，DEC-18）。 */
+/** raw 语义条目集（kind 在前）→ CompiledSlot（fail → cooldown → ok 组序编译 = 判定序；
+ * flags 应用于全部判据）。语义条目名跨槽位重名与保留字语义条目名在此 fail-loud
+ *（构建期自检，DEC-18）。 */
 function compileSlots(
   outcomes: SlotTable, where: string, closeOn: ClosureKind, flags: string,
 ): CompiledSlot[] {
   const slots: CompiledSlot[] = []
   const seen = new Set<string>()
-  for (const kind of ['fail', 'ok'] as const) {
+  for (const kind of ['fail', 'cooldown', 'ok'] as const) {
     for (const [name, slotValue] of Object.entries(outcomes[kind] ?? {})) {
       if (RESERVED_SLOT_NAMES.includes(name)) {
-        throw new Error(`命令条目装配失败：${where} 语义条目名「${name}」是保留字（ok/fail 是 kind 寻址键）`)
+        throw new Error(`命令条目装配失败：${where} 语义条目名「${name}」是保留字（ok/fail/cooldown 是 kind 寻址键）`)
       }
       if (seen.has(name)) {
-        throw new Error(`命令条目装配失败：${where} 语义条目名「${name}」跨槽位重名（语义条目名在 ok/fail 组内必须唯一）`)
+        throw new Error(`命令条目装配失败：${where} 语义条目名「${name}」跨槽位重名（语义条目名在 ok/fail/cooldown 组内必须唯一）`)
       }
       seen.add(name)
       if (!Array.isArray(slotValue.patterns) || slotValue.patterns.length === 0) {
@@ -111,7 +112,8 @@ function compileSlots(
       slots.push({ name, kind, res, patterns: [...slotValue.patterns] })
     }
   }
-  // 判定序由遍历序保证（fail 组先编译，fail 槽位排前；同 kind 内保持声明序）。
+  // 判定序由遍历序保证（fail → cooldown → ok 组序编译，fail/cooldown 槽位排前；
+  // 同 kind 内保持声明序）。
   // 判据收窗形态必须至少有一条可命中判据（否则只剩超时收场 = 配置错误）。
   if (closeOn === 'criteria' && slots.length === 0) {
     throw new Error(`命令条目装配失败：${where}（criteria）没有任何判据语义条目`)

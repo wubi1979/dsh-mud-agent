@@ -92,10 +92,12 @@ interface CriteriaMeta {
   readonly patIdx: number
 }
 
-/** 判据派生产（start 时一次算好）：语义条目集 → fail/ok 两组正则数组 + 并行名表。 */
+/** 判据派生产（start 时一次算好）：语义条目集 → fail/cooldown/ok 三组正则数组 + 并行名表。 */
 interface DerivedCriteria {
   readonly failRes: readonly RegExp[]
   readonly failMeta: readonly CriteriaMeta[]
+  readonly cooldownRes: readonly RegExp[]
+  readonly cooldownMeta: readonly CriteriaMeta[]
   readonly okRes: readonly RegExp[]
   readonly okMeta: readonly CriteriaMeta[]
   /** 语义条目集全量（ga 的收束分类用）。 */
@@ -104,27 +106,32 @@ interface DerivedCriteria {
 
 /**
  * 判据派生（三形态分档）：
- *   - `'criteria'`：fail 槽位 → failRes、ok 槽位 → okRes（判定序 fail 先）；
+ *   - `'criteria'`：fail 槽位 → failRes、cooldown 槽位 → cooldownRes、ok 槽位 → okRes
+ *     （判定序 fail > cooldown > ok）；
  *   - `'ga'`：语义条目不参与收窗判定（收束时分类），数组为空；
  *   - `'quiet'` / 裸读：无判据，数组为空。
  */
 function deriveCriteria(opts: ReadOpts): DerivedCriteria {
   const failRes: RegExp[] = []
   const failMeta: CriteriaMeta[] = []
+  const cooldownRes: RegExp[] = []
+  const cooldownMeta: CriteriaMeta[] = []
   const okRes: RegExp[] = []
   const okMeta: CriteriaMeta[] = []
   if (opts.closeOn === 'criteria') {
     for (const slot of opts.slots ?? []) {
       const target = slot.kind === 'fail'
         ? { res: failRes, meta: failMeta }
-        : { res: okRes, meta: okMeta }
+        : slot.kind === 'cooldown'
+          ? { res: cooldownRes, meta: cooldownMeta }
+          : { res: okRes, meta: okMeta }
       slot.res.forEach((re, patIdx) => {
         target.res.push(re)
         target.meta.push({ name: slot.name, kind: slot.kind, patIdx })
       })
     }
   }
-  return { failRes, failMeta, okRes, okMeta, slots: opts.slots ?? [] }
+  return { failRes, failMeta, cooldownRes, cooldownMeta, okRes, okMeta, slots: opts.slots ?? [] }
 }
 
 /** 在途状态。 */
@@ -280,7 +287,7 @@ export class ReadMachine {
   }
 
   /**
-   * 同步判定：判定序 **fail 槽位 > ok 槽位（criteria）> GA 计数（ga）> maxLines**
+   * 同步判定：判定序 **fail 槽位 > cooldown 槽位 > ok 槽位（criteria）> GA 计数（ga）> maxLines**
    *（写死）。quiet / 裸读无同步收窗者（quiet 的窗由 timeoutTimer 关；裸读的
    * quietMs 见 armQuiet）。
    */
@@ -289,6 +296,8 @@ export class ReadMachine {
     if (opts.closeOn === 'criteria') {
       const failHit = this.matchFirst(derived.failRes, derived.failMeta, accText)
       if (failHit !== null) return { reason: 'done', source: 'criteria', hit: failHit }
+      const cooldownHit = this.matchFirst(derived.cooldownRes, derived.cooldownMeta, accText)
+      if (cooldownHit !== null) return { reason: 'done', source: 'criteria', hit: cooldownHit }
       const okHit = this.matchFirst(derived.okRes, derived.okMeta, accText)
       if (okHit !== null) return { reason: 'done', source: 'criteria', hit: okHit }
     }
@@ -351,7 +360,7 @@ export class ReadMachine {
     // 没有命中，收场者是 timeout / maxLines 剪断 —— 记 error（判据失配要吵，
     // 语料可见）；GA 关窗（ga 形态）不算失配；fail 语义条目命中是命中不是失配。
     if (state.opts.closeOn === 'criteria'
-      && (state.derived.failRes.length > 0 || state.derived.okRes.length > 0)
+      && (state.derived.failRes.length > 0 || state.derived.cooldownRes.length > 0 || state.derived.okRes.length > 0)
       && (reason === 'timeout' || source === 'maxLines')) {
       this.onLog?.('error', `read 判据失配：criteria 语义条目未命中即收束（reason=${reason}）`)
     }

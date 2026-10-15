@@ -108,16 +108,32 @@ describe('resolveAwaitPlan 解析单点（DEC-21）', () => {
 // ── ② 装配期 fail-loud 自检（assembleProfiles 受控 fixture）─────────────
 
 describe('装配期自检（DEC-18 fail-loud）', () => {
-  it('保留字语义条目名拒用（ok/fail 是 kind 寻址键）', () => {
+  it('保留字语义条目名拒用（ok/fail/cooldown 是 kind 寻址键）', () => {
     expect(() =>
       assembleProfiles([profile('a', { resolve: byOutcomes({ ok: { ok: { patterns: ['x'] } } }) })]),
     ).toThrow(/保留字/)
     expect(() =>
       assembleProfiles([profile('a', { resolve: byOutcomes({ fail: { fail: { patterns: ['x'] } } }) })]),
     ).toThrow(/保留字/)
+    expect(() =>
+      assembleProfiles([profile('a', { resolve: byOutcomes({ ok: { cooldown: { patterns: ['x'] } } }) })]),
+    ).toThrow(/保留字/)
   })
 
-  it('语义条目名跨槽位禁重名（ok/fail 组内唯一）', () => {
+  it('判定序：fail → cooldown → ok 组序编译（槽位排前）', () => {
+    const out = assembleProfiles([profile('a', {
+      resolve: byOutcomes({
+        ok: { 完成: { patterns: ['ok1'] } },
+        cooldown: { 刚查看过: { patterns: ['cd1'] } },
+        fail: { 不足: { patterns: ['f1'] } },
+      }),
+    })])
+    expect(out[0]!.judge.slots.map(s => `${s.kind}:${s.name}`)).toEqual([
+      'fail:不足', 'cooldown:刚查看过', 'ok:完成',
+    ])
+  })
+
+  it('语义条目名跨槽位禁重名（ok/fail/cooldown 组内唯一）', () => {
     expect(() =>
       assembleProfiles([profile('a', {
         resolve: byOutcomes({
@@ -183,12 +199,17 @@ describe('装配期自检（DEC-18 fail-loud）', () => {
 // ── ③ 生产装配 sanity + 匹配面 ──────────────────────────────────────────
 
 describe('生产总表与匹配面', () => {
-  it('总表非空且每条目判定序 fail 槽位在前', () => {
+  it('总表非空且每条目判定序 fail/cooldown 槽位在前', () => {
     expect(COMMAND_PROFILES.length).toBeGreaterThanOrEqual(3)
     for (const p of COMMAND_PROFILES) {
       const kinds = p.judge.slots.map(s => s.kind)
       const firstOk = kinds.indexOf('ok')
-      expect(kinds.slice(firstOk)).not.toContain('fail') // fail 全部排在 ok 之前
+      if (firstOk === -1) {
+        expect(kinds.every(k => k === 'fail' || k === 'cooldown'), p.id).toBe(true) // 负面-only 条目（如 skills 刚查看过 = cooldown）
+      } else {
+        expect(kinds.slice(firstOk), p.id).not.toContain('fail') // fail/cooldown 全部排在 ok 之前
+        expect(kinds.slice(firstOk), p.id).not.toContain('cooldown')
+      }
     }
   })
 
@@ -239,12 +260,20 @@ describe('capture 装配（T29 D4/D7）', () => {
   })
 
   it('七命令（含别名）命中 table 档 ga 收束、条目法定 timeout 15s', () => {
-    for (const cmd of ['look', 'l', 'skills', 'cha', 'sk', 'hpbrief', 'inventory', 'i', 'score', 'sc', 'hp', 'exp']) {
+    for (const cmd of ['look', 'l', 'hpbrief', 'inventory', 'i', 'score', 'sc', 'hp', 'exp']) {
       const plan = resolveAwaitPlan(cmd)
       expect(plan.source, cmd).toBe('table')
       expect(plan.closeOn, cmd).toBe('ga')
       expect(plan.timeoutMs, cmd).toBe(15_000)
-      expect(plan.slots, cmd).toEqual([])
+      expect(plan.slots, cmd).toEqual([]) // 无分类语义条目：关窗即 next
+    }
+    // skills/cha/sk：同 ga 收束 + cooldown 语义条目 `刚查看过`（频控冷却，2026-10-15 用户供句）。
+    for (const cmd of ['skills', 'cha', 'sk']) {
+      const plan = resolveAwaitPlan(cmd)
+      expect(plan.source, cmd).toBe('table')
+      expect(plan.closeOn, cmd).toBe('ga')
+      expect(plan.timeoutMs, cmd).toBe(15_000)
+      expect(plan.slots, cmd).toEqual([expect.objectContaining({ name: '刚查看过', kind: 'cooldown' })])
     }
     // 词边界：未登记的相似头不误命中。
     expect(matchCommandProfile('looks')).toBeNull()
