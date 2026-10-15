@@ -6,9 +6,9 @@
  *（即时命令 GA 1:1，无需逐条语料），`'criteria'` / `'quiet'` 类逐条指附录 A。
  */
 
-import { byOutcomes, defineCommand } from './define.ts'
+import { byBoundary, byOutcomes, defineCommand } from './define.ts'
 
-/** 基础命令族（sleep；lm 待实录后回填，见文件尾注释；其余待 79 清单实录。walk 归 usr 分组，2026-10-12 用户澄清）。 */
+/** 基础命令族（sleep；drink/eat 喝吃 2026-10-15 用户供句入库；lm 待实录后回填，见文件尾注释；其余待 79 清单实录。walk 归 usr 分组，2026-10-12 用户澄清）。 */
 export const STD_COMMANDS = [
   defineCommand({
     // 睡觉（A.3：受理/完成句原句 2026-10-10 用户提供；全程时长无实测，兜底放宽待校准）。
@@ -20,6 +20,33 @@ export const STD_COMMANDS = [
     resolve: byOutcomes({
       ok: { 完成: { patterns: ['你一觉醒来，精神抖擞地活动了几下手脚'] } },
       fail: { 刚睡过: { patterns: ['你刚刚睡过一觉, 多睡对身体有害无益!'] } },
+    }),
+  }),
+  // 喝（标准命令 drink，别名 he；A.3：判据原句 2026-10-15 用户提供，茶水场景
+  // 基础形态）：即时命令——应答句后即 GA（A.2 1:1），形态取 `'ga'`（GA 是主
+  // 收束，timeoutMs 纯兜底）；分类槽声明即断言：命中按槽路由，全不命中 ⇒
+  // fail「分支未知」。其余饮品行文变体待实录回填 patterns（行文变体不分槽，
+  // DEC-7）；句尾句号不进判据（子串匹配两侧兼容，同 sleep 条目口径）。
+  defineCommand({
+    id: 'drink',
+    aliases: ['he'],
+    timeoutMs: 15_000,
+    meta: { corpus: '附录 A.3（2026-10-15 用户提供）' },
+    resolve: byBoundary({
+      ok: { 喝下: { patterns: ['你端起桌上的茶具，咕噜咕噜地喝了几口茶下去'] } },
+      fail: { 喝饱: { patterns: ['你已经喝饱了，再也喝不下一丁点了'] } },
+    }),
+  }),
+  // 吃（标准命令 eat，别名 chi；A.3：判据原句 2026-10-15 用户提供，包子场景
+  // 基础形态）：口径同 drink 条目。
+  defineCommand({
+    id: 'eat',
+    aliases: ['chi'],
+    timeoutMs: 15_000,
+    meta: { corpus: '附录 A.3（2026-10-15 用户提供）' },
+    resolve: byBoundary({
+      ok: { 吃下: { patterns: ['你拿起包子咬了几口'] } },
+      fail: { 吃太饱: { patterns: ['你已经吃太饱了，再也塞不下任何东西了'] } },
     }),
   }),
   // LM（无判据无 GA 的命令，用户举例）：固定采样窗——窗长即 timeoutMs（A.6：

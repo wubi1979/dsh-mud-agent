@@ -848,3 +848,12 @@
 - **§16.2 用例账目计数表勘误**（`doc/architecture/16-17-acceptance-roadmap.md`；2026-10-13 用户裁定）：v0.0.61 写入的 462/77 一直未随版更新，违反 §16.1「账目以当次实测为准」纪律——改 2026-10-13 实测值（core3 487 例 / 35 文件，485 绿 + wake 2 例 v0.0.66 登记历史遗留；mud-workflow 96 例 / 4 文件）并标注实测日期。
 - **附录 B-audit-checklist C4 判定序勘误**（2026-10-13 用户裁定）：现役硬约束示例仍写退役判定序 `failOn > until > gaCount > maxLines`——改为现役口径「fail 槽 > ok 槽（criteria）> GA 计数（`gaCount`，仅 ga 形态）> `maxLines`」并注记退役词汇。
 - **缝侧 none/empty 档 maxLines 防护**（`service.ts workflowIoFor` read 缝；2026-10-13 用户裁定）：未登记/空命令不收窗只等超时（DEC-4）的 30s 窗内行流可无界累积（战斗刷屏尤甚）——新增 `FLOW_SEAM_MAX_LINES = 50` 缝侧兜底（与工具面 `sendMaxLines` 缺省同值）；`maxLines` 兜底链：表条目 > 步半声明（只声明 `maxLines` 未声明 `closeOn`，此前 decl 未成形被静默丢弃——直传防丢）> 缝侧兜底；`exactOptionalPropertyTypes` 下条件展开不改 `ReadOpts` 形。测试 +2（service.spec：none 档 50 行提前收束实证、半声明 3 行直传实证）——core3 485 绿 + 2 wake 遗留（487 例）+ typecheck 两包零错。
+
+## [v0.0.73]命令总表新增 drink/eat（喝/吃）条目 (2026-10-15)
+
+> 总结：std 分组新增喝/吃两条即时完成条目（`'ga'` 形态 + 分类槽，A.3 2026-10-15 用户提供基础判据）——吃喝不再「未登记不收窗只等超时」（DEC-4）；即时完成类 `'ga'` 条目登记首例（6.2 挂账路径走通）。记法约定（用户明示）：**用户供句 `标准命令[别名]`，方括号内恒为别名**（`drink[he]`/`eat[chi]`）。
+
+- **std.ts 新增两条目**：`drink`（别名 `he`；ok `喝下` = `你端起桌上的茶具，咕噜咕噜地喝了几口茶下去`，fail `喝饱` = `你已经喝饱了，再也喝不下一丁点了`）、`eat`（别名 `chi`；ok `吃下` = `你拿起包子咬了几口`，fail `吃太饱` = `你已经吃太饱了，再也塞不下任何东西了`）——即时命令应答句后即 GA（A.2 1:1），形态取 `'ga'`（byBoundary + 分类槽，声明即断言：命中按槽路由、全不命中 ⇒ fail「分支未知」，GA 恒收窗不因行文变体空等）；timeoutMs 15s 纯兜底（GA 是主收束）；判据取句体不含句尾句号（子串匹配两侧兼容）；基础判据为茶水/包子场景，其余行文变体待实录回填（DEC-7 变体不分槽）。
+- **附录 A.3**：登记 drink/eat 判据原句（用户供给 2026-10-15，A.6 纪律）。
+- **§8.7 命令总表行**：现役条目清单同步 drink/eat（含记法约定注记）。
+- **测试**：assembler.spec +1 例（drink 条目 ga 档：别名 `he` 命中、归因 `command:'drink'`、槽序 fail 排前、条目法定 timeout 15s）+ 匹配面断言扩展（标准头/别名双向）——18 例全绿 + typecheck 零错。

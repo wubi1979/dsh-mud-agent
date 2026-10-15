@@ -53,6 +53,15 @@ describe('resolveAwaitPlan 解析单点（DEC-21）', () => {
     expect(plan.slots?.map(s => `${s.kind}:${s.name}`)).toEqual(['fail:刚睡过', 'ok:完成'])
   })
 
+  it('table 档 ga 形态：drink 条目整条采用（即时完成类首例，别名 he 命中，分类槽 fail 排前）', () => {
+    const plan = resolveAwaitPlan('he cha') // 别名命中
+    expect(plan.source).toBe('table')
+    expect(plan.command).toBe('drink')
+    expect(plan.closeOn).toBe('ga')
+    expect(plan.timeoutMs).toBe(15_000)
+    expect(plan.slots?.map(s => `${s.kind}:${s.name}`)).toEqual(['fail:喝饱', 'ok:喝下'])
+  })
+
   it('table 档同形态合并：同名槽后声明替换、异名追加（裁定 6，合并按调用点 flags）', () => {
     const plan = resolveAwaitPlan('sleep', {
       closeOn: 'criteria',
@@ -164,6 +173,10 @@ describe('生产总表与匹配面', () => {
     expect(matchCommandProfile('sleepwalk')).toBeNull() // 词边界防误命中
     expect(matchCommandProfile('walk -c')).toBeNull() // exempt：查询类不注入判据
     expect(matchCommandProfile('walk')?.id).toBe('walk')
+    expect(matchCommandProfile('drink')?.id).toBe('drink')
+    expect(matchCommandProfile('he cha')?.id).toBe('drink') // 别名 he 首词命中，参数无关
+    expect(matchCommandProfile('eat')?.id).toBe('eat')
+    expect(matchCommandProfile('chi')?.id).toBe('eat') // 别名 chi
     expect(matchCommandProfile('')).toBeNull()
   })
 
