@@ -717,7 +717,7 @@ describe('workflowIoFor 缝侧 lastSent 查表注入（T26）', () => {
       expect(handle.io.send('exercise')).toBe(true)
       const r = await handle.io.read({ timeoutMs: 5000 }, [])
       expect(r.reason).toBe('done')
-      expect(r.hit?.outcome).toBe('完成') // 槽分类命中（缝侧注入的 criteria 槽表）
+      expect(r.hit?.outcome).toBe('完成') // 语义条目分类命中（缝侧注入的 criteria 语义条目集）
       expect(r.command).toBe('exercise') // 归因：命中的表条目
       expect(r.source).toBe('table') // 归因：判据来源 = 查表注入
     } finally {
@@ -727,7 +727,7 @@ describe('workflowIoFor 缝侧 lastSent 查表注入（T26）', () => {
     }
   })
 
-  it('已声明判据 + 登记命令 → 同形态槽级合并注入（声明槽与表槽并存，归因 table）', async () => {
+  it('已声明判据 + 登记命令 → 同形态语义条目级合并注入（声明语义条目与表语义条目并存，归因 table）', async () => {
     const server = await startExerciseServer()
     const { service, handle } = await seamWith(server)
     try {
@@ -738,7 +738,7 @@ describe('workflowIoFor 缝侧 lastSent 查表注入（T26）', () => {
         timeoutMs: 200,
       }, [])
       expect(r.reason).toBe('done')
-      expect(r.hit?.outcome).toBe('完成') // 表槽完成句经合并窗口命中（DEC-5 同形态合并）
+      expect(r.hit?.outcome).toBe('完成') // 表语义条目完成句经合并窗口命中（DEC-5 同形态合并）
       expect(r.command).toBe('exercise') // 归因：同形态合并命中表条目
       expect(r.source).toBe('table')
     } finally {

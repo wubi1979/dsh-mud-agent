@@ -40,8 +40,8 @@ L6 是 agent **能动**的唯一出口——把"想做什么"变成"MUD 上发�
 
 | 工具 | 语义 | 约束 |
 |---|---|---|
-| **`mud_send`** | 发命令 + **判据驱动等应答**；**不带 `cmd` = 裸读近况**；**`wait: false` = 发送即走**（T19 D11：只 send 不 read、不设超时、不判成败——分页/save 等"发了就行"的动作；返回 `reason:'sent'`，仍过持有者与拒绝序）。收窗判据经**命令总表解析单点** `resolveAwaitPlan`（T26，§8.7）：显式 `listen`（同形态槽级合并）> 表条目 > **未登记不收窗只等超时**（DEC-4 终态：无兜底档；超时文案兼语料工单 DEC-22，点名未登记并给出 listen 声明示例） | 不受接入闸门；**只拒未连接**；独占（`isConcurrencySafe: false`）；应答原文返回调用方（状态拉取命令另有读后投影，§8.7） |
-| **`mud_walk`** | **内建路径自动行走 + 导航动作**（T23；`mud_send` 的判据预设特化，非新持有者/新闸门）：`action` 缺省 `walk`（发 `walk` 家族命令：拼音名 / `-c` / `-q` / `-p` / 缺省恢复）、`action: 'speed'`（`set walk_speed <值>`）；判据走命令总表 `walk` 条目（T26.6 改判 `'criteria'`——`到达`/`软阻断` 判据槽收窗，GA 不武装；条目 flags `'m'` 承重；`exempt` 锚定**完整发送串**，查询类 `-c`/`-q` 不套判据）⇒ 工具侧 `outcome` 分类（T23.5）；`node` 家族（玩家自建路径）**只留槽位、本期不实现**（A.9 结论 9） | 同 `mud_send` 约束（只拒未连接、独占、持有者、可读拒绝）；`args` 拒分号/换行（walk 前缀使 deny 扫描失效，显式堵拼接）；预留动作执行返回可读拒绝 |
+| **`mud_send`** | 发命令 + **判据驱动等应答**；**不带 `cmd` = 裸读近况**；**`wait: false` = 发送即走**（T19 D11：只 send 不 read、不设超时、不判成败——分页/save 等"发了就行"的动作；返回 `reason:'sent'`，仍过持有者与拒绝序）。收窗判据经**命令总表解析单点** `resolveAwaitPlan`（T26，§8.7）：显式 `listen`（同形态语义条目级合并）> 表条目 > **未登记不收窗只等超时**（DEC-4 终态：无兜底档；超时文案兼语料工单 DEC-22，点名未登记并给出 listen 声明示例） | 不受接入闸门；**只拒未连接**；独占（`isConcurrencySafe: false`）；应答原文返回调用方（状态拉取命令另有读后投影，§8.7） |
+| **`mud_walk`** | **内建路径自动行走 + 导航动作**（T23；`mud_send` 的判据预设特化，非新持有者/新闸门）：`action` 缺省 `walk`（发 `walk` 家族命令：拼音名 / `-c` / `-q` / `-p` / 缺省恢复）、`action: 'speed'`（`set walk_speed <值>`）；判据走命令总表 `walk` 条目（T26.6 改判 `'criteria'`——`到达`/`软阻断` 判据语义条目收窗，GA 不武装；条目 flags `'m'` 承重；`exempt` 锚定**完整发送串**，查询类 `-c`/`-q` 不套判据）⇒ 工具侧 `outcome` 分类（T23.5）；`node` 家族（玩家自建路径）**只留槽位、本期不实现**（A.9 结论 9） | 同 `mud_send` 约束（只拒未连接、独占、持有者、可读拒绝）；`args` 拒分号/换行（walk 前缀使 deny 扫描失效，显式堵拼接）；预留动作执行返回可读拒绝 |
 | **`mud_state`** | **状态自述**（两轴 + World 合并快照，§10.5） | **不受闸门 / 不受连接约束，只过归属** |
 | **`mud_connect`** | **建连**（幂等：已连接不重连、不踢已登录会话） | 三期把"连接是手工动词"升格为工具，模型可自行调用 |
 | `mud_workflow_run` + `mud_workflow_list/get/save/delete/history/rollback` | 流程执行与管理七工具 | 归 `mud-workflow` 包（§8.14） |
@@ -96,41 +96,40 @@ mud_send {
 | 项 | 规则 |
 |---|---|
 | `listen` 校验 | 与流程 `wait` **同一 zod schema**（DEC-21 一个语法三个消费点；全量拼写无简写，DEC-24）；工具面专属限制：`timeoutMs` 是顶层参数不进 listen、`captures`/`captureFrom` 是流程面词汇 ⇒ 出现即拒（可读）。编译在 `resolveAwaitPlan` 单点（非法正则执行期可读拒） |
-| `listen` 解析 | 缺省 ⇒ 按命令总表解析（见「命令总表」行）；模型显式给 `listen` ⇒ 与表条目**形态比对**（DEC-5）：同形态 ⇒ 槽级合并（同名槽后声明整体替换、异名追加、timeoutMs 步声明优先表填缺省），异形态/未登记 ⇒ 声明即全部配方。**裸读**（无 `cmd`）不是"某条命令的收窗"，不走表：缺省 `maxLines: 50 + quietMs: 300` |
+| `listen` 解析 | 缺省 ⇒ 按命令总表解析（见「命令总表」行）；模型显式给 `listen` ⇒ 与表条目**形态比对**（DEC-5）：同形态 ⇒ 语义条目级合并（同名语义条目后声明整体替换、异名追加、timeoutMs 步声明优先表填缺省），异形态/未登记 ⇒ 声明即全部配方。**裸读**（无 `cmd`）不是"某条命令的收窗"，不走表：缺省 `maxLines: 50 + quietMs: 300` |
 | **空命令** | **放开**（2026-10-10 二次裁定）：照常发送，收窗特例归 `closeOn: 'ga'` 立即收束（空输入也是命令 ⇒ 回 prompt+GA，A.2 1:1；T26.1 起 `resolveAwaitPlan` 特例，兜底行数照设）——刷提示符无害；等长程命令不用它（根因治理靠命令总表判据 + persona 等待纪律；曾设可读拒绝，因根因已除放开） |
-| **命令总表（T26，v0.0.70 勘误改口径）** | `packages/mud/mud-commands/src/`（`define.ts` 契约 + `std/skill/usr/stunt/profession` 五分组文件；`assembler.ts` **装配器**，T28 前名 `command-profiles.ts`）：条目 = `defineCommand({ id, aliases?, exempt?, timeoutMs, maxLines?, flags?, resolve, meta })` **纯数据单元**，**构建期数组、无运行期注册面**（agent 不可修缮）；`resolve` = 三判定器工厂之一（T26.6 终态）——`byBoundary`（`closeOn:'ga'`，GA 收窗，gaCount 缺省 1，分类槽可选——声明即断言）/ `byOutcomes`（`'criteria'`，判据收窗 GA 不武装，fail 槽先于 ok 槽）/ `byWindow`（`'quiet'`，固定采样窗——窗长即条目 `timeoutMs`，无槽）——数据面即契约层 `CLOSURE_KINDS` **三值**（§8.10）；**kind（ok/fail）= 契约、槽名 = 条目数据自由命名**（DEC-23；判据表与路由表**两表同构**——**kind 在前、槽名在内**：`outcomes` 外层键 = ok/fail、槽条目不带 kind，2026-10-12 用户裁定统一；保留字 `ok`/`fail` 装配期拒用，`patterns ≥ 1` 推定槽退役）。**解析单点（DEC-21）**：`resolveAwaitPlan(sent, decl)` 供 `mud_send`/`mud_walk` 与流程缝共用——声明（形态比对合并）> 表条目（整条采用）> 空命令特例（归 `'ga'`）> **未登记不收窗只等超时**（DEC-4 终态，无 `gaCount:1` 兜底；超时文案兼语料工单 DEC-22，点名未登记并给出 listen 声明示例）；`matchCommandProfile(sent)` 首词 + 词边界命中（exempt 锚定**完整发送串**）、`tableSlotsOf(sent)` 槽名查询（保存门槽集校验端口，§8.11）。现役条目：`exercise`（别名 `dazuo`；2026-10-12 勘误：打坐标准命令是 `exercise`，`dz` 是另一条命令非别名）（`'criteria'`：`完成`/`突破` ok 槽 + `内息不足`/`精神不足` fail 槽，兜底 120s）、`sleep`（`'criteria'`：`完成` ok + `刚睡过` fail，兜底 300s）、`drink`/`eat`（喝/吃，别名 `he`/`chi`；2026-10-15 用户供句入库——即时完成类 `'ga'` 条目**首例**：`drink` = `喝下` ok + `喝饱` fail、`eat` = `吃下` ok + `吃太饱` fail，兜底 15s；基础判据为茶水/包子场景，行文变体待实录；**用户供句记法 = `标准命令[别名]`，方括号内恒为别名**）——判据原文按 A.3 逐条搬入（不重写正则）；`walk`（`'criteria'` + 条目 flags `'m'` 承重：`到达`（`^你到达了`）/`软阻断`（fail 槽排前），`exempt` 查询类；超时按已知边步数 sizing 10s+3s/步钳 [30s,60s]——race 退役改判，A.9 结论 5）。即时完成 GA 收尾类（`xue`）**不入表 = 未登记不收窗只等超时**——如需登记为 `'ga'` 条目须先语料校准（6.2 挂账；`drink`/`eat` 即按此路径登记）。**新条目须先语料校准并登记附录 A 原句**（A.6 纪律） |
+| **命令总表（T26，v0.0.70 勘误改口径）** | `packages/mud/mud-commands/src/`（`define.ts` 契约 + `std/skill/usr/stunt/profession` 五分组文件；`assembler.ts` **装配器**，T28 前名 `command-profiles.ts`）：条目 = `defineCommand({ id, aliases?, exempt?, timeoutMs, maxLines?, flags?, resolve, meta })` **纯数据单元**，**构建期数组、无运行期注册面**（agent 不可修缮）；`resolve` = 三判定器工厂之一（T26.6 终态）——`byBoundary`（`closeOn:'ga'`，GA 收窗，gaCount 缺省 1，分类语义条目可选——声明即断言）/ `byOutcomes`（`'criteria'`，判据收窗 GA 不武装，fail 槽位先于 ok 槽位）/ `byWindow`（`'quiet'`，固定采样窗——窗长即条目 `timeoutMs`，无槽）——数据面即契约层 `CLOSURE_KINDS` **三值**（§8.10）；**槽位（ok/fail 判定类型，代码字段 `kind`）= 契约、语义条目（具名判据，旧称槽名）= 条目数据自由命名**（DEC-23 + 2026-10-15 术语定名，§8.10；判据表与路由表**两表同构**——**槽位在前、语义条目在内**：`outcomes` 外层键 = ok/fail 槽位、语义条目不带 kind，2026-10-12 用户裁定统一；保留字 `ok`/`fail` 装配期拒用，`patterns ≥ 1` 推定槽退役）。**解析单点（DEC-21）**：`resolveAwaitPlan(sent, decl)` 供 `mud_send`/`mud_walk` 与流程缝共用——声明（形态比对合并）> 表条目（整条采用）> 空命令特例（归 `'ga'`）> **未登记不收窗只等超时**（DEC-4 终态，无 `gaCount:1` 兜底；超时文案兼语料工单 DEC-22，点名未登记并给出 listen 声明示例）；`matchCommandProfile(sent)` 首词 + 词边界命中（exempt 锚定**完整发送串**）、`tableSlotsOf(sent)` 语义条目查询（保存门语义条目集校验端口，§8.11）。现役条目：`exercise`（别名 `dazuo`；2026-10-12 勘误：打坐标准命令是 `exercise`，`dz` 是另一条命令非别名）（`'criteria'`：`完成`/`突破` ok 槽位语义条目 + `内息不足`/`精神不足` fail 槽位语义条目，兜底 120s）、`sleep`（`'criteria'`：`完成` ok + `刚睡过` fail，兜底 300s）、`drink`/`eat`（喝/吃，别名 `he`/`chi`；2026-10-15 用户供句入库——即时完成类 `'ga'` 条目**首例**：`drink` = `喝下` ok + `喝饱` fail、`eat` = `吃下` ok + `吃太饱` fail，兜底 15s；基础判据为茶水/包子场景，行文变体待实录；**用户供句记法 = `标准命令[别名]`，方括号内恒为别名**）——判据原文按 A.3 逐条搬入（不重写正则）；`walk`（`'criteria'` + 条目 flags `'m'` 承重，用户口径 2026-10-14 四条语义条目：fail 槽位 `阻塞`（`你因为种种原因停了下来`——取消软/硬说法，只有阻塞）/`不在出发点`（`当前区域的系统内建路径出发点在`）+ ok 槽位 `到达`（`^你到达了`）/`出发点表`（`^┌`——出现表格 = 处于 walk 节点）；`exempt` 只留 `-c` 查询；超时 = 条目预算 30s 缺省，**无步数 sizing**（用户裁定"没有超时，这些都是后续服务"），A.9 结论 5 + 用户口径 2026-10-14）。即时完成 GA 收尾类（`xue`）**不入表 = 未登记不收窗只等超时**——如需登记为 `'ga'` 条目须先语料校准（6.2 挂账；`drink`/`eat` 即按此路径登记）。**新条目须先语料校准并登记附录 A 原句**（A.6 纪律） |
 | `wait: false` | 只 `runtime.send(cmd)`，**不 read、不设超时、不判成败**；返回 `{ok:true, reason:'sent', lines:[]}`；需提供 `cmd`（裸读不适用）；仍过禁发表/连接闸门/持有者（拒绝序不变，§8.4） |
 | **读后投影**（2026-10-10） | `cmd` 头命中**状态拉取档案**且收窗 ⇒ 结果附 `world` 字段 = **本窗口**（send 时刻起）追踪器写入的语义分区快照（`vitals/combat/character/inventory/skills`，条目含来源元数据，与 `mud_state` 的 world 同形）。档案**单点 = `DEFAULT_TRACK_RULES` 推导**（zone ∈ 白名单 且 shape ∈ table/sequence，≈ `hpbrief\|hp\|sc\|i\|skills\|exp`；词边界不误伤 `id`/`inventory`），解析零重复（判据单点在 tracker，§10.3）。**窗内零写入 ⇒ 不带字段**（fail-open 回原文行——限流警告等非表格应答天然覆盖，旧值不冒充新值）；`wait:false` 与裸读不投影。投递通道的 `status` 剔除（§10.3 D8）不变 |
-| `listen`（模型面判据） | 与流程 `wait` 同一 schema（DEC-21/24 全量拼写）；表条目与流程 wait 新格式 = `closeOn` + `outcomes` 槽表（§8.10），两者经同一解析单点落入读窗机（§5.2） |
+| `listen`（模型面判据） | 与流程 `wait` 同一 schema（DEC-21/24 全量拼写）；表条目与流程 wait 新格式 = `closeOn` + `outcomes` 判据表（§8.10），两者经同一解析单点落入读窗机（§5.2） |
 | `timeoutMs` | **模型显式值钳制 ≤ 60000**（协作式超时上限）；缺省 = 表条目 `timeoutMs`（**系统注入值，豁免钳制**——判据是主收束，本值纯兜底）或 Config `sendTimeoutMs` 15000 |
 | 兜底行数 | Config 缺省 `sendMaxLines` 50（判据收窗条目不设 maxLines——完成句收束，行数剪断会误判） |
 | `render` | `ok: true` ⇒ 行原文 `join('\n')`（`reason:'sent'` ⇒ 发送即走说明文案；**带 `world` ⇒ JSON 渲染投影快照**——原文表格不重复进上下文）；拒/错 ⇒ 可读文本 |
 | **硬编码项** | 禁词表最小集（§12.3）与裸读 `quietMs = 300`：**无例证不进 Config** |
 
-**`mud_walk` 参数与判据预设（T23，A.9）**
+**`mud_walk` 参数与判据预设（T23，A.9 + 用户口径 2026-10-14）**
 
 ```ts
 mud_walk {
-  action?: 'walk' | 'speed'   // 缺省 'walk'；'node' | 'node-get' | 'node-walk' = 预留槽位（不进描述、执行可读拒绝）
-  args?: string               // action:'walk' 参数：拼音名 / -c / -c 拼音名 / -q 区域中文名 / -p；缺省 = 恢复行走
-  value?: string              // action:'speed' 值：-1 奔跑 / 1 正常 / 2 慢行 / 3 缓步
+  action?: 'walk'             // 缺省 'walk'（'speed' 已退役）；'node' | 'node-get' | 'node-walk' = 预留槽位（不进描述、执行可读拒绝）
+  args?: string               // action:'walk' 参数：拼音名 / -c / -c 拼音名；缺省 = 恢复行走
   timeoutMs?: number
 }
 ```
 
 | 项 | 规则 |
 |---|---|
-| 发送 | `action:'walk'`（缺省）⇒ `walk`（args 缺省）或 `walk <args>`（trim 后透传，单条）；`action:'speed'` ⇒ `set walk_speed <值>`（值须为整数、域 `-1..3`，非整数/越界可读拒）；**预留槽位**（`node` / `node-get` / `node-walk`）⇒ 可读拒绝"本期未实现"；未知 `action` ⇒ 可读拒绝（**命令字符串归本层拼装**，T23.9） |
-| `args` 校验 | 禁 `;`/换行、长度 ≤ 60（walk 前缀使 deny 全段扫描失效，显式堵 `walk -q 扬州;suicide` 类拼接） |
-| **判据（命令总表 `walk` 条目，T26.6 改判）** | **行走类**（`action:'walk'` 且非查询）走命令总表 `walk` 条目（`closeOn: 'criteria'`，`byOutcomes`；race 退役 2026-10-12）：判据槽 `到达`（`^你到达了`，**条目 flags `'m'` 承重**——多行行走窗行首锚，无 `'m'` 永不命中，2026-10-12 实证死判据修复）+ `软阻断`（`你因为种种原因停了下来`，fail 槽排前）；**无 GA**（每步都出提示符，GA 计数第一步就关窗）+ `maxLines` 兜底；**超时按已知边步数 sizing**（A.9 路线表步数列，10s + 3s/步，钺在 [30s, 60s]）——「读窗竞速是伪命题，根因是 timeout 过短」（用户裁定，race 退役改判）。**查询类**（`-c` / `-q`）命中条目 `exempt`（**锚定完整发送串** `/^walk\s+-(c\|q)(\s\|$)/`，DEC-8 修正——旧参数段正则对 `walk -c` 失配致查询被误注入行走判据）不套判据，与 **`speed`** 一样只等应答静默窗（`quietMs: 1500`；查询答复含与未受理同族的句子，注入会误判）。判据出处 = A.9 结论 5（原句已搬入条目，附录 A 是语料事实源） |
-| **在出发点判定（反证，T23.10b）** | 看本次调用有没有**正向证据**：表类（无参 `walk` / `-c`）**出路径表**、行走类（`walk <拼音名>` / `-p`）**出受理行** ⇒ 写 `location.出发点就绪 = true`（`kind:'nav'`）；**正向证据缺失 ⇒ 写 `false`**，并把"判据超时收束且无证据"的行走类结果判为 `outcome:'unaccepted'`（未受理时附 `departures`）。`-q` 与 `-c <拼音名>` 的输出与出发点无关 ⇒ **不参与判定**。**不用单行"拒绝行文"判据**（用户裁定 2026-10-08） |
-| `outcome` | 按**命中帧结局槽**分类（T26.6，§5.2）：`到达` 槽命中 ⇒ `arrived`；`软阻断` 槽命中 ⇒ `soft-stop`（可用无参 `walk` 继续）；其余（超时/maxLines 剪断未命中）⇒ `incomplete`。**`unaccepted`（不在出发点）由反证给出**（见上一行）。**仅 `action:'walk'` 带 `outcome`**；返回形态 = `{ok, reason, outcome?, departures?, region?, hint?, suggest?, path?, lines}` |
-| **精力闸**（T23.10 D16） | **行走类**（`action:'walk'` 且非查询）发送前先看 **`vitals.精力 / 最大精力`**：低于 `staminaFloorPct`（缺省 0.2，§15 #28）⇒ **可读拒绝、不发命令**（"精力不足以行动"是游戏事实，频繁动用另有惩罚）。口径：判据是**百分比**（`精力` 可为上限的 **200%**，A.7.1 结论 4）；**未知即放行**（`vitals` 未写入时不因"不知道"卡死导航）；**查询类与 `speed` 不受闸门**（不是行动）。阈值 = 用户裁定 20%，键由本切片引入，**T21 战斗规则（收加力）待接同一键** |
-| `departures` | 行走结果 `unaccepted` 时，顺手把 World `location.出发点`（T23.6）**结构化回给 agent**（`string[]`），免得它再发一条 `-c`；负判断（`location.出发点就绪 = false`）留给**导航服务侧**写，工具只做门面 |
-| `region` / `hint` / `suggest`（T23.10b） | 每次 `mud_walk` 返回都**把本次行文并入行走知识图**（`mudNav.record`：路径表 ⇒ 边、`-q` ⇒ 参考链；找不到东西就不记），并回给 agent：`region`（World `location.区域`，我在哪）、`hint`（`-q` 参考链 `{to, via}`，**只有参考意义**）、`suggest`（用已记录边算的**下一跳建议** `{dest, pinyin, steps}`，无解则不带）。**不加动词**（用户裁定）：每到一个新地点由 agent 自己再查一次，服务**不存分段进度**；`mudNav` 缺席时三者都不出现，行为退回本期之前 |
-| `timeoutMs` | 显式值钳制 ≤ 60000；缺省 = **max(`sendTimeoutMs`, 30000)**（长路线 15+ 步 × 慢速档 ≈ 12s+） |
-| **阻断档案（T23.11）** | **硬阻断没有专有行文**（A.9 结论 12）⇒ 判定是**行为性**的：**同位置软阻断连击 ≥ 2**（阈值 = `HARD_STOP_ATTEMPTS`，出自用户定义"连续两次 walk 都无法继续"）。计数落 World `nav.*`（`软阻断连击` / `软阻断位置` / `硬阻断`，`kind:'nav'`、会话相关、断线随 §10.4 复位），结果 `outcome` 升为 `hard-stop` 并附 `blocked:{attempts,hard,at}`。处置沿 D19 = **回给 agent 并停手**（不重试、不自动换路；"通过手段"字段留位待实录）。`arrived` / `unaccepted` ⇒ 清零 |
-| `path`（T23.10b） | `walk -c <拼音名>` 的区域内**方向序列**（A.9 结论 11）：返回 `{to, directions[], short?}`——`directions` 取**长版本**原文（可执行），只有短版本时按 `expandShortPath` 展开（`#4 w,nw,#5 w` ⇒ `west×4, northwest, west×5`；词表外 token 原样保留）。**与 `-q` 的"区域名链只有参考意义"对照：这是可执行的最后一程** |
+| 发送 | `action:'walk'`（缺省）⇒ `walk`（args 缺省）或 `walk <args>`（trim 后透传，单条）；**预留槽位**（`node` / `node-get` / `node-walk`）⇒ 可读拒绝"本期未实现"；未知 `action` ⇒ 可读拒绝（**命令字符串归本层拼装**，T23.9） |
+| `args` 校验 | 禁 `;`/换行、长度 ≤ 60（walk 前缀使 deny 全段扫描失效，显式堵 `walk -c 扬州;suicide` 类拼接）；**退役参数显式拒绝**——`-q`（查询只保留 `-c`，用户口径 2026-10-14）⇒ 可读错误注明"已退役，可改用 walk -c <拼音名>"；`speed` 已从工具面整体删除（`set walk_speed` 由 `mud_send` 直发即可） |
+| **判据（命令总表 `walk` 条目）** | **行走类**（非查询）走命令总表 `walk` 条目（`closeOn: 'criteria'`，`byOutcomes`；用户口径 2026-10-14 四条语义条目）：fail 槽位 `阻塞`（`你因为种种原因停了下来`——取消软/硬说法，可再发 `walk` 继续）+ `不在出发点`（`当前区域的系统内建路径出发点在…`，行文含动态出发点列表）；ok 槽位 `到达`（`^你到达了`，目的地为动态信息）+ `出发点表`（`^┌`，条目 flags `'m'` 承重——多行行走窗行首锚；**出现表格 = 处于 walk 节点**）。**无 GA**（每步都出提示符，GA 计数第一步就关窗）+ `maxLines` 兜底；**无步数 sizing**（用户裁定"没有超时，这些都是后续服务"）。**查询类**（`-c`）命中条目 `exempt`（**锚定完整发送串** `/^walk\s+-c(\s\|$)/`，DEC-8）不套判据，只等应答静默窗（`quietMs: 1500`） |
+| **在出发点判定** | 正向证据：表类**出路径表**、行走类**出受理行**（`你决定开始前往…`）⇒ 写 `location.出发点就绪 = true`（`kind:'nav'`）；**正向证据缺失 ⇒ 写 `false`**。`-c <拼音名>` 的输出与出发点无关 ⇒ **不参与判定**。**不用单行"拒绝行文"判据**（用户裁定 2026-10-08）。**`unaccepted` 由显式 fail 槽位「不在出发点」给出**（用户口径 2026-10-14 改判——不再走"超时无证据"反证升级） |
+| `outcome` | 按**命中帧结局语义条目**分类（T26.6，§5.2）：`到达` ⇒ `arrived`；`阻塞` ⇒ `blocked`（可再发 `walk` 继续，连击档案见下）；`不在出发点` ⇒ `unaccepted`（附 `departures`）；`出发点表` ⇒ `atNode`（当前点位，返回路径表）；其余（超时/maxLines 剪断未命中）⇒ `incomplete`。**仅行走类带 `outcome`**；返回形态 = `{ok, reason, outcome?, departures?, blocked?, region?, path?, lines}`——**不再带 `hint`/`suggest`**（nav 完全不进入 agent，用户口径 2026-10-14） |
+| **精力闸**（T23.10 D16） | **行走类**（非查询）发送前先看 **`vitals.精力 / 最大精力`**：低于 `staminaFloorPct`（缺省 0.2，§15 #28）⇒ **可读拒绝、不发命令**（"精力不足以行动"是游戏事实，频繁动用另有惩罚）。口径：判据是**百分比**（`精力` 可为上限的 **200%**，A.7.1 结论 4）；**未知即放行**（`vitals` 未写入时不因"不知道"卡死导航）；**查询类不受闸门**（不是行动）。阈值 = 用户裁定 20%，键由本切片引入，**T21 战斗规则（收加力）待接同一键** |
+| `departures` | 行走结果 `unaccepted` 时，**优先解析应答行文**（`…出发点在：中央广场、土地庙…` ⇒ 顿号分隔列表）；行文没给 ⇒ 退回 World `location.出发点`（T23.6）结构化回给 agent（`string[]`），免得它再发一条 `-c` |
+| **记录（nav 只记录）** | 每次 `mud_walk` 都**把本次行文并入行走知识图**（`mudNav.record`：路径表 ⇒ 边——目的地按 `◇` 拆区域/房间、**`◇` 分隔段颜色 ⇒ 可直达**（红 `[31m ◇ ` = false / 绿 `[1;32m ◇ ` = true，实录 2026-10-14，§15.2）；`walk -c <拼音名>` 方向序列按拼音并入对应边 `dirs`；找不到东西就不记）——**结果只回 `region`**（World `location.区域`）与 `path`，**不回任何建议**（用户口径 2026-10-14：nav 服务完全不进入 agent，只在后端挂载）；`mudNav` 缺席 ⇒ 不记录，行为退回本期之前。**出发前纪律（进工具描述）**：执行 `walk <拼音名>` 前建议先 `walk -c <拼音名>` 查询实际行走路径（结果自动记录进行走知识图，与之前区域图同步），再出发 |
+| `timeoutMs` | 显式值钳制 ≤ 60000；缺省 = **命令总表条目 `timeoutMs` 30s**（系统注入值，豁免钳制——判据是主收束，本值纯兜底）或 Config `sendTimeoutMs` 15000。**无步数 sizing**（用户裁定） |
+| **阻断档案（T23.11；用户口径 2026-10-14 取消软/硬）** | **只有阻塞**：`你因为种种原因停了下来，可以用 walk 继续`——理论可再发 `walk` 继续行走；**连续失败没有推进** = **同位置阻塞连击 ≥ 2**（阈值 = `BLOCK_MANUAL_ATTEMPTS`）⇒ 记录为**阻断**（`needsManual`），**需人工干预**。计数落 World `nav.*`（`阻塞连击` / `阻塞位置` / `阻断`，`kind:'nav'`、会话相关、断线随 §10.4 复位），结果附 `blocked:{attempts, needsManual, at}`（attempts > 0 时）。处置 = **回给 agent 并停手**（不重试、不自动换路）。`arrived` / `unaccepted` ⇒ 清零；`incomplete` / `atNode` ⇒ 保持原状 |
+| `path`（T23.10b） | `walk -c <拼音名>` 的区域内**方向序列**（A.9 结论 11）：返回 `{to, directions[], short?}`——`directions` 取**长版本**原文（可执行），只有短版本时按 `expandShortPath` 展开（`#4 w,nw,#5 w` ⇒ `west×4, northwest, west×5`；词表外 token 原样保留）。这是**可执行的最后一程**；`-q` 的"区域名链参考"已随退役删除 |
 | 其余 | 拒绝序、持有者、独占、render 全同 `mud_send` send+read 路径 |
 
 ## 8.8 流程面：包结构与纯度裁定
@@ -164,14 +163,14 @@ mud_walk {
 
 ## 8.10 流程面：词汇表（T26.6 契约模式，2026-10-12 定稿）
 
-> **契约模式（DEC-23）**：**kind（`ok`/`fail`）= 契约**——承担判定序（fail 槽先于 ok 槽，同帧 fail 收束）与粗路由缺省（ok → next / fail → timeout 出口）；**槽名 = 条目数据**——每命令/每步的语料事实，自由命名（命名纪律 DEC-7：分支类目化、行文变体进同槽 `patterns` 不分槽、应对不同才分槽）。判据词汇单点（DEC-21）：表条目 `resolve` / 流程 `wait` / 工具 `listen` 共用契约层同一份 schema；listen 全量拼写无简写（DEC-24）。**判据表与路由表两表同构（2026-10-12 用户裁定统一）：同为「kind 在前、槽名在内」——`outcomes` 外层键 = ok/fail（契约），内层键 = 槽名（条目数据），槽条目不带 kind 字段；槽名跨 kind 禁重名（schema 拒存）。****读时归一（`normalizeFlow`）已退役**（DEC-25：存储即新词汇，旧词汇解析失败在装载期点名，测试期零兼容层）。
+> **契约模式（DEC-23）+ 术语定名（2026-10-15 用户裁定）**：**kind（`ok`/`fail`）= 契约，中文定名「**槽位**」**——承担判定序（fail 槽位先于 ok 槽位，同帧 fail 收束）与粗路由缺省（ok → next / fail → timeout 出口）；**语义条目 = 条目数据**（旧称「槽名/槽」）——每命令/每步的语料事实，具名判据单元（如 `完成`/`刚睡过`），自由命名（命名纪律 DEC-7：分支类目化、行文变体进同条目 `patterns` 不分条目、应对不同才分条目）。**术语映射（防旧文混淆）**：旧措辞「X 槽」按语境读作「X 槽位的语义条目」；「槽级合并」=「语义条目级合并」；「槽名跨 kind 禁重名」=「语义条目名跨槽位禁重名」；代码标识符不改（`kind` = 槽位、`slots[].name` = 语义条目名、`SlotTable` = 判据表）；**捕获变量槽**（`captures`/`captureFrom`，§8.13 值替换源）是另一概念，不受本定名影响。判据词汇单点（DEC-21）：表条目 `resolve` / 流程 `wait` / 工具 `listen` 共用契约层同一份 schema；listen 全量拼写无简写（DEC-24）。**判据表与路由表两表同构（2026-10-12 用户裁定统一）：同为「槽位在前、语义条目在内」——`outcomes` 外层键 = ok/fail 槽位（契约），内层键 = 语义条目名（条目数据），语义条目不带 kind 字段；语义条目名跨槽位禁重名（schema 拒存）。****读时归一（`normalizeFlow`）已退役**（DEC-25：存储即新词汇，旧词汇解析失败在装载期点名，测试期零兼容层）。
 
 | 类别 | 项 | 语义 |
 |---|---|---|
-| **读窗 `wait`** | **`closeOn`**（显式单值；缺省 = 未声明判据，缝侧按喂令查表整条注入，DEC-5）+ **`outcomes`**（结局槽表：**kind 在前、槽名在内**——外层键 ok/fail、内层键槽名，槽条目只含 patterns；patterns ≥ 1，推定槽已退役）+ **`captureFrom`**（捕获源槽，组数只对该槽 `patterns[0]` 计）+ `captures`（run 级槽名表）· `gaCount`（仅 ga，等第 N 个 GA）· `maxLines` · `flags`（默认无，白名单 `d/i/m/s/u`）· **`timeoutMs`（可省**：步声明 > 表条目 > 缝侧 30s 兜底，绝不无界等待） | **三形态组合封闭**（schema superRefine）：判据声明必须搭配 `closeOn`；quiet 无槽；criteria 必须声明槽表且无 gaCount；gaCount 仅 ga；**槽名跨 kind 禁重名**（拒存） |
-| **`closeOn` 三形态** | `ga`（GA/EOR 收窗，`gaCount` 缺省 1 可设 N；**分类槽可选——声明即断言**：关窗无一命中 ⇒ 合成 fail 帧 +「收窗成功，分支未知」，DP 裁定 8；未声明 ⇒ 关窗即 next）/ `criteria`（**判据收窗，GA 不武装**；fail 槽先于 ok 槽，同帧 fail 收束防误判）/ `quiet`（**固定采样窗**：唯一计时器 `timeoutMs`，行只累积不重置；到点有行 ⇒ 合成 ok 帧、零行 ⇒ 合成 fail 帧等同 timeout；无槽） | `race` 退役、命令判据面 `quietMs` 退役（**裸读保留**——quietMs 是裸读参数，不在命令判据词汇中）；注释纪律：quiet 与 timeout 配合使用，timeout 需谨慎选择时长（编写责任非设计代价） |
+| **读窗 `wait`** | **`closeOn`**（显式单值；缺省 = 未声明判据，缝侧按喂令查表整条注入，DEC-5）+ **`outcomes`**（结局判据表：**槽位在前、语义条目在内**——外层键 ok/fail 槽位、内层键语义条目名，语义条目只含 patterns；patterns ≥ 1，推定槽已退役）+ **`captureFrom`**（捕获源槽，组数只对该槽 `patterns[0]` 计）+ `captures`（run 级槽名表）· `gaCount`（仅 ga，等第 N 个 GA）· `maxLines` · `flags`（默认无，白名单 `d/i/m/s/u`）· **`timeoutMs`（可省**：步声明 > 表条目 > 缝侧 30s 兜底，绝不无界等待） | **三形态组合封闭**（schema superRefine）：判据声明必须搭配 `closeOn`；quiet 无 outcomes；criteria 必须声明判据表且无 gaCount；gaCount 仅 ga；**语义条目名跨槽位禁重名**（拒存） |
+| **`closeOn` 三形态** | `ga`（GA/EOR 收窗，`gaCount` 缺省 1 可设 N；**分类语义条目可选——声明即断言**：关窗无一命中 ⇒ 合成 fail 帧 +「收窗成功，分支未知」，DP 裁定 8；未声明 ⇒ 关窗即 next）/ `criteria`（**判据收窗，GA 不武装**；fail 槽位先于 ok 槽位，同帧 fail 收束防误判）/ `quiet`（**固定采样窗**：唯一计时器 `timeoutMs`，行只累积不重置；到点有行 ⇒ 合成 ok 帧、零行 ⇒ 合成 fail 帧等同 timeout；无 outcomes） | `race` 退役、命令判据面 `quietMs` 退役（**裸读保留**——quietMs 是裸读参数，不在命令判据词汇中）；注释纪律：quiet 与 timeout 配合使用，timeout 需谨慎选择时长（编写责任非设计代价） |
 | **动作 `action`**（单动作） | `send` \| `sendCredential` \| `captcha`（T14 参数化：收 `url`——值过解释器槽替换，流程捕获槽传入或写死均允许；抓图 → 推帧 → 挂起等人工码，§8.17） | 凭据占位 `{name}` / `{pass}` 由**引擎注入替换**（不经模型）；`send` 空串**拒**，`sendCredential` **允许空串**（终态空命令走凭据通道，不进发送回显）；`{captcha}` 与 T14 命名槽同为引擎替换源（非敏感，不进 pass 掩码，§8.13/§8.17） |
-| **路由 `onOutcome`（两级，DEC-19）** | 外层 **kind 键直达**（`ok` / `fail` → 目标，粗粒度常态——`fail: { exit… }` 一条兜住所有 fail 槽）；细化用 **`when`**（键 = 槽名：⊆ 合并槽集且 kind 一致、**不跨键位查找**）。分流：**fail 未覆盖 ⇒ 结构化 timeout 出口**（运行期附未覆盖槽名注记，DEC-13 ③）；**ok 未覆盖 / 无命中（ga 关窗无分类槽） ⇒ 走 `next`**（kind 缺省） | 目标 = `goto` \| `exit`（`stage` 分类 + `ok`；`'success'` 强制 `ok: true`）；直达与 when 两种形态互斥（schema 拒）；kind 判定标准：**达成/推进 = ok，被拒/中断/未达成/异常 = fail**（fullme 答错已按此改判 fail，重入用 when 表达） |
+| **路由 `onOutcome`（两级，DEC-19）** | 外层 **kind 键直达**（`ok` / `fail` → 目标，粗粒度常态——`fail: { exit… }` 一条兜住 fail 槽位全部语义条目）；细化用 **`when`**（键 = 语义条目名：⊆ 合并语义条目集且槽位一致、**不跨键位查找**）。分流：**fail 未覆盖 ⇒ 结构化 timeout 出口**（运行期附未覆盖语义条目名注记，DEC-13 ③）；**ok 未覆盖 / 无命中（ga 关窗无分类语义条目） ⇒ 走 `next`**（kind 缺省） | 目标 = `goto` \| `exit`（`stage` 分类 + `ok`；`'success'` 强制 `ok: true`）；直达与 when 两种形态互斥（schema 拒）；kind 判定标准：**达成/推进 = ok，被拒/中断/未达成/异常 = fail**（fullme 答错已按此改判 fail，重入用 when 表达） |
 | **后置** | 循环 / 计算 / 条件 | JSON 表达不了的例证出现再评估（§17.3） |
 
 ## 8.11 流程面：注册表与进化闭环
@@ -181,8 +180,8 @@ mud_walk {
 | **locked 预制** | **拒改拒删**（`login` 锁死，§8.12） |
 | **非 locked** | 预制与 agent 新建均可 `save`（`version` 自增） |
 | **进化闭环** | **粗胚 → 执行 → 结构化失败现场 → 修缮 → 重试**——流程是 **agent 能力的持久化载体**；`delete` 还原预制 |
-| **保存门（三门，确定性校验即生效）** | ① **zod schema 校验**（含**槽名跨 kind 禁重名**拒存）② **`checkFlow` 结构门**（`goto` 目标存在 / `success` 的 `ok: true`；**保留字槽名 `ok`/`fail` 拒用**（kind 寻址键防撞名，DP 裁定 7）；**kind 一致性**：when 键引用的槽 kind 不符即拒（不跨键位查找，静态可判的都判）；捕获配对：组数只对 `captureFrom` 槽 `patterns[0]` 计、捕获组只许出现在该处；**when/captureFrom 引用 ⊆ 合并槽集**（本步 `outcomes` ∪ 喂令表槽，经 `tableSlotsOf` 端口注入——字面量喂令已登记而缺席 ⇒ 拒存（死引用），**动态命令/未登记 ⇒ 保存期只校验静态可判的 kind 一致性，查表校验后移运行期 fail-loud**，DP 裁定 4 分档））③ **凭据红线**（§8.12） |
-| **告警档（DEC-13 四处，放行但必须可见）** | ① 喂令字面量未登记表且本步未声明收窗（不收窗只等超时，DEC-4）；② `when` 未覆盖合并槽集内同 kind 槽（点名补全；直达形态 = 全覆盖不告警）；③ **运行期**：timeout 收束时附未覆盖 fail 槽名注记；④ 同形态合并引入带 flags 的表条目而本步未声明 flags（锚定判据失活风险）。`registry.save` 返回 `{record, warnings}`，工具面透出 ⚠ 行；`list`/`get` 视图同样携带复核告警 |
+| **保存门（三门，确定性校验即生效）** | ① **zod schema 校验**（含**语义条目名跨槽位禁重名**拒存）② **`checkFlow` 结构门**（`goto` 目标存在 / `success` 的 `ok: true`；**保留字语义条目名 `ok`/`fail` 拒用**（kind 寻址键防撞名，DP 裁定 7）；**kind 一致性**：when 键引用的语义条目 kind 不符即拒（不跨键位查找，静态可判的都判）；捕获配对：组数只对 `captureFrom` 槽 `patterns[0]` 计、捕获组只许出现在该处；**when/captureFrom 引用 ⊆ 合并语义条目集**（本步 `outcomes` ∪ 喂令表语义条目，经 `tableSlotsOf` 端口注入——字面量喂令已登记而缺席 ⇒ 拒存（死引用），**动态命令/未登记 ⇒ 保存期只校验静态可判的 kind 一致性，查表校验后移运行期 fail-loud**，DP 裁定 4 分档））③ **凭据红线**（§8.12） |
+| **告警档（DEC-13 四处，放行但必须可见）** | ① 喂令字面量未登记表且本步未声明收窗（不收窗只等超时，DEC-4）；② `when` 未覆盖合并语义条目集内同 kind 语义条目（点名补全；直达形态 = 全覆盖不告警）；③ **运行期**：timeout 收束时附未覆盖 fail 槽位语义条目名注记；④ 同形态合并引入带 flags 的表条目而本步未声明 flags（锚定判据失活风险）。`registry.save` 返回 `{record, warnings}`，工具面透出 ⚠ 行；`list`/`get` 视图同样携带复核告警 |
 | **存储** | 独立域 `mud_workflow`（**两张表**：`workflows` 生效记录 + `snapshots` 变更账本）；域不可用 ⇒ 降级内存并告警（记录与账本同在内存降级层），**内存先行、域挂上后迁入**（§14.3） |
 | **迁入取新（T16）** | 迁入前逐条比对域内既有 `version`：**域内更高 ⇒ 不改域**（取新），把内存期记录**归档**为 `migration` 快照并 `warn` 点名——修复"内存先行窗口期的 save 静默把域内高版本覆盖成低版本"；迁入整体失败 ⇒ **不挂域、不清内存**（内存仍是唯一真相，宿主点名告警） |
 | **变更账本（T16）** | `snapshots` 表**只追加**，键 = `` `${name}:v${version}` ``，记录 `title/flow/updatedAt/archivedAt/reason`（`save`/`delete`/`migration`）；每流程保留最近 `MAX_SNAPSHOTS_PER_FLOW`（20）个版本，超出丢最旧；`history` 按版本倒序读，`rollback(name, version)` = 取该快照的 `title`/`flow` **写一条新版本**（不原地改历史，`version` 继续单调） |
@@ -208,16 +207,16 @@ mud_walk {
 **`runFlow` 是纯函数**。每步四拍：
 
 ```
-wait（读窗，槽表） → fail 槽出口 → action（发送） → 路由（onOutcome / next）
+wait（读窗，判据表） → fail 槽位出口 → action（发送） → 路由（onOutcome / next）
 ```
 
 | 语义 | 规则 |
 |---|---|
 | **动作在路由前执行** | 步骤的应答**总发**；"条件发送"必须写成**独立步骤** |
 | **`initial` 快照** | 等待前取 `pendingLines` **尾部快照**做 `initial`（提示符**先到先结算**） |
-| **判据匹配单点（T15/T26.6）** | 判据匹配**只在 core3 读窗机发生一次**，结果以**命中帧** `hit`（`by` = `closeOn` 三值 + `maxLines` 四值 + `index`（槽内 pattern 下标）+ 首个命中的 `groups` + `outcome`（槽名）+ `kind`（ok/fail））随读结果返回（§5.2）；解释器**不重测也不编译**——判据以 raw 声明透传（DEC-21 单点），分类（`onOutcome` 槽名）、捕获（`captureFrom` 槽的 `groups`）与路由都消费同一帧，三者与收窗在物理上不可能不一致。**判定序 = fail 槽先于 ok 槽**（同帧 fail 收束防误判） |
-| **路由分流（T26.6 两级）** | **fail 未覆盖** ⇒ **结构化 timeout 出口**（附未覆盖槽名注记，不静默走正常路径）；**ok 未覆盖 / 无命中（ga 关窗无分类槽 / quiet 合成 ok 帧）** ⇒ 走 `next`；无 `next` 可走 ⇒ **结构化 timeout**（**点名步骤**，粗胚修缮的失败信号，**不静默**） |
-| **捕获填槽（T14/T15/T26.6）** | `captures` 声明的步（以 **`captureFrom`** 指源）：done 收束后、动作前按**命中帧**分流——① **帧命中的是 `captureFrom` 槽**：把帧里的 `groups` 按序入 **run 级命名槽**（组 1 → `captures[0]`…，组数只对该槽 `patterns[0]` 计），组缺失/空值 ⇒ **结构化 timeout 同型收束**（D11 fail-loud，不落空串进槽、不进后续 send）；② **帧命中其它槽**：该路径不需捕获 ⇒ **不捕获、不失败**，按该槽路由（分类出口可达，不吞分支）；③ **无结局命中**（ga 关窗无分类槽等非判据收窗）⇒ 同型 timeout（点名「本窗无「X」结局命中」）。fail 槽收束**不捕获**；解释器本层**不做任何正则匹配**（组值由读窗机 `exec` 单次调用取得，§5.2） |
+| **判据匹配单点（T15/T26.6）** | 判据匹配**只在 core3 读窗机发生一次**，结果以**命中帧** `hit`（`by` = `closeOn` 三值 + `maxLines` 四值 + `index`（条目内 pattern 下标）+ 首个命中的 `groups` + `outcome`（语义条目名）+ `kind`（ok/fail））随读结果返回（§5.2）；解释器**不重测也不编译**——判据以 raw 声明透传（DEC-21 单点），分类（`onOutcome` 语义条目名）、捕获（`captureFrom` 槽的 `groups`）与路由都消费同一帧，三者与收窗在物理上不可能不一致。**判定序 = fail 槽位先于 ok 槽位**（同帧 fail 收束防误判） |
+| **路由分流（T26.6 两级）** | **fail 未覆盖** ⇒ **结构化 timeout 出口**（附未覆盖语义条目名注记，不静默走正常路径）；**ok 未覆盖 / 无命中（ga 关窗无分类语义条目 / quiet 合成 ok 帧）** ⇒ 走 `next`；无 `next` 可走 ⇒ **结构化 timeout**（**点名步骤**，粗胚修缮的失败信号，**不静默**） |
+| **捕获填槽（T14/T15/T26.6）** | `captures` 声明的步（以 **`captureFrom`** 指源）：done 收束后、动作前按**命中帧**分流——① **帧命中的是 `captureFrom` 槽**：把帧里的 `groups` 按序入 **run 级命名槽**（组 1 → `captures[0]`…，组数只对该槽 `patterns[0]` 计），组缺失/空值 ⇒ **结构化 timeout 同型收束**（D11 fail-loud，不落空串进槽、不进后续 send）；② **帧命中其它槽**：该路径不需捕获 ⇒ **不捕获、不失败**，按该槽路由（分类出口可达，不吞分支）；③ **无结局命中**（ga 关窗无分类语义条目等非判据收窗）⇒ 同型 timeout（点名「本窗无「X」结局命中」）。fail 槽位收束**不捕获**；解释器本层**不做任何正则匹配**（组值由读窗机 `exec` 单次调用取得，§5.2） |
 | **槽替换四源（T14）** | 次序固定：`{captcha}` → **命名槽表** → `{name}` / `{pass}`；`sendCredential` 与 captcha 动作参数走全四源，**`send` 侧不碰 `{name}`/`{pass}`**；未知 `{xxx}` **原样保留**；保留名 `captcha`/`name`/`pass` 三类存储结构性分立（不靠运行期判名防撞） |
 | **槽生命周期（T14）** | run 级，两种复用情形显式分立：**重经捕获步 = 重捕获覆盖**（战斗动态词）；**未重经 = 沿用上值**（goto 跳过捕获步不清槽——fullme 答错重入 `judge → goto answer` 的正确性前提，§8.17） |
 | **步转移上限 256** | 防 `goto` 环 |
@@ -255,7 +254,7 @@ wait（读窗，槽表） → fail 槽出口 → action（发送） → 路由�
          无第二执行体发送，该推断结构上成立）
        · read 收 **raw 判据声明**（DEC-21：与流程 wait / 工具 listen 同一语法——
          内核不持正则），表条目合并与正则编译在本闭包单点完成
-         （`resolveAwaitPlan` 形态比对：未声明 ⇒ 整条采用；同形态 ⇒ 槽级合并；
+         （`resolveAwaitPlan` 形态比对：未声明 ⇒ 整条采用；同形态 ⇒ 语义条目级合并；
          异形态 ⇒ 整体替换；都无 ⇒ **不收窗只等超时**，DEC-4/5）
        · 读结果带**归因字段**：`closeOn`（生效收窗形态）/ `command`（命中的表
          条目 id）/ `source`（`'table'` \| `'declared'` \| `'empty'` \| `'none'`）
@@ -271,21 +270,21 @@ wait（读窗，槽表） → fail 槽出口 → action（发送） → 路由�
 
 声明文件：**[flows/login.md](../flows/login.md)**（本节只写语义要点与勘误）。
 
-**步表（7 步 + `success` 出口；步预算 30s，终态兜底 5s；T26 已改写为具名槽——`closeOn: 'criteria'` + `outcomes` + `onOutcome`，flags `m`；权威表见 [flows/login.md](../flows/login.md)）**
+**步表（7 步 + `success` 出口；步预算 30s，终态兜底 5s；T26 已改写为具名语义条目——`closeOn: 'criteria'` + `outcomes` + `onOutcome`，flags `m`；权威表见 [flows/login.md](../flows/login.md)）**
 
 | # | 步 | 读窗 `outcomes` | 动作 `action` | 路由 |
 |---|---|---|---|---|
 | 1 | `prompt-name` | `名字提示`(ok)：名字提示（两形态） | `sendCredential: '{name}'` | `next → prompt-pass` |
-| 2 | `prompt-pass` | `需建新人物`(fail)：用户名不存在/非法；`密码提示`(ok)：密码提示 | `sendCredential: '{pass}'` | `onOutcome.fail` **直达** `exit(need-new, ok:false)`（粗粒度常态——唯一 fail 槽零槽名）；`密码提示`（ok 未覆盖）→ `next → confirm` |
+| 2 | `prompt-pass` | `需建新人物`(fail)：用户名不存在/非法；`密码提示`(ok)：密码提示 | `sendCredential: '{pass}'` | `onOutcome.fail` **直达** `exit(need-new, ok:false)`（粗粒度常态——唯一 fail 槽位零语义条目名）；`密码提示`（ok 未覆盖）→ `next → confirm` |
 | 3 | `confirm` | `密码错误`(fail)：密码错误类；`需替换`(ok)：替换提示；`登录成功`(ok)：成功句 | **无动作**（接收 `{pass}` 应答的那一窗） | `onOutcome.fail` **直达** `exit(bad-pass, ok:false)`；`onOutcome.ok.when 需替换 → replace`（细化）；`登录成功`（ok 未覆盖）→ `next → send-empty` |
 | 4 | `replace` | — | `send: 'y'` | `next → wait-success` |
 | 5 | `wait-success` | `登录成功`(ok)：成功句 | — | `next → send-empty` |
 | 6 | `send-empty` | — | `sendCredential: ''`（空命令） | `next → wait-ga` |
-| 7 | `wait-ga` | `closeOn: 'ga'`（gaCount 缺省 1 不必写；**未声明分类槽**——关窗即 next，5s 兜底） | — | `next → exit(success, ok:true)` |
+| 7 | `wait-ga` | `closeOn: 'ga'`（gaCount 缺省 1 不必写；**未声明分类语义条目**——关窗即 next，5s 兜底） | — | `next → exit(success, ok:true)` |
 
 **两条实测勘误（E2E 确证，已采纳）**
 
-1. **fail 槽归窗**：失败分类是**被应答的那一窗**的事——「需要创建新人物」是 `{name}` 的应答（挂 `prompt-pass`），「密码错误」是 `{pass}` 的应答（挂 `confirm`）。**反例**：把「密码错误」挂在发送前等 driver 的窗，那一窗在密码发出前就已关闭，**永远赶不到**。
+1. **fail 槽位归窗**：失败分类是**被应答的那一窗**的事——「需要创建新人物」是 `{name}` 的应答（挂 `prompt-pass`），「密码错误」是 `{pass}` 的应答（挂 `confirm`）。**反例**：把「密码错误」挂在发送前等 driver 的窗，那一窗在密码发出前就已关闭，**永远赶不到**。
 2. **「欢迎来到」不可用作成功句**：与建连横幅「欢迎来到北大侠客行」**撞车**（登录前即到达会误判成功）；成功句以「**目前权限：(player)**」「**重新连线完毕**」为准。
 
 **边界**
@@ -323,6 +322,6 @@ wait（读窗，槽表） → fail 槽出口 → action（发送） → 路由�
 
 **webui 呈现（§9.7）**：全局弹窗独立订阅 `watchCaptcha`（与画面 tab 无关）；DSH 标准弹窗 = 图片 / 提示行（来源账号名）+ 刷新图标（本轮已用置灰）/ 输入框 / 中止 + 提交；收束（提交/中止/断线/销毁/超时）服务端推清除帧关窗；提交/中止后本地不清窗——答错重入服务端重推帧（缓存图重现，刷新可再点 1 次）；多会话并发（罕见）按最新帧呈现，未呈现的照常等 + 超时兜底。
 
-**fullme 实体（locked；声明文件 [flows/fullme.md](../flows/fullme.md)；T26.6 已改写为两级路由词汇）**：主链四段 `request`（发 `fullme`）→ `urlwait`（等 robot.php URL，**outcomes**：`验证码地址`(ok) = URL 行 + `captureFrom: '验证码地址'` + `captures: ['captchaUrl']`——组 1 入槽，捕获源具名化、组数只对该槽 `patterns[0]` 计；仅首轮锚定，答错重入跳过本步沿槽上值；`已挂起`(fail) = stale 句 / `冷却中`(fail) = 冷却句，**两 fail 分支不同 ⇒ `onOutcome.fail.when` 细化**；URL 行未出现 ⇒ 本步结构化 timeout，报错点前移）→ `answer`（captcha 动作，url = `{captchaUrl}`）→ `send-code`（发 `fullme {captcha}`）→ `judge`（**outcomes**：`答对`(ok) → `onOutcome.ok` 直达 success；`答错`(**fail**——信号视角改判 T26.6/DEC-19：被拒是 fail，重入用 when 表达) → `onOutcome.fail.when 答错 → goto answer` 重入，不重发引子——服务端每次 fullme 只回一次 URL；`失效`(fail) → when 失效 → expired）。**stale 自愈环**：urlwait `已挂起` 槽命中 → `abandon1/2/3` 三连 `fullme 1` 放弃悬挂态 → **结构化 fail 收束不重试**（服务端事实：放弃后约 15 分钟冷却，立即重试必再 stale）。answer 后必跟 judge 收束窗——fullme 应答被窗口消费（readAbs 推进）不进投递（答案行不上浮 agent）。判据语料 v1 实录起步（附录 A 同源七常量），实机触发时校准。
+**fullme 实体（locked；声明文件 [flows/fullme.md](../flows/fullme.md)；T26.6 已改写为两级路由词汇）**：主链四段 `request`（发 `fullme`）→ `urlwait`（等 robot.php URL，**outcomes**：`验证码地址`(ok) = URL 行 + `captureFrom: '验证码地址'` + `captures: ['captchaUrl']`——组 1 入槽，捕获源具名化、组数只对该槽 `patterns[0]` 计；仅首轮锚定，答错重入跳过本步沿槽上值；`已挂起`(fail) = stale 句 / `冷却中`(fail) = 冷却句，**两 fail 分支不同 ⇒ `onOutcome.fail.when` 细化**；URL 行未出现 ⇒ 本步结构化 timeout，报错点前移）→ `answer`（captcha 动作，url = `{captchaUrl}`）→ `send-code`（发 `fullme {captcha}`）→ `judge`（**outcomes**：`答对`(ok) → `onOutcome.ok` 直达 success；`答错`(**fail**——信号视角改判 T26.6/DEC-19：被拒是 fail，重入用 when 表达) → `onOutcome.fail.when 答错 → goto answer` 重入，不重发引子——服务端每次 fullme 只回一次 URL；`失效`(fail) → when 失效 → expired）。**stale 自愈环**：urlwait `已挂起` 语义条目命中 → `abandon1/2/3` 三连 `fullme 1` 放弃悬挂态 → **结构化 fail 收束不重试**（服务端事实：放弃后约 15 分钟冷却，立即重试必再 stale）。answer 后必跟 judge 收束窗——fullme 应答被窗口消费（readAbs 推进）不进投递（答案行不上浮 agent）。判据语料 v1 实录起步（附录 A 同源七常量），实机触发时校准。
 
 > AI生成

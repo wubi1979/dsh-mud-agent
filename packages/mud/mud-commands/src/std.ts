@@ -12,7 +12,7 @@ import { byBoundary, byOutcomes, defineCommand } from './define.ts'
 export const STD_COMMANDS = [
   defineCommand({
     // 睡觉（A.3：受理/完成句原句 2026-10-10 用户提供；全程时长无实测，兜底放宽待校准）。
-    // 受理被拒：刚睡过 ⇒ fail 槽立即收窗，拒绝句原文回给 agent 自决。原句尾随
+    // 受理被拒：刚睡过 ⇒ fail 语义条目立即收窗，拒绝句原文回给 agent 自决。原句尾随
     // 空格不进判据（子串匹配两侧兼容：句体命中即收，行文带不带尾随空白都能命中）。
     id: 'sleep',
     timeoutMs: 300_000,
@@ -24,8 +24,8 @@ export const STD_COMMANDS = [
   }),
   // 喝（标准命令 drink，别名 he；A.3：判据原句 2026-10-15 用户提供，茶水场景
   // 基础形态）：即时命令——应答句后即 GA（A.2 1:1），形态取 `'ga'`（GA 是主
-  // 收束，timeoutMs 纯兜底）；分类槽声明即断言：命中按槽路由，全不命中 ⇒
-  // fail「分支未知」。其余饮品行文变体待实录回填 patterns（行文变体不分槽，
+  // 收束，timeoutMs 纯兜底）；分类语义条目声明即断言：命中按语义条目路由，全不命中 ⇒
+  // fail「分支未知」。其余饮品行文变体待实录回填 patterns（行文变体不分条目，
   // DEC-7）；句尾句号不进判据（子串匹配两侧兼容，同 sleep 条目口径）。
   defineCommand({
     id: 'drink',

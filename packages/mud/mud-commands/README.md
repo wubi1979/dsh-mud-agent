@@ -10,11 +10,11 @@ MUD 命令判据总表（T28 拆包）。构建期装配（DEC-18 fail-loud）�
 
 ## 装配期自检（fail-loud，全部可经 `assembleProfiles` fixture 实证）
 
-- 保留字槽名拒用（`ok`/`fail` 是 kind 寻址键）
-- 槽名跨 kind 禁重名（ok/fail 组内唯一）
+- 保留字语义条目名拒用（`ok`/`fail` 是 kind 寻址键）
+- 语义条目名跨槽位禁重名（ok/fail 组内唯一）
 - 命令头冲突（id/aliases 不得与他条目重复）
-- 判据形态必须有 ≥1 可命中判据（criteria 无槽 = 配置错误）
-- ga 形态 `gaCount` 必须为正整数；登记槽 patterns 非空
+- 判据形态必须有 ≥1 可命中判据（criteria 无语义条目 = 配置错误）
+- ga 形态 `gaCount` 必须为正整数；登记语义条目 patterns 非空
 
 ## 依赖
 

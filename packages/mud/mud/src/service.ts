@@ -603,7 +603,7 @@ export class MudService {
     // T26.6（§3.6 + DEC-21 判据词汇单点）：send/sendCredential 记 `lastSent`
     //（凭据置 null——凭据命令不走表，DEC-8）；read 收** raw 判据声明**，
     // 表条目合并与正则编译在本闭包单点完成（resolveAwaitPlan 形态比对：
-    // 未声明 ⇒ 整条采用；同形态 ⇒ 槽级合并；异形态 ⇒ 整体替换；都无 ⇒ 不
+    // 未声明 ⇒ 整条采用；同形态 ⇒ 语义条目级合并；异形态 ⇒ 整体替换；都无 ⇒ 不
     // 收窗只等超时，DEC-4/DEC-5），结果带归因（closeOn/command/source）。
     // 会话级持有者独占（§8.6）⇒ 窗口内无第二执行体发送，lastSent 推断在结构
     // 上成立。timeoutMs 兜底链：步声明 > 表条目 > FLOW_SEAM_TIMEOUT_MS；

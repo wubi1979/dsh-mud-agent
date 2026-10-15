@@ -1,10 +1,10 @@
 /**
  * mud-commands 装配单测（T28.2 新增，PLAN 第 4 章 T28.2 行断言）：
  * ① 解析单点 resolveAwaitPlan 四档（DEC-21：declared > table > empty > none）；
- * ② 装配期 fail-loud 自检（保留字拒用 / 槽名跨 kind 禁重名 / 命令头冲突 /
+ * ② 装配期 fail-loud 自检（保留字拒用 / 语义条目名跨槽位禁重名 / 命令头冲突 /
  *    criteria 无判据 / gaCount 非法 / 空 patterns）——经 assembleProfiles 受控
  *    fixture 实证（错误路径在生产五分组上不可达）；
- * ③ 生产装配 sanity（总表非空 + 判定序 fail 槽在前 + 匹配/exempt 面）。
+ * ③ 生产装配 sanity（总表非空 + 判定序 fail 槽位在前 + 匹配/exempt 面）。
  *
  * 工具面行为（listen 透传、schema 组合自由度）不在此测——留 tool-mud（tools.spec）。
  */
@@ -44,7 +44,7 @@ describe('resolveAwaitPlan 解析单点（DEC-21）', () => {
     expect(resolveAwaitPlan('   ')).toMatchObject({ source: 'empty', closeOn: 'ga' })
   })
 
-  it('table 档：命中条目整条采用；fail 槽排前（判定序）+ 条目法定 timeout', () => {
+  it('table 档：命中条目整条采用；fail 槽位排前（判定序）+ 条目法定 timeout', () => {
     const plan = resolveAwaitPlan('sleep')
     expect(plan.source).toBe('table')
     expect(plan.command).toBe('sleep')
@@ -53,7 +53,7 @@ describe('resolveAwaitPlan 解析单点（DEC-21）', () => {
     expect(plan.slots?.map(s => `${s.kind}:${s.name}`)).toEqual(['fail:刚睡过', 'ok:完成'])
   })
 
-  it('table 档 ga 形态：drink 条目整条采用（即时完成类首例，别名 he 命中，分类槽 fail 排前）', () => {
+  it('table 档 ga 形态：drink 条目整条采用（即时完成类首例，别名 he 命中，分类语义条目 fail 排前）', () => {
     const plan = resolveAwaitPlan('he cha') // 别名命中
     expect(plan.source).toBe('table')
     expect(plan.command).toBe('drink')
@@ -62,7 +62,7 @@ describe('resolveAwaitPlan 解析单点（DEC-21）', () => {
     expect(plan.slots?.map(s => `${s.kind}:${s.name}`)).toEqual(['fail:喝饱', 'ok:喝下'])
   })
 
-  it('table 档同形态合并：同名槽后声明替换、异名追加（裁定 6，合并按调用点 flags）', () => {
+  it('table 档同形态合并：同名语义条目后声明替换、异名追加（裁定 6，合并按调用点 flags）', () => {
     const plan = resolveAwaitPlan('sleep', {
       closeOn: 'criteria',
       outcomes: { ok: { 完成: { patterns: ['自定义完成句'] }, 追加: { patterns: ['追加句'] } } },
@@ -81,7 +81,7 @@ describe('resolveAwaitPlan 解析单点（DEC-21）', () => {
     expect(plan.source).toBe('declared')
     expect(plan.closeOn).toBe('ga')
     expect(plan.gaCount).toBe(2)
-    expect(plan.slots).toEqual([]) // 声明即全部配方（ga 无槽）
+    expect(plan.slots).toEqual([]) // 声明即全部配方（ga 无语义条目）
     expect(plan.command).toBe('sleep') // 归因：命中但被整体替换
   })
 
@@ -104,7 +104,7 @@ describe('resolveAwaitPlan 解析单点（DEC-21）', () => {
 // ── ② 装配期 fail-loud 自检（assembleProfiles 受控 fixture）─────────────
 
 describe('装配期自检（DEC-18 fail-loud）', () => {
-  it('保留字槽名拒用（ok/fail 是 kind 寻址键）', () => {
+  it('保留字语义条目名拒用（ok/fail 是 kind 寻址键）', () => {
     expect(() =>
       assembleProfiles([profile('a', { resolve: byOutcomes({ ok: { ok: { patterns: ['x'] } } }) })]),
     ).toThrow(/保留字/)
@@ -113,7 +113,7 @@ describe('装配期自检（DEC-18 fail-loud）', () => {
     ).toThrow(/保留字/)
   })
 
-  it('槽名跨 kind 禁重名（ok/fail 组内唯一）', () => {
+  it('语义条目名跨槽位禁重名（ok/fail 组内唯一）', () => {
     expect(() =>
       assembleProfiles([profile('a', {
         resolve: byOutcomes({
@@ -121,7 +121,7 @@ describe('装配期自检（DEC-18 fail-loud）', () => {
           fail: { 冲突: { patterns: ['y'] } },
         }),
       })]),
-    ).toThrow(/跨 kind 重名/)
+    ).toThrow(/跨槽位重名/)
   })
 
   it('命令头冲突：id/aliases 不得与他条目重复', () => {
@@ -129,8 +129,8 @@ describe('装配期自检（DEC-18 fail-loud）', () => {
     expect(() => assembleProfiles([profile('d'), { ...profile('x'), aliases: ['d'] }])).toThrow(/命令头冲突/)
   })
 
-  it('criteria 形态没有任何判据槽 = 配置错误', () => {
-    expect(() => assembleProfiles([profile('a', { resolve: byOutcomes({}) })])).toThrow(/没有任何判据槽/)
+  it('criteria 形态没有任何判据语义条目 = 配置错误', () => {
+    expect(() => assembleProfiles([profile('a', { resolve: byOutcomes({}) })])).toThrow(/没有任何判据语义条目/)
   })
 
   it('ga 形态 gaCount 必须为正整数', () => {
@@ -142,13 +142,13 @@ describe('装配期自检（DEC-18 fail-loud）', () => {
     ).toThrow(/gaCount/)
   })
 
-  it('登记槽 patterns 为空 = 配置错误（空槽永不命中）', () => {
+  it('登记语义条目 patterns 为空 = 配置错误（空语义条目永不命中）', () => {
     expect(() =>
       assembleProfiles([profile('a', { resolve: byOutcomes({ ok: { 空: { patterns: [] } } }) })]),
     ).toThrow(/patterns 为空/)
   })
 
-  it('quiet 形态无槽合法（窗长即条目 timeoutMs）', () => {
+  it('quiet 形态无语义条目合法（窗长即条目 timeoutMs）', () => {
     const out = assembleProfiles([profile('q', { resolve: { closeOn: 'quiet' } })])
     expect(out[0]?.judge).toEqual({ closeOn: 'quiet', slots: [] })
   })
@@ -157,7 +157,7 @@ describe('装配期自检（DEC-18 fail-loud）', () => {
 // ── ③ 生产装配 sanity + 匹配面 ──────────────────────────────────────────
 
 describe('生产总表与匹配面', () => {
-  it('总表非空且每条目判定序 fail 槽在前', () => {
+  it('总表非空且每条目判定序 fail 槽位在前', () => {
     expect(COMMAND_PROFILES.length).toBeGreaterThanOrEqual(3)
     for (const p of COMMAND_PROFILES) {
       const kinds = p.judge.slots.map(s => s.kind)

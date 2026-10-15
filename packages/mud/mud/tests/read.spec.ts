@@ -1,17 +1,17 @@
 /**
  * read 测试 — ReadMachine 判定序/异步收束/失配记错/swallow + runtime 集成（水位线）。
  *
- * T26.6 终态词汇（DEC-3/7/19/21/23）：closeOn 三形态（ga/criteria/quiet）+ 槽表
- *（fail 槽在前 = 判定序）+ gaCount（ga 等第 N 个）+ maxLines（各形态通用兜底）。
+ * T26.6 终态词汇（DEC-3/7/19/21/23）：closeOn 三形态（ga/criteria/quiet）+ 语义条目集
+ *（fail 槽位在前 = 判定序）+ gaCount（ga 等第 N 个）+ maxLines（各形态通用兜底）。
  * until/failOn/race/quietMs（命令判据面）/静默计时器/推定槽已退役（旧 `gaCount`
  * 缺省兜底档同退役——现 gaCount 仅指 ga 形态显式计数）；
  * quietMs 仅裸读（closeOn 缺省）保留。
  *
  * 语义要点（§3.2）：
- *   - criteria：fail 槽 > ok 槽（槽内 pattern 序）；GA 不武装；失配（timeout/
+ *   - criteria：fail 槽位 > ok 槽位（条目内 pattern 序）；GA 不武装；失配（timeout/
  *     maxLines 收场）记 error；
- *   - ga：GA/EOR 计数关窗（gaCount ?? 1）；声明分类槽而无一命中 ⇒ 断言失败
- *     合成 fail 帧（by:'ga' 无 outcome——「收窗成功，分支未知」）；未声明分类槽
+ *   - ga：GA/EOR 计数关窗（gaCount ?? 1）；声明分类语义条目而无一命中 ⇒ 断言失败
+ *     合成 fail 帧（by:'ga' 无 outcome——「收窗成功，分支未知」）；未声明分类语义条目
  *     ⇒ 无帧（关窗即 next）；ga 关窗不算失配；
  *   - quiet：固定采样窗——唯一计时器 timeoutMs，行只累积不重置；到点按行数
  *     合成帧（有行 ⇒ ok reason:'quiet'；零行 ⇒ fail reason:'timeout'）；
@@ -60,7 +60,7 @@ async function startServer(onData: (data: string, socket: net.Socket) => void): 
 // ── ReadMachine 单测 ──────────────────────────────────────────
 
 describe('ReadMachine 判定次序', () => {
-  it('criteria：fail 槽先于 ok 槽（同帧两槽命中 → fail 收束）', async () => {
+  it('criteria：fail 槽位先于 ok 槽位（同帧两条语义条目命中 → fail 收束）', async () => {
     const m = new ReadMachine()
     const p = m.start({
       closeOn: 'criteria',
@@ -125,7 +125,7 @@ describe('ReadMachine 判定次序', () => {
 })
 
 describe('ReadMachine closeOn 分档（T26.6，§3.2）', () => {
-  it("'criteria'：受理帧 GA 不关窗，完成句槽命中收窗并给结局帧（outcome/kind）", async () => {
+  it("'criteria'：受理帧 GA 不关窗，完成句语义条目命中收窗并给结局帧（outcome/kind）", async () => {
     const m = new ReadMachine()
     const p = m.start({
       closeOn: 'criteria',
@@ -144,7 +144,7 @@ describe('ReadMachine closeOn 分档（T26.6，§3.2）', () => {
     expect(r.hit).toEqual({ by: 'criteria', index: 0, groups: [], outcome: '完成', kind: 'ok' })
   })
 
-  it("'criteria'：fail 槽先于 ok 槽（声明序无关，fail 槽摊平进判定序）", async () => {
+  it("'criteria'：fail 槽位先于 ok 槽位（声明序无关，fail 槽位摊平进判定序）", async () => {
     const m = new ReadMachine()
     const p = m.start({
       closeOn: 'criteria',
@@ -154,7 +154,7 @@ describe('ReadMachine closeOn 分档（T26.6，§3.2）', () => {
       ],
       timeoutMs: 500,
     })
-    m.onLine(line('气太少且完成')) // 两槽同帧命中
+    m.onLine(line('气太少且完成')) // 两条语义条目同帧命中
     const r = await p
     expect(r.reason).toBe('done')
     expect(r.hit).toEqual({ by: 'criteria', index: 0, groups: [], outcome: '内息不足', kind: 'fail' })
@@ -193,10 +193,10 @@ describe('ReadMachine closeOn 分档（T26.6，§3.2）', () => {
     const r = await p
     expect(r.reason).toBe('done')
     expect(r.hit).toEqual({ by: 'ga', index: 0, groups: [], outcome: '完成', kind: 'ok' })
-    expect(errors).toHaveLength(0) // 'ga' 槽仅分类：无判据失配可言
+    expect(errors).toHaveLength(0) // 'ga' 语义条目仅分类：无判据失配可言
   })
 
-  it("'ga'：声明分类槽而无一命中 ⇒ 断言失败合成帧（by 'ga' 无 outcome，kind fail）", async () => {
+  it("'ga'：声明分类语义条目而无一命中 ⇒ 断言失败合成帧（by 'ga' 无 outcome，kind fail）", async () => {
     const m = new ReadMachine()
     const p = m.start({
       closeOn: 'ga',
@@ -210,7 +210,7 @@ describe('ReadMachine closeOn 分档（T26.6，§3.2）', () => {
     expect(r.hit).toEqual({ by: 'ga', index: -1, groups: [], kind: 'fail' })
   })
 
-  it("'ga'：未声明分类槽 → 关窗无帧（关窗即 next）", async () => {
+  it("'ga'：未声明分类语义条目 → 关窗无帧（关窗即 next）", async () => {
     const m = new ReadMachine()
     const p = m.start({ closeOn: 'ga', timeoutMs: 500 })
     m.onLine(line('普通应答'))
@@ -259,7 +259,7 @@ describe('ReadMachine closeOn 分档（T26.6，§3.2）', () => {
 })
 
 describe('ReadMachine 命中帧（T15：命中判据 + 捕获组由读窗机返回）', () => {
-  it('① 槽内 pattern 声明序定位命中下标（槽内第 2 条命中 ⇒ index 1）', async () => {
+  it('① 条目内 pattern 声明序定位命中下标（条目内第 2 条命中 ⇒ index 1）', async () => {
     const m = new ReadMachine()
     const p = m.start({
       closeOn: 'criteria',
@@ -273,7 +273,7 @@ describe('ReadMachine 命中帧（T15：命中判据 + 捕获组由读窗机返�
     expect(r.hit).toMatchObject({ by: 'criteria', outcome: '标记', kind: 'ok', index: 1, groups: [] })
   })
 
-  it('② fail 槽命中 ⇒ by=criteria + 槽内正确下标', async () => {
+  it('② fail 语义条目命中 ⇒ by=criteria + 条目内正确下标', async () => {
     const m = new ReadMachine()
     const p = m.start({
       closeOn: 'criteria',
@@ -286,7 +286,7 @@ describe('ReadMachine 命中帧（T15：命中判据 + 捕获组由读窗机返�
     expect(r.hit).toMatchObject({ by: 'criteria', kind: 'fail', outcome: '失败', index: 1 })
   })
 
-  it('③ ga 关窗无分类槽 ⇒ hit 为 undefined（关窗即 next，供 D11 判空）', async () => {
+  it('③ ga 关窗无分类语义条目 ⇒ hit 为 undefined（关窗即 next，供 D11 判空）', async () => {
     const m = new ReadMachine()
     const p = m.start({ closeOn: 'ga', timeoutMs: 2000 })
     m.onLine(line('普通行'))

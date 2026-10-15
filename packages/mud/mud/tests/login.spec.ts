@@ -98,10 +98,10 @@ function makeIO(rt: SessionRuntime): WorkflowIO {
     send: cmd => rt.send(cmd),
     sendCredential: cmd => rt.sendCredential(cmd),
     // raw 判据声明 → ReadSlot 编译（镜像 service.workflowIoFor read 缝的单点转换；
-    // 契约 IoReadOpts 是 raw 判据，ReadMachine 只认编译槽——转换属于缝的职责，
-    // fail 槽排前 = 判定序，flags 随行）。
+    // 契约 IoReadOpts 是 raw 判据，ReadMachine 只认编译后的语义条目集——转换属于缝的职责，
+    // fail 槽位排前 = 判定序，flags 随行）。
     read: (opts, initial) => {
-      // 槽表展平（kind 在前）：fail 组排前 = 判定序，flags 随行。
+      // 语义条目集展平（kind 在前）：fail 组排前 = 判定序，flags 随行。
       const slots = opts.outcomes === undefined
         ? undefined
         : [

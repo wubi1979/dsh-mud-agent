@@ -165,7 +165,7 @@ note: 横切面：安全 · 观测 · 错误与降级
 | 场景 | 结构 |
 |---|---|
 | 流程等待收束（`timeout`/`signal`/`disconnected`/`danger`、criteria 判据失配） | 一律走 **timeout 出口**，语义 = 放弃等待，**现场行随结果返回**；**无 `next` 且路由未命中 ⇒ 点名步骤**（§8.13） |
-| 流程 fail 槽命中 | 按 `onOutcome.fail` 两级路由（kind 直达 / `when` 按槽名细化，DEC-19）返回**分类出口**（如 `need-new` / `bad-pass`）；未覆盖 ⇒ timeout 出口 + 未覆盖槽名注记 |
+| 流程 fail 槽位命中 | 按 `onOutcome.fail` 两级路由（kind 直达 / `when` 按语义条目名细化，DEC-19）返回**分类出口**（如 `need-new` / `bad-pass`）；未覆盖 ⇒ timeout 出口 + 未覆盖语义条目名注记 |
 | 子 agent 失败 | **立即停止**，收尾文本写明现场（已完成 / 未完成 / 卡在哪），作为 `subagent` 工具结果（`isError`）回到根（§7.6） |
 | 子级预算 | **本版无子级预算机制**（后置，§17.3）；子自身的超时以收尾文本随工具结果返回 |
 

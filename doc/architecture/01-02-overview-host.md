@@ -180,6 +180,7 @@ note: 全局视图 + 宿主底座；任何任务必读本文（§1 分层模型�
 | **`SessionLog`** | 内存环（缺省 2000）+ 按天 JSONL | 运行/网络/投递/闸门事件（原始行只落盘） | 诊断唯一真相（§13.1） | 随会话销毁；`removeAccount` 清本人文件 |
 | **`GameScreen`** | `@xterm/headless` 无头屏 | 游戏行与 send 回显 | 画面唯一真相（§5.3） | 跨重连保留；**插件重启即清** |
 | **工作流注册表** | 宿主 storage 域 `mud_workflow`（表 `workflows`） | 流程定义（locked / agent 修缮） | 流程定义唯一真相（§8.11） | 持久；域不可用降级内存 |
+| **行走知识图** | 项目内文件 `<cwd>/data/nav-graph.json`（§15.2） | 路径表边 + `walk -c` 方向路径 | 行走知识唯一真相（§15.2） | 持久（项目内累积资产）；`rosterStorage:false` 强制内存（重启丢图） |
 | **agent 句柄表** | `index.ts` 内存 `agentMap` | `sessionId → live agent` | 投递出口 | `agent/disposed` 移除 |
 
 ## 1.8 端到端数据流
@@ -191,7 +192,7 @@ TCP 字节 → link/telnet（协商 / GMCP 子协商 / GA·EOR 边界）
         → link/line（ANSI 解析 → 行化 → MudLine{text, abs}，abs 单调递增）
         → SessionRuntime.pendingLines（环形入队，断线清空）+ 边界事件
         → 消费者（§5）：
-             ① ReadMachine：read 在途则 acc + 判定（fail 槽 > ok 槽 > GA 计数 > maxLines）
+             ① ReadMachine：read 在途则 acc + 判定（fail 槽位 > ok 槽位 > GA 计数 > maxLines）
              ② Deliverer：按 seen 拉取 → 静默窗口聚合 → 用户消息投递进本会话
              ③ GameScreen：写入无头屏（供画面 tab follow）
              ④ World：GMCP / 状态写入（不消费行、不推进水位）

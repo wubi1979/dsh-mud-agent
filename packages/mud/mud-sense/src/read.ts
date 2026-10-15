@@ -7,11 +7,11 @@
  * machine.onLine → ③投递（水位线拉取）。
  *
  * **三形态（T26.6 终态，DEC-3；race/静默计时器 2026-10-12 退役）**：
- *   - `'criteria'`：槽收窗（判定序 **fail 槽 > ok 槽**，同帧 fail 收束防误判），
+ *   - `'criteria'`：语义条目收窗（判定序 **fail 槽位 > ok 槽位**，同帧 fail 收束防误判），
  *     GA 不武装（受理帧 GA 正是要忽略的）；判据失配（timeout/maxLines 收场）记 error；
- *   - `'ga'`：GA/EOR 计数收窗（`gaCount ?? 1`，可等第 N 个）；**分类槽可选——
+ *   - `'ga'`：GA/EOR 计数收窗（`gaCount ?? 1`，可等第 N 个）；**分类语义条目可选——
  *     声明即断言**：关窗时扫窗分类，无一命中 ⇒ 合成 fail 帧（`by:'ga'` 无
- *     outcome——「收窗成功，分支未知」，DP 裁定 8）；未声明分类槽 ⇒ 无帧；
+ *     outcome——「收窗成功，分支未知」，DP 裁定 8）；未声明分类语义条目 ⇒ 无帧；
  *   - `'quiet'`：**固定采样窗**——唯一计时器 `timeoutMs`，行只累积**不重置**；
  *     到点关窗按行数合成帧：有行 ⇒ ok（`reason:'quiet'`）、零行 ⇒ fail
  *     （`reason:'timeout'`，等同 timeout）；reason 不参与路由（消费侧只看 kind）；
@@ -45,7 +45,7 @@ interface CriterionHit {
   hit: ReadHit | undefined
 }
 
-/** 结局槽（与装配器 CompiledSlot 同形——读窗机只认正则数组 + 并行名表）。 */
+/** 结局语义条目（与装配器 CompiledSlot 同形——读窗机只认正则数组 + 并行名表）。 */
 export interface ReadSlot {
   readonly name: string
   readonly kind: OutcomeKind
@@ -59,7 +59,7 @@ export interface ReadSlot {
 export interface ReadOpts {
   /** 收窗形态（T26.6 三值；缺省 = 裸读）。 */
   closeOn?: ClosureKind
-  /** 结局槽表（criteria = 收窗判据；ga = 收束分类；quiet 不用）。 */
+  /** 结局语义条目集（criteria = 收窗判据；ga = 收束分类；quiet 不用）。 */
   slots?: readonly ReadSlot[]
   /** GA/EOR 边界计数关窗（仅 ga 形态；缺省 1）。 */
   gaCount?: number
@@ -85,27 +85,27 @@ export interface ReadResult {
   hit: ReadHit | undefined
 }
 
-/** 平行名表单元：判据命中时给结局槽名与槽内 pattern 下标。 */
+/** 平行名表单元：判据命中时给结局语义条目名与条目内 pattern 下标。 */
 interface CriteriaMeta {
   readonly name: string
   readonly kind: OutcomeKind
   readonly patIdx: number
 }
 
-/** 判据派生产（start 时一次算好）：槽表 → fail/ok 两组正则数组 + 并行名表。 */
+/** 判据派生产（start 时一次算好）：语义条目集 → fail/ok 两组正则数组 + 并行名表。 */
 interface DerivedCriteria {
   readonly failRes: readonly RegExp[]
   readonly failMeta: readonly CriteriaMeta[]
   readonly okRes: readonly RegExp[]
   readonly okMeta: readonly CriteriaMeta[]
-  /** 槽表全量（ga 的收束分类用）。 */
+  /** 语义条目集全量（ga 的收束分类用）。 */
   readonly slots: readonly ReadSlot[]
 }
 
 /**
  * 判据派生（三形态分档）：
- *   - `'criteria'`：fail 槽 → failRes、ok 槽 → okRes（判定序 fail 先）；
- *   - `'ga'`：槽不参与收窗判定（收束时分类），数组为空；
+ *   - `'criteria'`：fail 槽位 → failRes、ok 槽位 → okRes（判定序 fail 先）；
+ *   - `'ga'`：语义条目不参与收窗判定（收束时分类），数组为空；
  *   - `'quiet'` / 裸读：无判据，数组为空。
  */
 function deriveCriteria(opts: ReadOpts): DerivedCriteria {
@@ -242,7 +242,7 @@ export class ReadMachine {
    * 重置 `lastIndex` —— `g`/`y` 是有状态正则（起点由 `lastIndex` 决定），跨评估
    * 不重置会让"同一判据在窗口变长后时灵时不灵"（§5.2）。
    *
-   * 命中帧（§3.3）：`by:'criteria'` + 槽名 + kind + 槽内 pattern 下标。
+   * 命中帧（§3.3）：`by:'criteria'` + 语义条目名 + kind + 条目内 pattern 下标。
    */
   private matchFirst(res: readonly RegExp[], meta: readonly CriteriaMeta[], text: string): ReadHit | null {
     for (let i = 0; i < res.length; i++) {
@@ -257,10 +257,10 @@ export class ReadMachine {
   }
 
   /**
-   * ga 关窗分类（DP 裁定 1/8）：扫窗文本（fail 槽先于 ok 槽 = 判定序，槽内按
-   * pattern 序）——命中即给结局帧；**声明了分类槽而无一命中 = 断言失败** ⇒
+   * ga 关窗分类（DP 裁定 1/8）：扫窗文本（fail 槽位先于 ok 槽位 = 判定序，条目内按
+   * pattern 序）——命中即给结局帧；**声明了分类语义条目而无一命中 = 断言失败** ⇒
    * 合成 fail 帧（`by:'ga'` 无 outcome——「收窗成功，分支未知」）；未声明
-   * 分类槽 ⇒ undefined（关窗即 next）。
+   * 分类语义条目 ⇒ undefined（关窗即 next）。
    */
   private classifyGa(state: ReadState): ReadHit | undefined {
     for (const slot of state.derived.slots) {
@@ -280,7 +280,7 @@ export class ReadMachine {
   }
 
   /**
-   * 同步判定：判定序 **fail 槽 > ok 槽（criteria）> GA 计数（ga）> maxLines**
+   * 同步判定：判定序 **fail 槽位 > ok 槽位（criteria）> GA 计数（ga）> maxLines**
    *（写死）。quiet / 裸读无同步收窗者（quiet 的窗由 timeoutTimer 关；裸读的
    * quietMs 见 armQuiet）。
    */
@@ -349,11 +349,11 @@ export class ReadMachine {
     }
     // criteria 失配记错（承 core2 纪律，T26.6 收窄至 criteria）：判据声明了却
     // 没有命中，收场者是 timeout / maxLines 剪断 —— 记 error（判据失配要吵，
-    // 语料可见）；GA 关窗（ga 形态）不算失配；fail 槽命中是命中不是失配。
+    // 语料可见）；GA 关窗（ga 形态）不算失配；fail 语义条目命中是命中不是失配。
     if (state.opts.closeOn === 'criteria'
       && (state.derived.failRes.length > 0 || state.derived.okRes.length > 0)
       && (reason === 'timeout' || source === 'maxLines')) {
-      this.onLog?.('error', `read 判据失配：criteria 槽未命中即收束（reason=${reason}）`)
+      this.onLog?.('error', `read 判据失配：criteria 语义条目未命中即收束（reason=${reason}）`)
     }
     state.resolve({ lines: state.acc, reason, hit })
   }

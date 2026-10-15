@@ -1,6 +1,6 @@
 {
   "name": "mud-nav",
-  "description": "MUD 导航特性 Provider（T28 拆包）：NavGraph 图 · route 路由解析 · blocker 硬阻断 · stamina 精力闸纯层 · NavService 有状态服务 · createJsonNavStore 落盘。全部内部依赖 + node 内建，零跨包依赖（D9 矩阵）。",
+  "description": "MUD 导航特性 Provider（T28 拆包）：NavGraph 图 · route 路由解析 · blocker 阻塞连击 · stamina 精力闸纯层 · NavService 有状态服务 · 项目内 JSON 文件持久化。内部依赖，零宿主依赖（D9 矩阵）。",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -31,9 +31,9 @@
       "types": "./lib/service.d.ts",
       "default": "./lib/service.js"
     },
-    "./json-store": {
-      "types": "./lib/json-store.d.ts",
-      "default": "./lib/json-store.js"
+    "./store": {
+      "types": "./lib/store.d.ts",
+      "default": "./lib/store.js"
     },
     "./package.json": "./package.json"
   },

@@ -17,24 +17,24 @@ note: login 流程实体声明（locked）；机制见 §8.13、执行缝见 §8
 
 ## 步表（7 步 + `success` 出口；T26.6 两级路由词汇，DEC-19）
 
-步预算 `STEP_MS = 30_000`；终态兜底 `SUCCESS_MS = 5_000`。判据按**结局槽名**挂
+步预算 `STEP_MS = 30_000`；终态兜底 `SUCCESS_MS = 5_000`。判据按**结局语义条目名**挂
 `wait.outcomes`（`closeOn: 'criteria'`），路由走两级 `onOutcome`（kind 直达常态 /
-`when` 按槽名细化，DEC-19）——fail 槽未覆盖 ⇒ 结构化 timeout、ok 槽未覆盖 ⇒ `next`
+`when` 按语义条目名细化，DEC-19）——fail 槽位未覆盖 ⇒ 结构化 timeout、ok 槽位未覆盖 ⇒ `next`
 （kind 缺省）。
 
 | # | 步 `id` | 读窗 `wait`（`closeOn: 'criteria'`，flags `m`） | 动作 `action` | 路由 |
 |---|---|---|---|---|
 | 1 | `prompt-name` | outcomes：`名字提示`(ok) = `^您的英文名字（要注册新人物请输入new。）：` | `sendCredential: '{name}'` | `next → prompt-pass` |
-| 2 | `prompt-pass` | outcomes：`需建新人物`(fail) = `^同意玩家须知并使用\S+创造一个新的人物，您确定吗\(yes\)？\|^对不起，你的英文名字只能用小写英文字母。`；`密码提示`(ok) = `^此ID档案已存在，请输入密码：` | `sendCredential: '{pass}'` | `onOutcome.fail` **直达** `exit{stage:'need-new', ok:false}`（粗粒度常态——唯一 fail 槽零槽名）；`密码提示`（ok 未覆盖）→ `next → confirm` |
+| 2 | `prompt-pass` | outcomes：`需建新人物`(fail) = `^同意玩家须知并使用\S+创造一个新的人物，您确定吗\(yes\)？\|^对不起，你的英文名字只能用小写英文字母。`；`密码提示`(ok) = `^此ID档案已存在，请输入密码：` | `sendCredential: '{pass}'` | `onOutcome.fail` **直达** `exit{stage:'need-new', ok:false}`（粗粒度常态——唯一 fail 槽位零语义条目名）；`密码提示`（ok 未覆盖）→ `next → confirm` |
 | 3 | `confirm` | outcomes：`密码错误`(fail) = `^密码错误！\|^密码不正确\|^如果帐号…`；`需替换`(ok) = `替换在线人物提示`；`登录成功`(ok) = `成功句` | **无动作**（它是接收 `{pass}` 应答的那一窗） | `onOutcome.fail` **直达** `exit{stage:'bad-pass', ok:false}`；`onOutcome.ok.when 需替换 → replace`（细化）；`登录成功`（ok 未覆盖）→ `next → send-empty` |
 | 4 | `replace` | — | `send: 'y'` | `next → wait-success` |
 | 5 | `wait-success` | outcomes：`登录成功`(ok) = `成功句` | — | `next → send-empty` |
 | 6 | `send-empty` | — | `sendCredential: ''`（**空命令**） | `next → wait-ga` |
-| 7 | `wait-ga` | `closeOn: 'ga'`（gaCount 缺省 1 不必写；**未声明分类槽**——关窗即 next；`timeoutMs = SUCCESS_MS`） | — | `next → exit{stage:'success', ok:true}` |
+| 7 | `wait-ga` | `closeOn: 'ga'`（gaCount 缺省 1 不必写；**未声明分类语义条目**——关窗即 next；`timeoutMs = SUCCESS_MS`） | — | `next → exit{stage:'success', ok:true}` |
 
-**判据常量（与实现一一对应；kind 在前、槽名在内——两表同构，§8.10；fail 组在前 = 判定序）**
+**判据常量（与实现一一对应；槽位在前、语义条目在内——两表同构，§8.10；fail 组在前 = 判定序）**
 
-| kind | 槽名 | 常量 | 值 |
+| kind | 语义条目名 | 常量 | 值 |
 |---|---|---|---|
 | fail | `需建新人物` | `NEED_NEW_SRC` | `^同意玩家须知并使用\S+创造一个新的人物，您确定吗\(yes\)？\|^对不起，你的英文名字只能用小写英文字母。`（flags `m`） |
 | fail | `密码错误` | `BAD_PASS_SRC` | `^密码错误！\|^密码不正确\|^如果帐号用register命令注册过…`（`flags: 'm'`） |
@@ -48,14 +48,14 @@ note: login 流程实体声明（locked）；机制见 §8.13、执行缝见 §8
 1. **名字与密码都走 `sendCredential`**：两条都不触发 `onSend` ⇒ 不进画面回显（§12.2 发送侧闸）。
    - 代价：登录期间画面上看不到自己发出的用户名/密码——**这是有意的**（服务器本身也不回显，附录 A.5）。
 2. **失败归窗（勘误 ①）**：失败分类是**被应答的那一窗**的事——
-   - need-new 整句挂 `prompt-pass` 的 `需建新人物` 槽：它是 `{name}` 的应答；
-   - 「密码错误」挂 `confirm` 的 `密码错误` 槽：它是 `{pass}` 的应答。
+   - need-new 整句挂 `prompt-pass` 的 `需建新人物` 语义条目：它是 `{name}` 的应答；
+   - 「密码错误」挂 `confirm` 的 `密码错误` 语义条目：它是 `{pass}` 的应答。
    - **反例**：把「密码错误」挂在 `prompt-pass`（发送前等 driver 的窗）——那一窗在密码发出前就已关闭，**永远赶不到**。
 3. **判据一律 `^` 行首锚 + `flags: 'm'`（勘误 ③，2026-10-03 实机）**：防聊天语句误触发；整窗按行 join 匹配，**无 `'m'` 时 `^` = 窗首**——提示行在横幅之后，永不命中。need-new 实机整句内嵌**动态用户名**（`使用\S+创造`），`(yes)` 括号须转义。
 4. **成功句不用「欢迎来到」（勘误 ②）**：与建连横幅「欢迎来到北大侠客行」撞车，登录前即到达会误判成功；只认 `目前权限：(player)` 与 `重新连线完毕`。
 5. **`confirm` 无动作、三出口**：`需替换` 命中 → `onOutcome.ok.when → replace`；`登录成功` 命中（ok 未覆盖）→ `next → send-empty`；`密码错误` 命中 → `onOutcome.fail 直达 → bad-pass`。三条都不中 ⇒ **结构化 timeout**（点名步骤，不静默，§8.13）。
 6. **`replace`（答 `y`）→ `wait-success`**：接管在线同名人物后就等成功句。
-7. **终态两步**：`send-empty` 发**空命令**（顶开服务端 + 跳过 MXP 探测，实现天然走凭据通道、不进回显）→ `wait-ga` 收 GA = **"登录真的收尾了"的确认**（ga 形态未声明分类槽——关窗即 next）；GA 不到 ⇒ 5s 兜底到期 ⇒ 结构化 timeout ⇒ 流程失败。
+7. **终态两步**：`send-empty` 发**空命令**（顶开服务端 + 跳过 MXP 探测，实现天然走凭据通道、不进回显）→ `wait-ga` 收 GA = **"登录真的收尾了"的确认**（ga 形态未声明分类语义条目——关窗即 next）；GA 不到 ⇒ 5s 兜底到期 ⇒ 结构化 timeout ⇒ 流程失败。
 8. **`success` 是出口不是步**：`wait-ga` 的 `next` 直接 `exit{stage:'success', ok:true}`；**`'success'` 强制 `ok: true`**（§8.10）。
 
 ## 边界与不做的

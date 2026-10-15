@@ -20,15 +20,15 @@
  *
  * 步表（动作在路由前执行，条件发送 = 独立步骤；T26.6 两级路由词汇，DEC-19）：
  *   prompt-name   等名字提示 → 发 {name}（ok 未覆盖 → next）
- *   prompt-pass   等密码提示（fail 槽 需建新人物）→ 发 {pass}；
- *                 onOutcome.fail 直达 bad 出口（粗粒度常态——唯一 fail 槽零槽名）
- *   confirm       等「需替换 | 登录成功」（fail 槽 密码错误）；fail 直达 bad-pass
+ *   prompt-pass   等密码提示（fail 语义条目 需建新人物）→ 发 {pass}；
+ *                 onOutcome.fail 直达 bad 出口（粗粒度常态——唯一 fail 语义条目、零语义条目名）
+ *   confirm       等「需替换 | 登录成功」（fail 语义条目 密码错误）；fail 直达 bad-pass
  *                 出口；ok 用 when 细化——需替换特化转 replace，登录成功缺省 next
  *   replace       发 y（login.md replace 步 action=y，默认应答）
  *   wait-success  等成功句（ok 未覆盖 → next）
  *   send-empty    终态空命令（走凭据通道不进发送回显）
  *   wait-ga       空命令收 GA = 登录真的收尾了的确认 → success 出口
- *                 （closeOn 'ga' 显式声明，gaCount 缺省 1 不必写；未声明分类槽 ⇒ 关窗即 next）。
+ *                 （closeOn 'ga' 显式声明，gaCount 缺省 1 不必写；未声明分类语义条目 ⇒ 关窗即 next）。
  *
  * 连接守卫不在本表：流程执行以已建立连接为前提（core3 workflowIoFor 缝在
  * io 注入前拒绝未连接，等待以连接为前提——未连接时 driver 永远不会到达）。
@@ -45,19 +45,19 @@ import type { WorkflowRecord } from 'mud-workflow/contract'
 const STEP_MS = 30_000
 const SUCCESS_MS = 5_000
 
-// ── 判据（login.md 定稿 + 实测勘误，见文件头；按结局命名挂槽，T26）────
+// ── 判据（login.md 定稿 + 实测勘误，见文件头；按结局命名挂语义条目，T26）────
 
-/** 槽「名字提示」：英文名字提示（实机单形态；^ 行首锚防聊天误触发，配 flags 'm'）。 */
+/** 语义条目「名字提示」：英文名字提示（实机单形态；^ 行首锚防聊天误触发，配 flags 'm'）。 */
 const NAME_SRC = '^您的英文名字（要注册新人物请输入new。）：'
-/** 槽「需建新人物」（fail）：用户名不存在/非法 → 实质失败（`\S+` = 实机整句内嵌的动态用户名，2026-10-03 实机勘误）。 */
+/** 语义条目「需建新人物」（fail）：用户名不存在/非法 → 实质失败（`\S+` = 实机整句内嵌的动态用户名，2026-10-03 实机勘误）。 */
 const NEED_NEW_SRC = '^同意玩家须知并使用\\S+创造一个新的人物，您确定吗\\(yes\\)？|^对不起，你的英文名字只能用小写英文字母。'
-/** 槽「密码提示」：密码提示（实机单形态；裸「请输入密码：」不作判据，防误触发）。 */
+/** 语义条目「密码提示」：密码提示（实机单形态；裸「请输入密码：」不作判据，防误触发）。 */
 const PASS_SRC = '^此ID档案已存在，请输入密码：'
-/** 槽「密码错误」（fail）：密码错误类（login.md 字面三条，'m' 多行锚；实测密码错常表现为服务器直接断连 → 走 timeout/断线路）。 */
+/** 语义条目「密码错误」（fail）：密码错误类（login.md 字面三条，'m' 多行锚；实测密码错常表现为服务器直接断连 → 走 timeout/断线路）。 */
 const BAD_PASS_SRC = '^密码错误！|^密码不正确|^如果帐号用register命令注册过，并且密码已经忘记，请按照'
-/** 槽「需替换」：替换在线人物提示（login.md 字面全句）。 */
+/** 语义条目「需替换」：替换在线人物提示（login.md 字面全句）。 */
 const REPLACE_SRC = '您要将另一个连线中的相同人物赶出去，取而代之吗？\\(y\\/n\\)'
-/** 槽「登录成功」：成功句两条定稿判据（「欢迎来到」勘误见文件头）。 */
+/** 语义条目「登录成功」：成功句两条定稿判据（「欢迎来到」勘误见文件头）。 */
 const SUCCESS_SRC = '目前权限：\\(player\\)|重新连线完毕'
 
 /** 登录流程（locked；经 mudCore3.builtinFlows 交 mud-workflow 注册表挂载，agent 拒改拒删）。 */
@@ -92,7 +92,7 @@ export const login: WorkflowRecord = {
           flags: 'm',
           timeoutMs: STEP_MS,
         },
-        // fail 直达（粗粒度常态）：唯一 fail 槽零槽名；密码提示（ok 未覆盖）→ next
+        // fail 直达（粗粒度常态）：唯一 fail 语义条目、零语义条目名；密码提示（ok 未覆盖）→ next
         onOutcome: { fail: { exit: { stage: 'need-new', ok: false } } },
         action: { sendCredential: '{pass}' },
         next: { goto: 'confirm' },
@@ -112,7 +112,7 @@ export const login: WorkflowRecord = {
           timeoutMs: STEP_MS,
         },
         onOutcome: {
-          fail: { exit: { stage: 'bad-pass', ok: false } },   // 任何 fail 槽（密码错误）→ bad-pass
+          fail: { exit: { stage: 'bad-pass', ok: false } },   // 任何 fail 语义条目（密码错误）→ bad-pass
           ok: { when: { 需替换: { goto: 'replace' } } },       // 细化：需替换特化；登录成功 → 缺省 next
         },
         next: { goto: 'send-empty' },

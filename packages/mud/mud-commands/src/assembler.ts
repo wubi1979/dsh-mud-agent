@@ -4,7 +4,7 @@
  *
  * 表落 core3 数据面（纯层零宿主 import；§8.8 纯度裁定）：收集五个分组文件
  *（`commands/std|skill|usr|stunt|profession.ts`）导出的**构建期数组** → 把
- * `Judge` 编译为「正则数组 + 并行名表」（CompiledSlot；fail 槽在前 = 判定序）→
+ * `Judge` 编译为「正则数组 + 并行名表」（CompiledSlot；fail 槽位在前 = 判定序）→
  * 装配期自检 fail-loud → 导出只读总表。**无运行期注册面**：条目是仓库维护的
  * 资产，agent 不可修缮（DEC-18），调用点显式声明是唯一逃生口。
  *
@@ -12,9 +12,9 @@
  *（mud_send / mud_walk）与流程缝（workflowIoFor 的 io.read 注入）**唯一**的
  * 收束解析入口——行为一致性由构造保证。三档与合并（DEC-5 形态比对）：
  *   - **声明（decl）**：调用点声明了判据（closeOn/outcomes）——与表条目**形态
- *     比对**：同形态 ⇒ **槽级合并**（同名槽后声明整体替换、异名追加；数值参数
+ *     比对**：同形态 ⇒ **语义条目级合并**（同名语义条目后声明整体替换、异名追加；数值参数
  *     步声明优先、表填缺省）；异形态 ⇒ **整体替换**（「换判据形态 = 接管全部
- *     槽位」）。合并槽一律按**调用点 flags**（默认无）编译——不使用条目 flags
+ *     槽位」）。合并语义条目一律按**调用点 flags**（默认无）编译——不使用条目 flags
  *     （用户裁定 2026-10-12：flags 是覆盖；失活风险由保存门告警④点名）；
  *   - **表条目（table）**：未声明判据 ⇒ 整条采用（条目 flags 编译）；
  *   - **无（none）**：未声明且未登记（或凭据命令 sent=null）⇒ **不收窗只等
@@ -34,12 +34,12 @@ import { PROFESSION_COMMANDS } from './profession.ts'
 
 // ── 编译产物（正则数组 + 并行名表；读窗机匹配模型零变化，§5.2）────────
 
-/** 编译后的结局槽：并行名表单元（fail 槽排在 ok 槽之前 = 判定序）。
+/** 编译后的结局语义条目：并行名表单元（fail 槽位排在 ok 槽位之前 = 判定序）。
  * `patterns` 保留 raw 源——同形态合并时按**调用点 flags** 重编译（DEC-5/裁定 6）。 */
 export interface CompiledSlot {
   readonly name: string
   readonly kind: OutcomeKind
-  /** 与槽 patterns 一一对应的编译正则（整条采用档 = 条目 flags；合并档重编译）。 */
+  /** 与语义条目 patterns 一一对应的编译正则（整条采用档 = 条目 flags；合并档重编译）。 */
   readonly res: readonly RegExp[]
   /** raw 判据源（合并重编译用）。 */
   readonly patterns: readonly string[]
@@ -50,7 +50,7 @@ export interface CompiledJudge {
   readonly closeOn: ClosureKind
   /** GA 计数（ga 形态；缺省 1）。 */
   readonly gaCount?: number
-  /** 槽表（fail 槽在前）。 */
+  /** 语义条目集（fail 槽位在前）。 */
   readonly slots: readonly CompiledSlot[]
   /** 条目级 flags（整条采用档的编译 flags；告警④与合并档重编译参照）。 */
   readonly flags?: string
@@ -77,8 +77,8 @@ function escapeHead(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-/** raw 槽表（kind 在前）→ CompiledSlot（fail 组先编译 = 判定序；flags 应用于全部判据）。
- * 槽名跨 kind 重名与保留字槽名在此 fail-loud（构建期自检，DEC-18）。 */
+/** raw 语义条目集（kind 在前）→ CompiledSlot（fail 组先编译 = 判定序；flags 应用于全部判据）。
+ * 语义条目名跨槽位重名与保留字语义条目名在此 fail-loud（构建期自检，DEC-18）。 */
 function compileSlots(
   outcomes: SlotTable, where: string, closeOn: ClosureKind, flags: string,
 ): CompiledSlot[] {
@@ -87,31 +87,31 @@ function compileSlots(
   for (const kind of ['fail', 'ok'] as const) {
     for (const [name, slotValue] of Object.entries(outcomes[kind] ?? {})) {
       if (RESERVED_SLOT_NAMES.includes(name)) {
-        throw new Error(`命令条目装配失败：${where} 槽名「${name}」是保留字（ok/fail 是 kind 寻址键）`)
+        throw new Error(`命令条目装配失败：${where} 语义条目名「${name}」是保留字（ok/fail 是 kind 寻址键）`)
       }
       if (seen.has(name)) {
-        throw new Error(`命令条目装配失败：${where} 槽名「${name}」跨 kind 重名（槽名在 ok/fail 组内必须唯一）`)
+        throw new Error(`命令条目装配失败：${where} 语义条目名「${name}」跨槽位重名（语义条目名在 ok/fail 组内必须唯一）`)
       }
       seen.add(name)
       if (!Array.isArray(slotValue.patterns) || slotValue.patterns.length === 0) {
-        // patterns ≥ 1（DP 审阅 10）：推定槽已退役，空槽永不命中 = 配置错误。
-        throw new Error(`命令条目装配失败：${where} 槽「${name}」patterns 为空（登记槽必给判据，待实录的槽不登记）`)
+        // patterns ≥ 1（DP 审阅 10）：推定槽已退役，空语义条目永不命中 = 配置错误。
+        throw new Error(`命令条目装配失败：${where} 语义条目「${name}」patterns 为空（登记语义条目必给判据，待实录的语义条目不登记）`)
       }
       const res = slotValue.patterns.map((src) => {
-        if (typeof src !== 'string') throw new Error(`命令条目装配失败：${where} 槽「${name}」含非字符串判据`)
+        if (typeof src !== 'string') throw new Error(`命令条目装配失败：${where} 语义条目「${name}」含非字符串判据`)
         try {
           return new RegExp(src, flags)
         } catch (e) {
-          throw new Error(`命令条目装配失败：${where} 槽「${name}」判据正则非法: ${src}（${(e as Error).message}）`)
+          throw new Error(`命令条目装配失败：${where} 语义条目「${name}」判据正则非法: ${src}（${(e as Error).message}）`)
         }
       })
       slots.push({ name, kind, res, patterns: [...slotValue.patterns] })
     }
   }
-  // 判定序由遍历序保证（fail 组先编译，fail 槽排前；同 kind 内保持声明序）。
+  // 判定序由遍历序保证（fail 组先编译，fail 槽位排前；同 kind 内保持声明序）。
   // 判据收窗形态必须至少有一条可命中判据（否则只剩超时收场 = 配置错误）。
   if (closeOn === 'criteria' && slots.length === 0) {
-    throw new Error(`命令条目装配失败：${where}（criteria）没有任何判据槽`)
+    throw new Error(`命令条目装配失败：${where}（criteria）没有任何判据语义条目`)
   }
   return slots
 }
@@ -124,7 +124,7 @@ function compileJudge(profile: CommandProfile): CompiledJudge {
   }
   const flags = profile.flags ?? ''
   if (j.closeOn === 'quiet') {
-    // quiet：无槽（Judge 类型已挡）；窗长即条目 timeoutMs。
+    // quiet：无语义条目（Judge 类型已挡）；窗长即条目 timeoutMs。
     return { closeOn: 'quiet', slots: [] }
   }
   if (j.closeOn === 'ga') {
@@ -166,7 +166,7 @@ function compileProfile(profile: CommandProfile): CompiledProfile {
 }
 
 /** 装配：任意 raw 条目集 → 自检 → 编译（fail-loud；T28.2 起作为测试缝导出——
- * 保留字/跨 kind 重名/命令头冲突等装配期自检的错误路径以受控 fixture 实证）。 */
+ * 保留字/跨槽位重名/命令头冲突等装配期自检的错误路径以受控 fixture 实证）。 */
 export function assembleProfiles(raw: readonly CommandProfile[]): readonly CompiledProfile[] {
   const seen = new Set<string>()
   const out: CompiledProfile[] = []
@@ -208,7 +208,7 @@ export function matchCommandProfile(sent: string): CompiledProfile | null {
 }
 
 /**
- * 表槽名查询（T26.5；mud-workflow 注册表校验端口 FlowSlotsPort 的实现）：
+ * 表语义条目名查询（T26.5；mud-workflow 注册表校验端口 FlowSlotsPort 的实现）：
  * 命令命中总表条目时返回其喂令信息（形态 + 槽位含 kind + 条目 flags），未登记
  *（含空串/exempt 命中）返回 null。经 MudCore3Service 面交宿主插件注入注册表，
  * checkFlow 据此做 when 键双重校验与 DEC-13 告警（①②④）。
@@ -257,9 +257,9 @@ export type AwaitPlan = {
   readonly command?: string
 }
 
-/** raw 槽表 → CompiledSlot（按给定 flags 编译；非法正则 throw 可读错）。
- * 声明未带 outcomes 视为空槽表（ga 形态分类槽可选——closeOn:'ga' 无分类 =
- * 关窗即 next；criteria 缺 outcomes 由下方「没有任何判据槽」检查 fail-loud）。 */
+/** raw 语义条目集 → CompiledSlot（按给定 flags 编译；非法正则 throw 可读错）。
+ * 声明未带 outcomes 视为空语义条目集（ga 形态分类语义条目可选——closeOn:'ga' 无分类 =
+ * 关窗即 next；criteria 缺 outcomes 由下方「没有任何判据语义条目」检查 fail-loud）。 */
 function compileDeclSlots(
   decl: CallerDecl, where: string,
 ): CompiledSlot[] {
@@ -285,7 +285,7 @@ export function resolveAwaitPlan(sent: string | null, decl?: CallerDecl): AwaitP
     const own = compileDeclSlots(decl, '调用点声明')
     const profile = sent !== null ? matchCommandProfile(sent) : null
     if (profile !== null && profile.judge.closeOn === decl.closeOn) {
-      // 同形态 ⇒ 槽级合并：同名槽后声明整体替换、异名追加；合并槽一律按
+      // 同形态 ⇒ 语义条目级合并：同名语义条目后声明整体替换、异名追加；合并语义条目一律按
       // **调用点 flags**（默认无）重编译——不使用条目 flags（裁定 6）。
       const byName = new Map(own.map(s => [s.name, s]))
       for (const slot of profile.judge.slots) {

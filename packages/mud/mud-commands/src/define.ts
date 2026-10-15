@@ -11,13 +11,17 @@
  * `byOutcomes` / `byWindow`），数据面即 `closeOn` 三值封闭枚举（契约层
  * `ClosureKind`），两者同构；工厂签名编译期挡住形态参数不合。
  *
- * **契约模式（DEC-23）**：`closeOn` 三值与 kind 二分是契约层词汇；**槽名与
- * 判据句是条目数据**（自由命名——命名纪律：分支类目化、行文变体进 patterns
- * 不分槽、应对不同才分槽，见 PLAN DEC-7）。判据表与路由表同构——**kind 在前、
- * 槽名在内**（outcomes 外层键 = ok/fail，槽条目不带 kind；2026-10-12 用户裁定
- * 统一）。保留字 `ok`/`fail` 由装配期自检拒。
+ * **契约模式（DEC-23）+ 术语定名（2026-10-15 用户裁定）**：`closeOn` 三值与
+ * kind 二分是契约层词汇。**槽位 = ok/fail 判定类型**（kind 的中文定名）；
+ * **语义条目 = 具名判据单元**（如 `完成`/`刚睡过`；旧称「槽名/槽」）——条目
+ * 数据、自由命名（命名纪律：分支类目化、行文变体进同条目 patterns 不分条目、
+ * 应对不同才分条目，见 PLAN DEC-7）。判据表与路由表同构——**槽位在前、
+ * 语义条目在内**（outcomes 外层键 = ok/fail 槽位，语义条目不带 kind；
+ * 2026-10-12 用户裁定统一）。保留字 `ok`/`fail` 由装配期自检拒。
+ * 代码标识符不改（`kind` = 槽位、`slots[].name` = 语义条目名）；旧措辞
+ * 「X 槽」按语境读作「X 槽位的语义条目」。
  *
- * 判据句**内联**在槽里（DEC-20 口径），原文以附录 A 实录为准（A.6 纪律：
+ * 判据句**内联**在语义条目里（DEC-20 口径），原文以附录 A 实录为准（A.6 纪律：
  * 不得凭印象写正则）；同句跨条目复现时就地提常量。
  *
  * 构建期数组、无运行期注册面（DEC-18）：条目由各分组文件 `defineCommand(...)`
@@ -32,24 +36,24 @@ export type { ClosureKind, OutcomeSlot, SlotTable }
  * 判定器返回的数据形态 = `closeOn` 三值（可序列化；调用点 wait / listen 直接
  * 声明同一形状——**一个语法三个消费点**，§3.10 / DEC-21）。
  *
- * 各形态下槽的语义（PLAN 3.2）：
+ * 各形态下语义条目的语义（PLAN 3.2）：
  *   - `ga`：GA/EOR 收窗（`gaCount` 缺省 1，如 2 = 等第 2 个 GA 才关窗）；
- *     **分类槽可选——声明即断言**：窗口关闭时无一命中 ⇒ fail 路由 +
+ *     **分类语义条目可选——声明即断言**：窗口关闭时无一命中 ⇒ fail 路由 +
  *     「收窗成功，分支未知」（DP 裁定 1/8）；未声明 ⇒ 关窗即 next；
- *   - `criteria`：**槽收窗**（fail 槽先于 ok 槽 = 判定序），GA 不武装
+ *   - `criteria`：**语义条目收窗**（fail 槽位先于 ok 槽位 = 判定序），GA 不武装
  *     （受理帧 GA 正是要忽略的）；
  *   - `quiet`：**固定采样窗**（窗长 = 条目 `timeoutMs`，唯一计时器、行只累积
- *     不重置；到点关窗：有行 ⇒ ok、零行 ⇒ fail）——无 outcomes 槽（要分类
+ *     不重置；到点关窗：有行 ⇒ ok、零行 ⇒ fail）——无 outcomes（要分类
  *     说明写得出判据，那是 criteria 的事）。
  *
- * `SlotTable` 形状（kind 在前）：`{ ok?: { 槽名: { patterns } }, fail?: { … } }`。
+ * `SlotTable` 形状（槽位在前）：`{ ok?: { 语义条目名: { patterns } }, fail?: { … } }`。
  */
 export type Judge =
   | { readonly closeOn: 'ga'; readonly gaCount?: number; readonly outcomes?: SlotTable }
   | { readonly closeOn: 'criteria'; readonly outcomes: SlotTable }
   | { readonly closeOn: 'quiet' }
 
-/** `byBoundary` — GA 收窗（即时命令；gaCount 缺省 1；分类槽可选——声明即断言）。 */
+/** `byBoundary` — GA 收窗（即时命令；gaCount 缺省 1；分类语义条目可选——声明即断言）。 */
 export function byBoundary(outcomes?: SlotTable, gaCount?: number): Judge {
   return {
     closeOn: 'ga',
@@ -58,7 +62,7 @@ export function byBoundary(outcomes?: SlotTable, gaCount?: number): Judge {
   }
 }
 
-/** `byOutcomes` — 判据收窗，GA 不武装（长程命令；fail 槽先于 ok 槽判定）。 */
+/** `byOutcomes` — 判据收窗，GA 不武装（长程命令；fail 槽位先于 ok 槽位判定）。 */
 export function byOutcomes(outcomes: SlotTable): Judge {
   return { closeOn: 'criteria', outcomes }
 }

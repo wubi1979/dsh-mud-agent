@@ -13,10 +13,10 @@
  *   1. **读窗**：wait 存在则先等（判据满足才动作）；等待前取 pending 尾部
  *      快照（SNAP_LINES）做 initial——提示符先到先结算，不丢（login.ts 同款）；
  *      收窗形态与表条目合并由缝侧解析（结果归因 `closeOn`/`command`/`source`）；
- *   2. **负面出口**：fail 槽命中（criteria 判定序 fail 先于 ok / ga 分类命中
- *      fail 槽 / ga 断言失败「收窗成功，分支未知」/ quiet 零行）即裁决——
- *      onOutcome.fail 直达（粗粒度常态）或 when 细化按槽名；未覆盖 → 缺省
- *      timeout 出口 + 结果行点名未覆盖槽（DEC-13 ③）；
+ *   2. **负面出口**：fail 语义条目命中（criteria 判定序 fail 先于 ok / ga 分类命中
+ *      fail 语义条目 / ga 断言失败「收窗成功，分支未知」/ quiet 零行）即裁决——
+ *      onOutcome.fail 直达（粗粒度常态）或 when 细化按语义条目名；未覆盖 → 缺省
+ *      timeout 出口 + 结果行点名未覆盖语义条目（DEC-13 ③）；
  *   2.5 **捕获提取**（T14/T15 改由帧供值；T26 具名化 DEC-19）：captureFrom 槽
  *      命中 → 帧里的组值按序入 run 级命名槽，组缺失/空值 → 结构化 timeout
  *      同型收束（D11 空值护栏）；无结局命中（GA 关窗无分类）⇒ 同护栏收束；
@@ -27,8 +27,8 @@
  *      捕获槽传入，T14 D9）——answer 值入 {captcha} 固定单槽继续 / aborted →
  *      专用 aborted 出口 / closed → timeout 出口；发送失败 = 连接已断开 →
  *      timeout 出口；
- *   4. **路由（两级，DEC-19）**：ok 槽命中 → onOutcome.ok 直达或 when 细化
- *      （未覆盖 ⇒ next——kind 缺省）；无命中（ga 关窗未声明分类槽）⇒ next；
+ *   4. **路由（两级，DEC-19）**：ok 语义条目命中 → onOutcome.ok 直达或 when 细化
+ *      （未覆盖 ⇒ next——kind 缺省）；无命中（ga 关窗未声明分类语义条目）⇒ next；
  *      quiet 有行 ⇒ ok 路由（读窗机合成帧，reason 不参与）；**无 next 且无
  *      覆盖 = 结构缺出口**——返回结构化 timeout 出口并点名步骤（粗胚修缮
  *      闭环的失败信号，不静默）；
@@ -43,7 +43,7 @@
  *      无界循环（每步读窗有超时，环只烧预算不烧死进程）；
  *   - 出口统一过 pass 掩码（凭据零泄露最后一道闸——流程作者忘写也不泄露）。
  *
- * 结构合法性（goto 目标存在/when 键 ⊆ 合并槽集/kind 一致）由契约层 checkFlow
+ * 结构合法性（goto 目标存在/when 键 ⊆ 合并语义条目集/kind 一致）由契约层 checkFlow
  * 在保存/装载时保证，解释器不重复校验；运行期只对"缺出口"与动态命令引用
  * 给结构化失败（fail-loud 点名，DP 裁定 4 运行期档）。
  */
@@ -175,12 +175,12 @@ export async function runFlow(
       }
 
       // ── 2. 负面出口（fail 命中即裁决——失败不应答，动作不执行）──
-      // fail 来源三种：criteria fail 槽（判定序 fail 先于 ok）/ ga 分类命中 fail
-      // 槽 / ga 断言失败（by:'ga' 无 outcome——「收窗成功，分支未知」）；quiet
+      // fail 来源三种：criteria fail 语义条目（判定序 fail 先于 ok）/ ga 分类命中
+      // fail 语义条目 / ga 断言失败（by:'ga' 无 outcome——「收窗成功，分支未知」）；quiet
       // 零行（合成 fail 帧）同此。
       if (hit?.kind === 'fail') {
         const assertMiss = hit.outcome === undefined
-        const assertNote = assertMiss ? '（收窗成功，分支未知——分类槽无一命中）' : undefined
+        const assertNote = assertMiss ? '（收窗成功，分支未知——分类语义条目无一命中）' : undefined
         const route = step.onOutcome?.fail
         if (route === undefined) {
           return timeoutExit([
@@ -193,7 +193,7 @@ export async function runFlow(
           if (t === undefined) {
             return timeoutExit([
               ...(assertNote !== undefined ? [assertNote] : []),
-              `（步骤 ${step.id} 的 fail 槽「${hit.outcome ?? '？'}」未覆盖——落 timeout 出口；onOutcome.fail.when 请补全）`,
+              `（步骤 ${step.id} 的 fail 语义条目「${hit.outcome ?? '？'}」未覆盖——落 timeout 出口；onOutcome.fail.when 请补全）`,
             ])
           }
           const applied = applyTarget(t, `步骤 ${step.id} onOutcome.fail.when[${hit.outcome}]`)
@@ -212,7 +212,7 @@ export async function runFlow(
       if (hit === undefined && !(r.closeOn === 'ga' && r.reason === 'done')) {
         return timeoutExit()
       }
-      // 落到这里：ok 槽命中 / quiet 有行（合成 ok 帧）/ ga 关窗未声明分类槽（next）。
+      // 落到这里：ok 语义条目命中 / quiet 有行（合成 ok 帧）/ ga 关窗未声明分类语义条目（next）。
 
       // ── 2.5 捕获填槽（captureFrom 具名槽，DEC-19）──
       if (wait.captureFrom !== undefined) {
@@ -227,7 +227,7 @@ export async function runFlow(
             `（步骤 ${step.id} 捕获失败：本窗无「${wait.captureFrom}」结局命中（非判据收窗）——空值护栏收束，不落槽）`,
           ])
         }
-        // 其他结局命中（如已覆盖出口的 ok 槽）⇒ 跳过捕获照常路由。
+        // 其他结局命中（如已覆盖出口的 ok 语义条目）⇒ 跳过捕获照常路由。
       }
     }
 

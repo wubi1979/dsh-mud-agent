@@ -6,23 +6,23 @@
  * 契约层零 cordis、零宿主、零 I/O。
  *
  * **契约模式（DEC-23，2026-10-12 定稿）**：kind（ok/fail）= 契约——承担判定序
- * （fail 槽先于 ok 槽，同帧 fail 收束）与粗路由缺省（ok → next / fail → timeout
- * 出口）；槽名 = 条目数据——每命令的语料事实，自由命名（命名纪律见 DEC-7：分支
- * 类目化、行文变体进 patterns 不分槽、应对不同才分槽）。判据词汇单点（DEC-21）：
+ * （fail 槽位先于 ok 槽位，同帧 fail 收束）与粗路由缺省（ok → next / fail → timeout
+ * 出口）；语义条目名 = 条目数据——每命令的语料事实，自由命名（命名纪律见 DEC-7：分支
+ * 类目化、行文变体进 patterns 不分条目、应对不同才分条目）。判据词汇单点（DEC-21）：
  * 表条目 `resolve` / 流程 `wait` / 工具 `listen` 共用本 schema 的同一形状。
  * **两表同构（2026-10-12 用户裁定统一）**：判据表 outcomes 与路由表 onOutcome
- * 同为「kind 在前、槽名在内」——outcomes 槽条目不再自带 kind 字段，kind 由
+ * 同为「槽位在前、语义条目在内」——outcomes 语义条目不再自带 kind 字段，kind 由
  * 外层键表达。
  *
  * 词汇表（T26.6 终态，2026-10-12 全面整改）：
- *   - 读窗 wait：closeOn（三值：ga / criteria / quiet）+ outcomes 槽表 +
+ *   - 读窗 wait：closeOn（三值：ga / criteria / quiet）+ outcomes 语义条目集 +
  *     captureFrom/captures（捕获）+ gaCount（ga 等第 N 个）+ maxLines/timeoutMs +
  *     flags（多行窗语义，默认无）——until/failOn/quietMs 全线退役（旧 `gaCount`
  *     缺省兜底档同退役——现 `gaCount` 仅指 ga 形态显式计数，见下）；
  *   - 动作 action：send | sendCredential | captcha（单动作；凭据占位 {name}/{pass}
  *     与 {captcha} 槽由引擎注入替换，不经模型）；
  *   - 路由 onOutcome（两级，DEC-19）：外层 kind 键直达（ok/fail → 目标，粗粒度
- *     常态）；细化 when（键 ⊆ 合并槽集 + kind 一致、不跨键位查找）；
+ *     常态）；细化 when（键 ⊆ 合并语义条目集 + kind 一致、不跨键位查找）；
  *   - 目标 target：goto（后继步）| exit（终结，stage 分类 + ok）。
  *
  * 红线（PLAN「流程面演进」；T13.1 扩列）：sendCredential 与 captcha 动词
@@ -41,41 +41,41 @@ import { z } from 'zod'
 
 /**
  * 收窗形态（封闭三值，DEC-3「判定器即形态」2026-10-12 终态）：
- *   - `ga`：GA/EOR 边界收窗（`gaCount` 缺省 1 可设等第 N 个）；分类槽可选——
+ *   - `ga`：GA/EOR 边界收窗（`gaCount` 缺省 1 可设等第 N 个）；分类语义条目可选——
  *     **声明即断言**：窗口关闭时无一命中 ⇒ fail 路由 +「收窗成功，分支未知」；
- *   - `criteria`：文本判据收窗，GA 不武装（长程命令）；fail 槽先于 ok 槽；
+ *   - `criteria`：文本判据收窗，GA 不武装（长程命令）；fail 槽位先于 ok 槽位；
  *   - `quiet`：**固定采样窗**（窗长 = timeoutMs，唯一计时器，行只累积不重置）——
  *     到点关窗：有行 ⇒ ok（返回全部行），零行 ⇒ fail（等同 timeout）。适用于
- *     无明确边界的命令；无 outcomes 槽。注释纪律：quiet 与 timeout 配合使用，
+ *     无明确边界的命令；无 outcomes 语义条目。注释纪律：quiet 与 timeout 配合使用，
  *     timeout 需谨慎选择时长（编写责任，非设计代价——用户裁定 2026-10-12）。
  */
 export const CLOSURE_KINDS = ['ga', 'criteria', 'quiet'] as const
 export type ClosureKind = (typeof CLOSURE_KINDS)[number]
 
-/** 结局槽判定（契约）：kind 决定判定序（fail 先于 ok）与粗路由缺省。 */
+/** 结局槽位判定（契约）：kind 决定判定序（fail 先于 ok）与粗路由缺省。 */
 export const OUTCOME_KINDS = ['ok', 'fail'] as const
 export type OutcomeKind = (typeof OUTCOME_KINDS)[number]
 
 /**
- * 保留槽名（DP 审阅裁定 7）：`ok` / `fail` 是 onOutcome 的 kind 寻址键——
- * 槽名与其撞名会产生「槽名路由还是 kind 路由」的歧义，保存门拒存。
+ * 保留语义条目名（DP 审阅裁定 7）：`ok` / `fail` 是 onOutcome 的 kind 寻址键——
+ * 语义条目名与其撞名会产生「语义条目名路由还是 kind 路由」的歧义，保存门拒存。
  * （`槽N`/`拒N` 合成名随 normalizeFlow 退役不再保留。）
  */
 export const RESERVED_SLOT_NAMES: readonly string[] = ['ok', 'fail']
 
-/** 结局槽（DEC-7/DEC-23）：判据句内联（DEC-20 口径），A.6 语料为准。
- * patterns ≥ 1（DP 审阅 10）：空槽永不命中——ga 形态只会制造「分支未知」假
- * 失败，criteria 形态是死配置；登记槽必给判据，待实录的槽不登记。
- * kind 不在槽条目上——由槽表外层键表达（2026-10-12 两表同构裁定）。 */
+/** 结局语义条目（DEC-7/DEC-23）：判据句内联（DEC-20 口径），A.6 语料为准。
+ * patterns ≥ 1（DP 审阅 10）：空语义条目永不命中——ga 形态只会制造「分支未知」假
+ * 失败，criteria 形态是死配置；登记语义条目必给判据，待实录的语义条目不登记。
+ * kind 不在语义条目上——由语义条目集外层键表达（2026-10-12 两表同构裁定）。 */
 export interface OutcomeSlot {
   readonly patterns: readonly string[]
 }
 
 /**
- * 槽表（DEC-7 终态 + 2026-10-12 两表同构）：**kind 在前、槽名在内**——外层键 =
- * kind（契约：判定序 fail 先于 ok、粗路由缺省），内层键 = 槽名（条目数据，
- * 自由命名，命名纪律见决策表 DEC-7）。槽名跨 kind 禁重名（schema superRefine
- * 拒存）；保留字 ok/fail 禁作槽名（checkFlow / 装配自检拒存）。
+ * 语义条目集（DEC-7 终态 + 2026-10-12 两表同构）：**槽位在前、语义条目在内**——外层键 =
+ * kind（契约：判定序 fail 先于 ok、粗路由缺省），内层键 = 语义条目名（条目数据，
+ * 自由命名，命名纪律见决策表 DEC-7）。语义条目名跨槽位禁重名（schema superRefine
+ * 拒存）；保留字 ok/fail 禁作语义条目名（checkFlow / 装配自检拒存）。
  */
 export type SlotTable = {
   readonly ok?: Readonly<Record<string, OutcomeSlot>> | undefined
@@ -91,8 +91,8 @@ export type SlotTable = {
 export const waitSchema = z.object({
   /** 收窗形态（显式单值；缺省 = 未声明判据——缝侧按喂令查表整条注入，DEC-5）。 */
   closeOn: z.enum(CLOSURE_KINDS).optional(),
-  /** 结局槽表（kind 在前、槽名在内）：外层键 = ok/fail（契约），内层键 = 槽名
-   *（自由命名，保留字与跨 kind 重名由校验拒存）；值 = 判据句（patterns ≥ 1，
+  /** 结局语义条目集（槽位在前、语义条目在内）：外层键 = ok/fail（契约），内层键 = 语义条目名
+   *（自由命名，保留字与跨槽位重名由校验拒存）；值 = 判据句（patterns ≥ 1，
    * 推定槽已退役）。 */
   outcomes: z.object({
     ok: z.record(z.string(), z.object({
@@ -127,7 +127,7 @@ export const waitSchema = z.object({
   }
   if (w.closeOn === 'quiet') {
     if (w.outcomes !== undefined || w.captureFrom !== undefined || w.captures !== undefined) {
-      ctx.addIssue({ code: 'custom', message: 'quiet 形态无 outcomes 槽（要分类说明写得出判据，那是 criteria 的事）' })
+      ctx.addIssue({ code: 'custom', message: 'quiet 形态无 outcomes 语义条目（要分类说明写得出判据，那是 criteria 的事）' })
     }
     if (w.gaCount !== undefined) {
       ctx.addIssue({ code: 'custom', message: 'gaCount 仅 ga 形态可用' })
@@ -142,17 +142,17 @@ export const waitSchema = z.object({
       ? 0
       : Object.keys(w.outcomes.ok ?? {}).length + Object.keys(w.outcomes.fail ?? {}).length
     if (slotCount === 0) {
-      ctx.addIssue({ code: 'custom', message: 'criteria 形态必须声明 outcomes 槽表（否则只剩超时收场）' })
+      ctx.addIssue({ code: 'custom', message: 'criteria 形态必须声明 outcomes 语义条目集（否则只剩超时收场）' })
     }
   }
   // ga：outcomes 可选（未声明 ⇒ 关窗即 next）；gaCount 可选（缺省 1）。
-  // 槽名跨 kind 禁重名（kind 在前两表同构的新增约束：同名槽在 ok/fail 两组各
+  // 语义条目名跨槽位禁重名（kind 在前两表同构的新增约束：同名语义条目在 ok/fail 两组各
   // 声明一次会让 kind 寻址歧义——拒存）。
   if (w.outcomes !== undefined) {
     const names = [...Object.keys(w.outcomes.ok ?? {}), ...Object.keys(w.outcomes.fail ?? {})]
     const dup = [...new Set(names.filter((n, i) => names.indexOf(n) !== i))]
     if (dup.length > 0) {
-      ctx.addIssue({ code: 'custom', message: `槽名跨 kind 重名：${dup.join('、')}（槽名在 ok/fail 组内必须唯一）` })
+      ctx.addIssue({ code: 'custom', message: `语义条目名跨槽位重名：${dup.join('、')}（语义条目名在 ok/fail 组内必须唯一）` })
     }
   }
 })
@@ -200,8 +200,9 @@ export type Target = z.infer<typeof targetSchema>
 
 /**
  * kind 级路由（DEC-19 两级）：**粗粒度直达是常态**（`fail: { exit… }` 一条兜住
- * 所有 fail 槽）；细化用 `when`——键 = 槽名（⊆ 合并槽集且 kind 一致、**不跨键位
- * 查找**：`ok` 的 when 里只找 ok 槽）；when 未覆盖的槽落 kind 缺省（ok → next /
+ * 所有 fail 语义条目）；细化用 `when`——键 = 语义条目名（⊆ 合并语义条目集且
+ * kind 一致、**不跨键位查找**：`ok` 的 when 里只找 ok 语义条目）；when 未覆盖的
+ * 语义条目落 kind 缺省（ok → next /
  * fail → timeout 出口 + 记录）。两种形态互斥（goto/exit 直达 或 when 细化）。
  */
 export const kindRouteSchema = z.union([
@@ -222,7 +223,7 @@ export const stepSchema = z.object({
   /** 动作（缺省 = 纯等待步）。 */
   action: actionSchema.optional(),
   /** 两级结局路由（DEC-19）：`ok` / `fail` kind 键 → 直达目标或 when 细化。
-   * ok 槽命中未覆盖 ⇒ next；fail 槽命中未覆盖 ⇒ 结构化 timeout 出口 + 记录。 */
+   * ok 语义条目命中未覆盖 ⇒ next；fail 语义条目命中未覆盖 ⇒ 结构化 timeout 出口 + 记录。 */
   onOutcome: z.object({
     ok: kindRouteSchema.optional(),
     fail: kindRouteSchema.optional(),
@@ -327,17 +328,17 @@ export const RESERVED_SLOTS: readonly string[] = ['captcha', 'name', 'pass']
 export interface FlowSlotsInfo {
   /** 条目收窗形态（形态比对用，DEC-5）。 */
   readonly closeOn: ClosureKind
-  /** 槽位序列（fail 槽在前 = 判定序；kind 随行——when 键 kind 一致性校验用）。 */
+  /** 槽位序列（fail 槽位在前 = 判定序；kind 随行——when 键 kind 一致性校验用）。 */
   readonly slots: readonly { readonly name: string; readonly kind: OutcomeKind }[]
   /** 条目级 flags（告警④：合并失活风险点名用）。 */
   readonly flags?: string
 }
 
 /**
- * 命令总表槽名查询端口（T26.5）：命令命中总表条目时返回其喂令信息，未登记
+ * 命令总表语义条目名查询端口（T26.5）：命令命中总表条目时返回其喂令信息，未登记
  * 返回 null。core3 `tableSlotsOf` 按此实现，注册表经 `setSlotsOf` 注入——
- * checkFlow 据此把 when/captureFrom 的引用对到「本步 outcomes ∪ 喂令表槽」
- * 的合并槽集上（**仅字面量命令**；动态命令保存期只校验 kind 一致性，查表
+ * checkFlow 据此把 when/captureFrom 的引用对到「本步 outcomes ∪ 表语义条目」
+ * 的合并语义条目集上（**仅字面量命令**；动态命令保存期只校验 kind 一致性，查表
  * 校验整体后移运行期——DP 审阅裁定 4）。
  */
 export type FlowSlotsPort = (command: string) => FlowSlotsInfo | null
@@ -373,19 +374,19 @@ function whenKeys(route: KindRoute | undefined): readonly string[] {
  * 流程结构校验（schema 校验通过后调用；registry.save 与引擎执行共用——
  * 校验是确定性的，生效门 = 校验即生效）：
  *   - 步 id 不重复；entry 存在；goto 目标存在；stage 'success' 必须 ok:true；
- *   - 保留字槽名（ok/fail——kind 寻址键）拒存；判据可编译；
+ *   - 保留字语义条目名（ok/fail——kind 寻址键）拒存；判据可编译；
  *   - 捕获配对（captures ↔ captureFrom 同声明；组数只对 captureFrom 槽
  *     patterns[0] 计，捕获组只允许出现在该处）；
  *   - **when 键校验（DP 裁定 4 分档）**：字面量喂令（经 slotsOf 端口可判）⇒
- *     键 ⊆ 合并槽集（本步 outcomes ∪ 表槽）+ kind 一致，违者拒存；动态命令
+ *     键 ⊆ 合并语义条目集（本步 outcomes ∪ 表语义条目）+ kind 一致，违者拒存；动态命令
  *     （头部含槽替换）⇒ 保存期只校验静态可判的 kind 一致性（引用本步自声明
- *     槽的键按其声明 kind 判），查表校验整体后移运行期 fail-loud；
+ *     语义条目的键按其声明 kind 判），查表校验整体后移运行期 fail-loud；
  *   - 告警档（DEC-13，放行但可见）：① 喂令字面量未登记表且本步未声明收窗；
- *     ② when 未覆盖合并槽集内同 kind 槽（点名补全）；④ 同形态合并引入带
+ *     ② when 未覆盖合并语义条目集内同 kind 语义条目（点名补全）；④ 同形态合并引入带
  *     flags 的表条目而本步未声明 flags（锚定判据失活风险）。
  *
  * @param flow - 待校验流程本体。
- * @param slotsOf - 命令总表槽名查询（缺省 = 无端口，喂令相关引用一律放行）。
+ * @param slotsOf - 命令总表语义条目名查询（缺省 = 无端口，喂令相关引用一律放行）。
  * @returns 告警列表（DEC-13 档：放行但必须可见；结构性非法直接 throw）。
  * @throws 可读错（保存/执行转可读拒绝）。
  */
@@ -442,24 +443,24 @@ export function checkFlow(flow: Flow, slotsOf?: FlowSlotsPort): string[] {
 
     const wait = step.wait
     if (wait === undefined) continue
-    // 槽表展平（kind 在前：外层 kind 键 × 内层槽名 → name/kind/patterns 序列；
-    // 跨 kind 重名已由 schema superRefine 拒存，此处按展平序消费）。
+    // 语义条目集展平（槽位在前：外层 kind 键 × 内层语义条目名 → name/kind/patterns 序列；
+    // 跨槽位重名已由 schema superRefine 拒存，此处按展平序消费）。
     const outcomeEntries = OUTCOME_KINDS.flatMap((kind) =>
       Object.entries(wait.outcomes?.[kind] ?? {}).map(([name, slot]) => ({ name, kind, patterns: slot.patterns })))
     const outcomeKeys = outcomeEntries.map(e => e.name)
     const ownKind = new Map(outcomeEntries.map(e => [e.name, e.kind]))
     const ownByName = new Map(outcomeEntries.map(e => [e.name, e]))
 
-    // 槽表形状：保留字 + 判据可编译（patterns ≥ 1 已由 schema 保证）。
+    // 语义条目集形状：保留字 + 判据可编译（patterns ≥ 1 已由 schema 保证）。
     for (const e of outcomeEntries) {
       if (RESERVED_SLOT_NAMES.includes(e.name)) {
-        structural(`步骤 ${step.id} 的结局槽名是保留字：${e.name}（ok/fail 是 kind 寻址键）`)
+        structural(`步骤 ${step.id} 的结局语义条目名是保留字：${e.name}（ok/fail 是 kind 寻址键）`)
       }
       for (const p of e.patterns) {
         try {
           new RegExp(p)
         } catch (err) {
-          structural(`步骤 ${step.id} 的槽「${e.name}」判据正则非法：${p}（${(err as Error).message}）`)
+          structural(`步骤 ${step.id} 的语义条目「${e.name}」判据正则非法：${p}（${(err as Error).message}）`)
         }
       }
     }
@@ -500,7 +501,7 @@ export function checkFlow(flow: Flow, slotsOf?: FlowSlotsPort): string[] {
     const cmd = staticSendBefore(flow.steps, si)
     const dynamic = cmd !== null && cmd.includes('{')
     const info = slotsOf !== undefined && cmd !== null && !dynamic ? slotsOf(cmd) : undefined
-    // 槽 kind 解析：本步声明优先，字面量喂令的表槽次之（动态/未登记 ⇒ 不可判）。
+    // 语义条目 kind 解析：本步声明优先，字面量喂令的表语义条目次之（动态/未登记 ⇒ 不可判）。
     const kindOf = (name: string): OutcomeKind | undefined =>
       ownKind.get(name) ?? info?.slots.find(s => s.name === name)?.kind
     const allRefs = [...whenKeys(okRoute), ...whenKeys(failRoute)]
@@ -511,13 +512,13 @@ export function checkFlow(flow: Flow, slotsOf?: FlowSlotsPort): string[] {
       for (const k of whenKeys(route)) {
         const kind = kindOf(k)
         if (kind !== undefined && kind !== label) {
-          structural(`步骤 ${step.id} 的 onOutcome.${label}.when[${k}] 引用了 ${kind} 槽（不跨键位查找：${label} 键下只找 ${label} 槽）`)
+          structural(`步骤 ${step.id} 的 onOutcome.${label}.when[${k}] 引用了 ${kind} 语义条目（不跨键位查找：${label} 键下只找 ${label} 语义条目）`)
         }
       }
     }
 
     if (info != null) {
-      // 字面量已登记：引用 ⊆ 合并槽集（本步 outcomes ∪ 表槽），缺席 = 死引用拒存。
+      // 字面量已登记：引用 ⊆ 合并语义条目集（本步 outcomes ∪ 表语义条目），缺席 = 死引用拒存。
       const merged = new Set(outcomeKeys)
       const kindMap = new Map<string, OutcomeKind>()
       for (const k of outcomeKeys) kindMap.set(k, ownKind.get(k)!)
@@ -527,27 +528,27 @@ export function checkFlow(flow: Flow, slotsOf?: FlowSlotsPort): string[] {
       }
       const missing = refNames.filter(r => !merged.has(r))
       if (missing.length > 0) {
-        structural(`步骤 ${step.id} 的结局引用超喂令 ${cmd}（表条目）的槽集：${missing.join('、')}`)
+        structural(`步骤 ${step.id} 的结局引用超喂令 ${cmd}（表条目）的语义条目集：${missing.join('、')}`)
       }
-      // 告警②：when 未覆盖同 kind 槽（直达形态 = 全覆盖，不告警）。
+      // 告警②：when 未覆盖同 kind 语义条目（直达形态 = 全覆盖，不告警）。
       const okCovered = new Set(whenKeys(okRoute))
       const failCovered = new Set(whenKeys(failRoute))
       if (okRoute !== undefined && 'when' in okRoute) {
         const uncovered = [...merged].filter(n => kindMap.get(n) === 'ok' && !okCovered.has(n))
         if (uncovered.length > 0) {
-          warnings.push(`步骤 ${step.id} 的 onOutcome.ok.when 未覆盖 ok 槽：${uncovered.join('、')}——未覆盖落缺省 next（需分支请补全）`)
+          warnings.push(`步骤 ${step.id} 的 onOutcome.ok.when 未覆盖 ok 语义条目：${uncovered.join('、')}——未覆盖落缺省 next（需分支请补全）`)
         }
       }
       if (failRoute !== undefined && 'when' in failRoute) {
         const uncovered = [...merged].filter(n => kindMap.get(n) === 'fail' && !failCovered.has(n))
         if (uncovered.length > 0) {
-          warnings.push(`步骤 ${step.id} 的 onOutcome.fail.when 未覆盖 fail 槽：${uncovered.join('、')}——未覆盖落 timeout 出口并记录（需分支请补全）`)
+          warnings.push(`步骤 ${step.id} 的 onOutcome.fail.when 未覆盖 fail 语义条目：${uncovered.join('、')}——未覆盖落 timeout 出口并记录（需分支请补全）`)
         }
       }
       // 告警④：同形态合并引入带 flags 的表条目而本步未声明 flags（锚定判据失活）。
       if (wait.closeOn !== undefined && info.closeOn === wait.closeOn
         && info.flags !== undefined && wait.flags === undefined) {
-        warnings.push(`步骤 ${step.id} 同形态合并表条目 ${cmd}（条目 flags '${info.flags}'）而本步未声明 flags——表槽锚定判据（^）按默认编译可能在多行窗失活，请显式声明 flags`)
+        warnings.push(`步骤 ${step.id} 同形态合并表条目 ${cmd}（条目 flags '${info.flags}'）而本步未声明 flags——表语义条目锚定判据（^）按默认编译可能在多行窗失活，请显式声明 flags`)
       }
     } else {
       // 未登记 / 动态 / 无喂令 / 无端口：

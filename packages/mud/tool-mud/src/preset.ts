@@ -47,7 +47,7 @@ export function apply(ctx: Context): void {
   registerMudTools(registrar, {
     // 执行期解析引擎窄面：缺席返回 null ⇒ 工具执行给可读拒绝（I9）。
     core: () => (ctx.get('mudCore3') ?? null) as MudCore3Handle | null,
-    // `mudNav`（T23.10b）：插件级单例（行走知识图）；缺席 ⇒ 不记录、不给建议。
+    // `mudNav`（用户口径 2026-10-14）：插件级单例（行走知识图，**只记录**）；缺席 ⇒ 不记录。
     nav: () => (ctx.get('mudNav') ?? null) as MudNavFace | null,
   })
 }

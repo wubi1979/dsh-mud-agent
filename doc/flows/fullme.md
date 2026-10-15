@@ -17,8 +17,8 @@ note: fullme 流程实体声明（locked）；词汇表扩展与链路机制见 
 ## 步表（主链五步 + stale 自愈环三步 + 4 出口；T26.6 两级路由词汇，DEC-19）
 
 步预算 `STEP_MS = 30_000`（urlwait/judge 读窗）；**挂起预算独立** = Config `captchaTimeoutMs` 缺省 180_000（§8.17 双预算分立）。
-判据按**结局槽名**挂 `wait.outcomes`（`closeOn: 'criteria'`），路由走两级 `onOutcome`
-（kind 直达 / `when` 按槽名细化）；捕获源具名化 `wait.captureFrom`
+判据按**结局语义条目名**挂 `wait.outcomes`（`closeOn: 'criteria'`），路由走两级 `onOutcome`
+（kind 直达 / `when` 按语义条目名细化）；捕获源具名化 `wait.captureFrom`
 （组数只对该槽 patterns[0] 计）。
 
 | # | 步 `id` | 读窗 `wait`（`closeOn: 'criteria'`，flags `m`） | 动作 `action` | 路由 |
@@ -30,9 +30,9 @@ note: fullme 流程实体声明（locked）；词汇表扩展与链路机制见 
 | 5 | `judge` | outcomes：`失效`(fail) = 失效句、`答对`(ok) = 答对句、`答错`(**fail**，信号视角改判 T26.6/DEC-19：被拒是 fail，重入用 when 表达) = 答错句 | **无动作**（收束窗） | `onOutcome.ok` **直达** `exit{stage:'success', ok:true}`；`onOutcome.fail.when` 细化：`答错 → goto answer`（重入，不重发引子）、`失效 → exit{stage:'expired', ok:false}` |
 | 6–8 | `abandon1/2/3` | — | `send: 'fullme 1'` × 3 | 末步 `→ exit{stage:'abandoned', ok:false}` |
 
-**判据常量（与实现一一对应；kind 在前、槽名在内——两表同构，§8.10；fail 组在前 = 判定序）**
+**判据常量（与实现一一对应；槽位在前、语义条目在内——两表同构，§8.10；fail 组在前 = 判定序）**
 
-| kind | 槽名 | 常量 | 值 |
+| kind | 语义条目名 | 常量 | 值 |
 |---|---|---|---|
 | fail | `已挂起` | `STALE_SRC` | `你之前请求的fullme还没有完成` |
 | fail | `冷却中` | `COOLDOWN_SRC` | `^你刚刚用过这个命令不久，还要[^。]*才能再用。`（flags `m`，时长动态通配） |

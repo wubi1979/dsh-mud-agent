@@ -42,7 +42,7 @@ export interface IoLine {
 export interface IoReadOpts {
   /** 收窗形态（显式单值；缺省 = 未声明判据，缝侧注入表条目）。 */
   closeOn?: ClosureKind
-  /** 结局槽表（raw 判据源；kind 在前、槽名在内——与流程 wait 同形状）。 */
+  /** 结局语义条目集（raw 判据源；槽位在前、语义条目在内——与流程 wait 同形状）。 */
   outcomes?: SlotTable
   /** GA/EOR 边界计数（仅 ga 形态；缺省 1）。 */
   gaCount?: number
@@ -56,7 +56,7 @@ export interface IoReadOpts {
 
 /** 读窗收束原因（**单点声明**：core3 `read.ts` 的 `ReadReason` 引用本联合）。 */
 export type IoReadReason =
-  | 'done'      // 判据槽命中 / GA 计数到数 / maxLines 剪断
+  | 'done'      // 判据语义条目命中 / GA 计数到数 / maxLines 剪断
   | 'timeout'   // 总超时（quiet 形态零行同此——等同 timeout）
   | 'quiet'     // quiet 采样窗到点且有行 / 裸读静默到期
   | 'signal'    // 中止信号
@@ -70,22 +70,22 @@ export type IoReadReason =
  * 分类、捕获与收窗因此物理上不可能不一致（§8.13）。
  *
  * T26.6（§3.3，DP 裁定 2）：`by` 四值 = **closeOn 三值 + `maxLines`**（与形态
- * 枚举同名词，无第二套名字）；`index` 为该槽 `patterns` 数组内下标（非判据
- * 收束 = -1）；`outcome` = 命中的结局槽名（条目数据，自由命名）；`kind` =
- * 槽判定（路由的输入）。合成帧：quiet 关窗 `{ by:'quiet', kind }`（kind 由行数
- * 定，无槽名）；ga 声明分类槽而未命中 `{ by:'ga', kind:'fail' }`（断言失败，
+ * 枚举同名词，无第二套名字）；`index` 为该语义条目 `patterns` 数组内下标（非判据
+ * 收束 = -1）；`outcome` = 命中的结局语义条目名（条目数据，自由命名）；`kind` =
+ * 槽位判定（路由的输入）。合成帧：quiet 关窗 `{ by:'quiet', kind }`（kind 由行数
+ * 定，无语义条目名）；ga 声明分类语义条目而未命中 `{ by:'ga', kind:'fail' }`（断言失败，
  * 结果行「收窗成功，分支未知」——DP 裁定 8）。
  */
 export interface ReadHit {
   /** 实际收窗者：closeOn 三值（ga/criteria/quiet）或 maxLines。 */
   readonly by: 'ga' | 'criteria' | 'quiet' | 'maxLines'
-  /** 判据命中：该槽 patterns 数组内下标；非判据收束 = -1。 */
+  /** 判据命中：该语义条目 patterns 数组内下标；非判据收束 = -1。 */
   readonly index: number
   /** 该判据在整窗文本上**首次命中**的捕获组（组 1..n；未参与组 `undefined`；无组为空数组）。 */
   readonly groups: readonly (string | undefined)[]
-  /** 命中的结局槽名（条目数据；无分类命中时缺省）。 */
+  /** 命中的结局语义条目名（条目数据；无分类命中时缺省）。 */
   readonly outcome?: string
-  /** 结局槽判定（kind 决定消费侧分流：fail 未覆盖 ⇒ 结构化失败出口）。 */
+  /** 结局槽位判定（kind 决定消费侧分流：fail 未覆盖 ⇒ 结构化失败出口）。 */
   readonly kind?: OutcomeKind
 }
 
@@ -94,7 +94,7 @@ export interface IoReadResult {
   readonly lines: IoLine[]
   readonly reason: IoReadReason
   /**
-   * 命中帧；窗由 `gaCount` 到数（未声明分类槽）/ `maxLines` 剪断 / `timeout` /
+   * 命中帧；窗由 `gaCount` 到数（未声明分类语义条目）/ `maxLines` 剪断 / `timeout` /
    * `quiet`（零行）/ `signal` / `disconnected` / `danger` 关窗时视形态而定
    *（quiet 总有合成帧；criteria 失配无帧）。
    */

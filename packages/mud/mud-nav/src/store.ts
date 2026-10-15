@@ -1,32 +1,30 @@
 /**
- * nav/json-store — 行走知识图的 **JSON 文件持久化**（T23.10b，用户裁定 2026-10-08：
- * "先使用 json 数据持久化，后期再考虑优化"）。
+ * nav/store — 行走知识图持久化：**项目内 JSON 文件**（用户裁定 2026-10-14 三次：
+ * 知识图是伴随项目累积的耐久资产，应"跟数据库文件一样存在项目中"——
+ * 宿主 storage 域落盘位置由宿主控制（`$DSH_HOME/storages/`，用户目录），
+ * 不满足"项目内"诉求，故弃用；亦不与按天滚动的会话日志混放。
  *
- * 纪律：
+ * 落点：`<cwd>/data/nav-graph.json`（项目根 `data/`，耐久数据语义，
+ * 与 logs（可清理）/ knowledge（静态技能包）/ corpus（语料）分列）。
+ *
+ * 纪律（沿初版 json-store）：
  *   - **fail-soft**：读失败（文件不存在 / JSON 坏 / 结构不符）⇒ 返回 `null`（图从空开始），
  *     只通过 `onError` 上报；写失败 ⇒ 上报，**不影响行走本身**（知识是增益，不是前置）；
- *   - 文件是**快照 JSON**（`{ nodes:[{region,edges,updatedAt}], hints:[…] }`），人可读、可手工清理；
- *   - 落点与会话日志同目录（`logDir`，`<logDir>/nav-graph.json`）——复用既有配置，不新增 Config 键。
+ *   - 文件是**快照 JSON**（`{ nodes:[…] }`，边含 region/room/pinyin/steps/direct/dirs），人可读、可手工清理；
+ *   - 逐条校验在 `NavGraph.loadSnapshot`（坏数据逐条丢弃）——本模块只做浅层结构检查。
  *
  * 只依赖 `node:fs`（非宿主依赖，纯 Node 层）。
  *
- * @module mud-nav/json-store
+ * @module mud-nav/store
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { NavGraphSnapshot } from './graph.ts'
-
-/** 知识图存储端口（服务只认端口；换实现不影响服务）。 */
-export interface NavStore {
-  /** 读取快照；无/坏 ⇒ `null`（fail-soft，不抛）。 */
-  load(): NavGraphSnapshot | null
-  /** 写入快照（fail-soft，不抛）。 */
-  save(snapshot: NavGraphSnapshot): void
-}
+import type { NavStore } from './service.ts'
 
 /** 建一个 JSON 文件存储（`file` 为绝对路径；父目录不存在时自动建）。 */
-export function createJsonNavStore(file: string, onError?: (message: string) => void): NavStore {
+export function createFileNavStore(file: string, onError?: (message: string) => void): NavStore {
   const report = (message: string, e: unknown): void => {
     onError?.(`${message}: ${file}（${e instanceof Error ? e.message : String(e)}）`)
   }
@@ -40,7 +38,7 @@ export function createJsonNavStore(file: string, onError?: (message: string) => 
       }
       try {
         const parsed: unknown = JSON.parse(raw)
-        if (typeof parsed !== 'object' || parsed === null) {
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
           report('mudNav 知识图结构不符，按空图处理', new Error('not an object'))
           return null
         }
