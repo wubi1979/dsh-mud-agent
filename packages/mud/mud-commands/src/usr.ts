@@ -9,7 +9,7 @@
  *（hpbrief/hp/sc/i/exp，条目 capture 本地引用）；捕获契约类型归 define.ts。
  */
 
-import { byBoundary, byOutcomes, defineCommand } from './define.ts'
+import { byBoundary, byOutcomes, defineCommand, TABLE_BLOCK_FORMAT } from './define.ts'
 import type { BlockReducer, RowContext, SequenceCaptureRule, CaptureEntry, CaptureRule } from './define.ts'
 
 // ── hpbrief 捕获格式：定长 3 行位置映射（§2.2 已定稿 18 位表；实录 2026-10-06 同刻校准）──
@@ -100,7 +100,8 @@ const HP_PATTERNS: readonly HpPattern[] = [
   { re: /【潜能】\s*(\d+)/, build: m => [{ key: '潜能', value: n(m[1]) }] },
   { re: /【经验】\s*(\d+)/, build: m => [{ key: '经验', value: n(m[1]) }] },
   // 【状态】健康、极度疲倦 → 数组（只有 hp 表格有的自由文本；捕获止于 cell 边界）。
-  { re: /【状态】\s*([^│\]]+)/, build: m => [{
+  // cell 边界 = 块语法切分符（TABLE_BLOCK_FORMAT 单点，2026-10-15 格式/机制二分修正）。
+  { re: new RegExp(`【状态】\\s*([^${TABLE_BLOCK_FORMAT.cellDelimiter}\\]]+)`), build: m => [{
       key: '状态',
       value: (m[1] ?? '').split('、').map(s => s.trim()).filter(s => s !== ''),
     }] },
@@ -122,8 +123,8 @@ function hpRow(row: RowContext): CaptureEntry[] | undefined {
 const SC_OCTA_RE = /(膂力|悟性|根骨|身法|福缘|容貌|灵性|胆识)[:：]\s*\[([^\]]*)\]/g
 /** 数字型标签：存款/杀气/门忠/上榜差经验（千分位逗号剥除后取整）。 */
 const SC_NUM_RE = /(存款|杀气|门忠|上榜差经验)[:：=]?\s*([\d,，]+)/g
-/** 文本型标签：门派履历（门派/师承/出师/叛师 → 原文）。 */
-const SC_TEXT_RE = /(门派|师承|出师|叛师)[:：]\s*([^│\]]+)/g
+/** 文本型标签：门派履历（门派/师承/出师/叛师 → 原文）。cell 边界 = 块语法切分符单点。 */
+const SC_TEXT_RE = new RegExp(`(门派|师承|出师|叛师)[:：]\\s*([^${TABLE_BLOCK_FORMAT.cellDelimiter}\\]]+)`, 'g')
 /** 头衔与姓名：`武当派第四代弟子 夫差(Vicrly)`（待实录校准）。 */
 const SC_TITLE_RE = /([\u4e00-\u9fff]+第.{1,6}弟子)\s+([\u4e00-\u9fff]{1,8})\(([^)]+)\)/
 
@@ -372,9 +373,10 @@ const EXP_BLOCK: BlockReducer = {
 
 // ── 规则常量（本文件就地定义；条目 capture 本地引用；装配规范序见 assembler）──
 
-/** hpbrief 序列规则（命令 hpbrief；zone vitals，战斗中/忙两键带 zone:'combat'）。 */
+/** hpbrief 序列规则（命令 hpbrief；zone vitals，战斗中/忙两键带 zone:'combat'）。
+ *  cellSplit 随规则声明（序列 = 规则自理的特殊格式，引擎零格式知识）。 */
 export const HPBRIEF_RULE: SequenceCaptureRule = {
-  id: 'hpbrief', shape: 'sequence', zone: 'vitals', head: /^#/, length: 3, match: hpbriefRow,
+  id: 'hpbrief', shape: 'sequence', zone: 'vitals', head: /^#/, length: 3, cellSplit: ',', match: hpbriefRow,
 }
 
 /** hp 表规则（命令 hp；§2.3 兜底 + 只有表格才有的文本状态；A.7 实录出处）。 */
@@ -407,7 +409,8 @@ export const USR_COMMANDS = [
     //     可继续；连续失败没有推进由调用侧行为性判"阻断，需人工干预"，不入表）；
     //   - 不在出发点 `当前区域的系统内建路径出发点在`（**显式判据**：任意 walk
     //     用法不在 walk 节点都回这句，快速收束 ⇒ unaccepted，取代旧"反证"口径）；
-    //   - 出发点表 `^┌`（出现路径表格 = 处于当前点位，快收并捕获记录）。
+    //   - 出发点表 `^┌`（出现路径表格 = 处于当前点位，快收并捕获记录）——锚
+    //     = 块语法开行（TABLE_BLOCK_FORMAT.open 单点，2026-10-15 格式/机制二分修正）。
     // 查询只保留 `-c`（`-q`/`speed` 退役，用户口径）——走 exempt：锚定**完整
     // 发送串**（DEC-8），其答复与行走判据无关，注入会误判（§8.7）。
     // 无超时 sizing（用户口径：没有超时，后续服务）；条目 timeoutMs 只是判据
@@ -424,7 +427,7 @@ export const USR_COMMANDS = [
       },
       ok: {
         到达: { patterns: ['^你到达了'] },
-        出发点表: { patterns: ['^┌'] },
+        出发点表: { patterns: [TABLE_BLOCK_FORMAT.open.source] },
       },
     }),
   }),

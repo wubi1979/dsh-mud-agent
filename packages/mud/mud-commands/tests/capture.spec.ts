@@ -4,28 +4,33 @@
  * 语料）；块/序列**机制**（开闭块、序列完整性、打标）留在 tracker.spec.ts——
  * 本文件只测格式域知识：match 逐键产出 + BlockReducer 积攒/冲刷语义。
  *
- * ctx 构造口径 = tracker 机制：table 行 cells 按 `│` 切（trim、去首尾空段）、
- * raw = 行原文、index = 块内行序、section = 节标题；sequence 行 cells =
- * `#` 剥除后按 `,` 切（trim）、index = 序内行序。
+ * ctx 构造口径 = tracker 机制，切分知识单点引声明：table 行 cells 按
+ * `TABLE_BLOCK_FORMAT.cellDelimiter` 切（trim、去首尾空段）、raw = 行原文、
+ * index = 块内行序、section = 节标题；sequence 行 cells = head 剥除后按规则
+ * `cellSplit` 切（trim）、index = 序内行序。
  */
 import { describe, expect, it } from 'vitest'
 // 规则常量随命令条目就地定义（T29 用户裁定 2026-10-15）：skills → skill.ts，
 // hpbrief/hp/sc/i/exp → usr.ts；捕获契约类型归 define.ts（条目契约单点）。
 import { SKILLS_RULE } from '../src/skill.ts'
 import { EXP_RULE, HPBRIEF_RULE, HP_RULE, I_RULE, SC_RULE } from '../src/usr.ts'
+import { TABLE_BLOCK_FORMAT } from '../src/define.ts'
 import type { AnyCaptureRule, RowContext, CaptureEntry } from '../src/define.ts'
 
-/** table 行 ctx 构造（与 tracker.splitRowCells 同口径）。 */
+/** table 行 ctx 构造（与 tracker.splitRowCells 同口径；切分符引块语法定义单点）。 */
 function tableRow(text: string, over: Partial<RowContext> = {}): RowContext {
-  const parts = text.split('│').map(s => s.trim())
+  const parts = text.split(TABLE_BLOCK_FORMAT.cellDelimiter).map(s => s.trim())
   while (parts.length > 0 && parts[0] === '') parts.shift()
   while (parts.length > 0 && parts[parts.length - 1] === '') parts.pop()
   return { cells: parts, raw: text, index: 0, ...over }
 }
 
-/** sequence 行 ctx 构造（与 tracker.finishSequence 同口径）。 */
+/** sequence 行 ctx 构造（与 tracker.finishSequence 同口径；切分符引规则声明）。 */
 function seqRow(text: string, index: number): RowContext {
-  return { cells: text.replace(/^#/, '').split(',').map(s => s.trim()), raw: text, index }
+  return {
+    cells: text.replace(HPBRIEF_RULE.head, '').split(HPBRIEF_RULE.cellSplit).map(s => s.trim()),
+    raw: text, index,
+  }
 }
 
 /** 规则命中产出（undefined → 空，便于 toEqual 断言）。 */

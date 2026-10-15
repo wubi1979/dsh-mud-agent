@@ -894,3 +894,14 @@
 - **tool-mud 测试同步**：`STATE_PULL_CMD_RE` 断言改新契约；两例以 `look` 充当未登记命令的用例改喂 `foobar`（保留 DEC-4 意图）；新增 look 登记收窗正例（`closeOn:'ga'`、gaCount 缺省由读层收 1、条目法 `timeoutMs` 15s）。
 - **文档同步**：§8.7 命令总表行（七条 + D7 原则 + capture 字段）与读后投影行（改命令头推导）、§10.3 写入源 bullet（捕获格式归属）、§1.6 包地图与模块清单（mud-commands + capture）、§16.2 五处（三行重账 + T29 重账注 + tracker 注记与 capture 用例组行）、§16.5 切片表 T29 行。
 - **wake.spec 2 例遗留维持待用户定夺**（v0.0.66 登记历史遗留，与本任务无关，未动）。
+
+## [v0.0.77]块语法上移声明层：TABLE_BLOCK_FORMAT 单点（格式/机制二分修正，用户裁定 2026-10-15）(2026-10-15)
+
+> 总结：T29「格式归条目、机制留 tracker」在执行中把「格式」理解窄了——只搬了六套字段判据，线框四角/切分符仍硬编码在 tracker 运行时，且已泄漏到多个调用点（hp/sc 文本判据 `[^│]` cell 终止符、walk `出发点表` 判据 `^┌`、capture.spec ctx 构造）——服务器改线框须改 4 处。按用户裁定修正二分口径：**线框四角 + cell 切分符 = 格式定义**（表格块归属的唯一锁定依据——凡需捕获基本皆线框格式，hpbrief 序列是唯一例外，lines 逐行判据本就无法通用随规则自理），定义随捕获契约声明于 define.ts，机制只消费。
+
+- **mud-commands `define.ts`（扩展）**：捕获契约段新增 `TableBlockFormat` + `TABLE_BLOCK_FORMAT`（open/^┌、row/^│、border/^├、close/^└、cellDelimiter/'│'，实录 A.7，改动须先录附录 A）；`SequenceCaptureRule` 增必填 `cellSplit`（序列 = 规则自理的特殊格式，引擎零格式知识）。
+- **mud-sense `tracker.ts`（机制净身）**：本地 `TABLE_*_RE` 四常量与 `split('│')` 硬编码删除，改消费 `TABLE_BLOCK_FORMAT`（代码面不出现线框字符）；`finishSequence` 的 `/^#/` 剥离与 `','` 切分改由 `rule.head` + `rule.cellSplit` 驱动；sectionOf（节标题提取）留本地（机制面辅助，非四角）。
+- **mud-commands `usr.ts`（泄漏点收口）**：hp `【状态】` 判据与 `SC_TEXT_RE` 的 `[^│\]]` 终止符、walk `出发点表` 判据 `^┌` 全部改由声明组装（`open.source` / `cellDelimiter` 插值）——服务器改线框 = 只改 `TABLE_BLOCK_FORMAT` 一处；`HPBRIEF_RULE` 声明 `cellSplit: ','`。
+- **测试同步**：capture.spec.ts ctx 构造（tableRow/seqRow）切分知识改引声明/规则单点，断言语义不变。
+- **文档同步**：§10.3 写入源 bullet（块语法归属段）、§8.7 命令总表行（capture 括注追加块语法定义）。
+- **测试**：mud-commands 39 / mud-sense 38 / mud 234 全绿（行为等价改造，逐键回放不变）。

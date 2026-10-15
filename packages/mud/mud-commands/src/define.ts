@@ -132,15 +132,50 @@ export interface CaptureRule {
   readonly block?: BlockReducer
 }
 
-/** sequence 规则：head 命中即开序列，连续 length 行凑齐后逐行 match，全成才写。 */
+/** sequence 规则：head 命中即开序列，连续 length 行凑齐后逐行 match，全成才写。
+ *  行内 cell 切分随规则声明（cellSplit）——序列格式是**规则自理的特殊格式**
+ *  （现役唯一 hpbrief），引擎不携带格式知识。 */
 export interface SequenceCaptureRule extends CaptureRule {
   readonly shape: 'sequence'
   readonly head: RegExp
   readonly length: number
+  /** 行内 cell 切分符（head 命中部分剥离后按此切 cell；现役 hpbrief = ','）。 */
+  readonly cellSplit: string
 }
 
 /** 全形状规则联合（sequence 附带 head/length）。 */
 export type AnyCaptureRule = CaptureRule | SequenceCaptureRule
+
+/**
+ * 块语法（T29 格式/机制二分修正，2026-10-15 用户裁定）：线框四角 + cell 切分符
+ * = 「服务器长什么样」的**格式定义**（实录 A.7，A.6 纪律管辖）——表格块归属的
+ * **唯一锁定依据**（凡需捕获的基本都是线框格式，hpbrief 序列是唯一例外；lines
+ * 逐行判据本就无法通用，随各规则自理）。定义随捕获契约声明于此（定义归声明层），
+ * tracker 机制只消费不定义——**服务器改线框 = 只改本声明一处**（规则判据与流程
+ * 判据中的线框引用——如 hp/sc 文本判据的 `[^│]` 终止符、walk `出发点表` 判据
+ * `^┌`——一并由本声明组装，消除多调用点散落）。
+ */
+export interface TableBlockFormat {
+  /** 块开行（`┌…`；其携带的中文串 = blockHeader）。 */
+  readonly open: RegExp
+  /** 表行（`│…`）。 */
+  readonly row: RegExp
+  /** 边框行（`├…`，可携带中文节标题）。 */
+  readonly border: RegExp
+  /** 块收口行（`└…`）。 */
+  readonly close: RegExp
+  /** 表行 cell 切分符。 */
+  readonly cellDelimiter: string
+}
+
+/** 现役线框块语法（实录 A.7；改动须先录附录 A）。 */
+export const TABLE_BLOCK_FORMAT: TableBlockFormat = {
+  open: /^┌/,
+  row: /^│/,
+  border: /^├/,
+  close: /^└/,
+  cellDelimiter: '│',
+}
 
 /** 命令单元（数据，不含行为）。 */
 export interface CommandProfile {

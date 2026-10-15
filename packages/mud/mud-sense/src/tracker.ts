@@ -4,7 +4,9 @@
  * **T29 分工（格式归命令条目，机制留本文件）**：六套命令应答格式（hpbrief/hp/
  * sc/i/skills/exp）已迁 mud-commands **随命令条目就地定义**（条目 capture 登记，
  * D7 登记原则），捕获契约类型归 `mud-commands` 的 define（条目契约单点）；
- * 本文件只保留**机制**（块/序列/lines 三形状消费、打标、
+ * **块语法（线框四角 + cell 切分符）同为格式定义**，随契约声明于 define 的
+ * `TABLE_BLOCK_FORMAT`（2026-10-15 用户裁定：定义归声明层——服务器改线框 =
+ * 改声明一处），本文件只消费；保留**机制**（块/序列/lines 三形状消费、打标、
  * 写入）与**非命令触发路径**的本地规则（walk-region/walk-departure/walk-started、
  * combat、id——战斗行、walk 受理行、id 别称表不经命令窗；clears 同理留本地，
  * T29 边界纪律：capture 只承载命令应答格式，状态追踪独立于命令表）。
@@ -38,7 +40,7 @@
  */
 
 import type { MudLine } from 'mud-link/line'
-import { COMMAND_CAPTURE_RULES } from 'mud-commands'
+import { COMMAND_CAPTURE_RULES, TABLE_BLOCK_FORMAT } from 'mud-commands'
 import type { AnyCaptureRule, RowContext, SequenceCaptureRule, CaptureEntry, CaptureRule, CaptureShape } from 'mud-commands'
 
 /** 捕获契约类型自 mud-commands（define 条目契约单点）type-only 引入（T29 D2）；
@@ -68,12 +70,12 @@ export interface StateTrackerDeps {
   onDelete(zone: string, key: string): void
 }
 
-// ── 框线表格判据（§2.1；实录出处见 A.7）─────────────────────────────
+// ── 表格块机制判据（§2.1）────────────────────────────────────────────
+// 块语法（四角 + cell 切分符）= 格式定义，随捕获契约声明于 mud-commands
+//（`TABLE_BLOCK_FORMAT`，2026-10-15 用户裁定：定义归声明层，机制只消费——
+// 服务器改线框 = 改声明一处，本文件不出现线框字符）。
 
-const TABLE_OPEN_RE = /^┌/
-const TABLE_ROW_RE = /^│/
-const TABLE_BORDER_RE = /^├/
-const TABLE_CLOSE_RE = /^└/
+const FMT = TABLE_BLOCK_FORMAT
 /** 节标题提取：优先方括号内文本（`[装  备]` 内空格剥离；实录 A.7.4），
  *  否则首个 ≥2 字的中文连串（如 四项杂学/基本功夫）。 */
 const SECTION_CJK_RE = /[\u4e00-\u9fff]{2,}/
@@ -122,9 +124,9 @@ function walkStartedRow(row: RowContext): CaptureEntry[] | undefined {
 /** 表格块行数护栏：超限视为失控块（无 └ 收尾），强制闭块止损。 */
 const MAX_TABLE_LINES = 120
 
-/** 按 `│` 切行 cell（trim；去掉首尾边界产物空串，中间空 cell 保留由规则忽略）。 */
+/** 按 cell 切分符切行 cell（trim；去掉首尾边界产物空串，中间空 cell 保留由规则忽略）。 */
 function splitRowCells(text: string): string[] {
-  const parts = text.split('│').map(s => s.trim())
+  const parts = text.split(FMT.cellDelimiter).map(s => s.trim())
   while (parts.length > 0 && parts[0] === '') parts.shift()
   while (parts.length > 0 && parts[parts.length - 1] === '') parts.pop()
   return parts
@@ -263,7 +265,7 @@ export class StateTracker {
     }
 
     // 表格块边界（D8）：┌ 开块即整块打标（框线/节标题/表头/页脚祝福语全部行）。
-    if (TABLE_OPEN_RE.test(text)) {
+    if (FMT.open.test(text)) {
       const header = sectionOf(text)
       this.block = { rows: 0, ...(header !== undefined ? { header } : {}) }
       this.tag(line)
@@ -271,17 +273,17 @@ export class StateTracker {
     }
     if (this.block !== null) {
       this.tag(line)
-      if (TABLE_CLOSE_RE.test(text)) {
+      if (FMT.close.test(text)) {
         this.finishTableBlock()
         this.block = null
-      } else if (TABLE_ROW_RE.test(text)) {
+      } else if (FMT.row.test(text)) {
         this.matchTableRow(text)
         this.block.rows += 1
         if (this.block.rows > MAX_TABLE_LINES) { // 失控块止损（标已打，不再解析）
           this.finishTableBlock()
           this.block = null
         }
-      } else if (TABLE_BORDER_RE.test(text)) {
+      } else if (FMT.border.test(text)) {
         const section = sectionOf(text)
         if (section !== undefined) this.block.section = section
       }
@@ -392,7 +394,8 @@ export class StateTracker {
     for (let i = 0; i < seq.rows.length; i++) {
       const ln = seq.rows[i]
       if (ln === undefined) return
-      const cells = ln.text.replace(/^#/, '').split(',').map(s => s.trim())
+      // head 命中部分剥离 + 按规则声明切分符切 cell（序列格式随规则声明，引擎零格式知识）。
+      const cells = ln.text.replace(seq.rule.head, '').split(seq.rule.cellSplit).map(s => s.trim())
       const entries = seq.rule.match({ cells, raw: ln.text, index: i })
       if (entries === undefined) return
       collected.push(...entries)
