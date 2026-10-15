@@ -98,6 +98,8 @@ export interface MudStateSnapshot {
 export interface MudCore3Handle extends WorkflowIoSeam<MudLine> {
   /** 归属解析（父链上溯查名册）；未绑定返回 null。 */
   toolContextFor(agent: ToolAgent | undefined): { sessionId: string; runtime: SessionRuntime } | null
+  /** 会话活跃任务集（T27 行流推断，可多任务并存；空 = 不在任何任务中）——任务专用命令收窗判据生效判定。 */
+  taskOf(sessionId: string): readonly string[]
   /** 建连 + login（幂等；失败 throw 可读错 → 工具层转可读拒绝）。 */
   connect(sessionId: string): Promise<{ state: string }>
   /** 状态快照（插件状态 + world 合并）。 */
@@ -579,9 +581,10 @@ export function registerMudTools(
       // 收束解析（T26.6，DEC-21 解析单点三档）：声明（形态比对合并）> 表条目
       //（整条采用）> 无（不收窗只等超时，DEC-4 终态）；空命令特例归 'ga'；
       // 裸读（cmd 缺省）无表可查——有显式 listen 即声明档，否则 'none'。
+      // 活跃任务透传（T27）：任务中先查任务条目再查全局表（任务专用命令生效判定）。
       let plan: AwaitPlan | null
       try {
-        plan = resolveAwaitPlan(args.cmd ?? null, decl)
+        plan = resolveAwaitPlan(args.cmd ?? null, decl, c.taskOf(tc.sessionId))
       } catch (e) {
         return reject((e as Error).message)
       }
@@ -755,7 +758,8 @@ export function registerMudTools(
       // 条目（'criteria' 形态——到达/阻塞/不在出发点/出发点表判据收窗，
       // commands/usr.ts，flags 'm' 多行窗行首锚）；查询类（-c）走条目 exempt
       // 不套判据，只等应答静默窗（其答复与行走判据无关，注入会误判）。
-      const plan = isWalkAction && !isQuery ? resolveAwaitPlan(cmd) : null
+      // 活跃任务透传（T27，walk 无任务条目——透传保持单点语义一致）。
+      const plan = isWalkAction && !isQuery ? resolveAwaitPlan(cmd, undefined, c.taskOf(tc.sessionId)) : null
 
       // timeoutMs（用户口径 2026-10-14：没有超时 sizing，判据是主收束）：显式值
       // 钳 ≤60s；缺省 = 表条目预算（行走类，系统注入豁免钳制）或 Config sendTimeoutMs。

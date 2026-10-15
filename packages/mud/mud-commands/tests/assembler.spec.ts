@@ -17,8 +17,11 @@ import {
   COMMAND_CAPTURE_RULES,
   COMMAND_PROFILES,
   matchCommandProfile,
+  matchProfileFor,
   resolveAwaitPlan,
   tableSlotsOf,
+  TASK_ENV_RULES,
+  TASK_PROFILES,
 } from '../src/assembler.ts'
 import { SC_RULE } from '../src/usr.ts'
 
@@ -278,5 +281,73 @@ describe('capture 装配（T29 D4/D7）', () => {
     // 词边界：未登记的相似头不误命中。
     expect(matchCommandProfile('looks')).toBeNull()
     expect(matchCommandProfile('hpx')).toBeNull()
+  })
+})
+
+// ── ⑤ 任务专用命令表（T27：分组装配 + 解析序 任务 > 全局）──────────────
+
+describe('任务专用命令（T27 jianxinju）', () => {
+  it('任务条目不入全局总表；按 task 标记分组装配', () => {
+    for (const id of ['clap', 'food', 'teacher']) {
+      expect(COMMAND_PROFILES.find(p => p.id === id), id).toBeUndefined()
+    }
+    const group = TASK_PROFILES.get('jianxinju')
+    expect(group?.map(p => p.id).sort()).toEqual(['clap', 'food', 'teacher'])
+  })
+
+  it('解析序：任务中先查任务条目再查全局表（同名任务条目优先）', () => {
+    // 任务条目命中：food → criteria 档整条采用（fail 槽位在前 = 判定序）。
+    const food = resolveAwaitPlan('food', undefined, ['jianxinju'])
+    expect(food).toMatchObject({ source: 'table', closeOn: 'criteria', command: 'food', timeoutMs: 120_000 })
+    expect(food.slots?.map(s => `${s.name}:${s.kind}`)).toEqual(['钱不够:fail', '完成:ok'])
+    // clap 3：ga 档 + ok 分类语义条目（声明即断言）。
+    const clap = resolveAwaitPlan('clap 3', undefined, ['jianxinju'])
+    expect(clap).toMatchObject({ source: 'table', closeOn: 'ga', command: 'clap', timeoutMs: 15_000 })
+    expect(clap.slots).toEqual([expect.objectContaining({ name: '小童应答', kind: 'ok' })])
+    // 任务中发全局命令：落全局表（任务组未命中不吞全局条目）。
+    const exercise = resolveAwaitPlan('exercise', undefined, ['jianxinju'])
+    expect(exercise).toMatchObject({ source: 'table', command: 'exercise' })
+  })
+
+  it('任务外：任务命令 = 未登记不收窗只等超时（DEC-4，不拦发送）', () => {
+    expect(resolveAwaitPlan('food')).toEqual({ source: 'none' })
+    expect(resolveAwaitPlan('food', undefined, [])).toEqual({ source: 'none' }) // 活跃任务空集同任务外
+    expect(resolveAwaitPlan('teacher', undefined, ['zhenfa'])).toEqual({ source: 'none' })
+    expect(matchCommandProfile('food')).toBeNull()
+  })
+
+  it('declared 档任务感知：声明与任务条目同形态 ⇒ 语义条目级合并', () => {
+    const plan = resolveAwaitPlan('food', {
+      closeOn: 'criteria',
+      outcomes: { ok: { 加急: { patterns: ['加急送达'] } } },
+    }, ['jianxinju'])
+    expect(plan).toMatchObject({ source: 'table', closeOn: 'criteria', command: 'food' })
+    // fail 槽位在前（判定序）；同名/异名合并：声明「加急」追加、表「钱不够/完成」保留。
+    expect(plan.slots?.map(s => s.name)).toEqual(['钱不够', '加急', '完成'])
+  })
+
+  it('matchProfileFor：任务命中 / 全局兜底 / 无任务直落全局', () => {
+    expect(matchProfileFor('food', ['jianxinju'])?.id).toBe('food')
+    expect(matchProfileFor('walk', ['jianxinju'])?.id).toBe('walk') // 全局兜底
+    expect(matchProfileFor('walk')?.id).toBe('walk')
+    expect(matchProfileFor('food')).toBeNull()
+  })
+
+  it('多任务并存：按进入顺序遍历任务组，先命中先用（2026-10-15 用户裁定）', () => {
+    // 两任务组都未命中 food 时落全局——组间顺序只有在跨组同名/命中差异时可观察，
+    // 此处实证「顺序遍历 + 先命中先用」：zhenfa 组无 food 条目 ⇒ 落到后组命中。
+    expect(matchProfileFor('food', ['zhenfa', 'jianxinju'])?.id).toBe('food')
+    expect(matchProfileFor('food', ['jianxinju', 'zhenfa'])?.id).toBe('food')
+  })
+
+  it('TASK_ENV_RULES：进出判据编译（实录 A.11 行文命中）', () => {
+    const env = TASK_ENV_RULES.find(e => e.task === 'jianxinju')
+    expect(env).toBeDefined()
+    // 进入句（2026-10-15 变更）：副本进入句含 leave 回主站提示，玩家名动态桥接。
+    expect(env!.enter.some(re => re.test('你进入了剑心居副本，可以通过leave vicrly命令来回到主站。'))).toBe(true)
+    expect(env!.enter.some(re => re.test('你进入了剑心居副本，可以通过leave someone命令来回到主站。'))).toBe(true)
+    expect(env!.enter.some(re => re.test('你沉思完毕，站起身来，进入剑心居。'))).toBe(false)
+    expect(env!.enter.some(re => re.test('你退出了剑心居副本。'))).toBe(false)
+    expect(env!.exit.some(re => re.test('你退出了剑心居副本。'))).toBe(true)
   })
 })

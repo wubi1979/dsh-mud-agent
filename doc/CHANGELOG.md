@@ -918,3 +918,28 @@
 - **测试同步**：assembler.spec 判定序 fixture + skills 断言改 cooldown；read.spec 两例（cooldown 收束 / fail 压过 cooldown）；interpreter.spec mini-reader 三组展平 + cooldown 缺省收束两例；tools.spec 冷却命中结果形态一例。
 - **文档同步**：§8.7（render 冷却分支）、§8.8（命令总表槽位三分 + skills 例外）、§8.10（kind 三分 + 判定序 + onOutcome 无 cooldown 键）、§8.11（保存门保留字）、§8.13（判定序 + 路由分流）、A.3（skills 冷却模式）。
 - **测试**：mud-workflow / mud-commands 41 / mud 236 / tool-mud 61 全绿（mud-sense 38，wake 2 例既有遗留维持）。
+
+## [v0.0.79]任务专用命令机制 T27（2026-10-15）
+
+> 总结：任务场景命令（首例剑心居 `clap 3`/`food`/`teacher`）由 **agent（模型面）调用**，调用点 listen 声明不可依赖 ⇒ 命令总表第六分组 `commands/task.ts` 落地：条目带 `task` 标记、**不入全局总表**；任务上下文 = **行流推断**（用户裁定 2026-10-15：任务/环境有明确进出标志，据此自动置/清标记，不依赖模型与会话谱系）。语义边界不变 = **只做收窗判据**：解析序 **任务条目 > 全局表**；任务外不命中 = 未登记不收窗只等超时（DEC-4），**不拦发送**。
+
+- **mud-commands `define.ts`**：`CommandProfile`/`CommandProfileInput` 增 `task?: string` 标记字段（注释：不入全局总表、按标记分组装配 `TASK_PROFILES`、解析序任务>全局），`defineCommand` 工厂透传；新增 `TaskEnvironment` 接口（`{ task, enter, exit, meta }`——判据逐字实录，A.6 纪律）。
+- **mud-commands `task.ts`**：第六分组落地——`JIANXINJU = 'jianxinju'` 三条目：`clap`（`'ga'` 档锚「进来一名小童，向你欠身行礼」，问 food/teacher 与只问 food 两变体共享，兜底 15s）、`food`（`'criteria'`：`你的钱不够了` fail + `小童将…送到你面前` ok（桥接正则），兜底 120s）、`teacher`（`'criteria'`：`原来师父您就在这` fail + `门被推开，…走了进来` ok（桥接正则），兜底 120s）——**受理句不入 outcomes**（criteria 档受理句命中会立即关窗、永远等不到完成句；受理句实录留存 A.11 不判）；`TASK_ENVIRONMENTS`：enter `进入剑心居` / exit `退出了剑心居`（2026-10-15 用户供给实录）。
+- **mud-commands `assembler.ts`**：`assembleTaskProfiles()` 按 `task` 标记分组（缺标记 fail-loud）⇒ `TASK_PROFILES`；`CompiledTaskEnv` + `compileEnvPatterns`（fail-loud）⇒ `TASK_ENV_RULES`；`matchProfileFor(sent, task?)` 任务组先查、全局表兜底；`resolveAwaitPlan` 增第三参 `task?`（declared 与表条目两分支改经 `matchProfileFor`）。
+- **mud-sense `taskdetect.ts`（新增）**：`TaskDetector` 纯层探测器——`onLine`：exit 仅清同名（异任务 exit 行不误清）、enter 覆盖写；`reset()`：断线整体复位（§10.4，同 World/tracker 纪律）；`current` 只读；exports 增 `./taskdetect`。
+- **mud `service.ts`**：每会话一 `TaskDetector`（`ensureRuntime` 接线 `rt.onLine`，探测在投递器前；`onStateChange` disconnected 复位；dispose 删除）；新增窄面 `taskOf(sessionId)`；流程缝 `io.read` 的 `resolveAwaitPlan` 透传 `this.taskOf(sessionId)`。
+- **tool-mud**：`MudCore3Handle` 增 `taskOf`；`mud_send`/`mud_walk` 两消费点透传 `c.taskOf(tc.sessionId)`；`ctx.provide('mudCore3')` 接线（`satisfies` 编译期断言随宿主窄面同步）。
+- **测试**：mud-commands 41→46（T27 段 6 例：不入全局表 + 分组装配 / 解析序（food 槽序 fail>ok、clap 3 ga 档、exercise 全局兜底）/ 任务外 none / declared 同形态合并 / matchProfileFor 三态 / TASK_ENV_RULES 实录行文命中）、mud-sense 38→43（taskdetect 5 例）、tool-mud 61→62（taskOf 命中任务条目收窗 / 任务外只等超时）；mud 236 / mud-workflow 98 / mud-link 79 全绿。
+- **文档同步**：§8.7（命令总表行任务专用命令段 + 六分组口径）、§16.2（重账 547 例 / 39 文件 + taskdetect 用例组行）、§16.5（T27 行）、附录 A.11（实录登记）、mud-commands README。
+- **遗留**：武当阵法 `zhenfa`/`zouwei` 判据待实录（A.10 挂账），实录前不接条目；剑心居环境行文变体与超时预算待实测校准（A.11）。
+
+## [v0.0.80]T27 增补：多任务并存 + 剑心居进入判据变更（2026-10-15）
+
+> 总结：用户裁定两项——① 会话可能**同时处于 2 个或以上任务**中（进出判据逻辑不变：enter 加入 / exit 仅移除同名）；② 剑心居**进入判据变更**：实录原句为 `你进入了剑心居副本，可以通过leave vicrly命令来回到主站。`（原录「沉思完毕…进入剑心居」是前置行文，副本真正进入以此句为准；玩家名动态 ⇒ 桥接 `leave \S+`，A.1 先例）。
+
+- **mud-sense `taskdetect.ts`**：`TaskDetector` 单值改**集合语义**（`Set<string>`，按进入顺序）——enter 判据命中 ⇒ 加入（重复进入幂等），exit 判据命中 ⇒ 仅移除同名任务，`reset()` 全清；`current` 返回 `readonly string[]`。
+- **mud-commands `assembler.ts`**：`matchProfileFor(sent, tasks?: readonly string[])` 按**进入顺序遍历任务组、先命中先用**，全局表兜底不变；`resolveAwaitPlan` 第三参改 `tasks?: readonly string[]`。
+- **mud-commands `task.ts`**：`TASK_ENVIRONMENTS` 进入判据更换为新实录句（`你进入了剑心居副本，可以通过leave \S+命令来回到主站`），退出判据不变（`退出了剑心居`）。
+- **mud `service.ts` / tool-mud**：`taskOf(sessionId)` 返回活跃任务集 `readonly string[]`（空集 = 不在任何任务中）；`MudCore3Handle` 窄面同步。
+- **测试**：mud-sense 43→44（taskdetect 5→6 例：+多任务并存顺序 / 重复进入幂等）、mud-commands 46→47（+多任务并存遍历序 / 活跃任务空集同任务外；TASK_ENV_RULES 进入句命中面扩为 2 例含玩家名桥接）、tool-mud 62（taskOf stub 改数组）；mud 236 / workflow 98 全绿。
+- **文档同步**：§8.7（多任务并存 + 新进入判据）、§16.2/§16.5（重账 549 例 / 39 文件 + T27 行 v0.0.80 增补注）、附录 A.11（进入句变更登记 + 多任务并存裁定）。

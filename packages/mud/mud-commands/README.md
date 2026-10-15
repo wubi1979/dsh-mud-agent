@@ -6,7 +6,8 @@ MUD 命令判据总表（T28 拆包）。构建期装配（DEC-18 fail-loud）�
 
 - `./define`：条目定义工厂 `defineCommand` + 三判定器 `byBoundary`/`byOutcomes`/`byWindow` + `CommandProfile` 类型
 - `./assembler`：`COMMAND_PROFILES` 总表（装配期自检通过才存在）、`matchCommandProfile`（缝侧对最终发送串匹配，DEC-8）、`tableSlotsOf`（注册表校验端口实现）、**`resolveAwaitPlan` 解析单点**（DEC-21：declared > table > empty > none 四档）、`assembleProfiles`（测试缝）
-- `./std` / `./skill` / `./usr` / `./stunt` / `./profession` / `./task`：六分组条目数组（DEC-18 构建期数组；task 组暂空，随 T27 接谱系标记）
+- `./std` / `./skill` / `./usr` / `./stunt` / `./profession` / `./task`：六分组条目数组（DEC-18 构建期数组；task 组为任务专用命令（T27），条目带 `task` 标记、不入全局总表）
+- `./assembler`（任务面，T27）：`TASK_PROFILES`（按 `task` 标记分组装配）、`TASK_ENV_RULES`（任务环境 enter/exit 判据编译产物）、`matchProfileFor(sent, task?)`（解析序：任务条目 > 全局表）
 
 ## 装配期自检（fail-loud，全部可经 `assembleProfiles` fixture 实证）
 
@@ -22,5 +23,5 @@ MUD 命令判据总表（T28 拆包）。构建期装配（DEC-18 fail-loud）�
 
 ## Known Limitations
 
-- `task` 组为空骨架：条目任务标记、会话谱系标记写入点与 `resolveAwaitPlan` 任务上下文参数全部随 T27 实施。
+- 任务面已落地（T27）：条目 `task` 标记 + 环境行流推断（`TaskEnvironment` → `TASK_ENV_RULES` → mud-sense `TaskDetector` 接线）+ `resolveAwaitPlan` 第三参 `task?`；武当阵法 `zhenfa` 判据待实录（附录 A.10 挂账），实录前无条目。
 - 工具面行为（listen 透传、schema 组合自由度）的测试**不在本包**——留 tool-mud（tools.spec 测工具面行为，本包测装配与解析）。

@@ -120,6 +120,7 @@ function setup(
   })
   const handle: MudCore3Handle = {
     toolContextFor: () => ({ sessionId: 'acc-1', runtime: rt }),
+    taskOf: () => [],
     connect: async () => ({ state: 'connected' }),
     workflowIoFor: async () => { throw new Error('测试未预期调用 workflowIoFor') },
     stateOf: () => ({
@@ -320,6 +321,28 @@ describe('mud_send 判据与 initial（stub）', () => {
     expect(readCapture().opts.gaCount).toBeUndefined() // byBoundary() 无显式 gaCount ⇒ 读层缺省收 1
     expect(readCapture().opts.maxLines).toBeUndefined()
     expect(readCapture().opts.timeoutMs).toBe(15000)
+  })
+
+  it('任务专用命令（T27）：活跃任务命中任务条目；任务外未登记只等超时', async () => {
+    // 任务中：clap 3 → 任务条目 ga 档 + ok 语义条目（断言面）+ 条目法定预算。
+    const inTask = setup({ taskOf: () => ['jianxinju'] })
+    await inTask.call('mud_send', { cmd: 'clap 3' })
+    expect(inTask.readCapture().opts.closeOn).toBe('ga')
+    expect(inTask.readCapture().opts.slots).toEqual([
+      expect.objectContaining({ name: '小童应答', kind: 'ok' }),
+    ])
+    expect(inTask.readCapture().opts.timeoutMs).toBe(15000)
+    // 任务中长程命令：food → criteria 档（fail 槽位在前）+ 条目法定预算 120s。
+    await inTask.call('mud_send', { cmd: 'food' })
+    expect(inTask.readCapture().opts.closeOn).toBe('criteria')
+    expect(inTask.readCapture().opts.slots?.map(s => `${s.name}:${s.kind}`)).toEqual(['钱不够:fail', '完成:ok'])
+    expect(inTask.readCapture().opts.timeoutMs).toBe(120_000)
+    // 任务外：任务命令 = 未登记（DEC-4 不收窗只等超时；缺省预算）。
+    const outTask = setup() // taskOf 缺省 () => []（不在任何任务中）
+    await outTask.call('mud_send', { cmd: 'food' })
+    expect(outTask.readCapture().opts.closeOn).toBeUndefined()
+    expect(outTask.readCapture().opts.slots).toBeUndefined()
+    expect(outTask.readCapture().opts.timeoutMs).toBe(15000)
   })
 
   it('裸读：不 send，initial = recentLines(sendMaxLines)，缺省判据 maxLines + quietMs:300', async () => {
@@ -870,6 +893,7 @@ async function setupIntegration() {
   // 引擎窄面（镜像 index.ts provide 面）
   const handle: MudCore3Handle = {
     toolContextFor: agent => service.toolContextFor(String(agent?.id ?? '')),
+    taskOf: sessionId => service.taskOf(sessionId),
     connect: async sessionId => {
       const r = await service.connect(sessionId)
       return { state: r.state }

@@ -21,6 +21,14 @@
  *     超时**（DEC-4 终态——无兜底档；超时文案兼语料工单，DEC-22）。
  *   - 特例：`sent === ''` 归 `'ga'`（A.2 1:1 事实，不是「需要登记的命令」）；
  *     凭据命令不走表（缝侧以 `sent = null` 表达，DEC-8）。
+ *
+ * **任务专用命令（T27）**：第六分组 `commands/task.ts` 条目带 `task` 标记，
+ * **不入全局总表**（matchCommandProfile 看不到）；按标记分组装配为
+ * `TASK_PROFILES`，`resolveAwaitPlan(sent, decl, tasks?)` 第三参传入会话活跃
+ * 任务集（行流推断，mud-sense `TaskDetector` + `TASK_ENV_RULES` 进出判据；
+ * **可多任务并存**，按进入顺序）——任务中先查任务条目再查全局表
+ * （`matchProfileFor`，同名任务条目优先）；任务外不命中 = 未登记不收窗只等
+ * 超时（DEC-4），不拦发送。
  */
 
 import { CLOSURE_KINDS, RESERVED_SLOT_NAMES } from 'mud-workflow/contract'
@@ -31,6 +39,7 @@ import { SKILL_COMMANDS } from './skill.ts'
 import { USR_COMMANDS } from './usr.ts'
 import { STUNT_COMMANDS } from './stunt.ts'
 import { PROFESSION_COMMANDS } from './profession.ts'
+import { TASK_COMMANDS, TASK_ENVIRONMENTS } from './task.ts'
 
 // ── 编译产物（正则数组 + 并行名表；读窗机匹配模型零变化，§5.2）────────
 
@@ -268,6 +277,74 @@ export function matchCommandProfile(sent: string): CompiledProfile | null {
   return null
 }
 
+// ── 任务专用命令表（T27）：按 task 标记分组，不入全局总表 ────────────────
+
+/** 任务条目按标记分组装配（fail-loud：缺 task 标记 / 组内命令头冲突即启动失败）。 */
+function assembleTaskProfiles(): ReadonlyMap<string, readonly CompiledProfile[]> {
+  const byTask = new Map<string, CommandProfile[]>()
+  for (const p of TASK_COMMANDS) {
+    if (p.task === undefined) {
+      throw new Error(`命令条目装配失败：任务条目 ${p.id} 缺 task 标记（task 分组条目必须声明 task）`)
+    }
+    let list = byTask.get(p.task)
+    if (list === undefined) {
+      list = []
+      byTask.set(p.task, list)
+    }
+    list.push(p)
+  }
+  const out = new Map<string, readonly CompiledProfile[]>()
+  for (const [task, profiles] of byTask) out.set(task, assembleProfiles(profiles))
+  return out
+}
+
+/** 任务专用命令表（只读；按 task 标记分组，每组经 assembleProfiles 自检编译）。 */
+export const TASK_PROFILES: ReadonlyMap<string, readonly CompiledProfile[]> = assembleTaskProfiles()
+
+/** 编译后的任务环境进出判据（消费面 = mud-sense TaskDetector；core3 service 接线）。 */
+export interface CompiledTaskEnv {
+  readonly task: string
+  readonly enter: readonly RegExp[]
+  readonly exit: readonly RegExp[]
+}
+
+function compileEnvPatterns(srcs: readonly string[], task: string, slot: 'enter' | 'exit'): readonly RegExp[] {
+  return srcs.map((src) => {
+    try {
+      return new RegExp(src)
+    } catch (e) {
+      throw new Error(`命令条目装配失败：任务环境 ${task} ${slot} 判据正则非法: ${src}（${(e as Error).message}）`)
+    }
+  })
+}
+
+/** 任务环境进出判据（编译 fail-loud；逐字实录 A.6 纪律，声明在 task.ts TASK_ENVIRONMENTS）。 */
+export const TASK_ENV_RULES: readonly CompiledTaskEnv[] = TASK_ENVIRONMENTS.map(env => ({
+  task: env.task,
+  enter: compileEnvPatterns(env.enter, env.task, 'enter'),
+  exit: compileEnvPatterns(env.exit, env.task, 'exit'),
+}))
+
+/**
+ * 活跃任务感知的条目匹配（T27）：任务中**先查任务条目再查全局表**（同名任务
+ * 条目优先——任务命令语义可整体覆盖全局同名命令）；任务外/未命中落全局表。
+ */
+export function matchProfileFor(sent: string, tasks?: readonly string[]): CompiledProfile | null {
+  if (tasks !== undefined) {
+    const c = sent.trim()
+    // 多任务并存（2026-10-15 用户裁定）：按进入顺序遍历任务组，先命中先用。
+    for (const task of tasks) {
+      const profiles = TASK_PROFILES.get(task)
+      if (profiles === undefined) continue
+      for (const p of profiles) {
+        if (p.exempt !== undefined && p.exempt.test(c)) continue
+        if (p.match.test(c)) return p
+      }
+    }
+  }
+  return matchCommandProfile(sent)
+}
+
 /**
  * 表语义条目名查询（T26.5；mud-workflow 注册表校验端口 FlowSlotsPort 的实现）：
  * 命令命中总表条目时返回其喂令信息（形态 + 槽位含 kind + 条目 flags），未登记
@@ -333,9 +410,11 @@ function compileDeclSlots(
  *
  * @param sent - 实际发送的最终字符串（null = 凭据命令/无发送——不走表）。
  * @param decl - 调用点判据声明（closeOn/outcomes 任一存在 = 已声明）。
+ * @param tasks - 会话活跃任务标记集（T27 行流推断，core3 service 传入，可多任务
+ *   并存、按进入顺序）：非空时先查任务条目再查全局表，同名任务条目优先。
  * @throws 调用点声明判据正则非法（可读上下文）。
  */
-export function resolveAwaitPlan(sent: string | null, decl?: CallerDecl): AwaitPlan {
+export function resolveAwaitPlan(sent: string | null, decl?: CallerDecl, tasks?: readonly string[]): AwaitPlan {
   const declared = decl !== undefined && (decl.closeOn !== undefined || decl.outcomes !== undefined)
 
   // ① 调用点声明（形态比对，DEC-5）。
@@ -344,7 +423,7 @@ export function resolveAwaitPlan(sent: string | null, decl?: CallerDecl): AwaitP
       throw new Error('已拒绝：判据声明必须搭配 closeOn（收窗形态必填）')
     }
     const own = compileDeclSlots(decl, '调用点声明')
-    const profile = sent !== null ? matchCommandProfile(sent) : null
+    const profile = sent !== null ? matchProfileFor(sent, tasks) : null
     if (profile !== null && profile.judge.closeOn === decl.closeOn) {
       // 同形态 ⇒ 语义条目级合并：同名语义条目后声明整体替换、异名追加；合并语义条目一律按
       // **调用点 flags**（默认无）重编译——不使用条目 flags（裁定 6）。
@@ -394,8 +473,8 @@ export function resolveAwaitPlan(sent: string | null, decl?: CallerDecl): AwaitP
     return { source: 'empty', closeOn: 'ga', gaCount: 1, slots: [], command: '' }
   }
 
-  // ④ 表条目（未声明判据 ⇒ 整条采用；条目 flags 编译）。
-  const profile = matchCommandProfile(sent)
+  // ④ 表条目（未声明判据 ⇒ 整条采用；条目 flags 编译；任务条目优先，T27）。
+  const profile = matchProfileFor(sent, tasks)
   if (profile !== null) {
     return {
       source: 'table',

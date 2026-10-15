@@ -33,7 +33,7 @@ export const STD_COMMANDS = [
     timeoutMs: 15_000,
     meta: { corpus: '附录 A.3（2026-10-15 用户提供）' },
     resolve: byBoundary({
-      ok: { 喝下: { patterns: ['你端起桌上的茶具，咕噜咕噜地喝了几口茶下去'] } },
+      ok: { 喝下: { patterns: ['你端起桌上的茶具，咕噜咕噜地喝了几口茶下去', '你感觉有点口渴，于是捧起窗边的山泉水，慢慢喝了下去。'] } },
       fail: { 喝饱: { patterns: ['你已经喝饱了，再也喝不下一丁点了'] } },
     }),
   }),
@@ -45,7 +45,7 @@ export const STD_COMMANDS = [
     timeoutMs: 15_000,
     meta: { corpus: '附录 A.3（2026-10-15 用户提供）' },
     resolve: byBoundary({
-      ok: { 吃下: { patterns: ['你拿起包子咬了几口'] } },
+      ok: { 吃下: { patterns: ['你拿起包子咬了几口', '你拿起干粮咬了几口。'] } },
       fail: { 吃太饱: { patterns: ['你已经吃太饱了，再也塞不下任何东西了'] } },
     }),
   }),

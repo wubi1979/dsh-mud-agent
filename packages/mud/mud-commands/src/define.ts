@@ -180,6 +180,25 @@ export const TABLE_BLOCK_FORMAT: TableBlockFormat = {
   cellDelimiter: '│',
 }
 
+/**
+ * 任务环境声明（T27）：任务专用命令族的生效域判据——**行流推断会话活跃任务**
+ * （2026-10-15 用户裁定「任务或环境有明确开始结束标志，据此设计」）：enter 判据
+ * 命中 ⇒ 加入该任务（**可多任务并存**，2026-10-15 用户裁定；同一任务重复进入
+ * 幂等），exit 判据命中 ⇒ 仅移除同名任务。判据逐字实录（A.6 纪律），装配期
+ * 编译 fail-loud（assembler.ts `TASK_ENV_RULES`）；探测器机制在 mud-sense
+ * `TaskDetector`，接线在 core3 service（每会话一实例，随断线整体复位）。
+ */
+export interface TaskEnvironment {
+  /** 任务标记（与条目 `task` 字段对应，如 'jianxinju'）。 */
+  readonly task: string
+  /** 进入判据（行文子串，实录原句；命中 ⇒ 加入活跃任务集）。 */
+  readonly enter: readonly string[]
+  /** 退出判据（命中 ⇒ 从活跃任务集移除同名任务）。 */
+  readonly exit: readonly string[]
+  /** 语料出处（A.6 纪律）。 */
+  readonly meta: { readonly corpus: string }
+}
+
 /** 命令单元（数据，不含行为）。 */
 export interface CommandProfile {
   /** 规范命令头 = 表键（'exercise'）；缝侧按首词精确命中，match 由 id/aliases 派生。 */
@@ -201,11 +220,16 @@ export interface CommandProfile {
   /** 命令应答捕获格式（T29 D1/D7 登记原则：捕获一律登记在条目——tracker 只引用；
    * 数据形状 = 上方捕获契约；规则 id 独立于命令 id/别名，两命名空间不保证对应）。 */
   readonly capture?: readonly AnyCaptureRule[]
+  /** 任务标记（T27）：存在 = 任务专用命令条目——只在会话谱系/环境推断的活跃任务
+   * 与此标记一致时生效（只做收窗判据，不拦发送；任务外不命中 = 未登记只等超时
+   * DEC-4）。任务条目**不入全局总表**（matchCommandProfile 看不到），按标记分组
+   * 查表（TASK_PROFILES），解析序任务条目 > 全局表（同名任务条目优先）。 */
+  readonly task?: string
   /** 语料出处（A.6 纪律）：ga 类可引 A.2 共享事实；其余逐条指附录 A。 */
   readonly meta: { readonly corpus: string }
 }
 
-/** 条目入参（aliases/exempt/maxLines/flags/capture 可省；exactOptionalPropertyTypes 安全）。 */
+/** 条目入参（aliases/exempt/maxLines/flags/capture/task 可省；exactOptionalPropertyTypes 安全）。 */
 export interface CommandProfileInput {
   readonly id: string
   readonly aliases?: readonly string[]
@@ -215,6 +239,7 @@ export interface CommandProfileInput {
   readonly flags?: string
   readonly resolve: Judge
   readonly capture?: readonly AnyCaptureRule[]
+  readonly task?: string
   readonly meta: { readonly corpus: string }
 }
 
@@ -229,6 +254,7 @@ export function defineCommand(c: CommandProfileInput): CommandProfile {
     ...(c.flags !== undefined ? { flags: c.flags } : {}),
     resolve: c.resolve,
     ...(c.capture !== undefined ? { capture: c.capture } : {}),
+    ...(c.task !== undefined ? { task: c.task } : {}),
     meta: { corpus: c.meta.corpus },
   }
 }

@@ -49,7 +49,8 @@ import type {
 // 取图纯层（D3 fetch 注入）。
 import type { CaptchaResume, IoReadResult, WorkflowIO, WorkflowIoHandle } from 'mud-workflow/contract'
 import { fetchCaptchaImage, type CaptchaFetch } from 'mud-flows/captcha'
-import { resolveAwaitPlan, type CallerDecl } from 'mud-commands/assembler'
+import { resolveAwaitPlan, TASK_ENV_RULES, type CallerDecl } from 'mud-commands/assembler'
+import { TaskDetector } from 'mud-sense/taskdetect'
 import type { ReadOpts } from 'mud-sense/read'
 
 /** 服务依赖（宿主/测试注入）。 */
@@ -316,6 +317,9 @@ export class MudService {
   private readonly reconnectTokens = new Map<string, number>()
   /** 在飞重连循环（按会话）：循环入口禁止重入——循环自身失败不再开第二轮。 */
   private readonly reconnecting = new Set<string>()
+  /** 任务环境探测器（T27，每会话一实例）：行流推断活跃任务，工具面/流程缝
+   *  经 taskOf 查询（任务专用命令收窗判据生效判定）。 */
+  private readonly taskDetectors = new Map<string, TaskDetector>()
   private readonly deps: MudServiceDeps
 
   constructor(deps: MudServiceDeps) {
@@ -380,6 +384,8 @@ export class MudService {
       this.emitStatus()
       if (state === 'disconnected') {
         combat.onDisconnected()
+        // 任务标记随断线整体复位（§10.4，T27：环境随连接失效）。
+        this.taskDetectors.get(sessionId)?.reset()
         this.resolveCaptcha(sessionId, { kind: 'closed' })
         this.scheduleAutoReconnect(sessionId, rt)
       }
@@ -410,9 +416,12 @@ export class MudService {
       this.deliverers.set(sessionId, new Deliverer(sessionId, this.deps.deliver, rt, delivererConfig))
     }
 
-    // 行流：原始行落盘（file-only，不占内存环）→ 投递器
+    // 行流：原始行落盘（file-only，不占内存环）→ 任务环境探测（T27）→ 投递器
+    const taskDetector = new TaskDetector(TASK_ENV_RULES)
+    this.taskDetectors.set(sessionId, taskDetector)
     rt.onLine = line => {
       log.stream(line.text)
+      taskDetector.onLine(line)
       this.deliverers.get(sessionId)?.onLine(line)
     }
 
@@ -442,6 +451,16 @@ export class MudService {
       s = this.deps.parentLookup?.(s)
     }
     return null
+  }
+
+  /**
+   * 会话活跃任务集（T27）：任务环境探测器沿行流推断（enter 加入 / exit 仅移除
+   * 同名，**可多任务并存**、按进入顺序；断线整体复位）。工具面与流程缝经此把
+   * 活跃任务传入 resolveAwaitPlan——任务专用命令的收窗判据只在这些标记命中的
+   * 任务组里生效（§8.7）。
+   */
+  taskOf(sessionId: string): readonly string[] {
+    return this.taskDetectors.get(sessionId)?.current ?? []
   }
 
   /** 取会话画面通道（remote.mud.follow 用；未登记返回 null，动词侧抛错）。 */
@@ -634,7 +653,7 @@ export class MudService {
             ...(opts.flags !== undefined ? { flags: opts.flags } : {}),
           }
           : undefined
-        const plan = resolveAwaitPlan(lastSent, decl)
+        const plan = resolveAwaitPlan(lastSent, decl, this.taskOf(sessionId))
         // maxLines 兜底链：表条目（plan）> 步半声明（只声明 maxLines 未声明
         // closeOn——decl 未成形，直传防静默丢弃）> 缝侧 none/empty 档兜底
         //（防行流无界累积，与工具面同责）。
@@ -1027,6 +1046,7 @@ export class MudService {
     this.deliverers.get(sessionId)?.dispose()
     this.deliverers.delete(sessionId)
     this.combatControllers.delete(sessionId)
+    this.taskDetectors.delete(sessionId)
     rt.dispose()
     this.runtimes.delete(sessionId)
     this.logs.delete(sessionId)

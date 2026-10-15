@@ -996,6 +996,7 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
   ctx.provide('mudCore3', {
     runtimeFor: (agent: { id: unknown }) => service.get(String(agent.id)),
     toolContextFor: (agent) => service.toolContextFor(String(agent?.id ?? '')),
+    taskOf: (sessionId: string) => service.taskOf(sessionId),
     connect: async (sessionId: string) => {
       const r = await service.connect(sessionId)
       return { state: r.state }
