@@ -479,4 +479,13 @@ export const USR_COMMANDS = [
     resolve: byBoundary(),
     capture: [EXP_RULE],
   }),
+  // 游戏帮助（标准命令 help，无别名；用户口径 2026-10-15 登记）：即时命令——
+  // 帮助文本应答后即 GA（A.2 1:1），形态取 `'ga'`，关窗即 next（帮助文本为自由
+  // 文档：无结构化捕获、无分类语义条目）。
+  defineCommand({
+    id: 'help',
+    timeoutMs: 15_000,
+    meta: { corpus: '附录 A.2（即时命令 GA 1:1）+ 用户口径 2026-10-15' },
+    resolve: byBoundary(),
+  }),
 ]

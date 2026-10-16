@@ -282,6 +282,29 @@ describe('capture 装配（T29 D4/D7）', () => {
     expect(matchCommandProfile('looks')).toBeNull()
     expect(matchCommandProfile('hpx')).toBeNull()
   })
+
+  it('learn[xue]/help 登记（用户供句 2026-10-15）：learn ga 收束 + ok/fail 分类条目、help 无判据', () => {
+    // learn/xue：ga 收束 + fail「太累」先于 ok「有心得」（判定序 = 组序编译 fail → cooldown → ok）。
+    for (const cmd of ['learn', 'xue']) {
+      const plan = resolveAwaitPlan(cmd)
+      expect(plan.source, cmd).toBe('table')
+      expect(plan.closeOn, cmd).toBe('ga')
+      expect(plan.timeoutMs, cmd).toBe(15_000)
+      expect(plan.slots, cmd).toEqual([
+        expect.objectContaining({ name: '太累', kind: 'fail' }),
+        expect.objectContaining({ name: '有心得', kind: 'ok' }),
+      ])
+    }
+    // help：无别名无判据，同七命令缺省（关窗即 next）。
+    const help = resolveAwaitPlan('help')
+    expect(help.source).toBe('table')
+    expect(help.closeOn).toBe('ga')
+    expect(help.timeoutMs).toBe(15_000)
+    expect(help.slots).toEqual([])
+    // 词边界：未登记的相似头不误命中。
+    expect(matchCommandProfile('learns')).toBeNull()
+    expect(matchCommandProfile('helper')).toBeNull()
+  })
 })
 
 // ── ⑤ 任务专用命令表（T27：分组装配 + 解析序 任务 > 全局）──────────────

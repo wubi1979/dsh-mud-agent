@@ -27,7 +27,7 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 |---|---|---|
 | **`mud-link`** | **79 例 / 5 文件**（2026-10-13 实测，T28 拆分） | `line` · `telnet` · `mud` · `keepalive` · `corpus` |
 | **`mud-sense`** | **44 例 / 3 文件**（42 绿 + wake 2 例 v0.0.66 登记历史遗留） | `elide`（T18 遮蔽判定与适配）· `wake`（T24：goal 节选/源分派/事件分派纯层 + 既有唤醒器与模板）· `taskdetect`（T27：行流任务探测器——enter 加入 / exit 仅移除同名 / 多任务并存按进入顺序 / 重复进入幂等 / reset 断线复位 / 空规则表零命中） |
-| **`mud-commands`** | **47 例 / 2 文件**（T27 重账） | `assembler`（T26 装配单测：`resolveAwaitPlan` 解析单点 / 保留字拒用 / 语义条目名跨槽位禁重名 / 表条目语义条目级合并与声明整体替换；T29 capture 装配：规范序 / 条目归属 / 七命令解析面 / 重复与未入序 fail-loud fixture；T27：任务条目不入全局表 + 分组装配 / 解析序 任务>全局 / declared 同形态合并 / matchProfileFor 三态 / 多任务并存按进入顺序先命中先用 / TASK_ENV_RULES 实录行文命中——进入句玩家名桥接）· `capture`（T29 捕获契约 + 六套格式——随条目就地定义于 skill/usr 分组：纯 matcher/归约器直调断言——hpbrief 18 键、hp 21 键、sc、skills、i/exp 块归约 flush、规则元数据） |
+| **`mud-commands`** | **48 例 / 2 文件**（v0.0.81 重账：+learn/help 登记解析面 1 例） | `assembler`（T26 装配单测：`resolveAwaitPlan` 解析单点 / 保留字拒用 / 语义条目名跨槽位禁重名 / 表条目语义条目级合并与声明整体替换；T29 capture 装配：规范序 / 条目归属 / 七命令解析面 / 重复与未入序 fail-loud fixture；v0.0.81：learn[xue] ga 收束 + ok/fail 分类序、help 无判据、词边界；T27：任务条目不入全局表 + 分组装配 / 解析序 任务>全局 / declared 同形态合并 / matchProfileFor 三态 / 多任务并存按进入顺序先命中先用 / TASK_ENV_RULES 实录行文命中——进入句玩家名桥接）· `capture`（T29 捕获契约 + 六套格式——随条目就地定义于 skill/usr 分组：纯 matcher/归约器直调断言——hpbrief 18 键、hp 21 键、sc、skills、i/exp 块归约 flush、规则元数据） |
 | **`mud-combat`** | **54 例 / 5 文件**（T21） | `combat-state` · `combat-rules` · `combat-controller` · `combat-report` · `combat.replay`（A.8 实录回放；危险抢占判定随 controller/rules 用例覆盖） |
 | **`mud-nav`** | **27 例 / 5 文件**（T23.10；2026-10-14 收窄 + 持久化，v0.0.75 边结构化重写后实数） | `nav-stamina`（精力闸纯层）· `nav-route`（路线表解析 / ◇ 拆区域房间与颜色三态 / `-c` 方向序列）· `nav-graph`（`NavGraph` 初始为空 / 同键后到覆盖 / `recordTable` / `recordDirs` 并边 / `loadSnapshot` 坏数据丢弃与读时归一）· `nav-blocker`（阻塞连击 ≥2 ⇒ 阻断）· `nav-store`（文件存储：缺失读 null / 落盘读回 / 坏文件上报 / 写失败上报 / 浅检边界） |
 | **`mud`** | **236 例 / 17 文件**（v0.0.78 重账：+2 read cooldown 用例） | `service`（含 `statusRowOf`）· `runtime`（含 T19 tracker 接线）· `reconnect` · `accounts` · `deliver` · `store` · `llm-gate` · `screen` · `log-service`；**引擎集成四套**：`read`（含 T15 命中帧）· `classify` · `tracker`（T19；T23.6 位置感知 `location.*`）· `world`；`nav-store`（T23.10 项目内文件持久化 × 引擎集成：记录即落盘、重启读回、坏数据逐条丢弃、`rosterStorage:false` 纯内存）· `workflow`（缝：`workflowIoFor` + login E2E 五路径）· `fullme`（流程 E2E 主链/stale 自愈/abort/三退出路径/URL 槽化断言） |
@@ -43,6 +43,8 @@ note: 验收与演进：测试策略、断言表、切片与完成定义、后�
 > **T27（2026-10-15）重账**：mud-commands 39→46（+T27 装配 5 例；v0.0.78 +2 判定序滞后顺带并入）、mud-sense 38→43（+`taskdetect` 5 例）、tool-mud 60→62（v0.0.78 +1 冷却形态滞后顺带并入 + T27 +1）、mud 234→236 与 mud-workflow 96→98（v0.0.78 cooldown 用例账目滞后顺带修正）；`packages/mud/` 组合计 **547 例 / 39 文件**（545 绿 + wake 2 例遗留）+ `mud-workflow` 98 + `mud-webui` 7。
 
 > **v0.0.80（2026-10-15 同日增补）重账**：多任务并存（taskdetect 5→6 例：+多任务并存顺序 / 重复进入幂等）+ 进入判据变更（TASK_ENV_RULES 命中面扩为 2 例）——mud-sense 43→44、mud-commands 46→47；`packages/mud/` 组合计 **549 例 / 39 文件**（547 绿 + wake 2 例遗留）+ `mud-workflow` 98 + `mud-webui` 7。
+
+> **v0.0.81（2026-10-16）重账**：learn[xue]/help 命令登记（用户供句 2026-10-15）——mud-commands 47→48（+装配解析面 1 例）；`packages/mud/` 组合计 **550 例 / 39 文件**（548 绿 + wake 2 例遗留）+ `mud-workflow` 98 + `mud-webui` 7。
 
 | 用例组 | 覆盖章节 |
 |---|---|

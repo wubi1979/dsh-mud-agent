@@ -70,7 +70,7 @@ function skillsRow(row: RowContext): CaptureEntry[] | undefined {
 /** skills 表规则（命令 skills[cha、sk]；zone skills；A.7.3 实录；本条目就地定义）。 */
 export const SKILLS_RULE: CaptureRule = { id: 'skills', shape: 'table', zone: 'skills', match: skillsRow }
 
-/** 修炼/技能命令族（dazuo、skills；xue/learn/practice 等待实录后回填）。 */
+/** 修炼/技能命令族（exercise、skills、learn；practice 等待实录后回填）。 */
 export const SKILL_COMMANDS = [
   defineCommand({
     // 打坐（标准命令 exercise，别名 dazuo；A.3 实录：受理帧 GA 后 57s 无 GA——
@@ -122,5 +122,27 @@ export const SKILL_COMMANDS = [
       },
     }),
     capture: [SKILLS_RULE],
+  }),
+  // 请教（标准命令 learn，别名 xue；用户供句 2026-10-15 登记）：即时命令——受理行
+  // + 学习结果行后即 GA（A.2 1:1），形态取 `'ga'`。分类语义条目（DEC-15 声明即断言）：
+  // ok「有心得」= 学有所得（可继续学）；fail「太累」= 今日疲劳无所得（agent 应对：
+  // 稍后重试 / 先恢复精神）——GA 关窗无一命中 ⇒ 收窗成功分支未知。受理行
+  // `你向谷虚道长请教一次有关「基本内功」的疑问。` 两形态共有且含变量（师父名/
+  // 技能名），不进判据（无判别力）；ok 原句「其中一次对答你颇有所感，你听了谷虚
+  // 道长的指导，似乎有些心得。」同样含变量 ⇒ 取结论子串（句尾句号不进判据，
+  // 同 drink/sleep 条目口径）。
+  defineCommand({
+    id: 'learn',
+    aliases: ['xue'],
+    timeoutMs: 15_000,
+    meta: { corpus: '用户供句 2026-10-15（谷虚道长「基本内功」请教实录）+ 附录 A.2（即时命令 GA 1:1）' },
+    resolve: byBoundary({
+      ok: {
+        有心得: { patterns: ['似乎有些心得'] },
+      },
+      fail: {
+        太累: { patterns: ['你今天太累了，结果什么也没有学到'] },
+      },
+    }),
   }),
 ]

@@ -943,3 +943,13 @@
 - **mud `service.ts` / tool-mud**：`taskOf(sessionId)` 返回活跃任务集 `readonly string[]`（空集 = 不在任何任务中）；`MudCore3Handle` 窄面同步。
 - **测试**：mud-sense 43→44（taskdetect 5→6 例：+多任务并存顺序 / 重复进入幂等）、mud-commands 46→47（+多任务并存遍历序 / 活跃任务空集同任务外；TASK_ENV_RULES 进入句命中面扩为 2 例含玩家名桥接）、tool-mud 62（taskOf stub 改数组）；mud 236 / workflow 98 全绿。
 - **文档同步**：§8.7（多任务并存 + 新进入判据）、§16.2/§16.5（重账 549 例 / 39 文件 + T27 行 v0.0.80 增补注）、附录 A.11（进入句变更登记 + 多任务并存裁定）。
+
+## [v0.0.81]learn[xue]/help 命令登记（用户供句 2026-10-15）(2026-10-16)
+
+> 总结：按 A.6 纪律（新条目须先语料校准并登记附录 A 原句）续登两条命令。`learn[xue]`（skill 分组，用户供句记法 `标准命令[别名]`）：即时命令 ga 收束（受理行 + 学习结果行后即 GA，A.2 1:1），分类语义条目（DEC-15 声明即断言）fail `太累`（`你今天太累了，结果什么也没有学到`）先于 ok `有心得`（`似乎有些心得`——ok 原句含师父/技能名变量取结论子串；受理行 `你向谷虚道长请教一次有关「基本内功」的疑问。` 两形态共有且含变量不进判据），兜底 15s；GA 关窗无一命中 ⇒ 收窗成功分支未知。`help`（usr 分组）：即时命令 ga 收束无判据（帮助文本自由文档），兜底 15s。§8.7 同步：原「即时完成 GA 收尾类（`xue`）不入表」挂账句随 learn 登记清账。测试：mud-commands 47→48（+装配解析面 1 例：learn/xue ga 收束 + 槽位分类序 fail→ok、help 无判据同七命令缺省、词边界 learns/helper 不误命中）。
+
+- **mud-commands `skill.ts`**：`SKILL_COMMANDS` 增 `learn` 条目（别名 `xue`，`byBoundary({ ok: { 有心得 }, fail: { 太累 } })`，timeoutMs 15s）；族注记更新（practice 仍待实录回填）。
+- **mud-commands `usr.ts`**：`USR_COMMANDS` 增 `help` 条目（无别名，`byBoundary()`，timeoutMs 15s）。
+- **测试**：mud-commands `assembler.spec` 增 learn[xue]/help 解析面用例（48 全绿）；lib 重建。
+- **文档同步**：§8.7 命令总表行（续登记段 + `xue` 挂账句清账）、§16.2（mud-commands 48 例 + v0.0.81 重账注 550 例 / 39 文件）。
+
