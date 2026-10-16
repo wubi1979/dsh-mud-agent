@@ -37,13 +37,18 @@ export const JIANXINJU = 'jianxinju'
  */
 export const TASK_COMMANDS: readonly CommandProfile[] = [
   defineCommand({
+    // exempt（2026-10-16 用户实测）：`clap` 本身是即时人物动作命令（动作行文后
+    // prompt+GA，A.2 1:1），**只有 `clap 3` 在剑心居触发副本唤小童**——豁免非
+    // `clap 3` 形态（裸 clap/其他参数），落回全局表 clap 条目 ga 收窗（std 分组）；
+    // 恰好 `clap 3` 不豁免，任务中命中本条目收小童应答窗（同名任务条目优先）。
     id: 'clap',
     task: JIANXINJU,
+    exempt: /^(?!clap 3$)/,
     timeoutMs: 15_000,
     resolve: byBoundary({
       ok: { 小童应答: { patterns: ['进来一名小童，向你欠身行礼'] } },
     }),
-    meta: { corpus: 'A.11：clap 3 成功应答（问 food/teacher 与只问 food 两变体共享锚）' },
+    meta: { corpus: 'A.11：clap 3 成功应答（问 food/teacher 与只问 food 两变体共享锚）；豁免判据 = 2026-10-16 用户实测（裸 clap 为动作命令）' },
   }),
   defineCommand({
     id: 'food',

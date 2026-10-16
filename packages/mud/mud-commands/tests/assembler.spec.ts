@@ -311,9 +311,12 @@ describe('capture 装配（T29 D4/D7）', () => {
 
 describe('任务专用命令（T27 jianxinju）', () => {
   it('任务条目不入全局总表；按 task 标记分组装配', () => {
-    for (const id of ['clap', 'food', 'teacher']) {
+    for (const id of ['food', 'teacher']) {
       expect(COMMAND_PROFILES.find(p => p.id === id), id).toBeUndefined()
     }
+    // clap 例外：全局表有同名 clap 条目（即时动作 ga 收窗，2026-10-16 登记），
+    // 任务表另有 clap 3 专用条目——同名任务条目优先，两表分组装配互不冲突。
+    expect(COMMAND_PROFILES.find(p => p.id === 'clap')?.judge.closeOn).toBe('ga')
     const group = TASK_PROFILES.get('jianxinju')
     expect(group?.map(p => p.id).sort()).toEqual(['clap', 'food', 'teacher'])
   })
@@ -330,6 +333,24 @@ describe('任务专用命令（T27 jianxinju）', () => {
     // 任务中发全局命令：落全局表（任务组未命中不吞全局条目）。
     const exercise = resolveAwaitPlan('exercise', undefined, ['jianxinju'])
     expect(exercise).toMatchObject({ source: 'table', command: 'exercise' })
+  })
+
+  it('clap 形态二分：全局 ga 动作条目 + 任务内 clap 3 小童应答（2026-10-16 用户实测）', () => {
+    // 任务内裸 clap / 其他参数 → 任务条目 exempt 落回全局 clap 条目（ga 收窗动作）。
+    const bare = resolveAwaitPlan('clap', undefined, ['jianxinju'])
+    expect(bare).toMatchObject({ source: 'table', closeOn: 'ga', command: 'clap', timeoutMs: 15_000 })
+    expect(bare.slots).toEqual([])
+    const clap4 = matchProfileFor('clap 4', ['jianxinju'])
+    expect(clap4?.judge.closeOn).toBe('ga')
+    expect(clap4?.judge.slots).toEqual([]) // 全局条目（无小童应答槽）
+    // 任务内恰好 clap 3 → 任务条目（小童应答语义条目）。
+    const trigger = resolveAwaitPlan('clap 3', undefined, ['jianxinju'])
+    expect(trigger).toMatchObject({ source: 'table', closeOn: 'ga', command: 'clap', timeoutMs: 15_000 })
+    expect(trigger.slots).toEqual([expect.objectContaining({ name: '小童应答', kind: 'ok' })])
+    // 任务外 clap 3 → 全局条目 ga 收窗（剑心居外不触发小童）。
+    const outside = resolveAwaitPlan('clap 3')
+    expect(outside).toMatchObject({ source: 'table', closeOn: 'ga', command: 'clap', timeoutMs: 15_000 })
+    expect(outside.slots).toEqual([])
   })
 
   it('任务外：任务命令 = 未登记不收窗只等超时（DEC-4，不拦发送）', () => {

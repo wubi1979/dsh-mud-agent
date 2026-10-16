@@ -59,6 +59,18 @@ export const STD_COMMANDS = [
     meta: { corpus: '附录 A.2（即时命令 GA 1:1）+ 用户口径 2026-10-15（表类命令收束同律）' },
     resolve: byBoundary(),
   }),
+  // 拍手（标准命令 clap，无别名；用户供句 2026-10-16 登记）：即时人物动作命令——
+  // 动作行文后即 prompt+GA（A.2 1:1；用户供句两例实证：裸 clap 与 `clap 4` 各有
+  // 行文变体），形态取 `'ga'`，关窗即 next（动作行文是自由变体文本，无分类语义
+  // 条目、无捕获）。特殊形态 `clap 3` **在剑心居副本内**触发小童应答——由 task
+  // 分组同名条目接管（解析序任务条目优先，任务条目 exempt 排除非 `clap 3` 形态
+  // 落回本条目）；副本外 `clap 3` 仍归本条目 ga 收窗（剑心居外不触发小童）。
+  defineCommand({
+    id: 'clap',
+    timeoutMs: 15_000,
+    meta: { corpus: '附录 A.2（即时命令 GA 1:1）+ 用户供句 2026-10-16（A.3）' },
+    resolve: byBoundary(),
+  }),
   // LM（无判据无 GA 的命令，用户举例）：固定采样窗——窗长即 timeoutMs（A.6：
   // 只有实录证明「无判据无 GA」之后才允许 quiet 形态；命令头与应答速度分布
   // 待实录后回填并谨慎选择窗长——注释纪律：quiet 与 timeout 配合使用，timeout
