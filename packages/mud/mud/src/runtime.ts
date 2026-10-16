@@ -103,8 +103,8 @@ export class SessionRuntime {
     this.state = next
     this.onStateChange?.(next)
   }
-  /** 网络层日志回调（telnet 协商/断线/协议异常）；装配层接此写入会话日志。 */
-  onLog: ((level: 'info' | 'error', text: string) => void) | null = null
+  /** 网络层日志回调（telnet 协商/断线/协议异常/GMCP 原文）；装配层接此写入会话日志。 */
+  onLog: ((level: 'debug' | 'info' | 'error', text: string) => void) | null = null
 
   /**
    * @param sessionId - 会话 id（= 账号 id）。
@@ -178,6 +178,9 @@ export class SessionRuntime {
     // 到达即置 in-game（覆盖行文推断的 inferred，不降级）并写入 world
     // （zone='gmcp'，key=包名，后到覆盖）。
     this.mud.onGmcp = msg => {
+      // GMCP 原文登记（debug/network，2026-10-16 用户口径）：GMCP 推送内容与时机
+      // 待语料校准——原文随写入 world 逐包落日志，供校准判据与排查。
+      this.onLog?.('debug', `GMCP ${msg.raw}`)
       this.loggedInState = 'in-game'
       this.worldState.set('gmcp', msg.package, msg.payload, 'measured', { kind: 'gmcp', time: Date.now() })
       this.onWorldChange?.()

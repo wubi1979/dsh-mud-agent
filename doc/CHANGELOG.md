@@ -970,3 +970,26 @@
 - **测试**：mud-commands `assembler.spec` 用例修订（任务条目不入全局总表断言收窄为 food/teacher + clap 全局同名例外断言；clap 豁免用例改形态二分：任务内裸 clap/clap 4 → 全局 ga、任务内 clap 3 → 小童应答、任务外 clap 3 → 全局 ga）——49 全绿（用例数不变）；mud 236 全绿。
 - **文档同步**：§8.7（续登记段 + 任务段豁免二分注）、§16.2（taskdetect 装配面行 clap 例外注）、附录 A.3（clap 语料登记 + 实录两例）、A.11（形态甄别行修订为落回全局条目）。
 
+## [v0.0.84]GMCP 原文落日志：写入 world 逐包登记（用户口径 2026-10-16）(2026-10-16)
+
+> 总结：`tune gmcp Status on` 可开 GMCP 状态推送，但推送**内容与时机未知**——用户口径：在 GMCP 写入 world 时把原文登记进会话日志，供语料校准与排查。
+
+- **mud-link `telnet.ts`**：`GmcpMessage` 增 `raw` 字段（原文 = 包名 + 空格 + 载荷整串，ANSI 已剥离）——payload 是 JSON 尽力解析产物，原文以 raw 为准；emit 随带。
+- **mud `runtime.ts`**：`onGmcp` 写 world 前经 `onLog('debug', 'GMCP <raw>')` 逐包登记（channel `network`）；`onLog` 级别扩为 `debug|info|error`（service 侧 append 原样透传，wire 兼容）。
+- **测试**：mud-link `telnet.spec` 两 GMCP 用例断言补 `raw`——79 全绿；mud 236 / tool-mud 62 全绿（lib 按拓扑重建）。
+
+## [v0.0.85]GMCP Status 语料登记 + 状态源裁定：文本抓取维持现役（用户实测/裁定 2026-10-16）(2026-10-16)
+
+> 总结：v0.0.84 原文落日志回收首批语料——包名 `GMCP.Status`：全量帧 20 键（qi/jing/jingli/neili 六向 + food/water + combat_exp/level + name/id/title/family + vigour 两键），增量帧收窄为 qi/food/water/jing 四键、约 11s 级周期（键集/时机规律样本不足待校准）。用户裁定：**状态捕获维持文本抓取现役路径**——文本抓取已非常稳定，GMCP 接收收益不大，不为 GMCP.Status 建捕获格式/判据；文本面出现盲区时再评估接捕。
+
+- **零代码变更**：GMCP 面维持现役职责（登录轴权威信号 + `zone='gmcp'` 原样整包写入 + 原文落日志）。
+- **文档同步**：§10.3（写入源段状态源裁定注）、附录 A.12（GMCP.Status 语料登记——开启方式/全量帧/增量帧逐字实录 + 裁定留档）。
+
+## [v0.0.86]exert[yun] 内功应用命令登记：三形态 ga 收窗（用户供句 2026-10-16）(2026-10-16)
+
+> 总结：`exert[yun]`（skill 分组）登记——即时 GA 收窗三形态：recover/regenerate（内力即时转换，ok/fail 语义条目）+ jing（受理帧即 GA；其完成句「你减缓真气运行，让自身恢复正常」**无 GA 异步推送**不入判据，受理即收窗，完成判据/时长待后续完善）。fail 槽位四条（`气力充沛`/`精力充沛`/`内力枯竭`/`已在凝神`）先于 ok 三形态（判定序组序编译）；语料 A.13 登记（含 help 原文佐证 + `yun jing` 期间无法 tuna、dazuo 游戏面事实）；其余参数形态 qi/heal/lifeheal/inspire/powerup/roar 待实录回填（DEC-7，同头命中 GA 即时收束 ⇒ 分支未知）。
+
+- **`mud-commands/src/skill.ts`**：`SKILL_COMMANDS` 增 `exert` 条目（id exert / 别名 yun / 兜底 15s / `byBoundary`）。
+- **测试**：mud-commands 49→50（+exert[yun] 解析面 1 例：fail 先于 ok 分类序、别名 yun、词边界）；lib 重建。
+- **文档同步**：§8.7（续登记段 exert[yun]）、§16.2（mud-commands 50 例重账）、附录 A.13（三形态语料登记）。
+

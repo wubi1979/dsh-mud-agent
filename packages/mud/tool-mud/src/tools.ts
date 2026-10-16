@@ -420,7 +420,7 @@ export function registerMudTools(
       '向 MUD 发送一条命令并等待应答原文（有 cmd = send + read；无 cmd = 裸读近期行流近况）。'
       + 'wait=false 时发送即走：只发命令不等应答（不 read、不判成败），用于翻页/save 等'
       + '"发了就行"的动作。未连接时被拒绝，可先调用 mud_connect。已登记命令'
-      + '（dz/sleep/walk 等）不写 listen 即按命令总表判据自动收窗（附 outcome 结局分类）；'
+      + '（dazuo/sleep/walk 等）不写 listen 即按命令总表判据自动收窗（附 outcome 结局分类）；'
       + '未登记命令**不收窗只等超时**——需判据请在 listen 显式声明。'
       + '返回应答行原文；状态拉取命令（hpbrief/hp/sc/i/skills）还会附带系统解析好的'
       + ' world 结构化状态（world 字段，与 mud_state 同形），直接读它即可。',

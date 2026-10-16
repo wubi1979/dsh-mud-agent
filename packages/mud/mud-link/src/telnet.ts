@@ -83,6 +83,9 @@ function escapeIac(bytes: Buffer): Buffer {
 export interface GmcpMessage {
   package: string
   payload: unknown
+  /** 原文（包名 + 空格 + 载荷整串，ANSI 已剥离；诊断登记用——payload 是 JSON
+   * 尽力解析产物，原文以本字段为准）。 */
+  raw: string
 }
 
 /** TelnetClient 构造参数。 */
@@ -384,7 +387,7 @@ export class TelnetClient extends EventEmitter {
           parsed = rest
         }
       }
-      this.emit('gmcp', { package: pkg, payload: parsed } satisfies GmcpMessage)
+      this.emit('gmcp', { package: pkg, payload: parsed, raw: text } satisfies GmcpMessage)
       return
     }
     if (option === OPT.MSSP) {

@@ -70,7 +70,7 @@ function skillsRow(row: RowContext): CaptureEntry[] | undefined {
 /** skills 表规则（命令 skills[cha、sk]；zone skills；A.7.3 实录；本条目就地定义）。 */
 export const SKILLS_RULE: CaptureRule = { id: 'skills', shape: 'table', zone: 'skills', match: skillsRow }
 
-/** 修炼/技能命令族（exercise、skills、learn；practice 等待实录后回填）。 */
+/** 修炼/技能命令族（exercise、skills、learn、exert；practice 等待实录后回填）。 */
 export const SKILL_COMMANDS = [
   defineCommand({
     // 打坐（标准命令 exercise，别名 dazuo；A.3 实录：受理帧 GA 后 57s 无 GA——
@@ -120,6 +120,9 @@ export const SKILL_COMMANDS = [
       cooldown: {
         刚查看过: { patterns: ['你不是刚查看过吗？'] },
       },
+      fail: {
+        fail: { patterns: ['周围有这个人吗？只有巫师，夫妻，或有师徒关系的人能察看他人的技能。'] },
+      },
     }),
     capture: [SKILLS_RULE],
   }),
@@ -142,6 +145,33 @@ export const SKILL_COMMANDS = [
       },
       fail: {
         太累: { patterns: ['你今天太累了，结果什么也没有学到'] },
+      },
+    }),
+  }),
+  // 内功应用（标准命令 exert，别名 yun；用户供句 2026-10-16 登记，A.13）：即时 GA
+  // 收窗三形态——recover/regenerate（内力即时转换）+ jing（受理帧即 GA；其完成句
+  // 「你减缓真气运行，让自身恢复正常」**无 GA 异步推送**，受理即收窗，完成句不入
+  // 判据、留 A.13 实录待后续完善再定判据/时长）。分类语义条目（DEC-15 声明即断言）：
+  // fail 判内力枯竭/已满足/已在凝神，ok 分形态三语义条目——GA 关窗无一命中 ⇒ 收窗
+  // 成功分支未知（其余参数形态 qi/heal/lifeheal/inspire/powerup/roar 待实录回填，
+  // DEC-7；同头命中 GA 即时收束不误等）。原句可能带括号包裹（用户记录形如 `( …)`），
+  // 锚取句体子串两侧兼容（句尾句号不进判据，learn 条目口径）。
+  defineCommand({
+    id: 'exert',
+    aliases: ['yun'],
+    timeoutMs: 15_000,
+    meta: { corpus: '用户供句 2026-10-16（A.13 三形态实录）' },
+    resolve: byBoundary({
+      ok: {
+        气血好转: { patterns: ['你深深吸了几口气，脸色看起来好多了'] },
+        精神好转: { patterns: ['你略一凝神，精神看起来好多了'] },
+        凝神加速: { patterns: ['你静心凝神，加速自身的精气恢复'] },
+      },
+      fail: {
+        气力充沛: { patterns: ['你现在气力充沛'] },
+        精力充沛: { patterns: ['你现在精力充沛'] },
+        内力枯竭: { patterns: ['你的内力已经枯竭，不能施用内功'] },
+        已在凝神: { patterns: ['你已经运行内功凝神加快自身精气恢复'] },
       },
     }),
   }),

@@ -435,4 +435,23 @@ note: 抓包与语料事实（MUD 侧实录）；现役登录流程与读窗口�
 - **已登记条目（`commands/task.ts`，任务标记 `jianxinju`）**：`clap`（`'ga'` 档 + ok `小童应答`，15s；exempt 非 `clap 3` 形态落回**全局 clap 条目**——见上形态甄别；全局同名条目 = A.3 即时动作 ga 收窗，2026-10-16 登记）/ `food`（`'criteria'`：fail `钱不够` + ok `完成`，120s）/ `teacher`（`'criteria'`：fail `师傅在场` + ok `完成`，120s）——预算先按 exercise/sleep 量级定（criteria 兜底），实测时长后回填。
 - **待实录回填**：`food`/`teacher` 应答行文变体（不同食物/师傅）、超时预算实测校准；武当阵法 `zhenfa`/`zouwei` 判据（A.10 挂账不变）。
 
+## A.12 GMCP Status 推送语料（2026-10-16 用户实测实录；状态源裁定 = 文本抓取维持现役，GMCP 不接捕获）
+
+- **开启方式**：`tune gmcp Status on`；已开启时再发同命令回提示行 `你已经在使用GMCP接收状态信息，如果要使用本命令查看状态，请先输入：tune gmcp Status off`。
+- **原文实录（v0.0.84 GMCP 原文落日志所得，包名 `GMCP.Status`）**：
+  - **全量帧**（开启时刻 11:25:30）：`GMCP.Status {"max_qi":318,"qi":318,"name":"夫差","jingli":325,"food":199,"eff_jing":260,"id":"vicrly","jing":260,"title":"武当派第四代弟子","family/family_name":"武当派","combat_exp":56074,"max_jing":260,"vigour/qi":0,"vigour/yuan":0,"level":0,"max_jingli":325,"neili":350,"water":199,"max_neili":350,"eff_qi":318}`——20 键：qi/max_qi/eff_qi、jing/max_jing/eff_jing、jingli/max_jingli、neili/max_neili、food/water、combat_exp/level、name/id/title/family/family_name、vigour/qi、vigour/yuan（键名 = 观测事实逐字登记，与文本 tracker 键的映射**不作推断**，接捕时再校准）。
+  - **增量帧**（同秒 11:25:30 一次 + 约 11s 后 11:25:41 再推）：`GMCP.Status {"qi":318,"food":199,"water":199,"jing":260}` ⇒ `GMCP.Status {"qi":318,"food":198,"water":198,"jing":260}`——键集收窄为 qi/food/water/jing 四键；触发时机与键集规律**样本不足待校准**。
+- **裁定（2026-10-16 用户）**：状态捕获**维持文本抓取现役路径**（tracker 判据解析）——文本抓取已非常稳定，GMCP 接收收益不大；本节只登记格式留档，**不落判据/捕获**（§10.3）；文本面出现盲区时再评估接捕。
+
+## A.13 exert[yun] 三形态语料（2026-10-16 用户供句实录；即时 GA 收窗登记 v0.0.86）
+
+- **help 原文（佐证）**：`使用内功功能，必须jifa指定你要使用的内功。内功的普通功能：recover 恢复自己的气血。qi 持续恢复自己的气血。regenerate 恢复自己的精神。jing 持续恢复自己的精神。内功的特殊功能（可能有些内功没有）：heal 用内力替自己疗伤（回复有效气血）。lifeheal 用内力替他人疗伤。inspire 用内力回复有效精神。powerup 用内力短时间内将自己的战斗力提高。roar 用内力发出吼声，震昏同一房间的其他生物。`
+- **参数形态实录（用户供句逐字；原句可能带括号包裹，形如 `( …)`）**：
+  - `yun recover`（内力转换为气血）：ok `你深深吸了几口气，脸色看起来好多了。`｜fail `你现在气力充沛。`｜fail `你的内力已经枯竭，不能施用内功。`
+  - `yun regenerate`（内力转换为精神）：ok `你略一凝神，精神看起来好多了。`｜fail `你现在精力充沛。`｜fail 同上（内力枯竭两形态共享）
+  - `yun jing`（加速自身精气恢复）：受理 ok `你静心凝神，加速自身的精气恢复。`｜fail `你已经运行内功凝神加快自身精气恢复。`｜**完成句 `你减缓真气运行，让自身恢复正常。`（无 GA 收——异步推送不入判据，受理帧即 GA 收窗；完成判据/时长待后续完善）**
+  - 三形态均 **GA 收窗**（用户口径）；无冷却频控句。
+- **游戏面事实**：加速恢复（`yun jing`）期间**无法 tuna、dazuo**（对打坐/吐纳流程的排他约束，流程编排需知）。
+- **待实录回填（DEC-7）**：`qi`（持续恢复气血）开始/完成句、特殊功能 heal/lifeheal/inspire/powerup/roar 各形态应答、不同内功的变体（「有些内功没有此功能」拒绝句）；未实录形态同头命中 GA 即时收束 ⇒ 分支未知。
+
 > AI生成

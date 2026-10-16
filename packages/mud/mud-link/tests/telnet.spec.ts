@@ -213,21 +213,21 @@ describe('TelnetClient 子协商四协议', () => {
 
   it('GMCP: 包名 + JSON 载荷解析为 gmcp 事件', () => {
     const { client, feed } = unitClient()
-    const messages: Array<{ package: string, payload: unknown }> = []
-    client.on('gmcp', (m: { package: string, payload: unknown }) => messages.push(m))
+    const messages: Array<{ package: string, payload: unknown, raw: string }> = []
+    client.on('gmcp', (m: { package: string, payload: unknown, raw: string }) => messages.push(m))
     const payload = Buffer.from('Core.Hello {"name":"pkuxkx"}', 'utf8')
     feed(Buffer.concat([
       Buffer.from([IAC, SB, 201 /* GMCP */]),
       payload,
       Buffer.from([IAC, SE]),
     ]))
-    expect(messages).toEqual([{ package: 'Core.Hello', payload: { name: 'pkuxkx' } }])
+    expect(messages).toEqual([{ package: 'Core.Hello', payload: { name: 'pkuxkx' }, raw: 'Core.Hello {"name":"pkuxkx"}' }])
   })
 
   it('GMCP: 非 JSON 载荷保留为字符串; 无载荷为空串', () => {
     const { client, feed } = unitClient()
-    const messages: Array<{ package: string, payload: unknown }> = []
-    client.on('gmcp', (m: { package: string, payload: unknown }) => messages.push(m))
+    const messages: Array<{ package: string, payload: unknown, raw: string }> = []
+    client.on('gmcp', (m: { package: string, payload: unknown, raw: string }) => messages.push(m))
     feed(Buffer.concat([
       Buffer.from([IAC, SB, 201]),
       Buffer.from('Char.Login {bad json', 'utf8'),
@@ -238,8 +238,8 @@ describe('TelnetClient 子协商四协议', () => {
       Buffer.from('Core.Ping', 'utf8'),
       Buffer.from([IAC, SE]),
     ]))
-    expect(messages[0]).toEqual({ package: 'Char.Login', payload: '{bad json' })
-    expect(messages[1]).toEqual({ package: 'Core.Ping', payload: '' })
+    expect(messages[0]).toEqual({ package: 'Char.Login', payload: '{bad json', raw: 'Char.Login {bad json' })
+    expect(messages[1]).toEqual({ package: 'Core.Ping', payload: '', raw: 'Core.Ping' })
   })
 
   it('MSSP: VAR/VAL 键值对解析为 mssp 事件', () => {

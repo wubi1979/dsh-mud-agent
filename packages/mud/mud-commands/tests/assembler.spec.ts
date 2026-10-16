@@ -305,6 +305,27 @@ describe('capture 装配（T29 D4/D7）', () => {
     expect(matchCommandProfile('learns')).toBeNull()
     expect(matchCommandProfile('helper')).toBeNull()
   })
+
+  it('exert[yun] 登记（用户供句 2026-10-16）：ga 收束 + fail 四条先于 ok 三形态', () => {
+    // 判定序 = 组序编译 fail → ok；别名 yun 同头命中。
+    for (const cmd of ['exert', 'yun']) {
+      const plan = resolveAwaitPlan(cmd)
+      expect(plan.source, cmd).toBe('table')
+      expect(plan.closeOn, cmd).toBe('ga')
+      expect(plan.timeoutMs, cmd).toBe(15_000)
+      expect(plan.slots, cmd).toEqual([
+        expect.objectContaining({ name: '气力充沛', kind: 'fail' }),
+        expect.objectContaining({ name: '精力充沛', kind: 'fail' }),
+        expect.objectContaining({ name: '内力枯竭', kind: 'fail' }),
+        expect.objectContaining({ name: '已在凝神', kind: 'fail' }),
+        expect.objectContaining({ name: '气血好转', kind: 'ok' }),
+        expect.objectContaining({ name: '精神好转', kind: 'ok' }),
+        expect.objectContaining({ name: '凝神加速', kind: 'ok' }),
+      ])
+    }
+    // 词边界：相似头不误命中。
+    expect(matchCommandProfile('exerts')).toBeNull()
+  })
 })
 
 // ── ⑤ 任务专用命令表（T27：分组装配 + 解析序 任务 > 全局）──────────────
