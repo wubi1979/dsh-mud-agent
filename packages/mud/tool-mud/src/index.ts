@@ -632,11 +632,19 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
     return { name: account.name, pass: resolved.value } satisfies ResolvedCredentials
   })
 
+  // ── 项目内落点（组合根统一解析，§15.2 / §15.5）──────────────────
+  // 插件落进宿主进程 cwd 的项目内文件在组合根集中解析、统一下发：
+  //   data/     = 耐久数据（行走知识图 nav-graph.json，§15.2；流程侧若将来
+  //               出现文件级运行时产物，按域落 data/workflow/ 子目录）
+  //   mud-logs/ = 会话日志（按天滚动、可随手清理语义，与 data/ 分列，§15.5 #14）
+  const projectDataDir = join(process.cwd(), 'data')
+  const defaultLogDir = join(process.cwd(), 'mud-logs')
+
   // 会话日志：warn/error 同时镜像到宿主日志（控制台可排查），文件按天 + 会话落盘。
   const logOptions: SessionLogOptions = {
     ...(config.logFile === false
       ? {}
-      : { logDir: resolveLogDir(config.logDir, join(process.cwd(), 'mud-logs')) }),
+      : { logDir: resolveLogDir(config.logDir, defaultLogDir) }),
     ...(config.logBufferMax !== undefined ? { bufferMax: config.logBufferMax } : {}),
     onEntry: (sessionId, entry) => {
       if (entry.level === 'error') {
@@ -982,7 +990,7 @@ export function apply(ctx: Context, config: MudCore3Config = {}): void {
   const navService = config.rosterStorage === false
     ? new NavService()
     : new NavService(createFileNavStore(
-        join(process.cwd(), 'data', 'nav-graph.json'),
+        join(projectDataDir, 'nav-graph.json'),
         message => ctx.logger.warn(`tool-mud: ${message}`),
       ))
   ctx.provide('mudNav', navService)

@@ -162,15 +162,18 @@ const I_CARRY_RE = /你共携带(.+?)件器物/
 const I_BURDEN_RE = /(?:总负重|负重)[:：]?\s*(约?[一二三四五六七八九十百千零\d]+斤)/
 /** 负重比：`接近一成`（原句尾锚定，堵正文误配；原文存档）。 */
 const I_BURDEN_RATIO_RE = /(?:接近|超过|已达)?\s*[一二三四五六七八九十百零\d]+成[。，]?\s*$/
-/** 财物：黄金×4 白银×70 铜板×81 → { gold, silver, copper }。 */
-const I_GOLD_RE = /黄金[×x*]\s*(\d+)/
-const I_SILVER_RE = /白银[×x*]\s*(\d+)/
-const I_COPPER_RE = /铜板[×x*]\s*(\d+)/
+/** 财物：黄金/白银/铜板（单式三币合并；用户口径 2026-10-18：数量 1 时游戏不显
+ *  `×N`，裸显 = 1）。`(?![\u4e00-\u9fff×x*])` 裸显分支堵「黄金手镯」类物品名误配。 */
+const I_CURRENCY_RE = /(黄金|白银|铜板)(?:[×x*]\s*(\d+)|(?![\u4e00-\u9fff×x*]))/g
 
 /** 装备/饰品槽位标签：`[帽子]`（1–6 字非方括号文本）。 */
 const I_SLOT_RE = /\[([^\[\]]{1,6})\]/g
 /** 背包物品：`北侠战甲(Pkuxkx zhanjia)` → {name, id}（实录 A.7.4）。 */
 const I_ITEM_RE = /([\u4e00-\u9fff]{1,12})\(([a-z][a-z0-9' -]*)\)/gi
+/** 食物物品：`干粮(Gan liang)×10` → {name, id, count}；无 ×N（`包子(Baozi)`）= 1
+ *（用户口径 2026-10-18：数量 1 时游戏不显 ×N）。id 域同 I_ITEM_RE（i flag 下
+ * [a-z] 兼顾大写首字母）。 */
+const I_FOOD_RE = /([\u4e00-\u9fff]{1,12})\(([a-z][a-z0-9' -]*)\)(?:[×x*]\s*(\d+))?/gi
 /** 槽位段含物品判据：段内有中文即视为物品名（画框字符 `▄▅█` 与 `--` 均非中文）。 */
 const I_HAS_CJK_RE = /[\u4e00-\u9fff]/
 
@@ -265,16 +268,16 @@ function inventoryRow(row: RowContext): CaptureEntry[] | undefined {
   if (burden !== null) out.push({ key: '负重', value: burden[1] ?? '' })
   const ratio = row.cells.map(c => I_BURDEN_RATIO_RE.exec(c)).find(m => m !== null)?.[0]
   if (ratio !== undefined) out.push({ key: '负重比', value: ratio.replace(/[。，\s]/g, '') })
-  const gold = I_GOLD_RE.exec(row.raw)?.[1]
-  const silver = I_SILVER_RE.exec(row.raw)?.[1]
-  const copper = I_COPPER_RE.exec(row.raw)?.[1]
-  if (gold !== undefined || silver !== undefined || copper !== undefined) {
-    out.push({ key: '财物', value: {
-      ...(gold !== undefined ? { gold: Number.parseInt(gold, 10) } : {}),
-      ...(silver !== undefined ? { silver: Number.parseInt(silver, 10) } : {}),
-      ...(copper !== undefined ? { copper: Number.parseInt(copper, 10) } : {}),
-    } })
+  const money: { gold?: number; silver?: number; copper?: number } = {}
+  I_CURRENCY_RE.lastIndex = 0
+  let cur: RegExpExecArray | null
+  while ((cur = I_CURRENCY_RE.exec(row.raw)) !== null) {
+    const count = cur[2] !== undefined ? Number.parseInt(cur[2], 10) : 1
+    if (cur[1] === '黄金') money.gold = count
+    else if (cur[1] === '白银') money.silver = count
+    else money.copper = count
   }
+  if (Object.keys(money).length > 0) out.push({ key: '财物', value: money })
   // 分区行按 section 门控（堵 skills 的 中文(id) 行被本规则抢走——i 先于 skills 声明）。
   if (row.section === '装备' || row.section === '饰品') {
     const slots = iSlotRow(row.cells)
@@ -283,6 +286,21 @@ function inventoryRow(row: RowContext): CaptureEntry[] | undefined {
   if (row.section === '其它') {
     const items = iOtherItems(row.cells)
     if (items.length > 0) out.push({ key: '其它', value: items })
+  }
+  if (row.section === '食物') {
+    const foods: { name: string; id: string; count: number }[] = []
+    for (const c of row.cells) {
+      I_FOOD_RE.lastIndex = 0
+      let m: RegExpExecArray | null
+      while ((m = I_FOOD_RE.exec(c)) !== null) {
+        foods.push({
+          name: m[1] ?? '',
+          id: m[2] ?? '',
+          count: m[3] !== undefined ? Number.parseInt(m[3], 10) : 1,
+        })
+      }
+    }
+    if (foods.length > 0) out.push({ key: '食物', value: foods })
   }
   return out.length > 0 ? out : undefined
 }

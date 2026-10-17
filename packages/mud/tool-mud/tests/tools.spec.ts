@@ -324,11 +324,12 @@ describe('mud_send 判据与 initial（stub）', () => {
   })
 
   it('任务专用命令（T27）：活跃任务命中任务条目；任务外未登记只等超时', async () => {
-    // 任务中：clap 3 → 任务条目 ga 档 + ok 语义条目（断言面）+ 条目法定预算。
+    // 任务中：clap 3 → 任务条目 ga 档 + ok/cooldown 语义条目（断言面；cooldown 排前）+ 条目法定预算。
     const inTask = setup({ taskOf: () => ['jianxinju'] })
     await inTask.call('mud_send', { cmd: 'clap 3' })
     expect(inTask.readCapture().opts.closeOn).toBe('ga')
     expect(inTask.readCapture().opts.slots).toEqual([
+      expect.objectContaining({ name: '无人应答', kind: 'cooldown' }),
       expect.objectContaining({ name: '小童应答', kind: 'ok' }),
     ])
     expect(inTask.readCapture().opts.timeoutMs).toBe(15000)
@@ -455,19 +456,23 @@ describe('mud_send 空命令与命令总表判据（§8.7，A.3，T26）', () =>
     expect(readCapture().opts.timeoutMs).toBe(15000)
   })
 
-  it('cmd:"sleep" 命中表条目："criteria" 形态，刚睡过 fail 槽位先行（尾随空格兼容），timeout 兜底 300s', async () => {
+  it('cmd:"sleep" 命中表条目："criteria" 形态，分槽判定序（刚睡过=cooldown / 地点不对=fail；尾随空格兼容），timeout 兜底 300s', async () => {
     const { call, readCapture } = setup()
     await call('mud_send', { cmd: 'sleep' })
     const opts = readCapture().opts
     expect(opts.closeOn).toBe('criteria')
     expect(opts.timeoutMs).toBe(300_000)
     const slots = opts.slots ?? []
-    expect(slots.map(s => `${s.name}:${s.kind}`)).toEqual(['刚睡过:fail', '完成:ok'])
+    expect(slots.map(s => `${s.name}:${s.kind}`)).toEqual([
+      '不是睡觉的地方:fail', '刚睡过:cooldown', '完成:ok',
+    ])
     expect(slots.find(s => s.name === '完成')!.res[0]!.test('你一觉醒来，精神抖擞地活动了几下手脚。')).toBe(true)
     const 刚睡过 = slots.find(s => s.name === '刚睡过')!.res[0]!
     expect(刚睡过.test('你刚刚睡过一觉, 多睡对身体有害无益! ')).toBe(true) // 原句带尾随空格
     expect(刚睡过.test('你刚刚睡过一觉, 多睡对身体有害无益!')).toBe(true) // 不带也能命中
     expect(刚睡过.test('你一觉醒来，精神抖擞地活动了几下手脚。')).toBe(false)
+    const 不是睡觉的地方 = slots.find(s => s.name === '不是睡觉的地方')!.res[0]!
+    expect(不是睡觉的地方.test('这里不是你能睡的地方!')).toBe(true)
   })
 
   it('模型显式 listen 仍整体覆盖预设（语义条目级合并：声明语义条目生效、表语义条目补充）；显式 timeoutMs 仍钳 60s', async () => {

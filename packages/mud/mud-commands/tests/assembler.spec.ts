@@ -51,13 +51,13 @@ describe('resolveAwaitPlan 解析单点（DEC-21）', () => {
     expect(resolveAwaitPlan('   ')).toMatchObject({ source: 'empty', closeOn: 'ga' })
   })
 
-  it('table 档：命中条目整条采用；fail 槽位排前（判定序）+ 条目法定 timeout', () => {
+  it('table 档：命中条目整条采用；槽位判定序（fail→cooldown→ok）+ 条目法定 timeout', () => {
     const plan = resolveAwaitPlan('sleep')
     expect(plan.source).toBe('table')
     expect(plan.command).toBe('sleep')
     expect(plan.closeOn).toBe('criteria')
     expect(plan.timeoutMs).toBe(300_000)
-    expect(plan.slots?.map(s => `${s.kind}:${s.name}`)).toEqual(['fail:刚睡过', 'ok:完成'])
+    expect(plan.slots?.map(s => `${s.kind}:${s.name}`)).toEqual(['fail:不是睡觉的地方', 'cooldown:刚睡过', 'ok:完成'])
   })
 
   it('table 档 ga 形态：drink 条目整条采用（即时完成类首例，别名 he 命中，分类语义条目 fail 排前）', () => {
@@ -350,10 +350,13 @@ describe('任务专用命令（T27 jianxinju）', () => {
     const food = resolveAwaitPlan('food', undefined, ['jianxinju'])
     expect(food).toMatchObject({ source: 'table', closeOn: 'criteria', command: 'food', timeoutMs: 120_000 })
     expect(food.slots?.map(s => `${s.name}:${s.kind}`)).toEqual(['钱不够:fail', '完成:ok'])
-    // clap 3：ga 档 + ok 分类语义条目（声明即断言）。
+    // clap 3：ga 档 + ok/cooldown 分类语义条目（声明即断言；cooldown 排前 = 判定序）。
     const clap = resolveAwaitPlan('clap 3', undefined, ['jianxinju'])
     expect(clap).toMatchObject({ source: 'table', closeOn: 'ga', command: 'clap', timeoutMs: 15_000 })
-    expect(clap.slots).toEqual([expect.objectContaining({ name: '小童应答', kind: 'ok' })])
+    expect(clap.slots).toEqual([
+      expect.objectContaining({ name: '无人应答', kind: 'cooldown' }),
+      expect.objectContaining({ name: '小童应答', kind: 'ok' }),
+    ])
     // 任务中发全局命令：落全局表（任务组未命中不吞全局条目）。
     const exercise = resolveAwaitPlan('exercise', undefined, ['jianxinju'])
     expect(exercise).toMatchObject({ source: 'table', command: 'exercise' })
@@ -367,10 +370,13 @@ describe('任务专用命令（T27 jianxinju）', () => {
     const clap4 = matchProfileFor('clap 4', ['jianxinju'])
     expect(clap4?.judge.closeOn).toBe('ga')
     expect(clap4?.judge.slots).toEqual([]) // 全局条目（无小童应答槽）
-    // 任务内恰好 clap 3 → 任务条目（小童应答语义条目）。
+    // 任务内恰好 clap 3 → 任务条目（小童应答/无人应答语义条目）。
     const trigger = resolveAwaitPlan('clap 3', undefined, ['jianxinju'])
     expect(trigger).toMatchObject({ source: 'table', closeOn: 'ga', command: 'clap', timeoutMs: 15_000 })
-    expect(trigger.slots).toEqual([expect.objectContaining({ name: '小童应答', kind: 'ok' })])
+    expect(trigger.slots).toEqual([
+      expect.objectContaining({ name: '无人应答', kind: 'cooldown' }),
+      expect.objectContaining({ name: '小童应答', kind: 'ok' }),
+    ])
     // 任务外 clap 3 → 全局条目 ga 收窗（剑心居外不触发小童）。
     const outside = resolveAwaitPlan('clap 3')
     expect(outside).toMatchObject({ source: 'table', closeOn: 'ga', command: 'clap', timeoutMs: 15_000 })

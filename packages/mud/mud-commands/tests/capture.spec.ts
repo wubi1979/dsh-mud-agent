@@ -230,6 +230,31 @@ describe('i 表规则（matcher + 块归约器面）', () => {
   it('skills 的 中文(id) 行不被 i 规则抢走（无 装备/饰品/其它 section 门控）', () => {
     expect(I_RULE.match(tableRow('│＋医道(medicine)      │不堪一击      │16.00/78│'))).toBeUndefined()
   })
+
+  it('食物分区 + 财宝裸币：中文名(id)+件数，数量 1 不显 ×N（实录/用户口径 2026-10-17/18）', () => {
+    const block = I_RULE.block!
+    const acc = block.init()
+    const rows = [
+      { text: '│干粮(Gan liang)×10      包子(Baozi)                                        │', section: '食物' },
+      { text: '│馒头(mantou)│', section: '食物' },
+      { text: '│黄金                     白银×68                 铜板×44                  │', section: '财宝' },
+    ]
+    for (const { text, section } of rows) {
+      const row = tableRow(text, { section })
+      const hit = I_RULE.match(row)
+      if (hit !== undefined) block.step(acc, row, hit)
+    }
+    const flushed = block.flush(acc)
+    expect(flushed.find(e => e.key === '食物')?.value).toEqual([
+      { name: '干粮', id: 'Gan liang', count: 10 },
+      { name: '包子', id: 'Baozi', count: 1 },
+      { name: '馒头', id: 'mantou', count: 1 },
+    ])
+    // 裸显黄金 = 1（数量 1 不显 ×N）；「黄金手镯」类物品名不被财物式误配。
+    expect(flushed.find(e => e.key === '财物')?.value).toEqual({ gold: 1, silver: 68, copper: 44 })
+    expect(I_RULE.match(tableRow('│-- [主兵] 黄金手镯 --│', { section: '装备' }))
+      ?.find(e => e.key === '财物')).toBeUndefined()
+  })
 })
 
 // ── skills（table；实录 A.7.3）──────────────────────────────────────

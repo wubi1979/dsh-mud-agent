@@ -47,6 +47,7 @@ export const TASK_COMMANDS: readonly CommandProfile[] = [
     timeoutMs: 15_000,
     resolve: byBoundary({
       ok: { 小童应答: { patterns: ['进来一名小童，向你欠身行礼'] } },
+      cooldown: { 无人应答: { patterns: ['你轻轻击掌三下，等了一会儿，却不见有人回应。大概都在忙吧。'] } },
     }),
     meta: { corpus: 'A.11：clap 3 成功应答（问 food/teacher 与只问 food 两变体共享锚）；豁免判据 = 2026-10-16 用户实测（裸 clap 为动作命令）' },
   }),
