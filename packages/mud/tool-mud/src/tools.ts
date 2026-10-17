@@ -420,8 +420,9 @@ export function registerMudTools(
       '向 MUD 发送一条命令并等待应答原文（有 cmd = send + read；无 cmd = 裸读近期行流近况）。'
       + 'wait=false 时发送即走：只发命令不等应答（不 read、不判成败），用于翻页/save 等'
       + '"发了就行"的动作。未连接时被拒绝，可先调用 mud_connect。已登记命令'
-      + '（dazuo/sleep/walk 等）不写 listen 即按命令总表判据自动收窗（附 outcome 结局分类）；'
-      + '未登记命令**不收窗只等超时**——需判据请在 listen 显式声明。'
+      + '（dazuo/sleep/walk/learn/exert 等）**一律省略 listen**——命令总表判据自动收窗'
+      + '（附 outcome 结局分类），写 listen 属多余声明；只有未登记命令**不收窗只等超时**，'
+      + '才需要 listen 显式声明判据。'
       + '返回应答行原文；状态拉取命令（hpbrief/hp/sc/i/skills）还会附带系统解析好的'
       + ' world 结构化状态（world 字段，与 mud_state 同形），直接读它即可。',
     isConcurrencySafe: () => false, // socket 写 + 行流等待，独占（谓词恒 false）
@@ -441,7 +442,8 @@ export function registerMudTools(
         },
         listen: {
           type: 'object',
-          description: '收窗判据声明（全量拼写，无简写；覆盖已登记命令的表判据时为语义条目级合并）。'
+          description: '收窗判据声明——**仅未登记命令需要**（已登记命令省略本参数，写了属多余）。'
+            + '全量拼写，无简写；覆盖已登记命令的表判据时为语义条目级合并。'
             + '三形态：等一句判据 {closeOn:"criteria",outcomes:{ok:{完成:{patterns:["你将运转于全身经脉间的内息收回丹田"]}}}}；'
             + '等 GA（即时命令应答）{closeOn:"ga",timeoutMs:10000}；'
             + '读无边界输出（采样窗，有行即成功）{closeOn:"quiet",timeoutMs:3000}。'

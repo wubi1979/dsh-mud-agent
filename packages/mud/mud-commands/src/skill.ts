@@ -121,7 +121,7 @@ export const SKILL_COMMANDS = [
         刚查看过: { patterns: ['你不是刚查看过吗？'] },
       },
       fail: {
-        fail: { patterns: ['周围有这个人吗？只有巫师，夫妻，或有师徒关系的人能察看他人的技能。'] },
+        权限不足: { patterns: ['周围有这个人吗？只有巫师，夫妻，或有师徒关系的人能察看他人的技能。'] },
       },
     }),
     capture: [SKILLS_RULE],

@@ -276,7 +276,10 @@ describe('capture 装配（T29 D4/D7）', () => {
       expect(plan.source, cmd).toBe('table')
       expect(plan.closeOn, cmd).toBe('ga')
       expect(plan.timeoutMs, cmd).toBe(15_000)
-      expect(plan.slots, cmd).toEqual([expect.objectContaining({ name: '刚查看过', kind: 'cooldown' })])
+      expect(plan.slots, cmd).toEqual([
+        expect.objectContaining({ name: '权限不足', kind: 'fail' }), // fail 先于 cooldown（判定序）
+        expect.objectContaining({ name: '刚查看过', kind: 'cooldown' }),
+      ])
     }
     // 词边界：未登记的相似头不误命中。
     expect(matchCommandProfile('looks')).toBeNull()
